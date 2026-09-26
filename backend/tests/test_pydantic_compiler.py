@@ -506,7 +506,8 @@ class Analysis(BaseModel):
 
 
 def test_required_excluded_from_field_hash():
-    """`_field_hash` cobre name|type|options|description e nada mais. Se
+    """`_field_hash` cobre name|type|options|description (e o contador de
+    revisão da pergunta, quando existe) e nada mais. Se
     `required` entrasse no hash, marcar um campo como opcional invalidaria as
     respostas já codificadas daquele campo na Comparação."""
     base = """from pydantic import BaseModel, Field
