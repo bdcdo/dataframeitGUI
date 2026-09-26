@@ -18,7 +18,7 @@ import {
 import { normalizeText } from "@/lib/utils";
 import type { PydanticField } from "@/lib/types";
 
-const MIGRATION = join(__dirname, "..", "..", "..", "supabase", "migrations", "20260927120000_both_correct_common_value.sql");
+const MIGRATION = join(__dirname, "..", "..", "..", "supabase", "migrations", "20260927140000_both_correct_common_value.sql");
 
 function field(name: string, overrides: Partial<PydanticField> = {}): PydanticField {
   return { id: `00000000-0000-4000-8000-0000000000${name.length}`, name, type: "single", options: ["A", "B"], description: name, hash: `h-${name}`, ...overrides };

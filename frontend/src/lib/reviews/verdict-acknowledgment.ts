@@ -7,7 +7,7 @@
 // e vale enquanto ele é o veredito atual da review: mudou, o pesquisador não
 // reconheceu o veredito novo. A igualdade é a do texto cru, sem normalização,
 // a mesma do gatilho `enforce_verdict_acknowledgment_current`
-// (20260927121000_verdict_ack_pinned_verdict.sql), que só deixa gravar o
+// (20260927141000_verdict_ack_pinned_verdict.sql), que só deixa gravar o
 // reconhecimento com o veredito atual.
 //
 // Puro e client-safe.

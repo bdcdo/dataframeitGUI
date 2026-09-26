@@ -222,7 +222,7 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
  * gabarito continua sendo o veredito da fonte. A lista é a das decisões com
  * valor para que um tipo novo nasça exigindo a fonte; a cópia SQL é o último
  * argumento de `llm_error_context` em `read_error_resolutions`
- * (20260927120000_both_correct_common_value.sql).
+ * (20260927140000_both_correct_common_value.sql).
  */
 export function decisionDependsOnSource(row: Pick<ErrorResolutionRow, "decision" | "approved_value">): boolean {
   const { decision } = row;

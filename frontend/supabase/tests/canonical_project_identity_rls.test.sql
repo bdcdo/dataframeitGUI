@@ -104,7 +104,7 @@ SET resolved_at = now(),
 WHERE id = '44000000-0000-0000-0000-000000000003';
 
 -- `acknowledged_verdict`: o veredito reconhecido, que o gatilho exige igual ao
--- atual da review (20260927121000_verdict_ack_pinned_verdict.sql).
+-- atual da review (20260927141000_verdict_ack_pinned_verdict.sql).
 INSERT INTO public.verdict_acknowledgments
   (id, review_id, respondent_id, status, acknowledged_verdict)
 VALUES
