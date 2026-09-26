@@ -803,9 +803,11 @@ $$;
 
 -- (h) Campo que volta ao schema. Projeto proprio, humano e LLM divergentes em
 -- todo campo: o documento 21 tem ciclo decidido em `r`, o 22 em `x`, e o 23
--- nenhum. A saida do campo arquiva o ciclo como 'field_removed' sem
--- enfileirar; sem a volta do documento ao reconciliador, a view dava
--- 'consenso' com a resposta do LLM.
+-- nenhum ciclo operacional, so historico em `r` encerrado por outro motivo
+-- ('no_longer_divergent'). A saida do campo arquiva o ciclo como
+-- 'field_removed' sem enfileirar; sem a volta do documento ao reconciliador,
+-- a view dava 'consenso' com a resposta do LLM. O historico do documento 23
+-- nao caiu com a saida do campo e nao o leva de volta.
 INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_hash, pydantic_fields) VALUES
   ('7a100000-0000-0000-0000-000000000002', 'campo que volta',
    '7a000000-0000-0000-0000-000000000001', 'auto_review_llm', 'schema-v1',
@@ -837,6 +839,29 @@ VALUES
    '7a300000-0000-0000-0000-000000000062', '7a300000-0000-0000-0000-000000000052',
    '7a000000-0000-0000-0000-000000000002', 'admite_erro', now());
 
+-- Historico do documento 23 em `r` por outro motivo: o ciclo sai com o campo
+-- no schema, as respostas e a pergunta intactas, e o arquivamento o nomeia
+-- 'no_longer_divergent'.
+INSERT INTO public.field_reviews (project_id, document_id, field_name, human_response_id, llm_response_id,
+                                  self_reviewer_id, self_verdict, self_reviewed_at)
+VALUES
+  ('7a100000-0000-0000-0000-000000000002', '7a200000-0000-0000-0000-000000000023', 'r',
+   '7a300000-0000-0000-0000-000000000063', '7a300000-0000-0000-0000-000000000053',
+   '7a000000-0000-0000-0000-000000000002', 'admite_erro', now());
+DELETE FROM public.field_reviews
+WHERE document_id = '7a200000-0000-0000-0000-000000000023' AND field_name = 'r';
+DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000002';
+
+DO $$
+BEGIN
+  IF (SELECT pg_catalog.array_agg(superseded_reason) FROM public.field_review_cycle_history_entries
+      WHERE document_id = '7a200000-0000-0000-0000-000000000023' AND field_name = 'r')
+     IS DISTINCT FROM ARRAY['no_longer_divergent'] THEN
+    RAISE EXCEPTION 'FALHOU: a fixture deveria deixar o documento 23 com historico no_longer_divergent em r';
+  END IF;
+END;
+$$;
+
 CREATE FUNCTION pg_temp.returning_field_queue() RETURNS UUID[] LANGUAGE sql AS $$
   SELECT COALESCE(array_agg(document_id ORDER BY document_id), '{}')
   FROM public.auto_review_reconciliation_requests
@@ -856,6 +881,9 @@ WHERE id = '7a100000-0000-0000-0000-000000000002';
 
 DO $$
 BEGIN
+  IF '7a200000-0000-0000-0000-000000000023'::UUID = ANY(pg_temp.returning_field_queue()) THEN
+    RAISE EXCEPTION 'FALHOU: historico de outro motivo que nao a saida do campo levou o documento ao reconciliador';
+  END IF;
   IF pg_temp.returning_field_queue() IS DISTINCT FROM ARRAY['7a200000-0000-0000-0000-000000000021'::UUID] THEN
     RAISE EXCEPTION 'FALHOU: renomear e desfazer deveria levar so o documento do ciclo caido ao reconciliador (%)',
       pg_temp.returning_field_queue();
