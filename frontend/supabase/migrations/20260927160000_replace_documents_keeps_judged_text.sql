@@ -9,14 +9,22 @@
 -- sinal no Gabarito, no export ou na métrica.
 --
 -- Em vez de carimbar a versão do texto em cada julgamento e ensinar cada
--- leitor a descartá-lo, a RPC passa a recusar a troca: se algum documento
--- existente com respostas receberia texto diferente e o chamador pediu para
--- manter as respostas, a chamada inteira aborta (inclusive os INSERTs de
--- documentos novos do mesmo lote) e nada muda. O caminho para trocar o texto
--- é escolher apagar as respostas desses documentos, que já existe na tela de
--- duplicatas. Título, metadados e external_id continuam atualizáveis quando o
--- texto é o mesmo, e documento sem resposta nenhuma continua podendo trocar de
--- texto: não há julgamento a proteger.
+-- leitor a descartá-lo, a RPC passa a recusar a troca: se algum documento do
+-- lote de atualização receberia texto diferente e ainda tem respostas, a
+-- chamada inteira aborta (inclusive os DELETE de respostas e os INSERT de
+-- documentos novos do mesmo lote) e nada muda. O caminho para trocar o texto é
+-- apagar as respostas desses documentos, que já existe na tela de duplicatas.
+-- Título, metadados e external_id continuam atualizáveis quando o texto é o
+-- mesmo, e documento sem resposta nenhuma continua podendo trocar de texto:
+-- não há julgamento a proteger.
+--
+-- A guarda lê o estado, e não o pedido: roda depois do bloco de DELETE e
+-- pergunta se o documento ainda tem resposta naquele ponto. Uma guarda que
+-- olhasse `p_delete_responses` deixaria passar a chamada com `true` em que o
+-- documento atualizado não está em `p_existing_doc_ids`: nada seria apagado e
+-- o texto trocaria com a resposta no lugar. Lendo o estado, esse caso é
+-- recusado, e `p_delete_responses` NULL deixa de precisar de tratamento
+-- próprio.
 --
 -- A comparação é pelo próprio texto, e não por `text_hash`: `d.text_hash` pode
 -- ser NULL (a coluna nasceu em 20260316 sem NOT NULL; o backfill daquela
@@ -24,30 +32,39 @@
 -- sem hash) e `u.text_hash` chega do
 -- chamador sem conferência, então um hash que não corresponda ao texto enviado
 -- abriria a guarda. `IS DISTINCT FROM` sobre o texto não depende de nenhum dos
--- dois.
+-- dois. Por isso a diferença só de formatação (quebra de linha, espaço no fim)
+-- conta como troca, e a mensagem avisa disso.
 --
 -- "Com respostas" usa o mesmo critério da tela de duplicatas (`checkDuplicates`
 -- em actions/documents.ts conta documentos com linha em `responses`, lida pela
 -- mesma sessão): é esse número que decide se a tela oferece a opção de apagar
 -- as respostas. Contar outra coisa aqui poderia recusar uma troca sem que a
--- tela mostrasse a saída.
+-- tela mostrasse a saída. A mesma `checkDuplicates` conta, só lendo, as
+-- duplicatas com resposta cujo `text_hash` gravado difere do hash do texto
+-- novo, e o upload recusa antes de gravar o primeiro chunk: sem isso a recusa
+-- podia cair num chunk posterior, com os anteriores já gravados. Documento com
+-- `text_hash` NULL escapa dessa conta; esta guarda continua sendo a autoridade.
 --
--- `p_delete_responses IS NOT TRUE` e não `NOT p_delete_responses`: com NULL, o
--- `NOT` daria NULL e a guarda seria pulada; o ramo de DELETE abaixo também
--- trata NULL como "manter", então NULL precisa passar pela guarda.
+-- A mensagem nomeia as opções exatamente como aparecem na tela
+-- (components/documents/DuplicateAnalysis.tsx) e é a mesma que a pré-checagem
+-- devolve (TEXT_CHANGE_WITH_RESPONSES_MESSAGE em lib/upload-chunking.ts, que um
+-- teste confere contra este arquivo). Ela diz que apagar as respostas vale para
+-- todas as duplicatas do envio, inclusive as de texto igual, porque a tela
+-- manda como `p_existing_doc_ids` a lista inteira de duplicatas.
 --
 -- ERRCODE 55000 (object_not_in_prerequisite_state): o pedido é válido, mas os
 -- documentos não estão no estado que ele exige (sem respostas). A mensagem vai
--- direto ao toast do upload e não leva a contagem de documentos: o upload trata
--- como "payload grande demais" qualquer erro que contenha "413"
+-- direto ao toast do upload e não leva dígito nenhum: o upload trata como
+-- "payload grande demais" qualquer erro que contenha "413"
 -- (`isPayloadTooLarge` em lib/upload-chunking.ts), e uma contagem com esses
 -- dígitos trocaria a mensagem por outra, errada.
 --
 -- Redefinição por CREATE OR REPLACE a partir do corpo vigente
 -- (20260716120000_comparacao_single_reviewer_rpcs.sql), preservando
--- assinatura, SECURITY INVOKER e search_path. A única mudança é a guarda no
--- início. CREATE OR REPLACE mantém os privilégios existentes, então os
--- REVOKE/GRANT de 20260724120000_rls_audit_hardening.sql continuam valendo.
+-- assinatura, SECURITY INVOKER e search_path. A única mudança é a guarda entre
+-- o DELETE e o UPDATE. CREATE OR REPLACE mantém os privilégios existentes,
+-- então os REVOKE/GRANT de 20260724120000_rls_audit_hardening.sql continuam
+-- valendo.
 CREATE OR REPLACE FUNCTION public.replace_and_add_documents(
   p_project_id uuid,
   p_existing_doc_ids uuid[],
@@ -62,26 +79,6 @@ AS $$
 DECLARE
   v_inserted integer := 0;
 BEGIN
-  IF p_delete_responses IS NOT TRUE
-     AND p_duplicate_updates IS NOT NULL
-     AND EXISTS (
-       SELECT 1
-       FROM jsonb_to_recordset(p_duplicate_updates) AS u(id uuid, "text" text)
-       JOIN public.documents d
-         ON d.id = u.id
-        AND d.project_id = p_project_id
-       WHERE d."text" IS DISTINCT FROM u."text"
-         AND EXISTS (
-           SELECT 1 FROM public.responses r
-           WHERE r.project_id = p_project_id
-             AND r.document_id = d.id
-         )
-     ) THEN
-    RAISE EXCEPTION
-      'Há documentos com respostas cujo texto seria trocado. As respostas foram dadas sobre o texto atual: para trocar o texto, escolha apagar as respostas desses documentos.'
-      USING ERRCODE = '55000';
-  END IF;
-
   IF p_delete_responses
      AND p_existing_doc_ids IS NOT NULL
      AND array_length(p_existing_doc_ids, 1) > 0 THEN
@@ -99,6 +96,25 @@ BEGIN
     WHERE project_id = p_project_id
       AND document_id = ANY(p_existing_doc_ids)
       AND NOT (type = 'comparacao' AND status = 'concluido');
+  END IF;
+
+  IF p_duplicate_updates IS NOT NULL
+     AND EXISTS (
+       SELECT 1
+       FROM jsonb_to_recordset(p_duplicate_updates) AS u(id uuid, "text" text)
+       JOIN public.documents d
+         ON d.id = u.id
+        AND d.project_id = p_project_id
+       WHERE d."text" IS DISTINCT FROM u."text"
+         AND EXISTS (
+           SELECT 1 FROM public.responses r
+           WHERE r.project_id = p_project_id
+             AND r.document_id = d.id
+         )
+     ) THEN
+    RAISE EXCEPTION
+      'Há documentos já respondidos cujo texto no arquivo difere do texto atual, mesmo que só na formatação (quebra de linha, espaço no fim). As respostas valem para o texto atual. Para manter esses documentos como estão, use "Importar apenas novos" (ou "Voltar ao mapeamento", se não houver novos). Para trocar o texto, use "Substituir duplicatas e importar novos" com "Apagar respostas e exigir re-codificação", que apaga as respostas de todas as duplicatas do envio, inclusive as de texto igual.'
+      USING ERRCODE = '55000';
   END IF;
 
   IF p_duplicate_updates IS NOT NULL

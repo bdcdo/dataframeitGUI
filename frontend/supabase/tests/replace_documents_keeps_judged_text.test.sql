@@ -52,7 +52,7 @@ BEGIN
     );
     RAISE EXCEPTION 'FALHOU (1): a RPC aceitou trocar o texto de documento com respostas mantendo as respostas';
   EXCEPTION WHEN SQLSTATE '55000' THEN
-    IF SQLERRM NOT LIKE '%texto seria trocado%apagar as respostas%' THEN
+    IF SQLERRM NOT LIKE '%texto no arquivo difere%formatação%Importar apenas novos%Apagar respostas e exigir re-codificação%todas as duplicatas do envio%' THEN
       RAISE EXCEPTION 'FALHOU (1): mensagem inesperada: %', SQLERRM;
     END IF;
   END;
@@ -92,7 +92,7 @@ BEGIN
   RAISE NOTICE 'OK (1b): hash enviado igual ao atual não abre a guarda';
 END $$;
 
--- ----- (1c) p_delete_responses NULL conta como manter -----
+-- ----- (1c) p_delete_responses NULL: nada é apagado, então a resposta segue e a troca é recusada -----
 DO $$
 BEGIN
   BEGIN
@@ -103,10 +103,39 @@ BEGIN
       '[{"id":"a2222222-2222-2222-2222-222222222222","text":"texto d1 NOVO","title":"D1 titulo","external_id":"D1","text_hash":"h","metadata":null}]'::jsonb,
       '[]'::jsonb
     );
-    RAISE EXCEPTION 'FALHOU (1c): p_delete_responses NULL pulou a guarda';
+    RAISE EXCEPTION 'FALHOU (1c): p_delete_responses NULL trocou o texto com a resposta no lugar';
   EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
   END;
-  RAISE NOTICE 'OK (1c): p_delete_responses NULL passa pela guarda';
+  RAISE NOTICE 'OK (1c): p_delete_responses NULL recusa como manter';
+END $$;
+
+-- ----- (1d) apagar respostas, mas o documento atualizado fora de p_existing_doc_ids -----
+-- O DELETE só alcança p_existing_doc_ids; D1 fica com a resposta e não pode
+-- trocar de texto. A guarda lê o estado depois do DELETE, não o parâmetro.
+-- D2 está na lista, então a resposta dele seria apagada: o rollback da recusa
+-- precisa devolvê-la.
+DO $$
+DECLARE v_text text; n_resp1 int; n_resp2 int;
+BEGIN
+  BEGIN
+    PERFORM public.replace_and_add_documents(
+      'a1111111-1111-1111-1111-111111111111'::uuid,
+      ARRAY['a3333333-3333-3333-3333-333333333333'::uuid],
+      true,
+      '[{"id":"a2222222-2222-2222-2222-222222222222","text":"texto d1 NOVO","title":"D1 titulo","external_id":"D1","text_hash":"h","metadata":null}]'::jsonb,
+      '[]'::jsonb
+    );
+    RAISE EXCEPTION 'FALHOU (1d): apagar respostas com o documento fora da lista trocou o texto com a resposta no lugar';
+  EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
+  END;
+  SELECT text INTO v_text FROM public.documents WHERE id = 'a2222222-2222-2222-2222-222222222222';
+  SELECT count(*) INTO n_resp1 FROM public.responses WHERE id = 'a5555555-5555-5555-5555-555555555551';
+  SELECT count(*) INTO n_resp2 FROM public.responses WHERE id = 'a5555555-5555-5555-5555-555555555552';
+  IF v_text <> 'texto d1' THEN RAISE EXCEPTION 'FALHOU (1d): D1 mudou (%)', v_text; END IF;
+  IF n_resp1 <> 1 OR n_resp2 <> 1 THEN
+    RAISE EXCEPTION 'FALHOU (1d): recusa não desfez o DELETE (D1=%, D2=%)', n_resp1, n_resp2;
+  END IF;
+  RAISE NOTICE 'OK (1d): apagar respostas não libera documento fora de p_existing_doc_ids, e a recusa desfaz o DELETE';
 END $$;
 
 -- ----- (2) manter respostas + mesmo texto: título, metadata e external_id atualizam -----
