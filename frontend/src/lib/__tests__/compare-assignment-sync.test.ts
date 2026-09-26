@@ -7,6 +7,7 @@ import type { PydanticField } from "@/lib/types";
 import {
   callsOf,
   makeFilterAwareSupabaseMock,
+  type QueryError,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 import { CURRENT_HASH } from "@/test-utils/comparison-fixtures";
@@ -21,8 +22,9 @@ const FIELDS: PydanticField[] = [{
 
 let writeCalls: WriteCall[];
 let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError | null>;
 
-const client = () => makeFilterAwareSupabaseMock({ tableData, writeCalls }) as never;
+const client = () => makeFilterAwareSupabaseMock({ tableData, writeCalls, queryErrors }) as never;
 const updates = () => callsOf(writeCalls, "update", "assignments");
 
 const resp = (id: string, documentId: string, decisao: string) => ({
@@ -44,6 +46,7 @@ const assignment = (id: string, documentId: string, status: string, userId = "re
 
 beforeEach(() => {
   writeCalls = [];
+  queryErrors = {};
   tableData = {
     projects: [{
       id: "p1", name: "Projeto", pydantic_fields: FIELDS, pydantic_hash: CURRENT_HASH,
@@ -148,6 +151,25 @@ describe("runResync (o script de pós-deploy)", () => {
 
     expect(code).toBe(0);
     expect(lines.filter((l) => l.startsWith("projeto "))).toHaveLength(2);
+  });
+
+  it("falha num projeto sai com código 1, relatada, sem parar os outros", async () => {
+    queryErrors["assignments:select"] = { message: "tempo esgotado" };
+    tableData.projects.push({ id: "p2", name: "Outro", pydantic_fields: [], pydantic_hash: null });
+
+    const { code, lines } = await run(["--project", "p1", "--project", "p2"]);
+
+    expect(code).toBe(1);
+    expect(lines.filter((l) => l.includes("falhou: assignments: tempo esgotado"))).toHaveLength(2);
+  });
+
+  it("--all com a lista de projetos ilegível sai com código 1", async () => {
+    queryErrors["projects:select"] = { message: "sem acesso" };
+
+    const { code, lines } = await run(["--all"]);
+
+    expect(code).toBe(1);
+    expect(lines).toEqual(["projects: sem acesso"]);
   });
 
   it.each([[[]], [["--project"]], [["--all", "--project", "p1"]], [["--desconhecido"]]])(
