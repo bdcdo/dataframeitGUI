@@ -218,7 +218,7 @@ BEGIN
                 OR v_context->'llm_value'->'value' = '[]'::JSONB
                 OR (pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'string'
                     AND (v_context->'llm_value'->>'value')
-                      ~ E'^[\t\n\u000B\f\r    -     　﻿]*$'), false);
+                      ~ E'^[\t\n\u000B\f\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$'), false);
 
   -- O valor comum de "Ambos corretos", conferido contra o contexto.
   IF v_common IS NOT NULL THEN
