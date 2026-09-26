@@ -686,57 +686,173 @@ describe("assembleExport: células sem veredito", () => {
     expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
   });
 
-  describe("campo condicional: quem não vê o campo não vota", () => {
-    // `campo` só aparece para quem respondeu "sim" em `gate`, que fica fora do
-    // schema exportado para as Pendências listarem só `campo`.
-    const conditional = field("campo", { condition: { field: "gate", equals: "sim" } });
-    const shown = (id: string, type: "humano" | "llm", value: unknown): ExportResponse => ({
-      ...resp(id, type, value), answers: { gate: "sim", campo: value },
+  describe("campo condicional: a linha do Gabarito decide se ele se aplica", () => {
+    // `filho` só aparece para quem responde "sim" em `pai`, e `neto` só para
+    // quem responde "Sim" em `filho`.
+    const pai = field("pai");
+    const filho = field("filho", { condition: { field: "pai", equals: "sim" } });
+    const neto = field("neto", { condition: { field: "filho", equals: "Sim" } });
+    const answering = (id: string, type: "humano" | "llm", answers: Record<string, unknown>): ExportResponse => ({
+      id, document_id: "A", respondent_name: id, respondent_type: type, answers,
     });
-    // A resposta oculta pode guardar um valor antigo: ele não conta.
-    const hidden = (id: string, type: "humano" | "llm", stale: unknown = null): ExportResponse => ({
-      ...resp(id, type, stale), answers: { gate: "não", campo: stale },
+    // Veredito do revisor sobre o pai: fixa o valor dele no Gabarito
+    // independentemente das respostas.
+    const paiVerdict = (verdict: string) => ({
+      id: `rv-${verdict}`, document_id: "A", field_name: "pai", verdict, comment: null,
+      created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null,
     });
-    const withConditional = (overrides: Partial<AssembleInput>) => exported({ fields: [conditional], ...overrides });
+    const withChain = (overrides: Partial<AssembleInput>) => exported({ fields: [pai, filho, neto], ...overrides });
+    const cell = (d: ReturnType<typeof run>, name: string) =>
+      d.verdicts.rows.find((r) => r[0] === "A")?.[idx(d.verdicts, name)] ?? "";
 
-    it("oculto para um pesquisador, e o outro e o LLM concordam: preenche", () => {
-      const d = withConditional({ responses: [hidden("h1", "humano"), shown("h2", "humano", "Sim"), shown("l", "llm", "Sim")] });
-      expect(cellOf(d)).toBe("Sim");
-      expect(d.pending.rows).toEqual([]);
-    });
-
-    it("oculto para um de três pesquisadores, os outros dois concordam e o LLM diverge: preenche", () => {
-      const d = withConditional({
-        responses: [hidden("h1", "humano"), shown("h2", "humano", "Sim"), shown("h3", "humano", "Sim"), shown("l", "llm", "Não")],
+    it("pai exportado satisfaz a condição: o filho segue as regras de valor", () => {
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+          answering("h2", "humano", { pai: "sim", filho: "Sim" }),
+          answering("l", "llm", { pai: "sim", filho: "Não" }),
+        ],
       });
-      expect(cellOf(d)).toBe("Sim");
-    });
-
-    it("oculto para o LLM e os pesquisadores concordam: o valor sai só deles", () => {
-      const [h1, h2, h3] = [shown("h1", "humano", "NI"), shown("h2", "humano", "NI"), shown("h3", "humano", "N/A")];
-      // O valor antigo do LLM cai no grupo de h3; se o LLM contasse, a célula
-      // levaria a forma dele, e não a mais frequente entre os pesquisadores.
-      const d = withConditional({ responses: [h1, h2, h3, hidden("l", "llm", "N/A")], equivalences: [pair(h3, h1)] });
-      expect(cellOf(d)).toBe("NI");
+      expect(cell(d, "filho")).toBe("Sim");
       expect(d.pending.rows).toEqual([]);
     });
 
-    it("um só respondente vê o campo: a Comparação não vê divergência e a célula recebe a resposta dele", () => {
-      const human = withConditional({ responses: [shown("h1", "humano", "Sim"), hidden("h2", "humano", "Não"), hidden("l", "llm", "Não")] });
-      expect(cellOf(human)).toBe("Sim");
-      expect(human.pending.rows).toEqual([]);
-      const llm = withConditional({ responses: [hidden("h1", "humano", "Não"), hidden("h2", "humano"), shown("l", "llm", "Sim")] });
-      expect(cellOf(llm)).toBe("Sim");
-      // Ninguém vê o campo: fica vazio, sem pendência.
-      const none = withConditional({ responses: [hidden("h1", "humano", "Sim"), hidden("l", "llm", "Não")] });
-      expect(cellOf(none)).toBe("");
-      expect(none.pending.rows).toEqual([]);
+    it("pai exportado não satisfaz: o filho que só um pesquisador viu fica em branco, sem pendência", () => {
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+          answering("h2", "humano", { pai: "não" }),
+          answering("l", "llm", { pai: "não" }),
+        ],
+        reviews: [paiVerdict("não")],
+      });
+      expect(cell(d, "pai")).toBe("não");
+      expect(cell(d, "filho")).toBe("");
+      expect(d.pending.rows).toEqual([]);
     });
 
-    it("o mínimo de dois pesquisadores conta só quem vê o campo", () => {
-      const d = withConditional({ responses: [hidden("h1", "humano"), shown("h2", "humano", "Sim"), shown("l", "llm", "Não")] });
-      expect(cellOf(d)).toBe("");
-      expect(pendingOf(d)).toEqual([["A", "campo", "aguarda arbitragem"]]);
+    it("pai decidido pelos pesquisadores contra o LLM: o filho que só o LLM viu fica em branco", () => {
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "não" }),
+          answering("h2", "humano", { pai: "não" }),
+          answering("l", "llm", { pai: "sim", filho: "Sim" }),
+        ],
+      });
+      expect(cell(d, "filho")).toBe("");
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("pai pendente: o filho vai para as Pendências esperando por ele", () => {
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+          answering("h2", "humano", { pai: "não" }),
+          answering("l", "llm", { pai: "sim", filho: "Sim" }),
+        ],
+      });
+      expect(pendingOf(d)).toEqual([
+        ["A", "pai", "divergência entre pesquisadores"],
+        ["A", "filho", "aguarda o campo pai"],
+        ["A", "neto", "aguarda o campo filho"],
+      ]);
+    });
+
+    it("pai com veredito \"ambíguo\" não é valor: o filho espera", () => {
+      const d = withChain({
+        responses: [answering("h1", "humano", { pai: "sim", filho: "Sim" }), answering("h2", "humano", { pai: "sim", filho: "Sim" })],
+        reviews: [paiVerdict("ambiguo")],
+      });
+      expect(pendingOf(d)).toEqual([["A", "filho", "aguarda o campo pai"], ["A", "neto", "aguarda o campo filho"]]);
+    });
+
+    it("condição encadeada: o neto segue o filho exportado", () => {
+      const full = { pai: "sim", filho: "Sim", neto: "x" };
+      const applies = withChain({ responses: [answering("h1", "humano", full), answering("h2", "humano", full)] });
+      expect(cell(applies, "neto")).toBe("x");
+      // Filho em branco legítimo: o neto também, sem pendência.
+      const blank = withChain({
+        responses: [answering("h1", "humano", full), answering("h2", "humano", { pai: "não" })],
+        reviews: [paiVerdict("não")],
+      });
+      expect(cell(blank, "neto")).toBe("");
+      expect(blank.pending.rows).toEqual([]);
+    });
+
+    it("pai multi: a condição testa a lista exportada", () => {
+      const multiPai = field("pai", { type: "multi", options: ["a", "b"] });
+      const filhoDeB = field("filho", { condition: { field: "pai", in: ["b"] } });
+      const d = exported({
+        fields: [multiPai, filhoDeB],
+        responses: [
+          answering("h1", "humano", { pai: ["a", "b"], filho: "Sim" }),
+          answering("h2", "humano", { pai: ["b", "a"], filho: "Sim" }),
+        ],
+      });
+      expect(cell(d, "filho")).toBe("Sim");
+    });
+
+    it("só o LLM respondeu: não preenche e vai para as Pendências", () => {
+      // O campo foi criado depois da codificação humana, e o LLM rodou depois.
+      const before = { answer_field_hashes: { outro: "h" } };
+      const d = exported({
+        fields: [pai],
+        responses: [
+          { ...answering("h1", "humano", {}), ...before },
+          { ...answering("h2", "humano", {}), ...before },
+          answering("l", "llm", { pai: "sim" }),
+        ],
+      });
+      expect(cell(d, "pai")).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "pai", "só o LLM respondeu"]]);
+      // Também quando só o LLM viu o filho de um pai decidido.
+      const conditional = withChain({
+        responses: [answering("h1", "humano", { pai: "não" }), answering("l", "llm", { pai: "sim", filho: "Sim" })],
+        reviews: [paiVerdict("sim")],
+      });
+      expect(cell(conditional, "filho")).toBe("");
+      expect(pendingOf(conditional)).toEqual([["A", "filho", "só o LLM respondeu"], ["A", "neto", "aguarda o campo filho"]]);
+    });
+
+    it("um único pesquisador viu o filho: a célula recebe a resposta dele", () => {
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "sim", filho: "Talvez" }),
+          answering("h2", "humano", { pai: "não" }),
+          answering("l", "llm", { pai: "não" }),
+        ],
+        reviews: [paiVerdict("sim")],
+      });
+      expect(cell(d, "filho")).toBe("Talvez");
+      expect(pendingOf(d)).toEqual([]);
+    });
+
+    it("quem respondeu o pai com outro valor não conta como divergente", () => {
+      // O valor antigo do filho em h3 divergiria dos demais se contasse.
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+          answering("h2", "humano", { pai: "sim", filho: "Sim" }),
+          answering("h3", "humano", { pai: "não", filho: "Não" }),
+          answering("l", "llm", { pai: "sim", filho: "Sim" }),
+        ],
+        reviews: [paiVerdict("sim")],
+      });
+      expect(cell(d, "filho")).toBe("Sim");
+      expect(pendingOf(d)).toEqual([]);
+    });
+
+    it("o mínimo de dois pesquisadores conta só quem viu o campo", () => {
+      const d = withChain({
+        responses: [
+          answering("h1", "humano", { pai: "não" }),
+          answering("h2", "humano", { pai: "sim", filho: "Sim" }),
+          answering("l", "llm", { pai: "sim", filho: "Não" }),
+        ],
+        reviews: [paiVerdict("sim")],
+      });
+      expect(cell(d, "filho")).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "filho", "aguarda arbitragem"], ["A", "neto", "aguarda o campo filho"]]);
     });
   });
 

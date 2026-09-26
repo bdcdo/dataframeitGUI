@@ -23,6 +23,7 @@ import {
   isFieldApplicable,
   type EquivalenceRow,
 } from "@/lib/compare-divergence";
+import { isFieldVisible } from "@/lib/conditional";
 import type { AutoReviewProvenance } from "@/lib/llm-error-metrics";
 import { formatExportValue, formatVerdict } from "./format";
 import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
@@ -260,6 +261,7 @@ const PENDING_REASON = {
   fewResponses: "poucas respostas",
   researchers: "divergência entre pesquisadores",
   uncompared: "divergência sem comparação",
+  llmOnly: "só o LLM respondeu",
 } as const;
 
 // O que cada proveniência da view `final_answers` faz com a célula: "decidido"
@@ -322,25 +324,26 @@ function groupValue(fieldName: string, group: ExportResponse[], llm: ExportRespo
   return [...counts].sort(([a, na], [b, nb]) => nb - na || a.localeCompare(b, "pt-BR"))[0][0];
 }
 
-// As respostas em que o campo se aplica, por `isFieldApplicable`, o mesmo
-// predicado da Comparação e da view `final_answers`: campo condicional oculto
-// para o respondente, ou que ainda não existia quando ele codificou, não tem
-// resposta a comparar, e o branco dele não conta como voto.
+// As respostas que contam numa célula que a linha do Gabarito já deu como
+// aplicável, por `isFieldApplicable`, o mesmo predicado da Comparação e da view
+// `final_answers`: quem codificou antes de o campo existir, ou respondeu o
+// campo pai com outro valor e por isso não viu este, não tem resposta a
+// comparar, e o branco dele não conta como voto nem como divergência.
 function applicableResponses(field: PydanticField, doc: DocResponses): DocResponses {
   return splitResponses(
     doc.all.filter((r) => isFieldApplicable(field, r.answers, r.answer_field_hashes ?? undefined)),
   );
 }
 
-// Consenso da célula, ou null, contado só entre as respostas em que o campo se
-// aplica. Vale quando todas elas, LLM incluído, caem num grupo (com o piso
-// `minResponses` de sempre, sobre as respostas do documento), ou quando pelo
-// menos dois pesquisadores caem num grupo e o LLM diverge: dois humanos
-// concordantes já são gabarito, e o LLM é justamente o que está sendo medido.
-// Com uma resposta aplicável só, a Comparação não vê divergência
-// (`applicable.length < 2` em `computeDivergentFieldNames`), e a célula recebe
-// essa resposta; com nenhuma, o campo não se aplica a ninguém e fica vazio sem
-// pendência.
+// Consenso da célula, ou null, contado só entre as respostas que contam, com
+// pelo menos um pesquisador entre elas (o LLM sozinho é barrado antes). Vale
+// quando todas elas, LLM incluído, caem num grupo (com o piso `minResponses` de
+// sempre, sobre as respostas do documento), ou quando pelo menos dois
+// pesquisadores caem num grupo e o LLM diverge: dois humanos concordantes já
+// são gabarito, e o LLM é justamente o que está sendo medido. Um pesquisador
+// só, sem o LLM, preenche com a resposta dele: ninguém mais viu o campo, e a
+// Comparação também não a arbitraria (`applicable.length < 2` em
+// `computeDivergentFieldNames`). Com nenhuma resposta, fica vazio sem pendência.
 function cellConsensus(
   field: PydanticField,
   applicable: DocResponses,
@@ -370,18 +373,61 @@ interface CellContext {
   comparisonDivergence: (docId: string, doc: DocResponses) => ReadonlySet<string>;
 }
 
+// A linha do Gabarito em montagem, na forma das respostas, para que as
+// condições dos campos se avaliem com o mesmo `isFieldVisible` da codificação.
+// Só tem chave o campo já decidido: com valor, ou `undefined` quando a condição
+// dele não se cumpre. Campo sem chave está pendente, e o filho dele espera.
+type GabaritoRow = Record<string, unknown>;
+
+// Os rótulos de "ambíguo" e "pular" são o veredito de que o campo não tem
+// valor, não um valor: a célula fica fora da linha, e o filho espera como se o
+// pai estivesse pendente.
+const NOT_A_VALUE = new Set([formatVerdict("ambiguo"), formatVerdict("pular")]);
+
+// Grava na linha uma célula decidida. O multi volta a ser lista, desfazendo o
+// "; " de `formatExportValue` e `formatVerdict`, porque a condição sobre ele
+// testa pertinência.
+function settleCell(row: GabaritoRow, field: PydanticField, cell: string | undefined): void {
+  if (cell !== undefined && NOT_A_VALUE.has(cell)) return;
+  row[field.name] = cell && field.type === "multi" ? cell.split("; ") : cell;
+}
+
+// A condição do campo avaliada na linha do Gabarito, e não na resposta de cada
+// respondente: se um pesquisador só respondeu "Sim" ao pai e o Gabarito ficou
+// com "Não", o filho que só ele viu não entra, senão a linha se contradiz.
+// Devolve null quando o campo se aplica. O schema só aceita condição sobre
+// campo anterior (`conditionTrigger` em pydantic-field.ts), então, percorrendo
+// os campos na ordem dele, o pai já passou por aqui; pai fora do Gabarito
+// (`llm_only`, `none`) nunca se decide, e o filho espera.
+function conditionOutcome(field: PydanticField, row: GabaritoRow): CellOutcome | null {
+  const parent = field.condition?.field;
+  if (!parent) return null;
+  if (!Object.hasOwn(row, parent)) return { reason: `aguarda o campo ${parent}` };
+  return isFieldVisible(field, row) ? null : { value: undefined };
+}
+
+// `value: undefined` é o branco legítimo: a condição não se cumpre na linha.
+type CellOutcome = { value: string | undefined } | { reason: string };
+
 // Uma célula sem veredito: o valor que ela recebe ou o motivo de ficar em
-// branco. Ordem: auto-revisão decidida, concordância, e então o motivo.
+// branco. Ordem: auto-revisão decidida, condição na linha do Gabarito,
+// concordância, e então o motivo.
 function resolveCell(
   docId: string,
   field: PydanticField,
   doc: DocResponses,
+  row: GabaritoRow,
   ctx: CellContext,
-): { value: string } | { reason: string } {
+): CellOutcome {
   const auto = ctx.autoReview.get(cellKey(docId, field.name));
   if (auto && AUTO_REVIEW_CELL[auto.provenance] === "decidido") return { value: formatExportValue(auto.answer) };
+  const gate = conditionOutcome(field, row);
+  if (gate) return gate;
   const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
   const applicable = applicableResponses(field, doc);
+  // O LLM sozinho não faz gabarito: é o que o gabarito serve para medir, e
+  // uma célula com o valor dele contaria como acerto dele mesmo.
+  if (applicable.all.length > 0 && applicable.humans.length === 0) return { reason: PENDING_REASON.llmOnly };
   const agree = groupAgreement(field, applicable, pairs);
   const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
@@ -453,9 +499,11 @@ function buildCellContext(input: AssembleInput, baseReviews: ExportReview[]): Ce
   };
 }
 
-// As células de um documento: as que a auto-revisão ou a concordância
-// preenchem, e as que ficam em branco, com o motivo. Célula com veredito só
-// volta como pendente quando o veredito é o branco de "Em discussão".
+// As células de um documento, na ordem do schema: as que a auto-revisão ou a
+// concordância preenchem, e as que ficam em branco, com o motivo. Célula com
+// veredito só volta como pendente quando o veredito é o branco de "Em
+// discussão"; as demais entram na linha como estão, porque o veredito é
+// julgamento explícito e vale acima da condição.
 function resolveDocCells(
   docId: string,
   doc: DocResponses,
@@ -465,14 +513,21 @@ function resolveDocCells(
 ): { filled: Map<string, string>; pending: [string, string][] } {
   const filled = new Map<string, string>();
   const pending: [string, string][] = [];
+  const row: GabaritoRow = {};
   for (const field of fields) {
-    if (!verdictFields?.has(field.name)) {
-      const outcome = resolveCell(docId, field, doc, ctx);
-      if ("value" in outcome) filled.set(field.name, outcome.value);
-      else pending.push([field.name, outcome.reason]);
-    } else if (ctx.discussed.has(cellKey(docId, field.name))) {
-      pending.push([field.name, PENDING_REASON.discussion]);
+    const verdict = verdictFields?.get(field.name);
+    if (verdict !== undefined) {
+      if (ctx.discussed.has(cellKey(docId, field.name))) pending.push([field.name, PENDING_REASON.discussion]);
+      else settleCell(row, field, verdict);
+      continue;
     }
+    const outcome = resolveCell(docId, field, doc, row, ctx);
+    if ("reason" in outcome) {
+      pending.push([field.name, outcome.reason]);
+      continue;
+    }
+    if (outcome.value !== undefined) filled.set(field.name, outcome.value);
+    settleCell(row, field, outcome.value);
   }
   return { filled, pending };
 }
