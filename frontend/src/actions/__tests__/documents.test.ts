@@ -519,7 +519,7 @@ describe("checkDuplicates — propaga erro de query (não engole silenciosamente
 // Pré-checagem do upload: entre as duplicatas com resposta, as que receberiam
 // texto diferente. Só o casamento por external_id pode trazer texto novo, e
 // text_hash NULL fica fora da conta (a guarda do banco decide esse caso).
-describe("checkDuplicates — duplicatas respondidas com texto novo", () => {
+describe("checkDuplicates: duplicatas respondidas com texto novo", () => {
   it("conta só a respondida cujo text_hash gravado difere do hash que chega", async () => {
     serverTableResults = {
       documents: [

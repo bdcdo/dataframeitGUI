@@ -29,10 +29,9 @@
 -- A comparação é pelo próprio texto, e não por `text_hash`: `d.text_hash` pode
 -- ser NULL (a coluna nasceu em 20260316 sem NOT NULL; o backfill daquela
 -- migration cobriu as linhas de então, mas nada impede uma escrita posterior
--- sem hash) e `u.text_hash` chega do
--- chamador sem conferência, então um hash que não corresponda ao texto enviado
--- abriria a guarda. `IS DISTINCT FROM` sobre o texto não depende de nenhum dos
--- dois. Por isso a diferença só de formatação (quebra de linha, espaço no fim)
+-- sem hash) e `u.text_hash` chega do chamador sem conferência, então um hash
+-- que não corresponda ao texto enviado abriria a guarda. `IS DISTINCT FROM`
+-- sobre o texto não depende de nenhum dos dois. Por isso a diferença só de formatação (quebra de linha, espaço no fim)
 -- conta como troca, e a mensagem avisa disso.
 --
 -- "Com respostas" usa o mesmo critério da tela de duplicatas (`checkDuplicates`

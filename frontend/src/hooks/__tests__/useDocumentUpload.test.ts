@@ -29,6 +29,7 @@ vi.mock("sonner", () => ({
 
 import { TEXT_CHANGE_WITH_RESPONSES_MESSAGE } from "@/lib/upload-chunking";
 import { useDocumentUpload } from "../useDocumentUpload";
+import { checkDuplicatesInChunks } from "../document-upload-helpers";
 
 // Faz o mock do Papa.parse chamar o callback `complete` como o handleFile espera.
 function feedCsv(
@@ -365,7 +366,7 @@ describe("useDocumentUpload — replace destrutivo falhando", () => {
   });
 });
 
-describe("useDocumentUpload — pré-checagem de texto trocado mantendo respostas", () => {
+describe("useDocumentUpload: pré-checagem de texto trocado mantendo respostas", () => {
   // Sem a pré-checagem, a guarda do banco recusaria por chunk: num CSV com
   // vários chunks, os anteriores ficariam gravados antes da recusa.
   const analysisWithNewText = {
@@ -391,7 +392,10 @@ describe("useDocumentUpload — pré-checagem de texto trocado mantendo resposta
 
     act(() => result.current.handleReplaceAndImport(false));
 
-    expect(toastError).toHaveBeenCalledWith(TEXT_CHANGE_WITH_RESPONSES_MESSAGE);
+    expect(toastError).toHaveBeenCalledWith(TEXT_CHANGE_WITH_RESPONSES_MESSAGE, {
+      duration: Infinity,
+      closeButton: true,
+    });
     expect(uploadDocuments).not.toHaveBeenCalled();
     expect(result.current.phase.kind).toBe("analysis");
   });
@@ -403,6 +407,46 @@ describe("useDocumentUpload — pré-checagem de texto trocado mantendo resposta
 
     await waitFor(() => expect(uploadDocuments).toHaveBeenCalled());
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("checkDuplicatesInChunks: agregação entre lotes", () => {
+  it("soma a contagem de texto trocado de todos os lotes, não só do primeiro", async () => {
+    // 5.001 documentos formam dois lotes (5.000 + 1). A resposta de cada lote
+    // é escolhida pelo csvIndex do lote, e não pela ordem de chamada, porque os
+    // lotes rodam em paralelo.
+    const docs = Array.from({ length: 5_001 }, (_, i) => ({
+      text: `texto ${i}`,
+      external_id: `e${i}`,
+    }));
+    checkDuplicates.mockImplementation(
+      async (_projeto: string, lote: { csvIndex: number }[]) =>
+        lote[0].csvIndex === 0
+          ? {
+              duplicates: [{ csvIndex: 0, existingDocId: "d0", matchType: "external_id" }],
+              duplicatesWithResponses: 1,
+              respondedDuplicatesWithNewText: 0,
+            }
+          : {
+              duplicates: [
+                { csvIndex: 5_000, existingDocId: "d5000", matchType: "external_id" },
+              ],
+              duplicatesWithResponses: 1,
+              respondedDuplicatesWithNewText: 1,
+            }
+    );
+
+    const r = await checkDuplicatesInChunks("p1", docs);
+
+    expect(checkDuplicates).toHaveBeenCalledTimes(2);
+    const tamanhos = checkDuplicates.mock.calls
+      .map((c) => (c[1] as unknown[]).length)
+      .sort((a, b) => a - b);
+    expect(tamanhos).toEqual([1, 5_000]);
+    // A contagem vem só do segundo lote: somar apenas o primeiro daria 0.
+    expect(r.respondedDuplicatesWithNewText).toBe(1);
+    expect(r.duplicatesWithResponses).toBe(2);
+    expect(r.duplicates.map((d) => d.existingDocId)).toEqual(["d0", "d5000"]);
   });
 });
 

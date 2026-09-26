@@ -246,7 +246,12 @@ export function useDocumentUpload(projectId: string) {
     // external_id. Recusando aqui, nada é gravado. A guarda do banco segue
     // sendo a autoridade (text_hash NULL escapa desta conta).
     if (!deleteResponses && analysis.respondedDuplicatesWithNewText > 0) {
-      toast.error(TEXT_CHANGE_WITH_RESPONSES_MESSAGE);
+      // A mensagem é longa (explica o motivo e os dois caminhos) e some no
+      // tempo padrão do sonner antes de ser lida: fica até o usuário fechar.
+      toast.error(TEXT_CHANGE_WITH_RESPONSES_MESSAGE, {
+        duration: Infinity,
+        closeButton: true,
+      });
       return;
     }
     void doUpload(analysis.docs, phase, {
