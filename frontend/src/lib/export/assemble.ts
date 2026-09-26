@@ -17,7 +17,12 @@ import {
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import { answerGroupKeys, type EquivalencePair } from "@/lib/equivalence";
-import { buildEquivalenceMap, computeDivergentFieldNames, type EquivalenceRow } from "@/lib/compare-divergence";
+import {
+  buildEquivalenceMap,
+  computeDivergentFieldNames,
+  isFieldApplicable,
+  type EquivalenceRow,
+} from "@/lib/compare-divergence";
 import type { AutoReviewProvenance } from "@/lib/llm-error-metrics";
 import { formatExportValue, formatVerdict } from "./format";
 import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
@@ -287,7 +292,7 @@ interface DocResponses {
 // `answerGroupKeys` (pares "=" vigentes mais a mesma resposta normalizada).
 function groupAgreement(
   field: PydanticField,
-  doc: DocResponses,
+  applicable: DocResponses,
   pairs: readonly EquivalencePair[],
 ): (responses: ExportResponse[]) => boolean {
   if (field.type === "multi" && field.options?.length) {
@@ -295,7 +300,7 @@ function groupAgreement(
     return (responses) =>
       multiSelectionsAgree(options, multiSelectionSets(responses.map((r) => r.answers?.[field.name])));
   }
-  const keys = answerGroupKeys(doc.all, pairs, field, field.name);
+  const keys = answerGroupKeys(applicable.all, pairs, field, field.name);
   return (responses) => new Set(responses.map((r) => keys.get(r.id))).size === 1;
 }
 
@@ -316,21 +321,38 @@ function groupValue(fieldName: string, group: ExportResponse[], llm: ExportRespo
   return [...counts].sort(([a, na], [b, nb]) => nb - na || a.localeCompare(b, "pt-BR"))[0][0];
 }
 
-// Consenso da célula, ou null. Vale quando todas as respostas atuais, LLM
-// incluído, caem num grupo (com o piso `minResponses` de sempre), ou quando
-// pelo menos dois pesquisadores caem num grupo e o LLM diverge: dois humanos
+// As respostas em que o campo se aplica, por `isFieldApplicable`, o mesmo
+// predicado da Comparação e da view `final_answers`: campo condicional oculto
+// para o respondente, ou que ainda não existia quando ele codificou, não tem
+// resposta a comparar, e o branco dele não conta como voto.
+function applicableResponses(field: PydanticField, doc: DocResponses): DocResponses {
+  return splitResponses(
+    doc.all.filter((r) => isFieldApplicable(field, r.answers, r.answer_field_hashes ?? undefined)),
+  );
+}
+
+// Consenso da célula, ou null, contado só entre as respostas em que o campo se
+// aplica. Vale quando todas elas, LLM incluído, caem num grupo (com o piso
+// `minResponses` de sempre, sobre as respostas do documento), ou quando pelo
+// menos dois pesquisadores caem num grupo e o LLM diverge: dois humanos
 // concordantes já são gabarito, e o LLM é justamente o que está sendo medido.
+// Com uma resposta aplicável só, a Comparação não vê divergência
+// (`applicable.length < 2` em `computeDivergentFieldNames`), e a célula recebe
+// essa resposta; com nenhuma, o campo não se aplica a ninguém e fica vazio sem
+// pendência.
 function cellConsensus(
   field: PydanticField,
-  doc: DocResponses,
-  pairs: readonly EquivalencePair[],
+  applicable: DocResponses,
+  agree: (responses: ExportResponse[]) => boolean,
+  totalResponses: number,
   minResponses: number,
 ): string | null {
-  const agree = groupAgreement(field, doc, pairs);
-  const allAgree = agree(doc.all);
-  if (allAgree && doc.all.length >= minResponses) return groupValue(field.name, doc.all, doc.llm);
-  if (doc.humans.length >= 2 && agree(doc.humans)) {
-    return groupValue(field.name, allAgree ? doc.all : doc.humans, doc.llm);
+  const floor = totalResponses >= minResponses;
+  if (applicable.all.length === 0) return floor ? "" : null;
+  const allAgree = agree(applicable.all);
+  if (allAgree && floor) return groupValue(field.name, applicable.all, applicable.llm);
+  if (applicable.humans.length >= 2 && agree(applicable.humans)) {
+    return groupValue(field.name, allAgree ? applicable.all : applicable.humans, applicable.llm);
   }
   return null;
 }
@@ -358,7 +380,9 @@ function resolveCell(
   const auto = ctx.autoReview.get(cellKey(docId, field.name));
   if (auto && AUTO_REVIEW_CELL[auto.provenance] === "decidido") return { value: formatExportValue(auto.answer) };
   const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
-  const consensus = cellConsensus(field, doc, pairs, ctx.minResponses);
+  const applicable = applicableResponses(field, doc);
+  const agree = groupAgreement(field, applicable, pairs);
+  const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
   return { reason: pendingReason(docId, field.name, doc, ctx) };
 }
@@ -374,7 +398,7 @@ function pendingReason(docId: string, fieldName: string, doc: DocResponses, ctx:
   if (doc.all.length < ctx.minResponses && doc.humans.length < 2) return PENDING_REASON.fewResponses;
   // Sem ler as atribuições não se sabe se a comparação já foi aberta; o que se
   // sabe é se a regra da Comparação vê a divergência. Quando não vê (campo
-  // `human_only`, resposta a que o campo não se aplica), ninguém vai arbitrar.
+  // `human_only`), ninguém vai arbitrar.
   return ctx.comparisonDivergence(docId, doc).has(fieldName)
     ? PENDING_REASON.arbitration
     : PENDING_REASON.uncompared;

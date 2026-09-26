@@ -686,6 +686,60 @@ describe("assembleExport: células sem veredito", () => {
     expect(pendingOf(d)).toEqual([["A", "campo", "aguarda arbitragem"]]);
   });
 
+  describe("campo condicional: quem não vê o campo não vota", () => {
+    // `campo` só aparece para quem respondeu "sim" em `gate`, que fica fora do
+    // schema exportado para as Pendências listarem só `campo`.
+    const conditional = field("campo", { condition: { field: "gate", equals: "sim" } });
+    const shown = (id: string, type: "humano" | "llm", value: unknown): ExportResponse => ({
+      ...resp(id, type, value), answers: { gate: "sim", campo: value },
+    });
+    // A resposta oculta pode guardar um valor antigo: ele não conta.
+    const hidden = (id: string, type: "humano" | "llm", stale: unknown = null): ExportResponse => ({
+      ...resp(id, type, stale), answers: { gate: "não", campo: stale },
+    });
+    const withConditional = (overrides: Partial<AssembleInput>) => exported({ fields: [conditional], ...overrides });
+
+    it("oculto para um pesquisador, e o outro e o LLM concordam: preenche", () => {
+      const d = withConditional({ responses: [hidden("h1", "humano"), shown("h2", "humano", "Sim"), shown("l", "llm", "Sim")] });
+      expect(cellOf(d)).toBe("Sim");
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("oculto para um de três pesquisadores, os outros dois concordam e o LLM diverge: preenche", () => {
+      const d = withConditional({
+        responses: [hidden("h1", "humano"), shown("h2", "humano", "Sim"), shown("h3", "humano", "Sim"), shown("l", "llm", "Não")],
+      });
+      expect(cellOf(d)).toBe("Sim");
+    });
+
+    it("oculto para o LLM e os pesquisadores concordam: o valor sai só deles", () => {
+      const [h1, h2, h3] = [shown("h1", "humano", "NI"), shown("h2", "humano", "NI"), shown("h3", "humano", "N/A")];
+      // O valor antigo do LLM cai no grupo de h3; se o LLM contasse, a célula
+      // levaria a forma dele, e não a mais frequente entre os pesquisadores.
+      const d = withConditional({ responses: [h1, h2, h3, hidden("l", "llm", "N/A")], equivalences: [pair(h3, h1)] });
+      expect(cellOf(d)).toBe("NI");
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("um só respondente vê o campo: a Comparação não vê divergência e a célula recebe a resposta dele", () => {
+      const human = withConditional({ responses: [shown("h1", "humano", "Sim"), hidden("h2", "humano", "Não"), hidden("l", "llm", "Não")] });
+      expect(cellOf(human)).toBe("Sim");
+      expect(human.pending.rows).toEqual([]);
+      const llm = withConditional({ responses: [hidden("h1", "humano", "Não"), hidden("h2", "humano"), shown("l", "llm", "Sim")] });
+      expect(cellOf(llm)).toBe("Sim");
+      // Ninguém vê o campo: fica vazio, sem pendência.
+      const none = withConditional({ responses: [hidden("h1", "humano", "Sim"), hidden("l", "llm", "Não")] });
+      expect(cellOf(none)).toBe("");
+      expect(none.pending.rows).toEqual([]);
+    });
+
+    it("o mínimo de dois pesquisadores conta só quem vê o campo", () => {
+      const d = withConditional({ responses: [hidden("h1", "humano"), shown("h2", "humano", "Sim"), shown("l", "llm", "Não")] });
+      expect(cellOf(d)).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "campo", "aguarda arbitragem"]]);
+    });
+  });
+
   describe("auto-revisão (view final_answers)", () => {
     const answer = (provenance: ExportFinalAnswer["provenance"], value: unknown = null): ExportFinalAnswer => ({
       document_id: "A", field_name: "campo", provenance, answer: value,
