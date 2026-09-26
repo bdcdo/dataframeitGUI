@@ -22,6 +22,7 @@ import {
 } from "@/lib/compare-assignment-status";
 import { versionGate, type ProjectVersionRow } from "@/lib/compare-version";
 import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
+import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
 
 const PG_UNIQUE_VIOLATION = "23505";
 // O índice parcial criado pelo #490 (uma comparação ATIVA por documento;
@@ -199,37 +200,10 @@ interface ReviewRow extends ValidatableReview {
 
 type ResponseRow = ComparisonCandidate & { document_id: string };
 
-const PAGE = 1000;
-
-// PostgREST corta em 1000 linhas por padrão; sem paginar, um projeto grande
-// seria ressincronizado pela metade sem erro. A ordem por `id` é requisito da
-// paginação: sem ela, a mesma linha pode cair em duas páginas ou em nenhuma.
-//
-// O builder fica `any` pelo mesmo motivo de `fetchAll` em
-// check-invariants.ts: o PostgrestFilterBuilder muda de tipo a cada método
-// encadeado, e num helper genérico por tabela o tsc estoura em TS2589.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type UntypedSelectBuilder = any;
-
-async function fetchAll<T>(
-  supabase: SupabaseServerClient,
-  table: string,
-  columns: string,
-  projectId: string,
-  filter: (query: UntypedSelectBuilder) => UntypedSelectBuilder = (q) => q,
-): Promise<T[]> {
-  const rows: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const query: UntypedSelectBuilder = supabase.from(table).select(columns).eq("project_id", projectId);
-    // A página seguinte depende de a anterior vir cheia.
-    // react-doctor-disable-next-line react-doctor/async-await-in-loop
-    const { data, error } = (await filter(query)
-      .order("id", { ascending: true })
-      .range(from, from + PAGE - 1)) as { data: T[] | null; error: { message: string } | null };
-    if (error) throw new Error(`${table}: ${error.message}`, { cause: error });
-    rows.push(...(data ?? []));
-    if (!data || data.length < PAGE) return rows;
-  }
+// Uma leitura paginada do projeto, que falha em vez de devolver meia tabela.
+function rowsOrThrow<T>(table: string, { data, error }: { data: T[]; error: { message: string } | null }): T[] {
+  if (error) throw new Error(`${table}: ${error.message}`, { cause: error });
+  return data;
 }
 
 function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[]> {
@@ -267,19 +241,28 @@ async function loadProjectCompareState(
   if (error) throw new Error(`projects: ${error.message}`, { cause: error });
   if (!project) return null;
 
-  const assignments = await fetchAll<AssignmentRow>(
-    supabase, "assignments", "id, document_id, user_id, status, completed_at", projectId,
-    (q) => q.eq("type", "comparacao"));
+  const assignments = rowsOrThrow("assignments", await fetchAllPaged<AssignmentRow>(() => supabase
+    .from("assignments").select("id, document_id, user_id, status, completed_at")
+    .eq("project_id", projectId).eq("type", "comparacao"), ["id"]));
   if (assignments.length === 0) return null;
 
   const [responses, reviews, equivalences] = await Promise.all([
-    fetchAll<ResponseRow>(supabase, "responses", COMPARE_RESPONSE_SELECT, projectId),
-    fetchAll<ReviewRow>(supabase, "reviews",
-      "id, document_id, reviewer_id, field_name, verdict, field_hash, chosen_response_id", projectId),
-    fetchAll<EquivalenceRow>(supabase, "response_equivalences", COMPARE_EQUIVALENCE_SELECT, projectId,
-      (q) => q.is("superseded_at", null)),
+    fetchAllPaged<ResponseRow>(() => supabase
+      .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId), ["id"]),
+    fetchAllPaged<ReviewRow>(() => supabase
+      .from("reviews").select("id, document_id, reviewer_id, field_name, verdict, field_hash, chosen_response_id")
+      .eq("project_id", projectId), ["id"]),
+    fetchAllPaged<EquivalenceRow>(() => supabase
+      .from("response_equivalences").select(COMPARE_EQUIVALENCE_SELECT)
+      .eq("project_id", projectId).is("superseded_at", null), ["id"]),
   ]);
-  return { project: project as CompareProjectRow, assignments, responses, reviews, equivalences };
+  return {
+    project: project as CompareProjectRow,
+    assignments,
+    responses: rowsOrThrow("responses", responses),
+    reviews: rowsOrThrow("reviews", reviews),
+    equivalences: rowsOrThrow("response_equivalences", equivalences),
+  };
 }
 
 // As mudanças por documento, cada lista já na ordem de reabertura.
