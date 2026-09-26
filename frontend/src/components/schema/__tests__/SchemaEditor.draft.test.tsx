@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SchemaEditorSession } from "../SchemaEditor";
@@ -76,6 +76,9 @@ vi.mock("../SchemaBuilderGUI", () => ({
       <button onClick={() => onChange([{ ...fields[0], description: "Editada" }])}>
         Editar campo
       </button>
+      <button onClick={() => onChange([{ ...fields[0], help_text: "Nova instrução" }])}>
+        Editar instrução
+      </button>
     </div>
   ),
 }));
@@ -151,6 +154,60 @@ describe("SchemaEditor — ciclo do draft", () => {
     expect(window.localStorage.getItem(schemaDraftStorageKey(SCOPE))).toBeNull();
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.getByText("Versão 0.1.1")).toBeTruthy();
+  });
+
+  // Ponta a ponta no editor: a pergunta abre FORA da transição do save (dentro
+  // dela, o diálogo nunca apareceria), o contador vai no payload e também no
+  // rascunho, e o schema devolvido com ele deixa o editor limpo, sem uma
+  // edição fantasma que desfaria a revisão no save seguinte.
+  it("instrução alterada pergunta antes de salvar e grava a revisão escolhida", async () => {
+    const revised = { ...BASE_FIELDS[0], help_text: "Nova instrução", question_revision: 1 };
+    hoisted.saveSchemaFromGUI.mockResolvedValue({
+      status: "saved",
+      snapshot: { fields: [{ ...revised, hash: "def" }], version: "0.1.1", revision: 1 },
+    });
+    await renderEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Editar instrução" }));
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(hoisted.saveSchemaFromGUI).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole("button", { name: "Muda como responder" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(hoisted.toast.success).toHaveBeenCalledWith("Schema salvo!"));
+    expect(hoisted.saveSchemaFromGUI).toHaveBeenCalledWith("project-1", [revised], { revision: 0 });
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(window.localStorage.getItem(schemaDraftStorageKey(SCOPE))).toBeNull();
+  });
+
+  it("\"Só esclarece\" grava a instrução sem revisão", async () => {
+    const clarified = { ...BASE_FIELDS[0], help_text: "Nova instrução" };
+    hoisted.saveSchemaFromGUI.mockResolvedValue({
+      status: "saved",
+      snapshot: { fields: [{ ...clarified, hash: "abc" }], version: "0.1.1", revision: 1 },
+    });
+    await renderEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Editar instrução" }));
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Só esclarece" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Salvar" }));
+
+    await waitFor(() => expect(hoisted.toast.success).toHaveBeenCalledWith("Schema salvo!"));
+    expect(hoisted.saveSchemaFromGUI).toHaveBeenCalledWith("project-1", [clarified], { revision: 0 });
+  });
+
+  it("cancelar a pergunta não salva e mantém a edição", async () => {
+    await renderEditor();
+    await userEvent.click(screen.getByRole("button", { name: "Editar instrução" }));
+    await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    const dialog = await screen.findByRole("alertdialog");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(hoisted.saveSchemaFromGUI).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toContain("Alterações não salvas");
   });
 
   it("bloqueia o save até escolher e aplicar o merge de três vias", async () => {

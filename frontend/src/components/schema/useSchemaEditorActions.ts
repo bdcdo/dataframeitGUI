@@ -10,6 +10,11 @@ import {
   recoverFieldsFromStoredCode,
 } from "@/actions/schema";
 import { validateGUIFields } from "@/lib/schema-utils";
+import {
+  applyInstructionChoices,
+  type InstructionChangeChoices,
+} from "@/lib/question-revision";
+import { useInstructionChangeGuard } from "./useInstructionChangeGuard";
 import type {
   PydanticField,
   SchemaBaselineIdentity,
@@ -41,6 +46,7 @@ export interface SchemaEditorActionsDeps {
   registerRemoteConflict: (current: SchemaSnapshot) => void;
   prepareSubmission: () => {
     fields: PydanticField[];
+    baseFields: PydanticField[];
     expectedBaseline: SchemaBaselineIdentity;
   };
   setValidationAttempted: (attempted: boolean) => void;
@@ -66,6 +72,8 @@ export function useSchemaEditorActions({
 }: SchemaEditorActionsDeps) {
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
+  const { confirmInstructionChanges, dialogProps: instructionDialogProps } =
+    useInstructionChangeGuard();
 
   const handlePublishMajor = () => {
     if (isDirty || conflict) {
@@ -146,22 +154,49 @@ export function useSchemaEditorActions({
     });
   };
 
-  const handleSave = () => {
+  // A pergunta sobre a instrução alterada vem antes da transição, e não dentro
+  // dela: ver `useInstructionChangeGuard`.
+  const confirmSaveChoices = async (): Promise<InstructionChangeChoices | null> => {
+    try {
+      const submission = prepareSubmission();
+      setValidationAttempted(true);
+      const errs = validateGUIFields(submission.fields);
+      if (errs.length > 0) return null;
+      setValidationAttempted(false);
+      return await confirmInstructionChanges(
+        submission.baseFields,
+        submission.fields,
+      );
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
+      return null;
+    }
+  };
+
+  const saveSchema = async () => {
     if (conflict) {
       toast.warning("Aplique ou descarte o rascunho conflitante antes de salvar.");
       return;
     }
+    const choices = await confirmSaveChoices();
+    if (!choices) return;
     startTransition(async () => {
       try {
-        const submission = prepareSubmission();
-        setValidationAttempted(true);
-        const errs = validateGUIFields(submission.fields);
-        if (errs.length > 0) return;
-        setValidationAttempted(false);
+        // As escolhas vão para o rascunho, e não só para o payload: o save
+        // devolve o schema com o contador, e um rascunho sem ele ficaria sujo
+        // e, no save seguinte, desfaria a revisão. Aplicadas sobre o estado de
+        // agora, porque o rascunho pode ter sido rebasado com o diálogo aberto.
+        const current = prepareSubmission();
+        const revised = applyInstructionChoices(
+          current.baseFields,
+          current.fields,
+          choices,
+        );
+        if (revised !== current.fields) setFields(revised);
         const r = await saveSchemaFromGUI(
           projectId,
-          submission.fields,
-          submission.expectedBaseline,
+          revised,
+          current.expectedBaseline,
         );
         if (r.status === "error") {
           toast.error(r.message);
@@ -180,6 +215,10 @@ export function useSchemaEditorActions({
     });
   };
 
+  const handleSave = () => {
+    void saveSchema();
+  };
+
   return {
     isPending,
     canRecover,
@@ -187,5 +226,6 @@ export function useSchemaEditorActions({
     handleBackfill,
     handleRecover,
     handleSave,
+    instructionDialogProps,
   };
 }

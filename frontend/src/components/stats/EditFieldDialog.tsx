@@ -21,6 +21,9 @@ import { JustificationPromptField } from "@/components/schema/JustificationPromp
 import { OptionsAllowOtherEditor } from "@/components/schema/OptionsAllowOtherEditor";
 import { DateSentinelEditor } from "@/components/schema/DateSentinelEditor";
 import { useOptionRemovalGuard } from "@/components/schema/useOptionRemovalGuard";
+import { useInstructionChangeGuard } from "@/components/schema/useInstructionChangeGuard";
+import { InstructionChangeDialog } from "@/components/schema/InstructionChangeDialog";
+import { applyInstructionChoices } from "@/lib/question-revision";
 import { TYPE_LABELS } from "@/lib/field-labels";
 import { saveSchemaFromGUI } from "@/actions/schema";
 import { approveSchemaSuggestionWithEdits } from "@/actions/suggestions";
@@ -166,6 +169,8 @@ export function EditFieldDialog({
   );
   const handleBeforeRemoveOption = async (opt: string): Promise<boolean> =>
     (await confirmRemoval(opt)).confirmed;
+  const { confirmInstructionChanges, dialogProps: instructionDialogProps } =
+    useInstructionChangeGuard();
 
   // O campo pode ter sido deletado remotamente com o diálogo aberto; o form
   // segue ancorado no base capturado e o merge do save expõe o edit-delete.
@@ -189,19 +194,25 @@ export function EditFieldDialog({
     return { status: "saved" };
   };
 
-  const handleSave = () => {
+  const saveEdit = async () => {
+    const editedFields = applyFormEdits(baseFields, fieldName, {
+      description,
+      helpText,
+      options,
+      allowOther,
+      subfields,
+      subfieldRule,
+      condition,
+      justificationPrompt,
+    });
+    // Fora da transição, como no SchemaEditor: ver `useInstructionChangeGuard`.
+    // A base é a capturada na abertura, a mesma do merge de três vias abaixo,
+    // então o contador sobe sobre o valor que o usuário viu.
+    const choices = await confirmInstructionChanges(baseFields, editedFields);
+    if (!choices) return;
+    const localFields = applyInstructionChoices(baseFields, editedFields, choices);
     startSave(async () => {
       try {
-        const localFields = applyFormEdits(baseFields, fieldName, {
-          description,
-          helpText,
-          options,
-          allowOther,
-          subfields,
-          subfieldRule,
-          condition,
-          justificationPrompt,
-        });
         const saved = await saveMergedEdit(
           baseFields,
           localFields,
@@ -229,6 +240,10 @@ export function EditFieldDialog({
         );
       }
     });
+  };
+
+  const handleSave = () => {
+    void saveEdit();
   };
 
   return (
@@ -318,6 +333,9 @@ export function EditFieldDialog({
     </Dialog>
 
     {dialogProps && <RemoveOptionDialog open {...dialogProps} />}
+    {instructionDialogProps && (
+      <InstructionChangeDialog open {...instructionDialogProps} />
+    )}
     </>
   );
 }
