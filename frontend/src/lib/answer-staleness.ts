@@ -87,10 +87,9 @@ export function answersCurrentQuestion(
   field: Pick<PydanticField, "name" | "hash"> | undefined,
 ): boolean {
   if (!field) return false;
-  const saved =
-    answerFieldHashes && Object.hasOwn(answerFieldHashes, field.name)
-      ? answerFieldHashes[field.name]
-      : undefined;
+  // Sem `Object.hasOwn`: o que o protótipo devolve para um nome como
+  // "constructor" não é string e cai no mesmo caso da chave ausente.
+  const saved: unknown = answerFieldHashes?.[field.name];
   if (typeof saved !== "string") return true;
   return saved === field.hash;
 }

@@ -110,7 +110,8 @@ describe("answersCurrentQuestion", () => {
     expect(answersCurrentQuestion(hashes, currentField)).toBe(expected);
   });
 
-  it("lê a chave própria do mapa, não a herdada do protótipo", () => {
+  it("campo com nome de propriedade do protótipo não confunde a leitura", () => {
     expect(answersCurrentQuestion({ q: "aaaaaaaaaaaa" }, { name: "constructor", hash: "x" })).toBe(true);
+    expect(answersCurrentQuestion({ constructor: "velho0000000" }, { name: "constructor", hash: "x" })).toBe(false);
   });
 });
