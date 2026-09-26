@@ -22,6 +22,31 @@ function makeClient() {
   return makeFilterAwareSupabaseMock({ tableData, writeCalls, queryErrors });
 }
 
+// O mock compartilhado registra o payload do UPDATE, não o filtro que escolheu
+// a linha. Este embrulho local anota o `id` passado ao `.eq` depois de cada
+// `update` em `assignments`, para o teste afirmar QUAL linha foi gravada.
+function idsAtualizadosEm(client: ReturnType<typeof makeClient>) {
+  const ids: unknown[] = [];
+  const from = client.from;
+  client.from = (table: string) => {
+    const builder = from(table);
+    if (table !== "assignments") return builder;
+    const update = builder.update as (payload: unknown) => unknown;
+    const eq = builder.eq as (coluna: string, valor: unknown) => unknown;
+    let emUpdate = false;
+    builder.update = (payload: unknown) => {
+      emUpdate = true;
+      return update(payload);
+    };
+    builder.eq = (coluna: string, valor: unknown) => {
+      if (emUpdate && coluna === "id") ids.push(valor);
+      return eq(coluna, valor);
+    };
+    return builder;
+  };
+  return ids;
+}
+
 const FIELDS: PydanticField[] = [
   {
     id: "00000000-0000-4000-8000-000000000001",
@@ -231,12 +256,14 @@ describe("syncCompareAssignment: só a rodada corrente", () => {
     ];
     tableData.responses = [resp("a", "proc"), resp("b", "proc")];
     const client = makeClient();
+    const idsAtualizados = idsAtualizadosEm(client);
 
     await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
 
     expect(updateCallsOf("assignments").map((c) => c.payload)).toEqual([
       { status: "concluido", completed_at: expect.any(String) },
     ]);
+    expect(idsAtualizados).toEqual(["a1"]);
   });
 
   // O erro da leitura (o PGRST116 de duas linhas, por exemplo) propaga para o
@@ -573,10 +600,11 @@ describe("syncCompareAssignmentsForDocument (#545)", () => {
     ];
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const client = makeClient();
+    const idsAtualizados = idsAtualizadosEm(client);
 
     await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
 
-    expect(updateCallsOf("assignments")).toHaveLength(1);
+    expect(idsAtualizados).toEqual(["a-atual"]);
     expect(errorSpy).not.toHaveBeenCalled();
   });
 
@@ -588,10 +616,12 @@ describe("syncCompareAssignmentsForDocument (#545)", () => {
       comparacao({ id: "a1", user_id: "rev1", completed_at: "2026-06-01T00:00:00Z" }),
     ];
     const client = makeClient();
+    const idsAtualizados = idsAtualizadosEm(client);
 
     await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
 
     expect(updateCallsOf("assignments")).toHaveLength(1);
+    expect(idsAtualizados).toEqual(["a1"]);
   });
 
   it("projeto sem rodada corrente não lê nem grava assignment", async () => {

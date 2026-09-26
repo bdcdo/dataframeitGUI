@@ -164,8 +164,8 @@ async function syncAssignmentStatus(
   // Atualiza só quando o status muda, limpando `completed_at` em qualquer
   // regressão (ex.: desmarcar uma equivalência reabre a divergência). Uma
   // comparação concluída pertence ao histórico da rodada. Se já houver outra
-  // comparação ativa para o documento, o índice parcial do banco impede
-  // atomicamente que a antiga seja reaberta; nesse caso preservamos a
+  // comparação ativa para o documento na rodada, o índice parcial do banco
+  // impede atomicamente que a antiga seja reaberta; nesse caso preservamos a
   // concluída de propósito e `updateCompareAssignmentStatus` registra o
   // bloqueio (#497).
   if (assignment.status !== next) {
