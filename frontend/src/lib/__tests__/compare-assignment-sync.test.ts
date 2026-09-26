@@ -12,7 +12,7 @@ import {
 } from "@/test-utils/supabase-mock";
 import { CURRENT_HASH } from "@/test-utils/comparison-fixtures";
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
-import { resyncProjects } from "../../../scripts/compare-assignments/resync";
+import { parseResyncArgs, resyncProjects } from "../../../scripts/compare-assignments/resync";
 
 const HASH = "aaaaaaaaaaaa";
 const FIELDS: PydanticField[] = [{
@@ -178,5 +178,22 @@ describe("resyncProjects (o script de pós-deploy)", () => {
 
     expect(code).toBe(1);
     expect(lines.filter((l) => l.includes("falhou: assignments: tempo esgotado"))).toHaveLength(2);
+  });
+});
+
+describe("parseResyncArgs (uso do script)", () => {
+  it.each([
+    ["--project X --dryrun", null],
+    ["--project X --force", null],
+    ["--project a --project b", null],
+    ["--project --dry-run", null],
+    ["--all --project X", null],
+    ["", null],
+    ["--project X", { projectId: "X", dryRun: false }],
+    ["--project X --dry-run", { projectId: "X", dryRun: true }],
+    ["--all", { dryRun: false }],
+    ["--all --dry-run", { dryRun: true }],
+  ])("%j -> %j", (args, expected) => {
+    expect(parseResyncArgs(args.split(" ").filter(Boolean))).toEqual(expected);
   });
 });

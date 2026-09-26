@@ -43,10 +43,32 @@ export async function resyncProjects(
   return code;
 }
 
+/**
+ * Lê `(--project <id> | --all) [--dry-run]`, ou `null` para uso inválido.
+ * Argumento desconhecido invalida o uso: sem isso, `--dryrun` digitado errado
+ * era ignorado e o script gravava em vez de simular.
+ */
+export function parseResyncArgs(argv: readonly string[]): { projectId?: string; dryRun: boolean } | null {
+  let projectId: string | undefined;
+  let all = false;
+  let dryRun = false;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "--project") {
+      i += 1;
+      const id = argv[i];
+      if (projectId !== undefined || !id || id.startsWith("--")) return null;
+      projectId = id;
+    } else if (arg === "--all") all = true;
+    else if (arg === "--dry-run") dryRun = true;
+    else return null;
+  }
+  return all === (projectId !== undefined) ? null : { projectId, dryRun };
+}
+
 async function main(argv: string[]): Promise<number> {
-  const at = argv.indexOf("--project");
-  const projectId = at >= 0 ? argv[at + 1] : undefined;
-  if (argv.includes("--all") === (projectId !== undefined)) {
+  const args = parseResyncArgs(argv);
+  if (!args) {
     console.error("uso: npm run resync:compare -- (--project <id> | --all) [--dry-run]");
     return 2;
   }
@@ -58,8 +80,8 @@ async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const client = createClient(url, key, { auth: { persistSession: false } });
-  let projectIds = projectId ? [projectId] : [];
-  if (!projectId) {
+  let projectIds = args.projectId ? [args.projectId] : [];
+  if (!args.projectId) {
     const { data, error } = await client.from("projects").select("id");
     if (error) {
       console.error(`projects: ${error.message}`);
@@ -67,7 +89,7 @@ async function main(argv: string[]): Promise<number> {
     }
     projectIds = (data ?? []).map((p) => p.id as string);
   }
-  return resyncProjects(client, projectIds, argv.includes("--dry-run"), (line) => console.log(line));
+  return resyncProjects(client, projectIds, args.dryRun, (line) => console.log(line));
 }
 
 // Só como script: o teste importa `resyncProjects` sem abrir conexão.
