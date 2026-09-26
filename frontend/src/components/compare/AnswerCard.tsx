@@ -172,6 +172,11 @@ export function AnswerCard({
  * cobre o card inteiro. Sem isso, clicar em "Confirmar" acertaria o overlay e
  * apenas re-prepararia o rascunho.
  */
+function PendingConfirmSlot({ isPending, slot }: { isPending: boolean; slot?: ReactNode }) {
+  if (!isPending || !slot) return null;
+  return <div className="relative z-[2]">{slot}</div>;
+}
+
 /**
  * A razão escrita no card quando o "=" não está disponível (todas as respostas
  * do grupo foram dadas a outra versão da pergunta).
@@ -183,11 +188,6 @@ function EquivalenceUnavailableNote({ mode }: { mode?: EquivalenceMode }) {
       {mode.unavailableReason}
     </p>
   );
-}
-
-function PendingConfirmSlot({ isPending, slot }: { isPending: boolean; slot?: ReactNode }) {
-  if (!isPending || !slot) return null;
-  return <div className="relative z-[2]">{slot}</div>;
 }
 
 /**
