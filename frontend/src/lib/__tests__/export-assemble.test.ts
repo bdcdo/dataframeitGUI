@@ -1097,6 +1097,39 @@ describe("assembleExport: células sem veredito", () => {
         expect(fCell(on)).toEqual(fCell(off));
       });
 
+      describe("pai comum que só o LLM preencheu, porque nasceu depois da codificação", () => {
+        // `extra` não é `llm_only`: entra em `GabaritoLine.optionOnly` só porque
+        // a célula dele saiu de `uncodedCell`. Os pesquisadores codificaram `f`
+        // antes de `extra` existir (fora de `answer_field_hashes`); com
+        // `exists: false`, `f` fica à mostra para eles, e a linha com o valor
+        // do LLM em `extra` diria que `f` não se aplica.
+        const fOnExtra = field("f", { condition: { field: "extra", exists: false } });
+        const codedBefore = (id: string, answers: Record<string, unknown>): ExportResponse => ({
+          id, document_id: "A", respondent_name: id, respondent_type: "humano", answers, answer_field_hashes: { f: "h" },
+        });
+        const modes = (overrides: Partial<AssembleInput>) => bothModes({ fields: [extra, fOnExtra], ...overrides });
+
+        it("pesquisadores que concordam no filho: igual nos dois modos, esperando o pai", () => {
+          const responses = [codedBefore("h1", { f: "X" }), codedBefore("h2", { f: "X" }), llm({ extra: "do LLM" })];
+          const [off, on] = modes({ responses });
+          expect(cell(on, "extra")).toBe("do LLM");
+          expect(fCell(off)).toEqual(["", [["A", "f", "aguarda o campo extra"]]]);
+          expect(fCell(on)).toEqual(fCell(off));
+        });
+
+        it("veredito no filho: entra igual nos dois modos, sem contradição", () => {
+          const verdictOnF = {
+            id: "rv-f", document_id: "A", field_name: "f", verdict: "X", comment: null,
+            created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null,
+          };
+          const responses = [codedBefore("h1", { f: "X" }), codedBefore("h2", { f: "Y" }), llm({ extra: "do LLM" })];
+          const [off, on] = modes({ responses, reviews: [verdictOnF] });
+          expect(cell(on, "extra")).toBe("do LLM");
+          expect(fCell(off)).toEqual(["X", []]);
+          expect(fCell(on)).toEqual(fCell(off));
+        });
+      });
+
       it("filho só do LLM com pai só do LLM: a condição vale na linha", () => {
         const onlyLlm = (answers: Record<string, unknown>) =>
           exported({ fields: [interno, f], fillFromLlm: true, responses: [human("h1"), human("h2"), llm(answers)] });

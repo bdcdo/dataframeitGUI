@@ -497,10 +497,9 @@ function resolveCell(
 // Célula sem pesquisador entre as respostas que contam: não há gabarito. Só o
 // LLM: fica pendente, salvo com `AssembleInput.fillFromLlm` (a resposta em
 // branco não tem o que preencher e segue pendente). Ninguém: a linha diz que o
-// campo se aplica, mas nenhum
-// respondente o viu nessa condição (o pai no Gabarito veio de um veredito que
-// ninguém tinha escolhido, ou o campo nasceu depois da codificação), e o
-// branco precisa de quem o preencha.
+// campo se aplica, mas nenhum respondente o viu nessa condição (o pai no
+// Gabarito veio de um veredito que ninguém tinha escolhido, ou o campo nasceu
+// depois da codificação), e o branco precisa de quem o preencha.
 function uncodedCell(field: PydanticField, applicable: DocResponses, fillFromLlm: boolean): CellOutcome {
   const llmCell = fillFromLlm && applicable.llm ? formatExportValue(applicable.llm.answers?.[field.name]) : "";
   if (llmCell !== "") return { value: llmCell, optionOnly: true };
