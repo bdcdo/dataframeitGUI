@@ -143,8 +143,8 @@ describe("resyncProjectCompareAssignments", () => {
     expect(report.changes).toEqual([expect.objectContaining({ assignmentId: "a-doc1", to: "concluido" })]);
   });
 
-  // Só uma comparação pode estar ativa por documento (índice parcial
-  // assignments_one_active_comparacao_per_doc). Com duas concluídas de
+  // Só uma comparação pode estar ativa por documento e rodada (índice parcial
+  // assignments_one_active_comparacao_per_doc_round). Com duas concluídas de
   // revisores diferentes que regridem, reabre a concluída mais recentemente; a
   // outra bate no índice e fica concluída.
   it("com duas concluídas no mesmo documento e nenhuma ativa, reabre a mais recente", async () => {
@@ -180,6 +180,7 @@ describe("resyncProjectCompareAssignments", () => {
 
   it("projeto sem rodada corrente não tem o que ressincronizar", async () => {
     (tableData.projects[0] as { current_round_id: string | null }).current_round_id = null;
+    queryErrors["assignments:select"] = { message: "não deveria ler assignments" };
 
     const report = await resyncProjectCompareAssignments(client(), "p1");
 
