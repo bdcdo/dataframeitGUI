@@ -222,9 +222,10 @@ function sourceDependentDecisions() {
 
 // O que o contexto congelado de uma decisão diz sobre o veredito da fonte e a
 // resposta do LLM, pela regra da métrica (`verdictMatchesAnswer`). O contexto
-// não guarda os pares "=" nem os demais pesquisadores; o que depende deles
-// fica de fora de propósito, para que a leitura só afirme o que o contexto
-// prova.
+// não guarda os pares "=", e dos demais pesquisadores guarda só o hash das
+// codificações (`cell_answers_hash`), que não se lê de volta; o que depende
+// deles fica de fora de propósito, para que a leitura só afirme o que o
+// contexto prova.
 function frozenContextReading(d: DecisionRow) {
   const c = d.context!;
   const field = (c.field_definition ?? {}) as PydanticField;

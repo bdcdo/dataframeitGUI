@@ -18,11 +18,15 @@
 -- `set_error_resolution` confere so o que o contexto da decisao prova: fonte
 -- Comparacao, resposta escolhida no veredito diferente da do LLM, valor igual
 -- a resposta do LLM do contexto (ou o branco canonico de condicional com o LLM
--- em branco) e valor no dominio atual do campo. Os demais pesquisadores e os
--- pares "=" nao estao no contexto, e o servidor nao os le: um pesquisador que
--- muda de resposta depois nao torna a decisao stale. O que isso deixa aberto
--- e so a contagem de erro: o valor gravado e a resposta do LLM, a mesma que
--- "Erro humano" gravaria, e quem pode chamar o RPC ja pode grava-la por la.
+-- em branco) e valor no dominio atual do campo. Se os demais pesquisadores
+-- concordam, o servidor nao confere: dos pesquisadores o contexto guarda so o
+-- hash das codificacoes (`cell_answers_hash`, de 20260927130000), que nao se
+-- le de volta, e os pares "=" nao estao nele. O que isso deixa aberto e so a
+-- contagem de erro: o valor gravado e a resposta do LLM, a mesma que "Erro
+-- humano" gravaria, e quem pode chamar o RPC ja pode grava-la por la. Depois
+-- de gravada, a decisao cai (fica stale) quando um pesquisador muda de
+-- resposta, porque o hash muda e o contexto recalculado deixa de ser igual ao
+-- guardado; a criacao ou remocao de um par "=" sozinha nao a derruba.
 --
 -- Com valor proprio, "Ambos corretos" deixa de depender da fonte, como as
 -- demais decisoes com valor: `read_error_resolutions` so exige veredito valido
@@ -170,8 +174,9 @@ BEGIN
   END IF;
 
   -- "Ambos corretos" com o valor comum. Se ha valor comum e a fila que decide,
-  -- porque depende dos demais pesquisadores e dos pares "=", que o contexto
-  -- nao guarda; mais abaixo se confere o que o contexto prova. Sem valor
+  -- porque depende das respostas dos demais pesquisadores, das quais o
+  -- contexto guarda so o hash, e dos pares "=", que ele nao guarda; mais
+  -- abaixo se confere o que o contexto prova. Sem valor
   -- (NULL ou JSON null), o veredito continua valendo.
   v_common := CASE WHEN p_decision = 'both_correct' THEN NULLIF(p_value, 'null'::JSONB) END;
 

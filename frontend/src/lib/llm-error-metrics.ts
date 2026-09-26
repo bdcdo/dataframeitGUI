@@ -616,8 +616,11 @@ export interface BothCorrectInput {
  *
  * A fila calcula o valor e o envia com a decisão. `set_error_resolution` só
  * confere o que o contexto da decisão prova (fonte Comparação, escolhida que
- * não é o LLM, valor igual à resposta do LLM e no domínio do campo): os
- * demais pesquisadores e os pares "=" não estão no contexto.
+ * não é o LLM, valor igual à resposta do LLM e no domínio do campo): dos
+ * demais pesquisadores o contexto guarda só o hash das codificações
+ * (`cell_answers_hash`), que não se lê de volta, e os pares "=" não estão nele.
+ * Pelo hash, a decisão gravada fica stale quando um pesquisador muda de
+ * resposta; um par "=" criado ou removido depois não a derruba.
  */
 export function bothCorrectCommonValue(input: BothCorrectInput): { value: unknown } | null {
   const { field, llmResponse, currentHumans } = input;
