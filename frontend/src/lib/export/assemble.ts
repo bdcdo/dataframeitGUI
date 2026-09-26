@@ -431,6 +431,16 @@ interface GabaritoLine {
 // pai estivesse pendente.
 const NOT_A_VALUE = new Set([formatVerdict("ambiguo"), formatVerdict("pular")]);
 
+// O que a planilha mostra na célula que a condição do campo deixa em branco,
+// para quem a lê separar esse branco do branco que espera decisão (que tem
+// linha nas Pendências). Só existe na saída (`verdictFieldValue` em
+// `assembleExport`): na linha do Gabarito o campo continua `undefined`, ou o
+// `""` do julgamento em branco, e por isso fica fora de `NOT_A_VALUE`. Se
+// entrasse na linha, a condição do neto o leria como valor (`exists`,
+// `not_equals`), e se entrasse em `NOT_A_VALUE` o neto passaria a esperar
+// pelo filho em vez de seguir o branco dele.
+const NOT_APPLICABLE_CELL = "[NÃO SE APLICA]";
+
 // Grava na linha uma célula decidida. O multi volta a ser lista, desfazendo o
 // "; " de `formatExportValue` e `formatVerdict`, porque a condição sobre ele
 // testa pertinência.
@@ -455,15 +465,18 @@ function conditionOutcome(field: PydanticField, line: GabaritoLine, readOptionOn
   const byOption = line.optionOnly.has(parent);
   if (!Object.hasOwn(line.row, parent) || (byOption && !readOptionOnly)) return { reason: `aguarda o campo ${parent}` };
   if (isFieldVisible(field, line.row)) return null;
-  return byOption ? { value: undefined, optionOnly: true } : { value: undefined };
+  return byOption ? { value: undefined, optionOnly: true, notApplicable: true } : { value: undefined, notApplicable: true };
 }
 
 // `value: undefined` é o branco legítimo: a condição não se cumpre na linha.
-// `notApplicable` marca o motivo que, mesmo deixando a célula nas Pendências,
-// dá o campo como fora da linha (ver `judgedCell`).
+// `notApplicable` dá o campo como fora da linha. Com valor, a célula sai com
+// `NOT_APPLICABLE_CELL` (o branco da condição, ou o julgamento em branco que
+// ela confirma); com motivo, fica em branco nas Pendências (ver `judgedCell`).
 // `optionOnly` marca a célula que só a opção `fillFromLlm` decidiu (ver
 // `GabaritoLine`); com valor, é a que o LLM preencheu e vai para "Só LLM".
-type CellOutcome = { value: string | undefined; optionOnly?: true } | { reason: string; notApplicable?: true };
+type CellOutcome =
+  | { value: string | undefined; optionOnly?: true; notApplicable?: true }
+  | { reason: string; notApplicable?: true };
 
 // Uma célula com julgamento explícito (veredito do revisor, decisão do LLM
 // Insights, auto-revisão decidida) diante da condição do campo na linha. O
@@ -479,12 +492,15 @@ type CellOutcome = { value: string | undefined; optionOnly?: true } | { reason: 
 // Na contradição, o campo sai da linha como não aplicável (`settleCell` com
 // `undefined`), o mesmo estado do branco legítimo: é o que o pai no Gabarito
 // diz, e assim o neto segue a linha como ela está, em vez de esperar por um
-// filho que, com esse pai, nunca terá valor.
+// filho que, com esse pai, nunca terá valor. O julgamento em branco que a
+// condição confirma sai marcado como não aplicável, como o branco dela; na
+// linha ele continua `""`, como antes da marca.
 function judgedCell(field: PydanticField, line: GabaritoLine, cell: string): CellOutcome {
   const parent = field.condition?.field;
   const gate = conditionOutcome(field, line, false);
-  if (parent && gate && "value" in gate && cell !== "" && !NOT_A_VALUE.has(cell)) {
-    return { reason: PENDING_REASON.contradiction(parent), notApplicable: true };
+  if (parent && gate && "value" in gate) {
+    if (cell === "") return { value: cell, notApplicable: true };
+    if (!NOT_A_VALUE.has(cell)) return { reason: PENDING_REASON.contradiction(parent), notApplicable: true };
   }
   return { value: cell };
 }
@@ -602,7 +618,7 @@ function resolveDocCells(
   fields: PydanticField[],
   ctx: CellContext,
 ): DocCells {
-  const cells: DocCells = { filled: new Map(), pending: [], fromLlm: [] };
+  const cells: DocCells = { filled: new Map(), notApplicable: new Set(), pending: [], fromLlm: [] };
   const line: GabaritoLine = { row: {}, optionOnly: new Set() };
   for (const field of fields) {
     if (field.target === "llm_only") line.optionOnly.add(field.name);
@@ -619,6 +635,8 @@ function resolveDocCells(
 
 interface DocCells {
   filled: Map<string, string>;
+  /** Células sem linha nas Pendências porque a condição não se cumpre. */
+  notApplicable: Set<string>;
   pending: [string, string][];
   /** As células que o LLM preencheu, para a aba "Só LLM". */
   fromLlm: string[];
@@ -633,6 +651,7 @@ function recordCell(cells: DocCells, line: GabaritoLine, field: PydanticField, o
     return;
   }
   if (outcome.value !== undefined) cells.filled.set(field.name, outcome.value);
+  if (outcome.notApplicable) cells.notApplicable.add(field.name);
   if (outcome.optionOnly) {
     line.optionOnly.add(field.name);
     if (outcome.value !== undefined) cells.fromLlm.push(field.name);
@@ -657,16 +676,18 @@ function resolveOpenCells(input: {
   verdictsByDoc: ReadonlyMap<string, VerdictEntry>;
   responses: ExportResponse[];
   ctx: CellContext;
-}): { filledByDoc: Map<string, Map<string, string>>; pendingRows: string[][]; llmOnlyRows: string[][] } {
+}): OpenCells {
   const responsesByDoc = groupBy(input.responses, (r) => r.document_id);
   const filledByDoc = new Map<string, Map<string, string>>();
+  const notApplicableByDoc = new Map<string, Set<string>>();
   const pendingRows: string[][] = [];
   const llmOnlyRows: string[][] = [];
   for (const { id: docId } of input.baseDocs) {
     const doc = splitResponses(responsesByDoc.get(docId));
     const verdictFields = input.verdictsByDoc.get(docId)?.fields;
-    const { filled, pending, fromLlm } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
+    const { filled, notApplicable, pending, fromLlm } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
     if (filled.size > 0) filledByDoc.set(docId, filled);
+    notApplicableByDoc.set(docId, notApplicable);
     // Entram nas Pendências os documentos que têm linha no Gabarito ou alguma
     // codificação humana. Documento só com a resposta do LLM (e, com
     // `includeDrafts` desligada, os rascunhos) ainda não foi codificado, e
@@ -678,7 +699,15 @@ function resolveOpenCells(input: {
     for (const [fieldName, reason] of pending) pendingRows.push([displayId, title, fieldName, reason]);
     for (const fieldName of fromLlm) llmOnlyRows.push([displayId, title, fieldName]);
   }
-  return { filledByDoc, pendingRows, llmOnlyRows };
+  return { filledByDoc, notApplicableByDoc, pendingRows, llmOnlyRows };
+}
+
+interface OpenCells {
+  filledByDoc: Map<string, Map<string, string>>;
+  /** Separado de `filledByDoc` para não mudar quais documentos têm linha no Gabarito. */
+  notApplicableByDoc: Map<string, Set<string>>;
+  pendingRows: string[][];
+  llmOnlyRows: string[][];
 }
 
 // As respostas que contam no Gabarito e nas Pendências: sem `includeDrafts`,
@@ -762,7 +791,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
   const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName);
   applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
-  const { filledByDoc, pendingRows, llmOnlyRows } = resolveOpenCells({
+  const { filledByDoc, notApplicableByDoc, pendingRows, llmOnlyRows } = resolveOpenCells({
     baseDocs,
     identity,
     exportableFields,
@@ -779,9 +808,12 @@ export function assembleExport(input: AssembleInput): ExportDataset {
 
   // Cada célula vem de `resolveDocCells`, que aplica a prioridade: veredicto
   // do revisor (com as decisões do LLM Insights) > auto-revisão decidida >
-  // concordância > vazio, com a condição na linha acima dos julgamentos.
+  // concordância > vazio, com a condição na linha acima dos julgamentos. O
+  // branco da condição sai marcado, e o que espera decisão, vazio.
   const verdictFieldValue = (docId: string, fieldName: string): string =>
-    filledByDoc.get(docId)?.get(fieldName) ?? "";
+    notApplicableByDoc.get(docId)?.has(fieldName)
+      ? NOT_APPLICABLE_CELL
+      : (filledByDoc.get(docId)?.get(fieldName) ?? "");
 
   const sourceOf = (respondentType: string): string =>
     respondentType === "llm" ? "llm" : "codificacao";

@@ -719,7 +719,7 @@ describe("assembleExport: células sem veredito", () => {
       expect(d.pending.rows).toEqual([]);
     });
 
-    it("pai exportado não satisfaz: o filho que só um pesquisador viu fica em branco, sem pendência", () => {
+    it("pai exportado não satisfaz: o filho que só um pesquisador viu sai como não aplicável, sem pendência", () => {
       const d = withChain({
         responses: [
           answering("h1", "humano", { pai: "sim", filho: "Sim" }),
@@ -729,11 +729,11 @@ describe("assembleExport: células sem veredito", () => {
         reviews: [paiVerdict("não")],
       });
       expect(cell(d, "pai")).toBe("não");
-      expect(cell(d, "filho")).toBe("");
+      expect(cell(d, "filho")).toBe("[NÃO SE APLICA]");
       expect(d.pending.rows).toEqual([]);
     });
 
-    it("pai decidido pelos pesquisadores contra o LLM: o filho que só o LLM viu fica em branco", () => {
+    it("pai decidido pelos pesquisadores contra o LLM: o filho que só o LLM viu sai como não aplicável", () => {
       const d = withChain({
         responses: [
           answering("h1", "humano", { pai: "não" }),
@@ -741,7 +741,7 @@ describe("assembleExport: células sem veredito", () => {
           answering("l", "llm", { pai: "sim", filho: "Sim" }),
         ],
       });
-      expect(cell(d, "filho")).toBe("");
+      expect(cell(d, "filho")).toBe("[NÃO SE APLICA]");
       expect(d.pending.rows).toEqual([]);
     });
 
@@ -777,7 +777,7 @@ describe("assembleExport: células sem veredito", () => {
         responses: [answering("h1", "humano", full), answering("h2", "humano", { pai: "não" })],
         reviews: [paiVerdict("não")],
       });
-      expect(cell(blank, "neto")).toBe("");
+      expect(cell(blank, "neto")).toBe("[NÃO SE APLICA]");
       expect(blank.pending.rows).toEqual([]);
     });
 
@@ -851,16 +851,16 @@ describe("assembleExport: células sem veredito", () => {
       it("veredito no filho com o pai no Gabarito sem cumprir a condição: branco e Pendências", () => {
         const d = withChain({ responses: contradicted, reviews: [paiVerdict("não"), verdictOn("filho", "Sim")] });
         expect(cell(d, "pai")).toBe("não");
+        // O filho, pendente, fica em branco; ele sai da linha como não
+        // aplicável, e o neto fica no branco legítimo, sem esperar por ele.
         expect(cell(d, "filho")).toBe("");
-        // O filho sai da linha como não aplicável: o neto fica no branco
-        // legítimo, sem esperar por ele.
-        expect(cell(d, "neto")).toBe("");
+        expect(cell(d, "neto")).toBe("[NÃO SE APLICA]");
         expect(pendingOf(d)).toEqual([["A", "filho", "julgamento contradiz o campo pai"]]);
       });
 
-      it("veredito em branco no filho não contradiz o pai", () => {
+      it("veredito em branco no filho não contradiz o pai e sai como não aplicável", () => {
         const d = withChain({ responses: contradicted, reviews: [paiVerdict("não"), verdictOn("filho", "")] });
-        expect(cell(d, "filho")).toBe("");
+        expect(cell(d, "filho")).toBe("[NÃO SE APLICA]");
         expect(d.pending.rows).toEqual([]);
       });
 
@@ -1136,7 +1136,7 @@ describe("assembleExport: células sem veredito", () => {
         const onlyLlm = (answers: Record<string, unknown>) =>
           exported({ fields: [interno, f], fillFromLlm: true, responses: [human("h1"), human("h2"), llm(answers)] });
         const fails = onlyLlm({ interno: "não", f: "Y" });
-        expect(cell(fails, "f")).toBe("");
+        expect(cell(fails, "f")).toBe("[NÃO SE APLICA]");
         expect(fails.pending.rows).toEqual([]);
         expect(fails.llmOnly.rows).toEqual([["A", "", "interno"]]);
         const holds = onlyLlm({ interno: "sim", f: "Y" });
@@ -1145,7 +1145,7 @@ describe("assembleExport: células sem veredito", () => {
       });
     });
 
-    it("ligada: a condição que não se cumpre na linha continua deixando a célula em branco", () => {
+    it("ligada: a condição que não se cumpre na linha continua deixando a célula fora, como não aplicável", () => {
       const filho = field("filho", { condition: { field: "pai", equals: "sim" } });
       const d = exported({
         fillFromLlm: true,
@@ -1157,7 +1157,7 @@ describe("assembleExport: células sem veredito", () => {
         ],
       });
       expect(cell(d, "pai")).toBe("não");
-      expect(cell(d, "filho")).toBe("");
+      expect(cell(d, "filho")).toBe("[NÃO SE APLICA]");
       expect(d.pending.rows).toEqual([]);
       expect(d.llmOnly.rows).toEqual([]);
     });
@@ -1381,6 +1381,90 @@ describe("assembleExport: células sem veredito", () => {
       expect(d.csv.headers).toContain("original_rascunho");
       expect(d.csv.headers.filter((h) => h === "rascunho")).toHaveLength(1);
       expect(d.csv.rows[0][idx(d.csv, "original_rascunho")]).toBe("x");
+    });
+  });
+});
+
+describe("assembleExport: branco legítimo e branco pendente", () => {
+  const NSA = "[NÃO SE APLICA]";
+  // `filho` só se aplica com `pai` = "sim", e `neto` só com `filho` = "Sim".
+  const pai = field("pai");
+  const filho = field("filho", { condition: { field: "pai", equals: "sim" } });
+  const neto = field("neto", { condition: { field: "filho", equals: "Sim" } });
+  const answering = (id: string, type: "humano" | "llm", answers: Record<string, unknown>): ExportResponse => ({
+    id, document_id: "A", respondent_name: id, respondent_type: type, is_partial: false, answers,
+  });
+  const verdictOn = (fieldName: string, verdict: string) => ({
+    id: `rv-${fieldName}-${verdict}`, document_id: "A", field_name: fieldName, verdict, comment: null,
+    created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null,
+  });
+  const exported = (overrides: Partial<AssembleInput>) =>
+    run({ fields: [pai, filho, neto], documents: [doc("A")], ...overrides });
+  const cell = (d: ReturnType<typeof run>, name: string) =>
+    d.verdicts.rows.find((r) => r[0] === "A")?.[idx(d.verdicts, name)] ?? "";
+  const csvCell = (d: ReturnType<typeof run>, source: string, name: string) =>
+    d.csv.rows.find((r) => r[idx(d.csv, "source")] === source)?.[idx(d.csv, name)];
+  const pendingOf = (d: ReturnType<typeof run>) => d.pending.rows.map((r) => [r[2], r[3]]);
+  const both = (answers: Record<string, unknown>) => [answering("h1", "humano", answers), answering("h2", "humano", answers)];
+
+  describe("[NÃO SE APLICA] na célula que a condição tira da linha", () => {
+    it("a condição não se cumpre: o Gabarito e a linha de Gabarito do CSV saem com o marcador", () => {
+      const d = exported({ responses: both({ pai: "não" }) });
+      expect(cell(d, "pai")).toBe("não");
+      expect(cell(d, "filho")).toBe(NSA);
+      expect(csvCell(d, "comparacao", "filho")).toBe(NSA);
+      // A linha de resposta do pesquisador mostra o que ele respondeu: nada.
+      expect(csvCell(d, "codificacao", "filho")).toBe("");
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("a condição se cumpre: a célula recebe o valor, sem marcador", () => {
+      const d = exported({ responses: both({ pai: "sim", filho: "Não" }) });
+      expect(cell(d, "filho")).toBe("Não");
+      expect(cell(d, "neto")).toBe(NSA);
+    });
+
+    it("cadeia: o filho e o neto de um campo não aplicável também saem com o marcador", () => {
+      const d = exported({ responses: both({ pai: "não" }) });
+      expect([cell(d, "filho"), cell(d, "neto")]).toEqual([NSA, NSA]);
+      expect(csvCell(d, "comparacao", "neto")).toBe(NSA);
+      expect(d.pending.rows).toEqual([]);
+    });
+
+    it("o branco pendente continua branco, com a linha nas Pendências", () => {
+      const d = exported({
+        responses: [answering("h1", "humano", { pai: "sim", filho: "Sim" }), answering("h2", "humano", { pai: "não" })],
+        reviews: [verdictOn("neto", "x")],
+      });
+      expect([cell(d, "pai"), cell(d, "filho")]).toEqual(["", ""]);
+      expect(pendingOf(d)).toEqual([["pai", "divergência entre pesquisadores"], ["filho", "aguarda o campo pai"]]);
+    });
+
+    it("julgamento em branco: marcador quando a condição não se cumpre, branco quando se cumpre", () => {
+      const fora = exported({ responses: both({ pai: "não" }), reviews: [verdictOn("filho", "")] });
+      expect(cell(fora, "filho")).toBe(NSA);
+      expect(fora.pending.rows).toEqual([]);
+      const dentro = exported({ responses: both({ pai: "sim", filho: "Sim" }), reviews: [verdictOn("filho", "")] });
+      expect(cell(dentro, "filho")).toBe("");
+    });
+
+    it("o marcador não conta como valor para a condição do neto", () => {
+      // Com `exists: false`, o neto se aplica justamente porque o filho não tem
+      // valor; com `exists: true`, não se aplica. Se o marcador fosse lido
+      // como valor, os dois se inverteriam.
+      const semFilho = field("neto", { condition: { field: "filho", exists: false } });
+      const comFilho = field("neto", { condition: { field: "filho", exists: true } });
+      const aplica = exported({ fields: [pai, filho, semFilho], responses: both({ pai: "não", neto: "Z" }) });
+      expect(cell(aplica, "filho")).toBe(NSA);
+      expect(cell(aplica, "neto")).toBe("Z");
+      const naoAplica = exported({ fields: [pai, filho, comFilho], responses: both({ pai: "não", neto: "Z" }) });
+      expect(cell(naoAplica, "neto")).toBe(NSA);
+      expect(naoAplica.pending.rows).toEqual([]);
+    });
+
+    it("documento sem linha no Gabarito não ganha uma por causa do marcador", () => {
+      const d = exported({ documents: [doc("A"), doc("B")], responses: both({ pai: "não" }) });
+      expect(d.verdicts.rows.map((r) => r[0])).toEqual(["A"]);
     });
   });
 });
