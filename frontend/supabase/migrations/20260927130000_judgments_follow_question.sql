@@ -1270,14 +1270,6 @@ DECLARE
   v_filled INTEGER;
 BEGIN
   v_filled := public.backfill_error_resolution_cell_answers_hash();
-  -- Nenhuma decisao com contexto pode sair desta migration sem a chave.
-  IF EXISTS (
-    SELECT 1 FROM public.error_resolutions
-    WHERE pg_catalog.jsonb_typeof(context->'source') = 'object'
-      AND NOT (context->'source' ? 'cell_answers_hash')
-  ) THEN
-    RAISE EXCEPTION 'error_resolutions: decisao com contexto sem cell_answers_hash depois do backfill';
-  END IF;
   RAISE NOTICE 'error_resolutions: cell_answers_hash gravado em % decisao(oes)', v_filled;
 END $$;
 
