@@ -58,6 +58,7 @@ GATE_SUITES=(
   reviews_field_hash
   judgments_follow_question
   both_correct_common_value
+  replace_documents_keeps_judged_text
   verdict_acknowledgments_pinned
   note_resolution_follows_note
   llm_error_decisions

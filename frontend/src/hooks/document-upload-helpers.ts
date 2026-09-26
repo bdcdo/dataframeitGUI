@@ -12,7 +12,11 @@ const MAX_HASH_DOCS_PER_CHUNK = 5_000;
 export async function checkDuplicatesInChunks(
   projectId: string,
   docs: UploadDoc[]
-): Promise<{ duplicates: DuplicateMatch[]; duplicatesWithResponses: number }> {
+): Promise<{
+  duplicates: DuplicateMatch[];
+  duplicatesWithResponses: number;
+  respondedDuplicatesWithNewText: number;
+}> {
   // Hash client-side so the request payload stays small (Vercel ~4.5MB limit).
   const docsWithHash = docs.map((d, i) => ({
     external_id: d.external_id,
@@ -33,9 +37,11 @@ export async function checkDuplicatesInChunks(
 
   const duplicates: DuplicateMatch[] = [];
   let duplicatesWithResponses = 0;
+  let respondedDuplicatesWithNewText = 0;
   for (const r of results) {
     duplicates.push(...r.duplicates);
     duplicatesWithResponses += r.duplicatesWithResponses;
+    respondedDuplicatesWithNewText += r.respondedDuplicatesWithNewText;
   }
-  return { duplicates, duplicatesWithResponses };
+  return { duplicates, duplicatesWithResponses, respondedDuplicatesWithNewText };
 }

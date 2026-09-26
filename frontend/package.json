@@ -43,6 +43,7 @@
     "test:db:reviews-field-hash": "npm run test:db:psql -- supabase/tests/reviews_field_hash.test.sql",
     "test:db:judgments-follow-question": "npm run test:db:psql -- supabase/tests/judgments_follow_question.test.sql",
     "test:db:both-correct-value": "npm run test:db:psql -- supabase/tests/both_correct_common_value.test.sql",
+    "test:db:replace-keeps-judged-text": "npm run test:db:psql -- supabase/tests/replace_documents_keeps_judged_text.test.sql",
     "test:db:verdict-ack-pinned": "npm run test:db:psql -- supabase/tests/verdict_acknowledgments_pinned.test.sql",
     "test:db:note-resolution": "npm run test:db:psql -- supabase/tests/note_resolution_follows_note.test.sql",
     "test:db:psql": "bash scripts/run-sql-test.sh",

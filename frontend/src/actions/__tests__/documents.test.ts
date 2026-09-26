@@ -516,6 +516,47 @@ describe("checkDuplicates — propaga erro de query (não engole silenciosamente
   });
 });
 
+// Pré-checagem do upload: entre as duplicatas com resposta, as que receberiam
+// texto diferente. Só o casamento por external_id pode trazer texto novo, e
+// text_hash NULL fica fora da conta (a guarda do banco decide esse caso).
+describe("checkDuplicates: duplicatas respondidas com texto novo", () => {
+  it("conta só a respondida cujo text_hash gravado difere do hash que chega", async () => {
+    serverTableResults = {
+      documents: [
+        {
+          data: [
+            { id: "d-novo", external_id: "A", text_hash: "h-velho" },
+            { id: "d-igual", external_id: "B", text_hash: "hB" },
+            { id: "d-nulo", external_id: "C", text_hash: null },
+            { id: "d-sem-resp", external_id: "D", text_hash: "h-velho-d" },
+          ],
+        },
+      ],
+      responses: [
+        {
+          data: [
+            { document_id: "d-novo" },
+            { document_id: "d-igual" },
+            { document_id: "d-nulo" },
+          ],
+        },
+      ],
+    };
+    const checkDuplicates = await loadCheck();
+
+    const r = await checkDuplicates("proj-1", [
+      { external_id: "A", text_hash: "hA", csvIndex: 0 },
+      { external_id: "B", text_hash: "hB", csvIndex: 1 },
+      { external_id: "C", text_hash: "hC", csvIndex: 2 },
+      { external_id: "D", text_hash: "hD", csvIndex: 3 },
+    ]);
+
+    expect(r.duplicates).toHaveLength(4);
+    expect(r.duplicatesWithResponses).toBe(3);
+    expect(r.respondedDuplicatesWithNewText).toBe(1);
+  });
+});
+
 describe("getDocumentText", () => {
   it("retorna texto e titulo quando o doc existe", async () => {
     serverTableResults = {
