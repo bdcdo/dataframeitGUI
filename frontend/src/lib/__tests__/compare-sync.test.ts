@@ -62,6 +62,7 @@ const projectRow = (over: Record<string, unknown> = {}) => ({
   schema_version_major: 2,
   schema_version_minor: 0,
   schema_version_patch: 0,
+  current_round_id: "r-atual",
   ...over,
 });
 
@@ -71,6 +72,7 @@ const assignment = (status: string) => ({
   document_id: "doc1",
   user_id: "rev1",
   type: "comparacao",
+  round_id: "r-atual",
   status,
 });
 
@@ -211,6 +213,73 @@ describe("syncCompareAssignment — guarda de <2 respostas qualificadas (#286)",
     ];
     const client = makeClient();
     await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
+    expect(updateCallsOf("assignments")).toHaveLength(0);
+  });
+});
+
+describe("syncCompareAssignment: só a rodada corrente", () => {
+  // O revisor tem comparação do documento em duas rodadas. A chave única de
+  // `assignments` inclui a rodada, e sem o filtro por `current_round_id` o
+  // `maybeSingle` receberia as duas linhas: o PostgREST devolve PGRST116 e o
+  // mock devolve a primeira, aqui a da rodada antiga, já concluída. Só a da
+  // rodada corrente deve ser lida e fechada.
+  it("lê e fecha o assignment da rodada corrente, não o da rodada antiga", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.assignments = [
+      { ...assignment("concluido"), id: "a-antigo", round_id: "r-antiga" },
+      assignment("pendente"),
+    ];
+    tableData.responses = [resp("a", "proc"), resp("b", "proc")];
+    const client = makeClient();
+
+    await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
+
+    expect(updateCallsOf("assignments").map((c) => c.payload)).toEqual([
+      { status: "concluido", completed_at: expect.any(String) },
+    ]);
+  });
+
+  // O erro da leitura (o PGRST116 de duas linhas, por exemplo) propaga para o
+  // chamador, que o registra, em vez de virar "sem assignment" e sair em
+  // silêncio.
+  it("propaga erro da leitura do assignment do revisor", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    queryErrors["assignments:select"] = {
+      message: "JSON object requested, multiple (or no) rows returned",
+      code: "PGRST116",
+    };
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).rejects.toThrow("multiple (or no) rows returned");
+  });
+
+  it("propaga erro da leitura do projeto", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    queryErrors["projects:select"] = {
+      message: "permission denied for table projects",
+      code: "42501",
+    };
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).rejects.toThrow("permission denied for table projects");
+  });
+
+  // Projeto sem rodada corrente: todo assignment é histórico. O erro na
+  // leitura de assignments faz o teste falhar se ela acontecer.
+  it("projeto sem rodada corrente não lê nem grava assignment", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.projects = [projectRow({ current_round_id: null })];
+    tableData.responses = [resp("a", "proc"), resp("b", "proc")];
+    queryErrors["assignments:select"] = { message: "leitura inesperada", code: "XX000" };
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignment(client as never, "p1", "doc1", "rev1"),
+    ).resolves.toBeUndefined();
     expect(updateCallsOf("assignments")).toHaveLength(0);
   });
 });
@@ -400,12 +469,12 @@ describe("syncCompareAssignmentsForDocument (#545)", () => {
   };
 
   // TRIP-WIRE da ordem de reabertura. Só UMA comparação pode ficar ativa por
-  // documento (assignments_one_active_comparacao_per_doc), então quem regride
-  // primeiro ocupa a vaga: a rodada CORRENTE (concluída mais recente) precisa
-  // vir antes da arquivada. Remover `sortByReopenPriority` faz a iteração
+  // documento na rodada (índice parcial por document_id e round_id), então
+  // quem regride primeiro ocupa a vaga: a concluída mais recente precisa vir
+  // antes da mais antiga. Remover `sortByReopenPriority` faz a iteração
   // seguir a ordem do SELECT — aqui, deliberadamente a errada — e este teste
   // falha com "pendente" na primeira posição.
-  it("reabre a rodada mais recente antes da arquivada", async () => {
+  it("reabre a concluída mais recente antes da mais antiga", async () => {
     const { syncCompareAssignmentsForDocument } = await loadLib();
     divergeEmDoisCampos();
     tableData.assignments = [
@@ -485,18 +554,57 @@ describe("syncCompareAssignmentsForDocument (#545)", () => {
     ]);
   });
 
-  it("dedup por user_id: a mesma revisora não é sincronizada duas vezes", async () => {
+  // Comparação de rodada antiga é histórico. Reabri-la chamaria um segundo
+  // revisor para a célula que a rodada corrente já cobre, ou bateria no
+  // gatilho contra autoarbitragem se o revisor antigo codificou o documento na
+  // rodada corrente. A divergência regrediria as duas; só a da rodada corrente
+  // pode mudar.
+  it("revisor que só tem comparação em rodada antiga não é tocado", async () => {
+    const { syncCompareAssignmentsForDocument } = await loadLib();
+    divergeEmDoisCampos();
+    tableData.assignments = [
+      comparacao({
+        id: "a-antigo",
+        user_id: "rev-antigo",
+        round_id: "r-antiga",
+        completed_at: "2026-06-02T00:00:00Z",
+      }),
+      comparacao({ id: "a-atual", user_id: "rev-atual", completed_at: "2026-06-01T00:00:00Z" }),
+    ];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const client = makeClient();
+
+    await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
+
+    expect(updateCallsOf("assignments")).toHaveLength(1);
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  it("revisora com comparação em duas rodadas é sincronizada uma vez, na corrente", async () => {
     const { syncCompareAssignmentsForDocument } = await loadLib();
     tableData.responses = [resp("a", "proc"), resp("b", "improc")];
     tableData.assignments = [
+      comparacao({ id: "a1-antigo", user_id: "rev1", round_id: "r-antiga", completed_at: "2026-06-02T00:00:00Z" }),
       comparacao({ id: "a1", user_id: "rev1", completed_at: "2026-06-01T00:00:00Z" }),
-      comparacao({ id: "a1-dup", user_id: "rev1", completed_at: "2026-06-02T00:00:00Z" }),
     ];
     const client = makeClient();
 
     await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
 
     expect(updateCallsOf("assignments")).toHaveLength(1);
+  });
+
+  it("projeto sem rodada corrente não lê nem grava assignment", async () => {
+    const { syncCompareAssignmentsForDocument } = await loadLib();
+    tableData.projects = [projectRow({ current_round_id: null })];
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    queryErrors["assignments:select"] = { message: "leitura inesperada", code: "XX000" };
+    const client = makeClient();
+
+    await expect(
+      syncCompareAssignmentsForDocument(client as never, "p1", "doc1"),
+    ).resolves.toBeUndefined();
+    expect(updateCallsOf("assignments")).toHaveLength(0);
   });
 
   // Best-effort por revisora: o sync roda pós-commit, então uma falha isolada
