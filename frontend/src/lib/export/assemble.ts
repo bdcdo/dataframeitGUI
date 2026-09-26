@@ -441,8 +441,8 @@ function resolveCell(
 // O que decide o motivo de uma célula que ficou sem consenso.
 interface PendingSignals {
   researchersDiverge: boolean;
-  /** A Comparação lista a célula como divergência a resolver. */
-  compared: boolean;
+  /** O campo entra na Comparação, que não examina `human_only`. */
+  inComparison: boolean;
   fewResponses: boolean;
 }
 
@@ -456,10 +456,10 @@ function pendingSignals(
   const allAgree = agree(applicable.all);
   return {
     researchersDiverge: applicable.humans.length >= 2 && !agree(applicable.humans),
-    // A regra de `computeDivergentFieldNames` para esta célula: a Comparação
-    // lista o campo quando duas ou mais respostas que contam divergem, salvo
-    // em campo `human_only`, que ela não examina.
-    compared: field.target !== "human_only" && applicable.all.length >= 2 && !allAgree,
+    // A regra de `computeDivergentFieldNames` pede também duas ou mais
+    // respostas que contam e divergem; os dois usos em `pendingReason` já
+    // garantem isso (pesquisadores divergentes, ou `fewResponses` falso).
+    inComparison: field.target !== "human_only",
     // As que contam concordam e mesmo assim não fizeram consenso, então só o
     // piso `minResponses` as barrou; ou o documento todo fica abaixo do piso
     // sem dois pesquisadores.
@@ -472,7 +472,7 @@ function pendingReason(key: string, ctx: CellContext, signals: PendingSignals): 
   // auto-revisão confronta o LLM com um pesquisador só (`field_reviews` tem uma
   // linha por documento e campo), e a divergência com os demais é resolvida na
   // Comparação, também nos projetos de auto-revisão.
-  if (signals.researchersDiverge && signals.compared) return PENDING_REASON.researchers;
+  if (signals.researchersDiverge && signals.inComparison) return PENDING_REASON.researchers;
   const auto = ctx.autoReview.get(key);
   const autoReason = auto ? AUTO_REVIEW_CELL[auto.provenance] : null;
   if (autoReason) return autoReason;
@@ -483,7 +483,7 @@ function pendingReason(key: string, ctx: CellContext, signals: PendingSignals): 
   // Sem ler as atribuições não se sabe se a comparação já foi aberta; o que se
   // sabe é se a regra da Comparação vê a divergência. Quando não vê (campo
   // `human_only`), ninguém vai arbitrar.
-  return signals.compared ? PENDING_REASON.arbitration : PENDING_REASON.uncompared;
+  return signals.inComparison ? PENDING_REASON.arbitration : PENDING_REASON.uncompared;
 }
 
 // O contexto das células sem veredito, montado do que o export leu.

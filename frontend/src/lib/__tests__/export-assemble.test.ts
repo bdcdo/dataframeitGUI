@@ -973,6 +973,14 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
     });
 
+    it("divergentes abaixo do piso, com um pesquisador só: poucas respostas, e não arbitragem", () => {
+      const d = exported({
+        minResponses: 3,
+        responses: [resp("h1", "humano", "Sim"), resp("l", "llm", "Não")],
+      });
+      expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
+    });
+
     it("divergência que a Comparação não examina: o motivo diz que o campo não entra nela", () => {
       const d = exported({
         fields: [field("campo", { target: "human_only" })],
