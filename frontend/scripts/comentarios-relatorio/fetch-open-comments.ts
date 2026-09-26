@@ -23,6 +23,7 @@
 import { createClient } from "@supabase/supabase-js";
 
 import type { PydanticField } from "../../src/lib/types";
+import { invalidReasonOf } from "../../src/lib/review-validity";
 import { loadEnv } from "./load-env";
 
 loadEnv();
@@ -158,7 +159,7 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
     supabase
       .from("reviews")
       .select(
-        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at, response_snapshot",
+        "id, document_id, field_name, verdict, comment, chosen_response_id, resolved_at, reviewer_id, created_at, response_snapshot, field_hash",
       )
       .eq("project_id", projectId)
       .not("comment", "is", null)
@@ -283,6 +284,15 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
   // review
   for (const r of reviews ?? []) {
     const field = fieldMap.get(r.field_name as string);
+    const invalidReason = invalidReasonOf(
+      {
+        field_name: r.field_name as string,
+        verdict: r.verdict as string,
+        field_hash: (r.field_hash as string | null) ?? null,
+        chosen_response_id: (r.chosen_response_id as string | null) ?? null,
+      },
+      field,
+    );
     comments.push({
       id: `review-${r.id}`,
       source: "review",
@@ -297,6 +307,11 @@ async function fetchOpenComments(projectId: string, fields: PydanticField[]) {
       createdAt: r.created_at as string,
       extra: {
         verdict: r.verdict,
+        // Se o veredito ainda é gabarito (`review-validity.ts`) e, se não é,
+        // por quê. O comentário entra no relatório de qualquer forma; o
+        // veredito sem validade não deve ser lido como a resposta certa.
+        verdictValid: invalidReason === undefined,
+        verdictInvalidReason: invalidReason ?? null,
         chosenResponseId: r.chosen_response_id,
         responseSnapshot: r.response_snapshot,
         fieldType: field?.type,

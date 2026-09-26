@@ -51,6 +51,7 @@ function renderGroup(
       existingVerdict={null}
       pendingVerdict={null}
       onVote={onVote}
+      domainField={null}
       allowEquivalence={true}
       equivalences={[]}
       onConfirmEquivalent={onConfirmEquivalent}

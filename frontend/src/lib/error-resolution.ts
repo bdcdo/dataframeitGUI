@@ -169,6 +169,21 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
   return llmCorrectResolution(context);
 }
 
+/**
+ * Se a decisão depende do veredito que a originou para valer. "Erro humano",
+ * "Erro do LLM" e "Todos errados" gravam valor próprio (a resposta do LLM ou
+ * `approved_value`): são um julgamento novo sobre as respostas e a pergunta
+ * atuais, que o contexto já confere, e valem mesmo que o veredito da fonte
+ * tenha perdido a validade. "Ambos corretos" e "Em discussão" não gravam
+ * valor, e o gabarito continua sendo o veredito da fonte. A lista é a das
+ * decisões com valor para que um tipo novo nasça exigindo a fonte; a cópia SQL
+ * é o último argumento de `llm_error_context` em `read_error_resolutions`
+ * (20260926121000_llm_error_context_review_valid.sql).
+ */
+export function decisionDependsOnSource(decision: ErrorDecision | null): boolean {
+  return decision !== "llm_correct" && decision !== "researchers_correct" && decision !== "all_wrong";
+}
+
 function hasSubfields(field: PydanticField): boolean {
   return field.type === "text" && (field.subfields?.length ?? 0) > 0;
 }
@@ -296,9 +311,24 @@ function isAllowedOption(field: PydanticField, value: unknown): boolean {
 }
 
 /**
- * Se o valor do seletor basta para ir ao gabarito. Espelha, na fronteira do
- * cliente, a validação de `set_error_resolution`, regra a regra: o botão só
- * habilita o que a RPC aceita.
+ * Se o valor do seletor basta para ir ao gabarito. Segue a validação de
+ * `set_error_resolution` e, fora das duas regras do último parágrafo, é igual
+ * a ela ou mais restritiva. É mais restritiva em quatro pontos:
+ * - grupo de subcampos: a RPC aceita qualquer texto não vazio no lugar do
+ *   registro, e aqui só entram o registro de subcampos ou `NOT_INFORMED`
+ *   (`hasGroupValue`);
+ * - texto simples: "Outro: " sem complemento não conta como preenchido, e a
+ *   RPC o aceita;
+ * - branco: aqui se mede pelo `trim()` do JS, que tira também tabulação e
+ *   NBSP, e o `btrim` da RPC só tira o espaço comum;
+ * - data: parte completa fora do intervalo, como dia 32, mês 13 ou ano 0999,
+ *   fica de fora (`arePartsValid`), e a RPC a aceita.
+ *
+ * Duas regras da RPC não moram aqui. A data só de dígitos (até 2/2/4) é
+ * garantida pelo controle de data do FieldRenderer: um valor pré-carregado
+ * como "ab/cd/efgh" passa nesta função e a RPC o recusa.
+ * E a recusa do branco quando o LLM também deixou em branco depende do
+ * contexto, e fica em `canConfirmValue`, no diálogo.
  */
 export function hasResolutionValue(field: PydanticField, value: unknown): boolean {
   if (isConditionalField(field) && isCanonicalBlank(field, value)) return true;

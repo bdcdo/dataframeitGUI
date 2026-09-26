@@ -1,5 +1,6 @@
 import type { PydanticField } from "@/lib/types";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
+import { invalidReasonOf } from "@/lib/review-validity";
 
 /* ── Raw row shapes (subset de colunas realmente usadas por cada mapper) ── */
 
@@ -14,6 +15,8 @@ export interface ReviewCommentRow {
   reviewer_id: string | null;
   created_at: string;
   response_snapshot: unknown;
+  /** `reviews.field_hash`: o hash do campo quando a arbitragem foi feita. */
+  field_hash: string | null;
 }
 
 export interface NoteResponseRow {
@@ -106,6 +109,10 @@ export function mapReviewComments(
     resolvedAt: r.resolved_at,
     createdAt: r.created_at,
     chosenResponseId: r.chosen_response_id,
+    // O comentário continua na aba como foi escrito, mesmo quando só faz
+    // sentido na versão antiga da pergunta; o que muda é que o veredito dele
+    // deixa de ser apresentado como gabarito (`review-validity.ts`).
+    verdictInvalidReason: invalidReasonOf(r, fieldMap.get(r.field_name)),
     source: "review",
     responseSnapshot:
       (r.response_snapshot as ReviewComment["responseSnapshot"]) ?? null,

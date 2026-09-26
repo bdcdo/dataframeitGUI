@@ -58,15 +58,18 @@ function fetchMetricsSources(
           .eq("project_id", id),
       ["id"],
     ),
+    // Todas as reviews, de qualquer rodada: quais valem e qual vale por
+    // célula a métrica decide pela regra de `review-validity.ts`, que precisa
+    // de `field_hash`. Sem o filtro de `chosen_response_id`, que a escolha por
+    // célula aplica depois de escolher.
     fetchAllPaged<MetricsReview>(
       () =>
         supabase
           .from("reviews")
           .select(
-            "id, document_id, field_name, verdict, chosen_response_id, comment, created_at, round_id",
+            "id, document_id, field_name, verdict, chosen_response_id, comment, created_at, field_hash",
           )
-          .eq("project_id", id)
-          .not("chosen_response_id", "is", null),
+          .eq("project_id", id),
       ["id"],
     ),
     // Só os documentos ativos: a métrica usa as CHAVES deste conjunto para
@@ -146,7 +149,7 @@ async function loadInsightsData(
   const [{ data: project }, accessResult] = await Promise.all([
     supabase
       .from("projects")
-      .select("pydantic_fields, schema_revision, automation_mode, current_round_id")
+      .select("pydantic_fields, schema_revision, automation_mode")
       .eq("id", id)
       .single(),
     getProjectAccessContext(id, user),
@@ -267,10 +270,9 @@ export default async function LlmInsightsPage({
     revision: project?.schema_revision ?? 0,
   };
 
-  const { errors, reviewedEntries } = computeLlmErrorMetrics({
+  const { errors, reviewedEntries, lapsedDecisions } = computeLlmErrorMetrics({
     fields: allFields,
     automationMode: project?.automation_mode ?? null,
-    currentRoundId: (project?.current_round_id as string | null) ?? null,
     documentTitles: new Map(
       documents.map((d) => [d.id, d.title || d.external_id || d.id]),
     ),
@@ -299,6 +301,7 @@ export default async function LlmInsightsPage({
         projectId={id}
         errors={errors}
         reviewedEntries={reviewedEntries}
+        lapsedDecisions={lapsedDecisions}
         fields={visibleFields}
         schemaEditor={{ fields: allFields, baseline: schemaBaseline }}
         isCoordinator={isCoordinator}

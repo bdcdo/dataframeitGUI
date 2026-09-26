@@ -17,7 +17,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { normalizeForComparison } from "@/lib/utils";
-import { formatPartialDate } from "@/lib/date-parts";
+import { formatCardAnswer } from "@/lib/verdict-display";
+import { copiedVerdictInDomain, type DomainField } from "@/lib/review-validity";
 import {
   buildResponseGroupKeys,
 } from "@/lib/equivalence";
@@ -63,6 +64,13 @@ interface AgreementGroupProps {
   existingVerdict: ExistingVerdict | null;
   pendingVerdict: PendingVerdict | null;
   onVote: (displayAnswer: string, chosenResponseId: string) => void;
+  /**
+   * A definição atual do campo, para decidir quais cards aceitam voto: o voto
+   * copia `displayAnswer`, e a resposta que saiu das opções geraria um
+   * veredito sem validade. `null` quando o campo não está no schema, e aí não
+   * há o que restringir. Obrigatória pelo mesmo motivo de `pendingConfirm`.
+   */
+  domainField: DomainField | null;
   allowEquivalence: boolean;
   equivalences: FieldEquivalencePair[];
   onConfirmEquivalent?: (
@@ -82,21 +90,6 @@ interface AgreementGroupProps {
     onDiscard: () => void;
     isSaving: boolean;
   };
-}
-
-function formatAnswer(answer: unknown): string {
-  if (answer == null) return "";
-  if (typeof answer === "string") return formatPartialDate(answer.trim());
-  if (Array.isArray(answer))
-    return answer.map((v) => (typeof v === "string" ? v.trim() : v)).join(", ");
-  if (typeof answer === "object") {
-    const obj = answer as Record<string, unknown>;
-    return Object.entries(obj)
-      .filter(([, v]) => v != null && String(v).trim() !== "")
-      .map(([k, v]) => `${k}: ${v}`)
-      .join(", ");
-  }
-  return String(answer);
 }
 
 interface RenderedGroup {
@@ -149,7 +142,7 @@ function groupByEquivalenceKey(
     }
     map.set(key, {
       groupKey: key,
-      displayAnswer: formatAnswer(r.answer),
+      displayAnswer: formatCardAnswer(r.answer),
       responses: [r],
       variants: [],
     });
@@ -176,7 +169,7 @@ function variantsWithinGroup(
       pairId: p.id,
       reviewerId: p.reviewer_id,
       respondentName: `${a.respondent_name} ↔ ${b.respondent_name}`,
-      answerDisplay: `${formatAnswer(a.answer)} · ${formatAnswer(b.answer)}`,
+      answerDisplay: `${formatCardAnswer(a.answer)} · ${formatCardAnswer(b.answer)}`,
     });
   }
   return variants;
@@ -255,6 +248,7 @@ export function AgreementGroup({
   existingVerdict,
   pendingVerdict,
   onVote,
+  domainField,
   allowEquivalence,
   equivalences,
   onConfirmEquivalent,
@@ -306,6 +300,7 @@ export function AgreementGroup({
               isPending={facts.isPending}
               versions={facts.versions}
               readOnly={readOnly}
+              outOfDomain={!copiedVerdictInDomain(group.displayAnswer, domainField ?? undefined)}
               onVote={() => onVote(group.displayAnswer, group.responses[0].id)}
               // Montada só no card preparado, e não em todos com o
               // `AnswerCard` decidindo depois: `isPending` é conhecido AQUI, e é

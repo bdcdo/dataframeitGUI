@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // pegar regressão na migração pro wrapper.
 import { createSupabaseMockState } from "./supabase-mock";
 import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
+import type { ErrorDecision } from "@/lib/error-resolution";
 
 const supabaseState = createSupabaseMockState();
 
@@ -257,7 +258,7 @@ describe("resolveError / reopenError", () => {
     expect(supabaseState.writeCalls).toHaveLength(0);
   });
 
-  const prepareInput = { projectId: "p1", documentId: "doc1", fieldName: "x", llmResponseId: "rllm", preferredHumanResponseId: "rh", sourceKind: "comparacao" as const, sourceId: "review1" };
+  const prepareInput = { projectId: "p1", documentId: "doc1", fieldName: "x", llmResponseId: "rllm", preferredHumanResponseId: "rh", sourceKind: "comparacao" as const, sourceId: "review1", decision: "llm_correct" as const };
   function humansInRound(ids: string[], currentRoundId: string | null = "round1") {
     supabaseState.reset({ projects: { data: { current_round_id: currentRoundId } }, responses: { data: ids.map((id) => ({ id })) } });
   }
@@ -279,6 +280,23 @@ describe("resolveError / reopenError", () => {
     const { prepareErrorResolution } = await loadStats();
     await prepareErrorResolution(prepareInput);
     expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_human_response_id: "rh2" }));
+  });
+
+  // Sobre veredito que perdeu a validade, só as decisões que dependem dele
+  // ("Ambos corretos", "Em discussão") pedem fonte válida; as que gravam valor
+  // próprio podem ser redecididas entre si.
+  it.each<[ErrorDecision, boolean]>([
+    ["llm_correct", false],
+    ["researchers_correct", false],
+    ["all_wrong", false],
+    ["both_correct", true],
+    ["discussion", true],
+  ])("%s pede o contexto com p_require_valid_source = %s", async (decision, required) => {
+    humansInRound(["rh"]);
+    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
+    const { prepareErrorResolution } = await loadStats();
+    await prepareErrorResolution({ ...prepareInput, decision });
+    expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_require_valid_source: required }));
   });
 
   it("auto-revisão não troca de humana: sem a do field_reviews na rodada, explica e não chama a RPC", async () => {

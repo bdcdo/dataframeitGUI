@@ -14,7 +14,7 @@ import { useCompareFieldData } from "./useCompareFieldData";
 import { useCompareVerdicts } from "./useCompareVerdicts";
 import { useCompareKeyboard } from "./useCompareKeyboard";
 import { useUrlState } from "@/hooks/useUrlState";
-import type { ReviewsByDoc } from "@/lib/compare-reviews";
+import { staleVerdictOf, type ReviewsByDoc, type StaleReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
 import {
@@ -29,6 +29,11 @@ import {
 
 const LIST_COLLAPSED_KEY = "compare:listCollapsed";
 
+// O rótulo do campo no painel: a descrição, ou o nome quando não há.
+function fieldLabelOf(field: PydanticField | undefined, fieldName: string): string {
+  return field?.description || fieldName;
+}
+
 interface ComparePageProps {
   projectId: string;
   documents: CompareDocument[];
@@ -36,6 +41,8 @@ interface ComparePageProps {
   divergentFields: Record<string, string[]>;
   fields: PydanticField[];
   existingReviews: ReviewsByDoc;
+  /** Vereditos do revisor que perderam a validade, só como referência (#758). */
+  staleReviews?: StaleReviewsByDoc;
   projectPydanticHash: string | null;
   respondentNames: string[];
   // Defaults VIVOS derivados do automation_mode/projeto (compareDefaultsForMode):
@@ -92,6 +99,7 @@ export function ComparePage({
   divergentFields,
   fields,
   existingReviews,
+  staleReviews,
   projectPydanticHash,
   respondentNames,
   defaultMinHumans,
@@ -611,7 +619,7 @@ export function ComparePage({
           documentId: currentDoc.id,
           documentTitle: docTitle,
           fieldName: currentFieldName,
-          fieldDescription: currentField?.description || currentFieldName,
+          fieldDescription: fieldLabelOf(currentField, currentFieldName),
           fieldHelpText: currentField?.help_text,
           fieldType: currentField?.type,
           fieldOptions: currentField?.options,
@@ -620,6 +628,7 @@ export function ComparePage({
           totalFields: docFields.length,
           responses: fieldResponses,
           existingVerdict: currentVerdict,
+          staleVerdict: staleVerdictOf(staleReviews, currentDoc.id, currentFieldName),
           reviewed,
           isDivergent: isCurrentFieldDivergent,
           docStatus: isCurrentDocComplete

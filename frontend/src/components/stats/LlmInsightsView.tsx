@@ -7,6 +7,7 @@ import { EditFieldDialog } from "./EditFieldDialog";
 import { ErrorStatsCards } from "./ErrorStatsCards";
 import { ErrorFiltersToolbar } from "./ErrorFiltersToolbar";
 import { ErrorDecisionDialog, type PendingErrorDecision } from "./ErrorDecisionDialog";
+import { LapsedDecisionsNotice } from "./LapsedDecisionsNotice";
 import { choosesValue, type ErrorDecision, type ErrorResolutionInput } from "@/lib/error-resolution";
 import { useLlmErrorFiltering } from "@/hooks/useLlmErrorFiltering";
 import {
@@ -20,6 +21,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
 import type {
+  LapsedDecision,
   LlmError,
   ReviewedEntry,
 } from "@/lib/llm-error-metrics";
@@ -28,6 +30,8 @@ interface LlmInsightsViewProps {
   projectId: string;
   errors: LlmError[];
   reviewedEntries: ReviewedEntry[];
+  /** Decisões que saíram da fila por terem perdido a validade. */
+  lapsedDecisions?: LapsedDecision[];
   fields: { name: string; description: string }[];
   schemaEditor?: {
     fields: PydanticField[];
@@ -60,6 +64,7 @@ export function LlmInsightsView({
   projectId,
   errors,
   reviewedEntries,
+  lapsedDecisions,
   fields,
   schemaEditor,
   isCoordinator,
@@ -69,42 +74,11 @@ export function LlmInsightsView({
   const { refresh } = useRouter();
   const [isPending, startTransition] = useTransition();
   const [editingField, setEditingField] = useState<string | null>(null);
-  const [regenerating, setRegenerating] = useState(false);
   const [pendingDecision, setPendingDecision] = useState<PendingErrorDecision | null>(null);
-
-  async function handleRegenerateBacklog() {
-    setRegenerating(true);
-    // try/finally: uma rejeição da action (queda de rede, erro não capturado
-    // no servidor) não pode deixar o botão preso em "Regenerando…".
-    try {
-      const result = await regenerateAutoReviewBacklog(projectId);
-      if (!result.success) {
-        toast.error(result.error ?? "Falha ao regenerar backlog");
-        return;
-      }
-      // "Aguardando a resposta LLM" saiu na #670: documento sem geração LLM
-      // deixou de entrar no backlog, então não há mais pedido em espera para
-      // contar — o que sobrava ali era a fila insatisfazível se anunciando como
-      // se fosse trabalho em andamento.
-      const parts = [
-        `${result.queued ?? 0} documento(s) reenfileirado(s)`,
-        `${result.processed ?? 0} pedido(s) processado(s)`,
-      ];
-      toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
-      refresh();
-    } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Falha ao regenerar backlog",
-      );
-    } finally {
-      setRegenerating(false);
-    }
-  }
 
   // Error filters + derivation (filtered population, rate, sorting, counts)
   const filtering = useLlmErrorFiltering(errors, reviewedEntries);
   const { measuredErrorCount, filteredErrorRate, sortedErrors } = filtering;
-  const regenerateLabel = regenerating ? "Regenerando…" : "Regenerar backlog";
   const emptyMessage = errors.length === 0 ? "Nenhum erro do LLM encontrado." : "Nenhum erro corresponde aos filtros.";
 
   // A resposta humana do contexto é escolhida no servidor (#733): a UI só
@@ -115,7 +89,7 @@ export function LlmInsightsView({
       try {
         const result = await prepareErrorResolution({ projectId, documentId: error.documentId,
           fieldName: error.fieldName, llmResponseId: error.llmResponseId,
-          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId! });
+          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId!, decision });
         if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
         setPendingDecision({ error, decision, context: result.context });
       } catch {
@@ -165,25 +139,7 @@ export function LlmInsightsView({
   return (
     <>
     <div className="space-y-4">
-      {isCoordinator ? (
-        <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
-          <div>
-            <p className="text-sm font-medium">Backlog de auto-revisão</p>
-            <p className="text-xs text-muted-foreground">
-              Varre todas as codificações humanas concluídas e cria entradas de
-              auto-revisão para divergências com o LLM. Idempotente.
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void handleRegenerateBacklog()}
-            disabled={regenerating}
-          >
-            {regenerateLabel}
-          </Button>
-        </div>
-      ) : null}
+      {isCoordinator ? <RegenerateBacklogPanel projectId={projectId} onRegenerated={refresh} /> : null}
 
       <ErrorStatsCards
         totalLlmDocs={summary.totalLlmDocs}
@@ -193,6 +149,8 @@ export function LlmInsightsView({
       />
 
       <ErrorFiltersToolbar fields={fields} filtering={filtering} />
+
+      <LapsedDecisionsNotice decisions={lapsedDecisions} />
 
       {sortedErrors.length === 0 ? (
         <p className="py-12 text-center text-sm text-muted-foreground">
@@ -239,5 +197,62 @@ export function LlmInsightsView({
       />
     )}
     </>
+  );
+}
+
+// Regenerar o backlog de auto-revisão (só coordenador). Separado da tela do
+// LLM Insights: o estado "regenerando" e o tratamento do resultado não têm
+// relação com a fila de decisões.
+function RegenerateBacklogPanel({ projectId, onRegenerated }: { projectId: string; onRegenerated: () => void }) {
+  const [regenerating, setRegenerating] = useState(false);
+  const regenerateLabel = regenerating ? "Regenerando…" : "Regenerar backlog";
+
+  async function handleRegenerateBacklog() {
+    setRegenerating(true);
+    // try/finally: uma rejeição da action (queda de rede, erro não capturado
+    // no servidor) não pode deixar o botão preso em "Regenerando…".
+    try {
+      const result = await regenerateAutoReviewBacklog(projectId);
+      if (!result.success) {
+        toast.error(result.error ?? "Falha ao regenerar backlog");
+        return;
+      }
+      // "Aguardando a resposta LLM" saiu na #670: documento sem geração LLM
+      // deixou de entrar no backlog, então não há mais pedido em espera para
+      // contar — o que sobrava ali era a fila insatisfazível se anunciando como
+      // se fosse trabalho em andamento.
+      const parts = [
+        `${result.queued ?? 0} documento(s) reenfileirado(s)`,
+        `${result.processed ?? 0} pedido(s) processado(s)`,
+      ];
+      toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
+      onRegenerated();
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Falha ao regenerar backlog",
+      );
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 p-3">
+      <div>
+        <p className="text-sm font-medium">Backlog de auto-revisão</p>
+        <p className="text-xs text-muted-foreground">
+          Varre todas as codificações humanas concluídas e cria entradas de
+          auto-revisão para divergências com o LLM. Idempotente.
+        </p>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => void handleRegenerateBacklog()}
+        disabled={regenerating}
+      >
+        {regenerateLabel}
+      </Button>
+    </div>
   );
 }

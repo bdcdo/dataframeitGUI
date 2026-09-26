@@ -42,13 +42,14 @@ function response(overrides: Partial<MetricsResponse> = {}): MetricsResponse {
 
 function review(overrides: Partial<MetricsReview> = {}): MetricsReview {
   return {
+    id: "review1",
     document_id: "doc1",
     field_name: "x",
     verdict: "sim",
     chosen_response_id: "rh",
     comment: null,
     created_at: "2026-02-01T00:00:00Z",
-    round_id: "round1",
+    field_hash: null,
     ...overrides,
   };
 }
@@ -94,7 +95,6 @@ function run(overrides: Partial<LlmErrorMetricsInput> = {}) {
   return computeLlmErrorMetrics({
     fields: [field()],
     automationMode: "auto_review_llm",
-    currentRoundId: "round1",
     documentTitles: new Map([["doc1", "Documento 1"]]),
     responses: [],
     reviews: [],
@@ -135,19 +135,23 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
   // erro sumiria. O par de controle, no mesmo documento, é quem separa isso da
   // simples ausência de response escolhida.
   it.each([
-    ["de outro documento, não silencia o erro", "doc2", 1],
-    ["do mesmo documento, concorda e não é erro", "doc1", 0],
+    ["de outro documento não pré-marca o seletor", "doc2", undefined],
+    ["do mesmo documento pré-marca o seletor", "doc1", ["a"]],
   ])("multi: resposta escolhida %s", (_nome, documentId, esperado) => {
+    // Desde o #758 quem decide o erro é o veredito, e não a resposta
+    // escolhida; a guarda de documento segue valendo para a forma crua que
+    // pré-marca o seletor.
     const { errors } = run({
       fields: [field({ name: "x", type: "multi", options: ["a", "b"] })],
       responses: [
-        response({ id: "rllm", respondent_type: "llm", answers: { x: ["a"] } }),
+        response({ id: "rllm", respondent_type: "llm", answers: { x: ["b"] } }),
         response({ id: "rh", document_id: documentId, answers: { x: ["a"] } }),
       ],
       reviews: [review({ chosen_response_id: "rh", verdict: '{"a":true}' })],
     });
 
-    expect(errors).toHaveLength(esperado);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].chosenValue).toEqual(esperado);
   });
 
   it("conta erro quando o gabarito escolhido difere da resposta do LLM", () => {
@@ -309,8 +313,10 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
   });
 
   // A pergunta era `single` quando foi arbitrada e virou `multi` depois, com a
-  // opção antiga fundida numa nova. A review tem resposta escolhida, o card
-  // oferece o "=", e o par gravado precisa suprimir o erro.
+  // opção antiga fundida numa nova. Até o #758 a métrica tratava esse veredito
+  // como válido e deixava o par "=" suprimir o erro; pela regra única ele está
+  // fora do domínio atual da pergunta e sai da métrica, com ou sem par, até a
+  // célula ser rearbitrada.
   describe("review de single em campo que virou multi", () => {
     const migrated = {
       fields: [field({ name: "x", type: "multi", options: ["Não discutido", "Há comprovação"] })],
@@ -321,25 +327,13 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
       reviews: [review({ verdict: "Não informado se há comprovação" })],
     };
 
-    it("sem par, a opção antiga contra a nova é erro do LLM", () => {
-      expect(run(migrated).errors).toHaveLength(1);
-    });
-
-    it("o par marcado pelo revisor suprime o erro", () => {
-      const { errors, reviewedEntries } = run({
-        ...migrated,
-        equivalences: [equiv("rh", "rllm", "Não informado se há comprovação", ["Não discutido"])],
-      });
+    it.each([
+      ["sem par", []],
+      ["com par marcado pelo revisor", [equiv("rh", "rllm", "Não informado se há comprovação", ["Não discutido"])]],
+    ])("%s, o veredito fora do domínio sai da métrica", (_label, equivalences) => {
+      const { errors, reviewedEntries } = run({ ...migrated, equivalences });
       expect(errors).toEqual([]);
-      expect(reviewedEntries).toMatchObject([{ isError: false }]);
-    });
-
-    it("par com snapshot desatualizado não suprime", () => {
-      const { errors } = run({
-        ...migrated,
-        equivalences: [equiv("rh", "rllm", "Não informado se há comprovação", ["Há comprovação"])],
-      });
-      expect(errors).toHaveLength(1);
+      expect(reviewedEntries).toEqual([]);
     });
   });
 });
@@ -782,37 +776,28 @@ describe("computeLlmErrorMetrics — metadados para os filtros da UI", () => {
   });
 });
 
-describe("rodada corrente (#733)", () => {
+describe("rodada não entra na validade do veredito (#758)", () => {
   const llm = response({ id: "rllm", respondent_type: "llm", answers: { x: "LLM" } });
   const human = response({ id: "rh", respondent_type: "humano", answers: { x: "Humano" } });
 
-  it("arbitragem de rodada anterior sai da fila e do denominador", () => {
+  it("arbitragem de rodada anterior sobre a mesma pergunta continua na fila e no denominador", () => {
     const out = run({
       automationMode: "compare_llm",
+      fields: [field({ hash: "aaaaaaaaaaaa" })],
       responses: [llm, human],
-      reviews: [review({ verdict: "Humano", round_id: "round0" })],
-    });
-    expect(out.errors).toEqual([]);
-    expect(out.reviewedEntries).toEqual([]);
-  });
-
-  it("a mesma arbitragem na rodada corrente conta como erro do LLM", () => {
-    const out = run({
-      automationMode: "compare_llm",
-      responses: [llm, human],
-      reviews: [review({ verdict: "Humano", round_id: "round1" })],
+      reviews: [review({ verdict: "Humano", field_hash: "aaaaaaaaaaaa" })],
     });
     expect(out.errors).toHaveLength(1);
     expect(out.reviewedEntries).toHaveLength(1);
     expect(out.reviewedEntries[0].isError).toBe(true);
   });
 
-  it("sem rodada corrente, nenhuma arbitragem conta", () => {
+  it("arbitragem sobre outra versão da pergunta sai da fila e do denominador", () => {
     const out = run({
       automationMode: "compare_llm",
-      currentRoundId: null,
+      fields: [field({ hash: "aaaaaaaaaaaa" })],
       responses: [llm, human],
-      reviews: [review({ verdict: "Humano" })],
+      reviews: [review({ verdict: "Humano", field_hash: "ffffffffffff" })],
     });
     expect(out.errors).toEqual([]);
     expect(out.reviewedEntries).toEqual([]);
@@ -837,12 +822,13 @@ describe("rodada corrente (#733)", () => {
     expect(out.errors[0].chosenValue).toBeUndefined();
   });
 
-  it("decisão gravada sobre célula de rodada antiga continua na fila", () => {
+  it("decisão com valor próprio sobre veredito que perdeu a validade continua na fila", () => {
     const row = resolutionFixture("researchers_correct");
     const out = run({
       automationMode: "compare_llm",
+      fields: [field({ hash: "aaaaaaaaaaaa" })],
       responses: [llm, human],
-      reviews: [review({ verdict: "Humano", round_id: "round0" })],
+      reviews: [review({ verdict: "Humano", field_hash: "ffffffffffff" })],
       errorResolutions: new Map([["doc1:x", row]]),
     });
     expect(out.errors).toHaveLength(1);

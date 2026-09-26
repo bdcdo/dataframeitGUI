@@ -41,6 +41,7 @@ describe("mapReviewComments", () => {
       reviewer_id: "user1",
       created_at: "2026-01-01T00:00:00Z",
       response_snapshot: [{ id: "resp1", respondent_name: "Ana", respondent_type: "humano", answer: "x" }],
+      field_hash: null,
     };
     const reviewerMap = new Map([["user1", "ana"]]);
 
@@ -65,6 +66,7 @@ describe("mapReviewComments", () => {
       reviewer_id: "user-fora-do-mapa",
       created_at: "2026-01-01T00:00:00Z",
       response_snapshot: null,
+      field_hash: null,
     };
 
     const [result] = mapReviewComments([review], docMap, fieldMap, new Map());
@@ -72,6 +74,27 @@ describe("mapReviewComments", () => {
     expect(result.reviewerName).toBe("Anônimo");
     expect(result.documentTitle).toBe("doc-desconhecido");
     expect(result.fieldDescription).toBe("campo-desconhecido");
+  });
+});
+
+describe("mapReviewComments: veredito que perdeu a validade (#758)", () => {
+  const hashed = { ...field, hash: "aaaaaaaaaaaa" };
+  const row = (field_hash: string | null, field_name = "campo1"): ReviewCommentRow => ({
+    id: "r3", document_id: "doc1", field_name, verdict: "x", comment: "comentário antigo",
+    chosen_response_id: null, resolved_at: null, reviewer_id: null,
+    created_at: "2026-01-01T00:00:00Z", response_snapshot: null, field_hash,
+  });
+
+  it.each([
+    ["mesma pergunta", row("aaaaaaaaaaaa"), undefined],
+    ["pergunta alterada", row("ffffffffffff"), "pergunta_alterada"],
+    ["campo removido", row("aaaaaaaaaaaa", "sumiu"), "campo_removido"],
+    ["fora das opções", { ...row(null), verdict: "Talvez" }, "fora_do_dominio"],
+  ])("%s: o comentário continua, e o veredito é marcado com o motivo", (_label, review, reason) => {
+    const single = { ...hashed, type: "single" as const, options: ["x"] };
+    const [result] = mapReviewComments([review], docMap, new Map([["campo1", single]]), new Map());
+    expect(result.comment).toBe("comentário antigo");
+    expect(result.verdictInvalidReason).toBe(reason);
   });
 });
 

@@ -40,11 +40,13 @@
     "test:db:rls-audit": "npm run test:db:psql -- supabase/tests/rls_audit.test.sql",
     "test:db:llm-runs-round": "npm run test:db:psql -- supabase/tests/llm_runs_round.test.sql",
     "test:db:reviews-round": "npm run test:db:psql -- supabase/tests/reviews_round_id.test.sql",
+    "test:db:reviews-field-hash": "npm run test:db:psql -- supabase/tests/reviews_field_hash.test.sql",
     "test:db:psql": "bash scripts/run-sql-test.sh",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "invariants": "tsx scripts/invariants/check-invariants.ts",
+    "resync:compare": "tsx scripts/compare-assignments/resync.ts",
     "e2e:fixture:coding": "tsx scripts/e2e-fixtures/create-coding-save-fixture.mts",
     "e2e:fixture:compare": "tsx scripts/e2e-fixtures/create-compare-field-switch-fixture.mts"
   },

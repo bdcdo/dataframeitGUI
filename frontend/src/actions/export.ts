@@ -42,7 +42,7 @@ export async function getExportDataset(
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("name, pydantic_fields, min_responses_for_comparison, current_round_id")
+      .select("name, pydantic_fields, min_responses_for_comparison")
       .eq("id", projectId)
       .single(),
     // Base exportada: documentos não excluídos. Exclusão apenas pendente
@@ -67,7 +67,7 @@ export async function getExportDataset(
     fetchAllPaged<ExportReview>(() =>
       supabase
         .from("reviews")
-        .select("document_id, field_name, verdict, comment, round_id")
+        .select("id, document_id, field_name, verdict, comment, created_at, field_hash, chosen_response_id")
         .eq("project_id", projectId),
       ["id"],
     ),
@@ -89,7 +89,6 @@ export async function getExportDataset(
     projectName: project.name || "Projeto",
     fields: (project.pydantic_fields || []) as PydanticField[],
     minResponses: project.min_responses_for_comparison || 2,
-    currentRoundId: (project.current_round_id as string | null) ?? null,
     documents,
     responses,
     reviews,

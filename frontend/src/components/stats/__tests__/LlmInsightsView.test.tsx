@@ -156,3 +156,28 @@ describe("decisão individual em Insights", () => {
     expect(screen.queryByRole("button", { name: "Em discussão" })).toBeNull();
   });
 });
+
+describe("decisões que perderam a validade", () => {
+  const lapsed = [
+    { documentId: "doc2", documentTitle: "Documento 2", fieldName: "x", fieldDescription: "Pergunta",
+      decision: "both_correct" as const, resolvedAt: "2026-09-14T12:00:00Z" },
+    { documentId: "doc3", documentTitle: "Documento 3", fieldName: "x", fieldDescription: "Pergunta",
+      decision: "discussion" as const, resolvedAt: "2026-09-14T12:00:00Z" },
+  ];
+
+  it("mostra a contagem e lista as decisões sob demanda", async () => {
+    render(<LlmInsightsView projectId="p1" errors={[]} fields={[{ name: "x", description: "Pergunta" }]}
+      reviewedEntries={[]} lapsedDecisions={lapsed} canResolve isCoordinator={false} summary={{ totalLlmDocs: 1 }} />);
+    expect(screen.getByText("2 decisões perderam a validade (a pergunta mudou ou as fontes mudaram).")).toBeTruthy();
+    expect(screen.queryByText("Documento 2")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Listar" }));
+    expect(await screen.findByText("Documento 2")).toBeTruthy();
+    expect(screen.getByText("Ambos corretos")).toBeTruthy();
+    expect(screen.getByText("Em discussão")).toBeTruthy();
+  });
+
+  it("sem decisões perdidas, nenhuma linha", () => {
+    show();
+    expect(screen.queryByText(/perderam a validade|perdeu a validade/)).toBeNull();
+  });
+});

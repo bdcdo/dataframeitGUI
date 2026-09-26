@@ -65,6 +65,8 @@ jobs:
         run: npm run test:db:llm-runs-round
       - name: Rodada da arbitragem
         run: npm run test:db:reviews-round
+      - name: Veredito vale enquanto a pergunta não muda
+        run: npm run test:db:reviews-field-hash
 
       # As fixtures destes precisam estar commitadas (duas conexões dblink veem
       # o mesmo estado), então eles sujam o banco e ficam por último.

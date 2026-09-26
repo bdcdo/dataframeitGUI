@@ -12,6 +12,8 @@ import { canonicalPair } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
 import { ZeroRowsError } from "@/lib/supabase/rls-guard";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
+import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
+import { fetchFieldDefinition } from "@/lib/reviews/field-definition";
 
 // Marks two or more responses as equivalent for a (document, field) and at the
 // same time records the verdict pointing to `gabaritoId` — the response that
@@ -26,6 +28,39 @@ export interface ConfirmEquivalentVerdictInput {
   verdictDisplay: string;
   comment?: string;
   responseSnapshot?: ResponseSnapshotEntry[];
+}
+
+// Um par canônico (a < b) por combinação das respostas marcadas, sem repetir.
+function canonicalPairRows(
+  responseIds: readonly string[],
+  cell: { projectId: string; documentId: string; fieldName: string; reviewerId: string },
+) {
+  const seen = new Set<string>();
+  const rows: Array<{
+    project_id: string;
+    document_id: string;
+    field_name: string;
+    response_a_id: string;
+    response_b_id: string;
+    reviewer_id: string;
+  }> = [];
+  for (let i = 0; i < responseIds.length; i++) {
+    for (let j = i + 1; j < responseIds.length; j++) {
+      const [a, b] = canonicalPair(responseIds[i], responseIds[j]);
+      const key = `${a}|${b}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        project_id: cell.projectId,
+        document_id: cell.documentId,
+        field_name: cell.fieldName,
+        response_a_id: a,
+        response_b_id: b,
+        reviewer_id: cell.reviewerId,
+      });
+    }
+  }
+  return rows;
 }
 
 export async function confirmEquivalentVerdict({
@@ -51,32 +86,14 @@ export async function confirmEquivalentVerdict({
 
   const supabase = await createSupabaseServer();
 
-  // Build canonical pairs (a < b) for every combination, dedup.
-  const seen = new Set<string>();
-  const rows: Array<{
-    project_id: string;
-    document_id: string;
-    field_name: string;
-    response_a_id: string;
-    response_b_id: string;
-    reviewer_id: string;
-  }> = [];
-  for (let i = 0; i < responseIds.length; i++) {
-    for (let j = i + 1; j < responseIds.length; j++) {
-      const [a, b] = canonicalPair(responseIds[i], responseIds[j]);
-      const key = `${a}|${b}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push({
-        project_id: projectId,
-        document_id: documentId,
-        field_name: fieldName,
-        response_a_id: a,
-        response_b_id: b,
-        reviewer_id: reviewerId,
-      });
-    }
+  // O veredito copia a resposta do gabarito: fora das opções atuais, nasceria
+  // sem validade, como no voto em card de `submitVerdict`. A recusa vem antes
+  // de gravar o par, para não deixar equivalência sem o veredito que a motivou.
+  if (!copiedVerdictInDomain(verdictDisplay, await fetchFieldDefinition(supabase, projectId, fieldName))) {
+    return { error: OUT_OF_DOMAIN_VOTE_MESSAGE };
   }
+
+  const rows = canonicalPairRows(responseIds, { projectId, documentId, fieldName, reviewerId });
 
   try {
     const { error: equivErr } = await supabase.rpc(

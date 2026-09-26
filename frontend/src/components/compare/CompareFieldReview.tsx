@@ -12,8 +12,9 @@ import {
   type PendingVerdict,
   type VerdictOrigin,
 } from "./compare-types";
-import type { VerdictInfo } from "@/lib/compare-reviews";
+import type { StaleVerdictInfo, VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
+import type { DomainField } from "@/lib/review-validity";
 
 export interface ComparisonResponse {
   id: string;
@@ -47,6 +48,8 @@ interface CompareFieldReviewProps {
   displayOptions: string[];
   responses: ComparisonResponse[];
   existingVerdict: VerdictInfo | null;
+  /** Veredito do revisor que perdeu a validade; só referência (#758). */
+  staleVerdict?: StaleVerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
   isDivergent: boolean;
   isSavingVerdict: boolean;
@@ -120,6 +123,7 @@ export function CompareFieldReview({
   displayOptions,
   responses,
   existingVerdict,
+  staleVerdict = null,
   pendingVerdict,
   isDivergent,
   isSavingVerdict,
@@ -169,6 +173,7 @@ export function CompareFieldReview({
         <SingleAnswerGroup
           readOnly={readOnly}
           origin={{ documentId, fieldName }}
+          domainField={fields.find((f) => f.name === fieldName) ?? null}
           responses={responses}
           existingVerdict={existingVerdict}
           pendingVerdict={pendingVerdict}
@@ -193,6 +198,7 @@ export function CompareFieldReview({
           fields={fields}
           isMulti={isMulti}
           existingVerdict={existingVerdict}
+          staleVerdict={staleVerdict}
           pendingVerdict={pendingVerdict}
           onPrepareVerdict={onPrepareVerdict}
           comment={comment}
@@ -214,6 +220,7 @@ export function CompareFieldReview({
 function SingleAnswerGroup({
   readOnly,
   origin,
+  domainField,
   responses,
   existingVerdict,
   pendingVerdict,
@@ -227,6 +234,7 @@ function SingleAnswerGroup({
 }: {
   readOnly: boolean;
   origin: VerdictOrigin;
+  domainField: DomainField | null;
   responses: ComparisonResponse[];
   existingVerdict: VerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
@@ -257,6 +265,7 @@ function SingleAnswerGroup({
       }))}
       existingVerdict={existingVerdict}
       pendingVerdict={pendingVerdict}
+      domainField={domainField}
       // `origin` vem das props deste render — e não do container. É o que faz um
       // clique em card fantasma carregar o campo FANTASMA, que a fronteira de
       // escrita recusa, em vez de herdar o campo atual e gravar nele (#613).

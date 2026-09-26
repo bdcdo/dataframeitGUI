@@ -9,7 +9,8 @@ import { Lightbulb } from "lucide-react";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
 import { SuggestFieldDialog } from "@/components/stats/SuggestFieldDialog";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
-import type { VerdictInfo } from "@/lib/compare-reviews";
+import { INVALID_VERDICT_LABELS } from "@/lib/review-validity";
+import type { StaleVerdictInfo, VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import { PendingConfirmBar } from "./PendingConfirmBar";
 import {
@@ -28,6 +29,13 @@ interface DivergenceActionsPanelProps {
   fields: PydanticField[];
   isMulti: boolean;
   existingVerdict: VerdictInfo | null;
+  /**
+   * Veredito do revisor que perdeu a validade (pergunta alterada, valor fora
+   * das opções atuais, campo removido): não conta como revisão, e a célula
+   * pede arbitragem de novo. Fica na tela só como referência, rotulado pelo
+   * motivo, e some assim que houver veredito válido (#758).
+   */
+  staleVerdict?: StaleVerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
   onPrepareVerdict: (pending: PendingVerdict) => void;
   comment: string;
@@ -57,6 +65,7 @@ export function DivergenceActionsPanel({
   fields,
   isMulti,
   existingVerdict,
+  staleVerdict = null,
   pendingVerdict,
   onPrepareVerdict,
   comment,
@@ -100,19 +109,7 @@ export function DivergenceActionsPanel({
         />
       )}
 
-      {existingVerdict && (
-        <div className="mt-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
-          Veredito anterior:{" "}
-          <span className="font-medium text-foreground">
-            {formatVerdictDisplay(existingVerdict.verdict)}
-          </span>
-          {existingVerdict.comment && (
-            <span className="ml-1">
-              &mdash; &ldquo;{existingVerdict.comment}&rdquo;
-            </span>
-          )}
-        </div>
-      )}
+      <PreviousVerdictNotice existingVerdict={existingVerdict} staleVerdict={staleVerdict} />
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Input
@@ -160,6 +157,39 @@ export function DivergenceActionsPanel({
         onOpenChange={setSuggestOpen}
       />
     </>
+  );
+}
+
+/**
+ * O veredito que o revisor já deu na célula. O válido aparece como "Veredito
+ * anterior"; sem ele, o que perdeu a validade aparece só como referência,
+ * rotulado pelo motivo (`INVALID_VERDICT_LABELS`).
+ */
+function PreviousVerdictNotice({
+  existingVerdict,
+  staleVerdict,
+}: {
+  existingVerdict: VerdictInfo | null;
+  staleVerdict: StaleVerdictInfo | null;
+}) {
+  const [shown, label] = existingVerdict
+    ? [existingVerdict, "Veredito anterior"]
+    : staleVerdict
+      ? [staleVerdict, INVALID_VERDICT_LABELS[staleVerdict.invalidReason]]
+      : [null, ""];
+  if (!shown) return null;
+  return (
+    <div className="mt-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+      {label}:{" "}
+      <span className="font-medium text-foreground">
+        {formatVerdictDisplay(shown.verdict)}
+      </span>
+      {shown.comment && (
+        <span className="ml-1">
+          &mdash; &ldquo;{shown.comment}&rdquo;
+        </span>
+      )}
+    </div>
   );
 }
 

@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { RotateCcw, Pencil, FileText, Equal } from "lucide-react";
 import { formatDate } from "@/lib/date-format";
 import { formatVerdictDisplay } from "@/lib/verdict-display";
-import { effectiveErrorResolution, ERROR_DECISION_LABELS, errorDecisionSchema, type ErrorDecision } from "@/lib/error-resolution";
-import type { LlmError } from "@/lib/llm-error-metrics";
+import { decisionDependsOnSource, effectiveErrorResolution, ERROR_DECISION_LABELS, errorDecisionSchema, type ErrorDecision } from "@/lib/error-resolution";
+import { INVALID_VERDICT_LABELS } from "@/lib/review-validity";
+import type { LlmError, SourceInvalidReason } from "@/lib/llm-error-metrics";
 
 interface LlmErrorCardProps {
   error: LlmError;
@@ -32,6 +33,16 @@ function resolutionLabel(resolution: LlmError["resolution"]): string | null {
   if (status === "stale") return "Fontes alteradas: confirme novamente";
   return resolution?.decision ? ERROR_DECISION_LABELS[resolution.decision] : null;
 }
+
+function invalidVerdictLabel(reason: SourceInvalidReason): string {
+  return reason === "veredito_apagado" ? "Veredito anterior apagado" : INVALID_VERDICT_LABELS[reason];
+}
+
+// Sobre veredito que não vale mais, só as decisões que gravam valor próprio
+// podem ser tomadas: "Ambos corretos" e "Em discussão" fariam o gabarito
+// voltar a ser esse veredito, e `set_error_resolution` as recusa.
+const SOURCE_REQUIRED_REASON =
+  "Ambos corretos e Em discussão dependem do veredito anterior, que não vale mais. Rearbitre a célula na Comparação para usá-las.";
 
 function ErrorCardHeader({ error, isCoordinator, onEditField }: Pick<LlmErrorCardProps, "error" | "isCoordinator" | "onEditField">) {
   const label = resolutionLabel(error.resolution);
@@ -69,11 +80,15 @@ function ErrorCardActions({ error, projectId, isPending, canResolve, onDecide, o
       </Button>
     )}
     {canResolve && <>
-      {errorDecisionSchema.options.map((decision) => (
-        <Button key={decision} variant="outline" size="sm" disabled={isPending || !error.sourceId} onClick={() => onDecide(decision)}>
-          {ERROR_DECISION_LABELS[decision]}
-        </Button>
-      ))}
+      {errorDecisionSchema.options.map((decision) => {
+        const needsValidSource = !!error.sourceInvalidReason && decisionDependsOnSource(decision);
+        return (
+          <Button key={decision} variant="outline" size="sm" disabled={isPending || !error.sourceId || needsValidSource}
+            title={needsValidSource ? SOURCE_REQUIRED_REASON : undefined} onClick={() => onDecide(decision)}>
+            {ERROR_DECISION_LABELS[decision]}
+          </Button>
+        );
+      })}
       {error.resolution && (
         <Button variant="ghost" size="sm" disabled={isPending} onClick={onReopen}>
           <RotateCcw className="mr-1 size-3.5" />Reabrir
@@ -94,7 +109,9 @@ export function LlmErrorCard(props: LlmErrorCardProps) {
           <p className="text-sm">{error.llmAnswer || "(vazio)"}</p>
         </div>
         <div className="rounded-md border px-3 py-2">
-          <p className="text-xs font-medium">Veredito anterior:</p>
+          <p className="text-xs font-medium">
+            {error.sourceInvalidReason ? `${invalidVerdictLabel(error.sourceInvalidReason)} (sem validade):` : "Veredito anterior:"}
+          </p>
           <p className="text-sm">{formatVerdictDisplay(error.chosenVerdict) || "(vazio)"}</p>
         </div>
       </div>
@@ -114,6 +131,9 @@ export function LlmErrorCard(props: LlmErrorCardProps) {
           Decisão registrada em {formatReviewedAt(error.resolution.resolved_at)}
           {error.resolution.note && ` · ${error.resolution.note}`}
         </p>
+      )}
+      {props.canResolve && error.sourceInvalidReason && (
+        <p className="text-xs text-muted-foreground">{SOURCE_REQUIRED_REASON}</p>
       )}
       <ErrorCardActions {...props} />
     </CardContent>

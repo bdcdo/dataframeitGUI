@@ -1,13 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
+  computeReviewedDocuments,
   computeTruncation,
-  currentRoundReviews,
+  fetchReviewBaseData,
+  gabaritoReviews,
   REVIEW_BASE_DATA_LIMIT,
   resolveViewedRespondentId,
-  type ReviewRow,
 } from "@/lib/reviews/queries";
 import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
 import type { PydanticField } from "@/lib/types";
+import type { ErrorDecision } from "@/lib/error-resolution";
+import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
+import { makeSupabaseMock } from "@/actions/__tests__/supabase-mock";
 
 describe("buildReviewLookupMaps", () => {
   it("indexa campos e usa título, ID externo e ID como fallback do documento", () => {
@@ -136,24 +140,51 @@ describe("resolveViewedRespondentId — viewAsUser só para coordenador/criador/
   });
 });
 
-describe("currentRoundReviews — só a rodada corrente entra no Gabarito (#733)", () => {
-  const row = (id: string, round_id: string, field_name = "x"): ReviewRow => ({
-    id, document_id: "d1", field_name, verdict: "sim", chosen_response_id: null,
-    comment: null, reviewer_id: null, round_id,
+// A escolha da review por célula é de `pickValidCellReviews`, testada em
+// review-validity.test.ts.
+describe("gabaritoReviews", () => {
+  it("query falhada (null) vira Gabarito vazio", () => {
+    expect(gabaritoReviews(null, new Map())).toEqual([]);
+  });
+});
+
+// A decisão do LLM Insights que depende da fonte ("Em discussão", "Ambos
+// corretos") vale enquanto a review de origem vale, seja ela a escolhida da
+// célula ou não. Dois revisores arbitraram a célula, os dois vereditos valem,
+// e a decisão foi dada sobre o mais antigo: o Gabarito aplica a decisão.
+describe("fetchReviewBaseData: decisão ancorada em veredito válido que não é o escolhido da célula", () => {
+  const HASH = "aaaaaaaaaaaa";
+  const x = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", description: "Pergunta", options: null, hash: HASH } as PydanticField;
+  const reviewRow = (id: string, reviewer: string, created_at: string) => ({
+    id, document_id: "doc1", field_name: "x", verdict: "Humano", chosen_response_id: "rh", comment: null,
+    reviewer_id: reviewer, created_at, field_hash: HASH,
   });
 
-  it("descarta arbitragem de rodada anterior e mantém a corrente", () => {
-    expect(currentRoundReviews([row("r1", "round0"), row("r2", "round1", "y")], "round1"))
-      .toEqual([row("r2", "round1", "y")]);
-  });
+  it.each<[ErrorDecision, string]>([["discussion", "ambiguo"], ["both_correct", "Humano"]])(
+    "%s sobre o veredito mais antigo vale no Gabarito",
+    async (decision, verdict) => {
+      const resolution = resolutionFixture(decision);
+      resolution.context!.source = { kind: "comparacao", id: "antiga", verdict: "Humano" };
+      resolution.current_context = structuredClone(resolution.context);
+      const client = makeSupabaseMock({
+        tableResults: {
+          projects: { data: { pydantic_fields: [x], pydantic_hash: null, created_by: "owner" } },
+          responses: { data: [
+            { id: "rllm", document_id: "doc1", respondent_id: null, respondent_type: "llm", respondent_name: "LLM", answers: { x: "LLM" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z" },
+            { id: "rh", document_id: "doc1", respondent_id: "ana", respondent_type: "humano", respondent_name: "Ana", answers: { x: "Humano" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z" },
+          ] },
+          reviews: { data: [reviewRow("nova", "bia", "2026-09-03T00:00:00Z"), reviewRow("antiga", "caio", "2026-09-02T00:00:00Z")] },
+          documents: { data: [{ id: "doc1", title: "Documento", external_id: null }] },
+          profiles: { data: [] },
+        },
+        rpcResults: { read_error_resolutions: { data: [resolution] } },
+      });
 
-  it("entre reviews da mesma célula e rodada, id maior vence", () => {
-    expect(currentRoundReviews([row("r1", "round1"), row("r2", "round1")], "round1").map((r) => r.id))
-      .toEqual(["r2"]);
-  });
+      const ctx = await fetchReviewBaseData(client as never, "p1");
+      const [doc] = computeReviewedDocuments(ctx);
 
-  it("sem rodada corrente nada conta; query falhada (null) vira vazio", () => {
-    expect(currentRoundReviews([row("r1", "round1")], null)).toEqual([]);
-    expect(currentRoundReviews(null, "round1")).toEqual([]);
-  });
+      expect(doc.fields[0].verdict).toBe(verdict);
+      expect(doc.fields[0].resolutionLabel).toBeTruthy();
+    },
+  );
 });

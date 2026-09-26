@@ -18,6 +18,7 @@ import {
 } from "@/lib/compare-multi-options";
 import { formatExportValue, formatVerdict } from "./format";
 import { effectiveErrorResolution, errorResolutionComment, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
 
 export interface ExportSheet {
   headers: string[];
@@ -48,25 +49,21 @@ export interface ExportResponse {
 }
 
 export interface ExportReview {
+  id: string;
   document_id: string;
   field_name: string;
   verdict: string;
   comment: string | null;
-  /** Rodada em que a arbitragem foi feita (`reviews.round_id`, NOT NULL). */
-  round_id: string;
+  created_at: string;
+  /** `reviews.field_hash`: o hash do campo quando a arbitragem foi feita. */
+  field_hash: string | null;
+  chosen_response_id: string | null;
 }
 
 export interface AssembleInput {
   projectName: string;
   fields: PydanticField[];
   minResponses: number;
-  /**
-   * `projects.current_round_id`. Só o veredito dado na rodada corrente entra
-   * no gabarito (#733); a célula de rodada antiga cai para a concordância ou
-   * fica vazia, e uma decisão gravada em `errorResolutions` continua
-   * sobrescrevendo, porque é aplicada depois.
-   */
-  currentRoundId: string | null;
   documents: ExportDocument[];
   responses: ExportResponse[];
   reviews: ExportReview[];
@@ -145,29 +142,36 @@ function unionOriginalColumns(baseDocs: ExportDocument[]): string[] {
   return union;
 }
 
-// Agrupa os veredictos do revisor por documento (valor formatado + comentários).
-// Arbitragem de rodada anterior não é veredito do gabarito corrente, e o
-// comentário dela sai junto, de propósito: foi escrito sobre respostas que a
-// rodada corrente substituiu. Sai do arquivo inteiro, não só da célula: o
-// texto do revisor só aparece na coluna `reviewer_comments`, alimentada também
-// por estas entradas (as decisões de erro entram nela por
-// `applyExportResolutions`), e o export não tem aba de comentários (ver o
-// `return` de `assembleExport`). Quem precisar dele lê a tela de Comentários
-// do app, que não filtra rodada.
+// Agrupa os veredictos do revisor por documento (valor formatado + comentários),
+// pela regra única de `review-validity.ts`: o valor da célula é o da review de
+// `pickValidCellReviews`, de qualquer rodada, e os comentários são os das
+// reviews válidas da célula. Veredito que perdeu a validade (a pergunta mudou
+// depois dele, ou o valor saiu das opções) não é gabarito, e o comentário dele
+// sai junto, de propósito: foi escrito sobre outra versão da pergunta. Sai do
+// arquivo inteiro, não só da célula: o texto do revisor só aparece na coluna
+// `reviewer_comments`, alimentada também por estas entradas (as decisões de
+// erro entram nela por `applyExportResolutions`), e o export não tem aba de
+// comentários (ver o `return` de `assembleExport`). Quem precisar dele lê a
+// tela de Comentários do app, que mostra todo comentário.
 function buildVerdictsByDoc(
   reviews: ExportReview[],
-  currentRoundId: string | null,
+  fieldByName: ReadonlyMap<string, PydanticField>,
 ): Map<string, VerdictEntry> {
   const byDoc = new Map<string, VerdictEntry>();
-  for (const r of reviews) {
-    if (r.round_id !== currentRoundId) continue;
-    let entry = byDoc.get(r.document_id);
+  const entryOf = (documentId: string) => {
+    let entry = byDoc.get(documentId);
     if (!entry) {
       entry = { fields: new Map(), comments: [] };
-      byDoc.set(r.document_id, entry);
+      byDoc.set(documentId, entry);
     }
-    entry.fields.set(r.field_name, formatVerdict(r.verdict));
-    if (r.comment) entry.comments.push(`[${r.field_name}] ${r.comment}`);
+    return entry;
+  };
+  for (const r of pickValidCellReviews(reviews, fieldByName).values()) {
+    entryOf(r.document_id).fields.set(r.field_name, formatVerdict(r.verdict));
+  }
+  for (const r of reviews) {
+    if (!r.comment || !reviewIsValid(r, fieldByName.get(r.field_name))) continue;
+    entryOf(r.document_id).comments.push(`[${r.field_name}] ${r.comment}`);
   }
   return byDoc;
 }
@@ -369,10 +373,10 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   const baseResponses = responses.filter((r) => identity.has(r.document_id));
   const baseReviews = reviews.filter((r) => identity.has(r.document_id));
 
-  const verdictsByDoc = buildVerdictsByDoc(baseReviews, input.currentRoundId);
-  applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
   const fieldByName = new Map<string, PydanticField>();
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
+  const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName);
+  applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
   const agreementByDoc = buildAgreementByDoc(
     baseResponses,
     exportableFields,

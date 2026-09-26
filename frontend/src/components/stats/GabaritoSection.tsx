@@ -15,6 +15,7 @@ import {
   type GabaritoRespondentAnswer,
 } from "@/actions/stats";
 import { formatVerdictAnswer } from "@/lib/reviews/verdict-format";
+import { INVALID_VERDICT_LABELS } from "@/lib/review-validity";
 import {
   type ReviewComment,
   formatVerdictLabel,
@@ -87,7 +88,9 @@ export function GabaritoSection({ comment, projectId }: GabaritoSectionProps) {
       <CollapsibleContent>
         <div className="mt-1 space-y-1.5 rounded-md bg-muted/50 p-3">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-medium">Gabarito:</span>
+            <span className="text-xs font-medium">
+              {comment.verdictInvalidReason ? `${INVALID_VERDICT_LABELS[comment.verdictInvalidReason]}:` : "Gabarito:"}
+            </span>
             <Badge
               variant={verdictVariant(comment.verdict)}
               className="text-xs"

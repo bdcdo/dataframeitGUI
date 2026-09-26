@@ -142,11 +142,41 @@ describe("syncCompareAssignment — piso de versão latest_major (#247/#286)", (
     expect(updateCallsOf("assignments")).toHaveLength(0);
   });
 
+  // #758: o fecho segue a mesma regra do Gabarito. Veredito dado sobre outra
+  // versão da pergunta (hash diferente) ou fora das opções atuais não resolve
+  // a divergência, e o parecer não fecha com uma célula que o Gabarito não tem.
+  it.each([
+    ["pergunta alterada", { verdict: "proc", field_hash: "velho0000000" }],
+    ["veredito fora das opções atuais", { verdict: "talvez", field_hash: null }],
+  ])("veredito que perdeu a validade (%s) não fecha o parecer", async (_label, stale) => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.projects = [projectRow({ pydantic_fields: [{ ...FIELDS[0], hash: "novo00000000" }] })];
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    tableData.reviews = [
+      { project_id: "p1", document_id: "doc1", reviewer_id: "rev1", field_name: "decisao", ...stale },
+    ];
+    const client = makeClient();
+    await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
+    expect(updateCallsOf("assignments")).toHaveLength(0);
+  });
+
+  it("veredito da mesma pergunta, de rodada anterior, fecha o parecer", async () => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.projects = [projectRow({ pydantic_fields: [{ ...FIELDS[0], hash: "novo00000000" }] })];
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    tableData.reviews = [
+      { project_id: "p1", document_id: "doc1", reviewer_id: "rev1", field_name: "decisao", verdict: "proc", field_hash: "novo00000000" },
+    ];
+    const client = makeClient();
+    await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
+    expect(updateCallsOf("assignments")[0].payload).toMatchObject({ status: "concluido" });
+  });
+
   it("divergência corrente resolvida pela revisora → fecha (concluido)", async () => {
     const { syncCompareAssignment } = await loadLib();
     tableData.responses = [resp("a", "proc"), resp("b", "improc")];
     tableData.reviews = [
-      { project_id: "p1", document_id: "doc1", reviewer_id: "rev1", field_name: "decisao" },
+      { project_id: "p1", document_id: "doc1", reviewer_id: "rev1", field_name: "decisao", verdict: "proc", field_hash: null },
     ];
     const client = makeClient();
     await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
@@ -267,6 +297,8 @@ describe("syncCompareAssignment — regressão de comparação histórica (#497)
         document_id: "doc1",
         reviewer_id: "rev1",
         field_name: "decisao",
+        verdict: "proc",
+        field_hash: null,
       },
     ];
     queryErrors["assignments:update"] = {
@@ -394,6 +426,8 @@ describe("syncCompareAssignmentsForDocument (#545)", () => {
         document_id: "doc1",
         reviewer_id: "rev-atual",
         field_name: "decisao",
+        verdict: "proc",
+        field_hash: null,
       },
     ];
     const client = makeClient();
@@ -433,6 +467,8 @@ describe("syncCompareAssignmentsForDocument (#545)", () => {
         document_id: "doc1",
         reviewer_id: "rev-ativa",
         field_name: "decisao",
+        verdict: "proc",
+        field_hash: null,
       },
     ];
     const client = makeClient();

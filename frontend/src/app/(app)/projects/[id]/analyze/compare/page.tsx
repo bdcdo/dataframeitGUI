@@ -222,7 +222,7 @@ export default async function ComparePageRoute({
       // estado "já revisado" da tela e travavam o fecho do parecer.
       supabase
         .from("reviews")
-        .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id")
+        .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
         .eq("project_id", id)
         .eq("reviewer_id", queueUserId),
       supabase
@@ -246,11 +246,12 @@ export default async function ComparePageRoute({
 
   // Track reviews da identidade efetiva para preencher reviewedCount — na
   // impersonação, o progresso exibido é o do dono da fila, não o do master.
-  const { existingReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
+  const { existingReviews, staleReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
     reviews,
     queueUserId,
     qualifiedDocIds,
     divergentFields,
+    new Map(fields.map((f) => [f.name, f])),
   );
   for (const docId of qualifiedDocIds) {
     coverageByDoc[docId].reviewedCount = reviewedCountByDoc[docId] ?? 0;
@@ -281,6 +282,7 @@ export default async function ComparePageRoute({
         divergentFields={divergentFields}
         fields={fields}
         existingReviews={existingReviews}
+        staleReviews={staleReviews}
         projectPydanticHash={project?.pydantic_hash ?? null}
         respondentNames={respondentNames}
         defaultMinHumans={compareDefaults.minHumans}

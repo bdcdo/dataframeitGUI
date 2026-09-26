@@ -16,6 +16,10 @@ const state = vi.hoisted(() => ({
   rpcResults: undefined as Record<string, TableResult | TableResult[]> | undefined,
 }));
 const fetchMock = vi.hoisted(() => vi.fn());
+// Espião na fronteira: a regra da ressincronização tem teste próprio
+// (compare-assignment-sync.test.ts); aqui só interessa QUE o save a dispara.
+const resyncMock = vi.hoisted(() => vi.fn(async () => ({ checked: 0, changes: [] })));
+vi.mock("@/lib/compare-assignment-sync", () => ({ resyncProjectCompareAssignments: resyncMock }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ getAuthUser: async () => ({ id: "userCoord" }) }));
@@ -57,6 +61,98 @@ beforeEach(() => {
   state.tables = undefined;
   state.rpcResults = undefined;
   fetchMock.mockReset();
+  resyncMock.mockClear();
+});
+
+// Uma mudança de schema pode tirar a validade de vereditos (hash da pergunta,
+// opções) e mudar a divergência (piso de versão). O status do assignment de
+// comparação só era recalculado no voto, e o parecer ficava "concluido" com
+// campos pendentes.
+describe("gravar o schema ressincroniza os assignments de comparação", () => {
+  it("save gravado dispara a ressincronização do projeto", async () => {
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(resyncMock).toHaveBeenCalledTimes(1);
+    expect(resyncMock).toHaveBeenCalledWith(expect.anything(), "p1");
+  });
+
+  it("falha da ressincronização não desfaz o save", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    resyncMock.mockRejectedValueOnce(new Error("rede"));
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("rede"));
+    error.mockRestore();
+  });
+
+  it.each([
+    ["conflito", { data: commitRow({ status: "conflict", schema_revision: 4 }) }],
+    ["erro", { error: { message: "histórico indisponível" } }],
+  ])("save com %s não ressincroniza", async (_label, rpcResult) => {
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = { commit_project_schema: rpcResult };
+
+    await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(resyncMock).not.toHaveBeenCalled();
+  });
+
+  // A reconstrução do histórico reatribui a versão das respostas, e o piso de
+  // versão da Comparação passa a contar outras respostas.
+  it("reconstruir o histórico de versões ressincroniza", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: {
+        data: [{
+          id: "log-1", field_name: "q1", before_value: {}, after_value: FIELD,
+          created_at: "2026-01-01T00:00:00.000Z", change_type: null,
+        }],
+      },
+      responses: { data: [] },
+    };
+    state.rpcResults = { apply_schema_backfill: { data: commitRow({ schema_revision: 4, pydantic_fields: [FIELD] }) } };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result.status).toBe("saved");
+    expect(resyncMock).toHaveBeenCalledTimes(1);
+    expect(resyncMock).toHaveBeenCalledWith(expect.anything(), "p1");
+  });
+
+  it("publicar MAJOR ressincroniza: o piso de versão muda a divergência", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          pydantic_fields: [FIELD],
+          pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
+          schema_revision: 7,
+        },
+      },
+    };
+    state.rpcResults = { commit_project_schema: { data: commitRow({ schema_revision: 8, schema_version_major: 1 }) } };
+
+    const result = await publishMajorVersion("p1", { revision: 7 });
+
+    expect(result.status).toBe("saved");
+    expect(resyncMock).toHaveBeenCalledWith(expect.anything(), "p1");
+  });
 });
 
 describe("saveSchemaFromGUI", () => {

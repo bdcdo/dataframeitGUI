@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
+import { toast } from "sonner";
+import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 import type { PydanticField } from "@/lib/types";
 import type {
   FieldResponse,
@@ -29,6 +31,35 @@ interface UseCompareKeyboardParams {
   onSubmitSpecialVerdict: (verdict: "ambiguo" | "pular") => void;
   onConfirmPendingVerdict: () => void;
   hasPendingVerdict: boolean;
+}
+
+// A tecla do número do card prepara o voto nele. A resposta fora das opções
+// atuais não vira rascunho: o card dela não oferece voto (`AnswerCard`,
+// `outOfDomain`), e o veredito copiado nasceria sem validade, que
+// `submitVerdict` só recusaria na confirmação.
+function prepareGroupVote(
+  group: FieldResponse[],
+  currentField: PydanticField | undefined,
+  origin: VerdictOrigin,
+  onPrepareVerdict: (pending: PendingVerdict) => void,
+): void {
+  const answer = group[0].answer;
+  const displayAnswer =
+    answer == null
+      ? ""
+      : Array.isArray(answer)
+        ? answer.join(", ")
+        : String(answer);
+  if (!copiedVerdictInDomain(displayAnswer, currentField)) {
+    toast.error(OUT_OF_DOMAIN_VOTE_MESSAGE, { id: "compare-out-of-domain" });
+    return;
+  }
+  onPrepareVerdict({
+    kind: "response",
+    verdict: displayAnswer,
+    chosenResponseId: group[0].id,
+    origin,
+  });
 }
 
 /**
@@ -108,20 +139,7 @@ export function useCompareKeyboard({
 
       const num = parseInt(e.key);
       if (num >= 1 && num <= answerGroups.length) {
-        const group = answerGroups[num - 1];
-        const answer = group[0].answer;
-        const displayAnswer =
-          answer == null
-            ? ""
-            : Array.isArray(answer)
-              ? answer.join(", ")
-              : String(answer);
-        onPrepareVerdict({
-          kind: "response",
-          verdict: displayAnswer,
-          chosenResponseId: group[0].id,
-          origin,
-        });
+        prepareGroupVote(answerGroups[num - 1], currentField, origin, onPrepareVerdict);
         return;
       }
 

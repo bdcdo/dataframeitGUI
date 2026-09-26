@@ -55,6 +55,7 @@ GATE_SUITES=(
   llm_rate_limit
   llm_runs_round
   reviews_round_id
+  reviews_field_hash
   llm_error_decisions
   llm_error_decisions_concurrency
   member_permission_rpcs

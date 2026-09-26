@@ -4,33 +4,11 @@ import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
-import {
-  isAnswerCorrect,
-  resolveViewedRespondentId,
-} from "@/lib/reviews/queries";
+import { resolveViewedRespondentId } from "@/lib/reviews/queries";
+import { buildMyVerdictItems, type MyVerdictReviewRow } from "@/lib/reviews/my-verdicts";
 import type { PydanticField } from "@/lib/types";
 
-export interface VerdictItem {
-  reviewId: string;
-  documentId: string;
-  documentTitle: string;
-  fieldName: string;
-  fieldDescription: string;
-  fieldType: "single" | "multi" | "text" | "date";
-  verdict: string;
-  coordinatorComment: string | null;
-  myAnswer: unknown;
-  isCorrect: boolean;
-  responseSnapshot: Array<{
-    id: string;
-    respondent_name: string;
-    respondent_type: "humano" | "llm";
-    answer: unknown;
-    justification?: string;
-  }> | null;
-  acknowledgmentStatus: "pending" | "accepted" | "questioned" | null;
-  acknowledgmentComment: string | null;
-}
+export type { VerdictItem } from "@/lib/reviews/my-verdicts";
 
 export default async function MyVerdictsPage({
   params,
@@ -81,8 +59,6 @@ export default async function MyVerdictsPage({
     .eq("is_latest", true);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
-  const fieldDescMap = new Map(fields.map((f) => [f.name, f.description]));
-  const fieldTypeMap = new Map(fields.map((f) => [f.name, (f.type || "text") as VerdictItem["fieldType"]]));
 
   // Get document IDs where I have responses
   const myDocIds = [...new Set((myResponses || []).map((r) => r.document_id))];
@@ -105,7 +81,7 @@ export default async function MyVerdictsPage({
   ] = await Promise.all([
     supabase
       .from("reviews")
-      .select("id, document_id, field_name, verdict, comment, response_snapshot, chosen_response_id")
+      .select("id, document_id, field_name, verdict, comment, response_snapshot, created_at, field_hash, chosen_response_id")
       .eq("project_id", id)
       .in("document_id", myDocIds),
     supabase
@@ -137,46 +113,19 @@ export default async function MyVerdictsPage({
       ).values()]
     : [];
 
-  const docMap = new Map(
-    documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
-  );
-  const ackMap = new Map(
-    acknowledgments?.map((a) => [a.review_id, { status: a.status, comment: a.comment }]) || [],
-  );
-  const myAnswersMap = new Map(
-    myResponses?.map((r) => [r.document_id, r.answers as Record<string, unknown>]) || [],
-  );
-
-  // Build verdict items
-  const verdictItems = (reviews || [])
-    .map((r) => {
-      const myAnswers = myAnswersMap.get(r.document_id);
-      if (!myAnswers) return null;
-      const myAnswer = myAnswers[r.field_name];
-      if (myAnswer === undefined) return null;
-
-      const fieldType = fieldTypeMap.get(r.field_name) || "text";
-      const isCorrect = isAnswerCorrect(myAnswer, r.verdict, fieldType);
-
-      const ack = ackMap.get(r.id);
-
-      return {
-        reviewId: r.id,
-        documentId: r.document_id,
-        documentTitle: docMap.get(r.document_id) || r.document_id,
-        fieldName: r.field_name,
-        fieldDescription: fieldDescMap.get(r.field_name) || r.field_name,
-        fieldType: fieldTypeMap.get(r.field_name) || "text",
-        verdict: r.verdict,
-        coordinatorComment: r.comment,
-        myAnswer,
-        isCorrect,
-        responseSnapshot: r.response_snapshot as VerdictItem["responseSnapshot"],
-        acknowledgmentStatus: (ack?.status as VerdictItem["acknowledgmentStatus"]) ?? null,
-        acknowledgmentComment: ack?.comment ?? null,
-      };
-    })
-    .filter((v) => v !== null) as VerdictItem[];
+  const verdictItems = buildMyVerdictItems({
+    reviews: (reviews ?? []) as MyVerdictReviewRow[],
+    fields,
+    myAnswersByDoc: new Map(
+      myResponses?.map((r) => [r.document_id, r.answers as Record<string, unknown>]) || [],
+    ),
+    docTitles: new Map(
+      documents?.map((d) => [d.id, d.title || d.external_id || d.id]) || [],
+    ),
+    acknowledgments: new Map(
+      acknowledgments?.map((a) => [a.review_id, { status: a.status, comment: a.comment }]) || [],
+    ),
+  });
 
   return (
     <div className="mx-auto max-w-6xl p-6">

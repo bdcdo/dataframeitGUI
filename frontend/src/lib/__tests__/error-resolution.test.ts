@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  blankAnswerFor, choosesValue, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, isBlankAnswer,
+  blankAnswerFor, choosesValue, decisionDependsOnSource, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, isBlankAnswer,
   prefillLosesItems, prefillFromValue, prefillFromVerdict, startsBlank,
-  type ErrorResolutionRow, type ErrorResolutionContext,
+  type ErrorDecision, type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
 import type { PydanticField } from "@/lib/types";
 
@@ -306,5 +306,21 @@ describe("classe de branco de set_error_resolution", () => {
     const trimmed: number[] = [];
     for (let c = 0; c <= 0xffff; c++) if (String.fromCharCode(c).trim() === "") trimmed.push(c);
     expect([...inClass].sort((a, b) => a - b)).toEqual(trimmed);
+  });
+});
+
+describe("decisionDependsOnSource: decisão que depende do veredito de origem (#758)", () => {
+  it.each<[ErrorDecision, boolean]>([
+    ["llm_correct", false],
+    ["researchers_correct", false],
+    ["all_wrong", false],
+    ["both_correct", true],
+    ["discussion", true],
+  ])("%s depende da fonte: %s", (decision, depends) => {
+    expect(decisionDependsOnSource(decision)).toBe(depends);
+  });
+
+  it("decisão sem tipo (legado) nasce dependendo da fonte", () => {
+    expect(decisionDependsOnSource(null)).toBe(true);
   });
 });

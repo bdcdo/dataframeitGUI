@@ -370,6 +370,13 @@ describe("buildDocumentsForCompare", () => {
   });
 });
 
+// Campos de texto sem hash: os vereditos das fixtures abaixo, com
+// `field_hash` NULL, valem pelo domínio, que em texto é sempre aberto.
+const TEXT_FIELDS = new Map([
+  ["a", field({ name: "a" })],
+  ["b", field({ name: "b" })],
+]);
+
 describe("buildReviewsAndReviewedCounts", () => {
   it("monta existingReviews e reviewedCount só com os vereditos do usuário atual", () => {
     const { existingReviews, reviewedCountByDoc } = buildReviewsAndReviewedCounts(
@@ -381,6 +388,7 @@ describe("buildReviewsAndReviewedCounts", () => {
           chosen_response_id: "r1",
           comment: null,
           reviewer_id: "me",
+          field_hash: null,
         },
         {
           document_id: "doc1",
@@ -389,11 +397,13 @@ describe("buildReviewsAndReviewedCounts", () => {
           chosen_response_id: "r2",
           comment: "ok",
           reviewer_id: "outro",
+          field_hash: null,
         },
       ],
       "me",
       ["doc1"],
       { doc1: ["a", "b"] },
+      TEXT_FIELDS,
     );
     expect(existingReviews.doc1.a.verdict).toBe("resposta_a");
     // veredito de outro revisor NÃO semeia a tela do usuário atual — a
@@ -415,6 +425,7 @@ describe("buildReviewsAndReviewedCounts", () => {
           chosen_response_id: null,
           comment: null,
           reviewer_id: "coordenador",
+          field_hash: null,
         },
         {
           document_id: "doc1",
@@ -423,18 +434,52 @@ describe("buildReviewsAndReviewedCounts", () => {
           chosen_response_id: null,
           comment: null,
           reviewer_id: "coordenador",
+          field_hash: null,
         },
       ],
       "me",
       ["doc1"],
       { doc1: ["a", "b"] },
+      TEXT_FIELDS,
     );
     expect(existingReviews.doc1).toBeUndefined();
     expect(reviewedCountByDoc.doc1).toBe(0);
   });
 
+  describe("veredito vale enquanto a pergunta não muda (#758)", () => {
+    const fields = new Map([["a", field({ name: "a", type: "single", options: ["Sim", "Não"], hash: "novo00000000" })]]);
+    const mine = (overrides: { field_hash: string | null; verdict?: string }) => ({
+      document_id: "doc1", field_name: "a", verdict: overrides.verdict ?? "Sim", chosen_response_id: "r1",
+      comment: "antes", reviewer_id: "me", field_hash: overrides.field_hash,
+    });
+
+    it("veredito da mesma pergunta, de qualquer rodada, conta como revisado", () => {
+      const out = buildReviewsAndReviewedCounts([mine({ field_hash: "novo00000000" })], "me", ["doc1"], { doc1: ["a"] }, fields);
+      expect(out.existingReviews.doc1.a.verdict).toBe("Sim");
+      expect(out.staleReviews.doc1).toBeUndefined();
+      expect(out.reviewedCountByDoc.doc1).toBe(1);
+    });
+
+    it("resposta nova digitada com o hash atual conta como revisada, mesmo fora das opções", () => {
+      const typed = { ...mine({ field_hash: "novo00000000", verdict: "Não houve" }), chosen_response_id: null };
+      const out = buildReviewsAndReviewedCounts([typed], "me", ["doc1"], { doc1: ["a"] }, fields);
+      expect(out.existingReviews.doc1.a.verdict).toBe("Não houve");
+      expect(out.reviewedCountByDoc.doc1).toBe(1);
+    });
+
+    it.each([
+      ["pergunta alterada", mine({ field_hash: "velho0000000" }), "pergunta_alterada"],
+      ["veredito fora das opções atuais", mine({ field_hash: null, verdict: "Talvez" }), "fora_do_dominio"],
+    ])("%s: a célula volta a pedir arbitragem e o veredito antigo fica como referência, com o motivo", (_label, stale, reason) => {
+      const out = buildReviewsAndReviewedCounts([stale], "me", ["doc1"], { doc1: ["a"] }, fields);
+      expect(out.existingReviews.doc1).toBeUndefined();
+      expect(out.reviewedCountByDoc.doc1).toBe(0);
+      expect(out.staleReviews.doc1.a).toEqual({ verdict: stale.verdict, chosenResponseId: "r1", comment: "antes", invalidReason: reason });
+    });
+  });
+
   it("doc sem nenhum review do usuário atual conta 0", () => {
-    const { reviewedCountByDoc } = buildReviewsAndReviewedCounts(null, "me", ["doc1"], { doc1: ["a"] });
+    const { reviewedCountByDoc } = buildReviewsAndReviewedCounts(null, "me", ["doc1"], { doc1: ["a"] }, TEXT_FIELDS);
     expect(reviewedCountByDoc.doc1).toBe(0);
   });
 });

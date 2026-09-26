@@ -1,3 +1,6 @@
+import type { ReviewInvalidReason } from "@/lib/review-validity";
+import { formatVerdictDisplay } from "@/lib/verdict-display";
+
 export { TYPE_LABELS, TYPE_COLORS } from "@/lib/field-labels";
 
 export interface ResponseSnapshotEntry {
@@ -23,6 +26,11 @@ export interface ReviewComment {
   resolvedAt: string | null;
   createdAt: string;
   chosenResponseId: string | null;
+  /**
+   * Só em comentário de review cujo veredito não é mais gabarito: o motivo
+   * (`review-validity.ts`), que a tela usa para rotulá-lo (#758).
+   */
+  verdictInvalidReason?: ReviewInvalidReason;
   source:
     | "review"
     | "nota"
@@ -64,18 +72,8 @@ export function formatVerdictLabel(verdict: string): string {
   if (verdict === "duvida") return "Dúvida do gabarito";
   if (verdict === "ambiguo") return "Ambíguo";
   if (verdict === "pular") return "Pular";
-  if (verdict.startsWith("{")) {
-    try {
-      const parsed = JSON.parse(verdict) as Record<string, boolean>;
-      const selected = Object.entries(parsed)
-        .filter(([, v]) => v)
-        .map(([k]) => k);
-      return selected.length > 0 ? selected.join(", ") : "(nenhuma)";
-    } catch {
-      /* fallback */
-    }
-  }
-  return verdict;
+  // O `multi` em JSON vira a lista das opções marcadas; o resto, como está.
+  return formatVerdictDisplay(verdict);
 }
 
 export function verdictVariant(

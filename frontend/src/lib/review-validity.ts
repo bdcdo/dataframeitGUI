@@ -1,0 +1,218 @@
+// Quando um veredito da Comparação (`reviews`) ainda vale como gabarito.
+//
+// O veredito é sobre a resposta certa de um documento para uma pergunta. Ele
+// vale enquanto (1) o campo existe no schema atual, (2) `field_hash`, o hash do
+// campo carimbado no veredito pelo banco, é o hash atual do campo, ou é NULL
+// (legado, sem como provar a pergunta) e (3) o valor do veredito está no
+// domínio atual do campo, conferido só quando o hash é NULL ou o veredito foi
+// copiado de uma resposta (`chosen_response_id`). O veredito digitado pelo
+// revisor ("Nenhuma correta") com o hash atual vale mesmo fora das opções: as
+// opções entram no hash, então o hash igual prova que o texto foi digitado sob
+// as opções atuais. O copiado fora das opções é resposta recodificada depois
+// sob outra versão, que o backfill pode ter carimbado com o hash novo. A
+// rodada não entra na regra, e editar a resposta escolhida depois da
+// arbitragem não invalida o veredito.
+//
+// Todo leitor de `reviews` que trata veredito como gabarito passa por aqui:
+// Gabarito, export, métrica e fila do LLM Insights, Comparação, fecho do
+// parecer, Meus vereditos, Comentários e a checagem de ambíguo de
+// `submitVerdict`. A cópia SQL da regra é `review_verdict_valid` (migration
+// 20260926120000_reviews_field_hash.sql), usada por `llm_error_context` e pelas
+// invariantes; a matriz de casos do teste SQL é a mesma do teste unitário
+// deste módulo.
+//
+// Puro e client-safe.
+import { resolveAllowOther } from "@/lib/pydantic-field";
+import { parseExistingMultiVerdict } from "@/lib/compare-multi-choices";
+import { groupBy } from "@/lib/utils";
+import type { PydanticField } from "@/lib/types";
+
+/** As colunas de `reviews` de que a regra precisa. */
+export interface ValidatableReview {
+  field_name: string;
+  verdict: string;
+  /** `reviews.field_hash`; `null` é veredito legado, anterior ao carimbo. */
+  field_hash: string | null;
+  /** Presente quando o veredito foi copiado de uma resposta (voto em card). */
+  chosen_response_id: string | null;
+}
+
+export type ReviewInvalidReason =
+  | "campo_removido"
+  | "pergunta_alterada"
+  | "fora_do_dominio";
+
+export type ReviewValidity =
+  | { valid: true }
+  | { valid: false; reason: ReviewInvalidReason };
+
+/**
+ * Como a tela nomeia o veredito que não vale, por motivo. Fonte única dos
+ * rótulos da Comparação, do Gabarito e do LLM Insights: cada tela diz o
+ * motivo real, e não "mudança da pergunta" para todos.
+ */
+export const INVALID_VERDICT_LABELS: Record<ReviewInvalidReason, string> = {
+  pergunta_alterada: "Veredito anterior à mudança da pergunta",
+  fora_do_dominio: "Veredito fora das opções atuais da pergunta",
+  campo_removido: "Veredito de pergunta removida do formulário",
+};
+
+export type DomainField = Pick<PydanticField, "type" | "options" | "allow_other">;
+
+// Marcadores da Comparação que nunca são resposta (ver compare-types.ts). O
+// branco é o voto no grupo de respostas vazias: diz que o documento não traz o
+// dado, e não depende das opções.
+const DOMAIN_FREE_VERDICTS = new Set(["", "ambiguo", "pular"]);
+
+// Só o espaço comum, como o `btrim` da cópia SQL: `String.prototype.trim` tira
+// também tabulação, quebra de linha e NBSP, e as duas cópias divergiriam no
+// mesmo veredito.
+function trimSpaces(text: string): string {
+  return text.replace(/^ +| +$/g, "");
+}
+
+/**
+ * Se o valor do veredito está no domínio atual do campo. Opção de formulário
+ * carrega espaço final e o valor gravado nem sempre, então os dois lados são
+ * comparados sem espaço nas pontas.
+ */
+export function verdictInDomain(verdict: string, field: DomainField): boolean {
+  const text = trimSpaces(verdict);
+  if (DOMAIN_FREE_VERDICTS.has(text)) return true;
+  if (resolveAllowOther(field.allow_other)) return true;
+  const options = new Set((field.options ?? []).map(trimSpaces));
+  if (options.size === 0) return true;
+  if (field.type === "single") return options.has(text);
+  if (field.type === "multi") {
+    return verdictSelection(text, options).every((option) => options.has(trimSpaces(option)));
+  }
+  return true;
+}
+
+/**
+ * As opções que um veredito de `multi` marca. O votado na grade é o JSON
+ * `{opção: bool}`, e contam as chaves `true`. O votado em card (pergunta que
+ * era `single` quando foi arbitrada) é o texto "A, B": uma opção inteira de
+ * `options`, ou as partes separadas por ", ". Opção que contém ", " num
+ * veredito em texto, fora de `options`, sai partida; no domínio é o único
+ * falso negativo, e só alcança veredito legado, sem hash, de campo que virou
+ * `multi`.
+ */
+export function verdictSelection(verdict: string, options: ReadonlySet<string>): string[] {
+  const text = trimSpaces(verdict);
+  const selection = parseExistingMultiVerdict(text);
+  if (selection) return Object.entries(selection).flatMap(([option, marked]) => (marked === true ? [option] : []));
+  if (text === "") return [];
+  return options.has(text) ? [text] : text.split(", ").map(trimSpaces);
+}
+
+/**
+ * O que o revisor lê quando o voto copiaria uma resposta que saiu das opções:
+ * com o piso de versão `latest_major`, a Comparação mostra respostas de
+ * versões minor anteriores, e o veredito copiado delas nasceria fora do
+ * domínio. `submitVerdict` e `confirmEquivalentVerdict` recusam com esta
+ * mensagem; o card e o teclado não oferecem o voto.
+ */
+export const OUT_OF_DOMAIN_VOTE_MESSAGE =
+  "A resposta usa uma opção que não está mais no formulário. Escolha outra resposta ou digite o veredito.";
+
+/**
+ * Se o voto que copia `verdict` de uma resposta nasceria válido quanto ao
+ * domínio. Campo ausente do schema não é assunto desta guarda: o veredito
+ * nasce sem hash e a regra o trata como campo removido.
+ */
+export function copiedVerdictInDomain(verdict: string, field: DomainField | undefined): boolean {
+  return !field || verdictInDomain(verdict, field);
+}
+
+/** A regra inteira, com o motivo quando o veredito não vale. */
+export function reviewValidity(
+  review: ValidatableReview,
+  field: (DomainField & Pick<PydanticField, "hash">) | undefined,
+): ReviewValidity {
+  if (!field) return { valid: false, reason: "campo_removido" };
+  // `field.hash` ausente com veredito carimbado não prova a pergunta: é a
+  // mesma leitura de `p_field_hash = p_field->>'hash'` na cópia SQL, que dá
+  // NULL e reprova.
+  if (review.field_hash !== null && review.field_hash !== field.hash) {
+    return { valid: false, reason: "pergunta_alterada" };
+  }
+  const domainApplies = review.field_hash === null || review.chosen_response_id !== null;
+  if (domainApplies && !verdictInDomain(review.verdict, field)) {
+    return { valid: false, reason: "fora_do_dominio" };
+  }
+  return { valid: true };
+}
+
+/** O motivo de o veredito não valer, ou `undefined` quando ele vale. */
+export function invalidReasonOf(
+  review: ValidatableReview,
+  field: (DomainField & Pick<PydanticField, "hash">) | undefined,
+): ReviewInvalidReason | undefined {
+  const validity = reviewValidity(review, field);
+  return validity.valid ? undefined : validity.reason;
+}
+
+export function reviewIsValid(
+  review: ValidatableReview,
+  field: (DomainField & Pick<PydanticField, "hash">) | undefined,
+): boolean {
+  return reviewValidity(review, field).valid;
+}
+
+/** O que `pickCellReview` precisa para desempatar. */
+export interface OrderableReview {
+  id: string;
+  created_at: string;
+}
+
+/**
+ * A review que vale por (documento, campo) quando há mais de uma: a mais
+ * recente por `created_at`, e entre iguais a de maior `id`. Recebe só reviews
+ * válidas de UMA célula; filtrar é trabalho do chamador (ou de
+ * `pickValidCellReviews`).
+ *
+ * `created_at` é a data da primeira gravação do revisor na célula: o upsert de
+ * rearbitragem de `submitVerdict` não a move. Entre dois revisores, vence quem
+ * arbitrou a célula pela primeira vez mais tarde, e não quem a rearbitrou por
+ * último; `reviews` não tem coluna que registre a rearbitragem.
+ */
+export function pickCellReview<R extends OrderableReview>(reviews: readonly R[]): R | undefined {
+  let winner: R | undefined;
+  for (const review of reviews) {
+    if (!winner || isNewer(review, winner)) winner = review;
+  }
+  return winner;
+}
+
+function isNewer(candidate: OrderableReview, incumbent: OrderableReview): boolean {
+  // Por instante, não pelo texto: o PostgREST e as fixtures não serializam o
+  // timestamptz sempre com o mesmo fuso e a mesma precisão.
+  const byTime = Date.parse(candidate.created_at) - Date.parse(incumbent.created_at);
+  if (byTime !== 0) return byTime > 0;
+  return candidate.id > incumbent.id;
+}
+
+function cellKey(documentId: string, fieldName: string): string {
+  return `${documentId}:${fieldName}`;
+}
+
+/**
+ * Uma review válida por (documento, campo), escolhida por `pickCellReview`,
+ * indexada por `cellKey`. Célula cujas reviews são todas inválidas fica de
+ * fora: ela volta ao consenso ou à Comparação.
+ */
+export function pickValidCellReviews<
+  R extends ValidatableReview & OrderableReview & { document_id: string },
+>(
+  reviews: readonly R[] | null | undefined,
+  fieldByName: ReadonlyMap<string, PydanticField>,
+): Map<string, R> {
+  const validByCell = groupBy(
+    (reviews ?? []).filter((review) => reviewIsValid(review, fieldByName.get(review.field_name))),
+    (review) => cellKey(review.document_id, review.field_name),
+  );
+  const picked = new Map<string, R>();
+  for (const [key, bucket] of validByCell) picked.set(key, pickCellReview(bucket)!);
+  return picked;
+}

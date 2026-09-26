@@ -56,7 +56,6 @@ function run(overrides: Partial<AssembleInput> = {}) {
     projectName: "Proj",
     fields: [],
     minResponses: 2,
-    currentRoundId: "round1",
     documents: [],
     responses: [],
     reviews: [],
@@ -108,7 +107,6 @@ describe("assembleExport — união ordenada das colunas originais", () => {
       projectName: "P",
       fields: [],
       minResponses: 2,
-      currentRoundId: "round1",
       documents: [
         doc("B", { created_at: "2024-02-01", columns: ["b", "c"] }),
         doc("A", { created_at: "2024-01-01", columns: ["a", "b"] }),
@@ -231,7 +229,7 @@ describe("assembleExport — prioridade do veredicto sobre a concordância", () 
         { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "concordado" } },
       ],
       reviews: [
-        { document_id: "A", field_name: "campo", round_id: "round1", verdict: "pular", comment: "nota do revisor" },
+        { document_id: "A", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "pular", comment: "nota do revisor" },
       ],
     });
     const row = d.verdicts.rows[0];
@@ -364,7 +362,7 @@ describe("assembleExport — filtra à base exportada (achado C1)", () => {
         { document_id: "ghost", respondent_name: "RX", respondent_type: "llm", answers: { campo: "x" } },
       ],
       reviews: [
-        { document_id: "ghost", field_name: "campo", round_id: "round1", verdict: "ambiguo", comment: null },
+        { document_id: "ghost", field_name: "campo", id: "rv1", created_at: "2026-01-01T00:00:00Z", field_hash: null, chosen_response_id: null, verdict: "ambiguo", comment: null },
       ],
     });
     const allIds = new Set([
@@ -499,49 +497,120 @@ describe("assembleExport — inteiro teor só na aba Documentos", () => {
   });
 });
 
-// --- Rodada corrente (#733) ---
+// --- Validade do veredito (#758): a pergunta, não a rodada ---
 
-describe("assembleExport — rodada corrente (#733)", () => {
+describe("assembleExport: validade do veredito (#758)", () => {
+  const HASH = "aaaaaaaaaaaa";
   const base = {
-    fields: [field("campo")],
+    fields: [field("campo", { hash: HASH })],
     documents: [doc("A")],
     responses: [
       { document_id: "A", respondent_name: "R1", respondent_type: "codificacao", answers: { campo: "sim" } },
       { document_id: "A", respondent_name: "R2", respondent_type: "codificacao", answers: { campo: "sim" } },
     ],
   };
+  const review = (overrides: Partial<{ id: string; verdict: string; comment: string | null; created_at: string; field_hash: string | null; chosen_response_id: string | null }> = {}) => ({
+    id: "rv1", document_id: "A", field_name: "campo", verdict: "não", comment: null,
+    created_at: "2026-01-01T00:00:00Z", field_hash: HASH, chosen_response_id: null, ...overrides,
+  });
 
-  it("veredito de rodada anterior não entra no gabarito: a célula cai para a concordância", () => {
-    const d = run({
-      ...base,
-      reviews: [{ document_id: "A", field_name: "campo", verdict: "não", comment: "antigo", round_id: "round0" }],
-    });
+  it("veredito de rodada anterior sobre a mesma pergunta prevalece sobre a concordância", () => {
+    // Não há rodada na review: a regra não a lê, e a pergunta é a mesma.
+    const d = run({ ...base, reviews: [review({ comment: "antigo" })] });
+    const row = d.verdicts.rows[0];
+    expect(row[idx(d.verdicts, "campo")]).toBe("não");
+    expect(row[idx(d.verdicts, "reviewer_comments")]).toBe("[campo] antigo");
+  });
+
+  it("veredito sobre outra versão da pergunta não entra: a célula cai para a concordância", () => {
+    const d = run({ ...base, reviews: [review({ comment: "antigo", field_hash: "ffffffffffff" })] });
     const row = d.verdicts.rows[0];
     expect(row[idx(d.verdicts, "campo")]).toBe("sim");
     expect(row[idx(d.verdicts, "reviewer_comments")]).toBe("");
   });
 
-  it("o mesmo veredito na rodada corrente prevalece sobre a concordância", () => {
+  it("veredito legado fora das opções atuais não entra", () => {
     const d = run({
       ...base,
-      reviews: [{ document_id: "A", field_name: "campo", verdict: "não", comment: null, round_id: "round1" }],
+      fields: [field("campo", { type: "single", options: ["sim", "não"], hash: HASH })],
+      reviews: [review({ verdict: "talvez", field_hash: null })],
     });
-    expect(d.verdicts.rows[0][idx(d.verdicts, "campo")]).toBe("não");
+    expect(d.verdicts.rows[0][idx(d.verdicts, "campo")]).toBe("sim");
   });
 
-  it("decisão gravada sobre célula de rodada antiga continua no gabarito", () => {
-    const resolution = resolutionFixture("researchers_correct");
+  it("resposta nova digitada com o hash atual entra mesmo fora das opções; copiada não", () => {
+    const single = { ...base, fields: [field("campo", { type: "single", options: ["sim", "não"], hash: HASH })] };
+    const typed = run({ ...single, reviews: [review({ verdict: "talvez", chosen_response_id: null })] });
+    expect(typed.verdicts.rows[0][idx(typed.verdicts, "campo")]).toBe("talvez");
+    const copied = run({ ...single, reviews: [review({ verdict: "talvez", chosen_response_id: "r1" })] });
+    expect(copied.verdicts.rows[0][idx(copied.verdicts, "campo")]).toBe("sim");
+  });
+
+  it("entre vereditos válidos da célula vence o mais recente por created_at", () => {
     const d = run({
-      fields: [field("x")],
+      ...base,
+      reviews: [
+        review({ id: "z", verdict: "velho", created_at: "2026-01-01T00:00:00Z" }),
+        review({ id: "a", verdict: "novo", created_at: "2026-02-01T00:00:00Z" }),
+      ],
+    });
+    expect(d.verdicts.rows[0][idx(d.verdicts, "campo")]).toBe("novo");
+  });
+
+  // A decisão com valor próprio é um julgamento novo sobre as respostas e a
+  // pergunta atuais; "Ambos corretos" e "Em discussão" dependem do veredito.
+  describe("decisão do LLM Insights ancorada em veredito", () => {
+    const decisionBase = {
+      fields: [field("x", { hash: HASH })],
       documents: [doc("doc1")],
       responses: [
         { document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { x: "LLM" } },
         { document_id: "doc1", respondent_name: "R1", respondent_type: "codificacao", answers: { x: "Humano" } },
       ],
-      reviews: [{ document_id: "doc1", field_name: "x", verdict: "Humano", comment: null, round_id: "round0" }],
-      errorResolutions: [resolution],
+    };
+    const source = (field_hash: string) => ({
+      id: "review1", document_id: "doc1", field_name: "x", verdict: "Humano", comment: null,
+      created_at: "2026-01-01T00:00:00Z", field_hash, chosen_response_id: "rh",
     });
-    expect(d.verdicts.rows).toHaveLength(1);
-    expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("Veredito");
+
+    it("Erro do LLM sobre veredito inválido continua no gabarito", () => {
+      const d = run({ ...decisionBase, reviews: [source("ffffffffffff")], errorResolutions: [resolutionFixture("researchers_correct")] });
+      expect(d.verdicts.rows).toHaveLength(1);
+      expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("Veredito");
+    });
+
+    // Sobre veredito inválido, `read_error_resolutions` não dá contexto
+    // corrente à decisão que depende da fonte.
+    it.each([
+      ["válido", HASH, "Em discussão", "", resolutionFixture("discussion")],
+      ["inválido", "ffffffffffff", "", undefined, { ...resolutionFixture("discussion"), current_context: null }],
+    ])("Em discussão sobre veredito %s", (_label, hash, comment, cell, resolution) => {
+      const d = run({ ...decisionBase, reviews: [source(hash)], errorResolutions: [resolution] });
+      if (cell === undefined) {
+        // Sem veredito válido nem concordância nem decisão: a linha nem existe.
+        expect(d.verdicts.rows).toHaveLength(0);
+        return;
+      }
+      expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe(cell);
+      expect(d.verdicts.rows[0][idx(d.verdicts, "reviewer_comments")]).toContain(comment);
+    });
+
+    it("Ambos corretos sobre veredito válido anota a célula; sobre inválido, nem a linha existe", () => {
+      const valid = run({ ...decisionBase, reviews: [source(HASH)], errorResolutions: [resolutionFixture("both_correct")] });
+      expect(valid.verdicts.rows[0][idx(valid.verdicts, "x")]).toBe("Humano");
+      expect(valid.verdicts.rows[0][idx(valid.verdicts, "reviewer_comments")]).toContain("Ambos corretos");
+      const stale = run({ ...decisionBase, reviews: [source("ffffffffffff")],
+        errorResolutions: [{ ...resolutionFixture("both_correct"), current_context: null }] });
+      expect(stale.verdicts.rows).toHaveLength(0);
+    });
+
+    // A fonte vale mesmo sem ser a review escolhida da célula: outro revisor
+    // arbitrou depois, e os dois vereditos valem.
+    it("Em discussão ancorada no veredito válido mais antigo da célula bloqueia o gabarito", () => {
+      const newer = { ...source(HASH), id: "review2", created_at: "2026-02-01T00:00:00Z" };
+      const d = run({ ...decisionBase, reviews: [newer, source(HASH)], errorResolutions: [resolutionFixture("discussion")] });
+      expect(d.verdicts.rows[0][idx(d.verdicts, "x")]).toBe("");
+      expect(d.verdicts.rows[0][idx(d.verdicts, "reviewer_comments")]).toContain("Em discussão");
+    });
   });
 });

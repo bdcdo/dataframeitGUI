@@ -16,7 +16,8 @@ import {
   type SchemaVersion,
   parseVersionStr,
 } from "@/lib/compare-version";
-import type { ReviewsByDoc } from "@/lib/compare-reviews";
+import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
+import { reviewValidity } from "@/lib/review-validity";
 import type { PydanticField } from "@/lib/types";
 import type { CompareResponse } from "@/components/compare/compare-types";
 
@@ -93,6 +94,8 @@ export interface ReviewRow {
   chosen_response_id: string | null;
   comment: string | null;
   reviewer_id: string | null;
+  /** `reviews.field_hash`: o hash do campo quando a arbitragem foi feita. */
+  field_hash: string | null;
 }
 
 export interface CommentCountRow {
@@ -374,8 +377,20 @@ export function buildReviewsAndReviewedCounts(
   userId: string,
   qualifiedDocIds: string[],
   divergentFields: Record<string, string[]>,
-): { existingReviews: ReviewsByDoc; reviewedCountByDoc: Record<string, number> } {
+  fieldByName: ReadonlyMap<string, PydanticField>,
+): {
+  existingReviews: ReviewsByDoc;
+  /**
+   * Vereditos do revisor que perderam a validade (`review-validity.ts`): a
+   * pergunta mudou depois deles, ou o valor saiu das opções. Não contam como
+   * revisados, e a célula volta a pedir arbitragem; a tela os mostra só como
+   * referência.
+   */
+  staleReviews: StaleReviewsByDoc;
+  reviewedCountByDoc: Record<string, number>;
+} {
   const existingReviews: ReviewsByDoc = {};
+  const staleReviews: StaleReviewsByDoc = {};
 
   // A revisão da Comparação é POR REVISOR (UNIQUE inclui reviewer_id, e
   // syncCompareAssignment fecha o assignment contando só os reviews do
@@ -385,15 +400,24 @@ export function buildReviewsAndReviewedCounts(
   // marcava docs revisados por outro revisor como "Revisão concluída" na tela
   // de quem nunca os revisou: o teclado de voto era bloqueado e o assignment
   // nunca fechava — o parecer travava na fila (bug relatado em 2026-07-10).
+  //
+  // Veredito que perdeu a validade vai para `staleReviews` e não conta: o
+  // mesmo critério do Gabarito e do fecho (`syncCompareAssignment`), senão o
+  // campo apareceria "já revisado" aqui enquanto some do Gabarito.
   const myReviewsByDoc = new Map<string, Set<string>>();
   reviews?.forEach((r) => {
     if (r.reviewer_id !== userId) return;
-    if (!existingReviews[r.document_id]) existingReviews[r.document_id] = {};
-    existingReviews[r.document_id][r.field_name] = {
+    const info = {
       verdict: r.verdict,
       chosenResponseId: r.chosen_response_id ?? null,
       comment: r.comment ?? null,
     };
+    const validity = reviewValidity(r, fieldByName.get(r.field_name));
+    if (!validity.valid) {
+      (staleReviews[r.document_id] ??= {})[r.field_name] = { ...info, invalidReason: validity.reason };
+      return;
+    }
+    (existingReviews[r.document_id] ??= {})[r.field_name] = info;
     if (!myReviewsByDoc.has(r.document_id)) myReviewsByDoc.set(r.document_id, new Set());
     myReviewsByDoc.get(r.document_id)!.add(r.field_name);
   });
@@ -405,7 +429,7 @@ export function buildReviewsAndReviewedCounts(
     reviewedCountByDoc[docId] = divergent.filter((fn) => reviewed.has(fn)).length;
   }
 
-  return { existingReviews, reviewedCountByDoc };
+  return { existingReviews, staleReviews, reviewedCountByDoc };
 }
 
 // Build comment+suggestion counts by (doc, field)

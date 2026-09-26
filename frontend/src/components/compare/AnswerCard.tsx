@@ -22,6 +22,7 @@ import {
   PopoverContent,
 } from "@/components/ui/popover";
 import { readOnlyTitle } from "./compare-types";
+import { OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 
 export interface EquivalentVariant {
   pairId: string; // response_equivalences.id
@@ -63,6 +64,12 @@ interface AnswerCardProps {
   isChosen: boolean;
   isPending: boolean;
   versions: string[];
+  /**
+   * A resposta saiu das opções atuais da pergunta: o voto gravaria um
+   * veredito sem validade (`submitVerdict` o recusa). O card fica marcado e
+   * sem o alvo de voto; continua legível e disponível para equivalência.
+   */
+  outOfDomain: boolean;
   onVote: () => void;
 
   // Confirmação do rascunho, renderizada DENTRO do card quando ele é o que
@@ -92,6 +99,7 @@ export function AnswerCard({
   isChosen,
   isPending,
   versions,
+  outOfDomain,
   onVote,
   confirmSlot,
   equivalenceMode,
@@ -118,6 +126,7 @@ export function AnswerCard({
       <VoteOverlay
         displayAnswer={displayAnswer}
         readOnly={readOnly}
+        outOfDomain={outOfDomain}
         onVote={onVote}
         title={voteTitle}
       />
@@ -127,6 +136,7 @@ export function AnswerCard({
           {index + 1}
         </span>
         <AnswerBody
+          outOfDomain={outOfDomain}
           displayAnswer={displayAnswer}
           respondentNames={respondentNames}
           respondentCount={respondentCount}
@@ -144,17 +154,20 @@ export function AnswerCard({
         <GabaritoRadio mode={equivalenceMode} readOnly={readOnly} />
       </div>
 
-      {/*
-        `relative z-[2]` pela mesma regra do comentário do overlay acima: filho
-        interativo precisa ficar ACIMA do botão de voto que cobre o card
-        inteiro. Sem isso, clicar em "Confirmar" acertaria o overlay e apenas
-        re-prepararia o rascunho.
-      */}
-      {isPending && confirmSlot && (
-        <div className="relative z-[2]">{confirmSlot}</div>
-      )}
+      <PendingConfirmSlot isPending={isPending} slot={confirmSlot} />
     </div>
   );
+}
+
+/**
+ * A confirmação do rascunho, só no card preparado. `relative z-[2]` pela mesma
+ * regra do overlay de voto: filho interativo precisa ficar ACIMA do botão que
+ * cobre o card inteiro. Sem isso, clicar em "Confirmar" acertaria o overlay e
+ * apenas re-prepararia o rascunho.
+ */
+function PendingConfirmSlot({ isPending, slot }: { isPending: boolean; slot?: ReactNode }) {
+  if (!isPending || !slot) return null;
+  return <div className="relative z-[2]">{slot}</div>;
 }
 
 /**
@@ -163,6 +176,7 @@ export function AnswerCard({
  * direita) nem o overlay que cobre o card.
  */
 function AnswerBody({
+  outOfDomain,
   displayAnswer,
   respondentNames,
   respondentCount,
@@ -176,6 +190,7 @@ function AnswerBody({
   onUnmarkPair,
   canUnmarkPair,
 }: {
+  outOfDomain: boolean;
   displayAnswer: string;
   respondentNames: string[];
   respondentCount: number;
@@ -192,6 +207,11 @@ function AnswerBody({
   return (
     <div className="min-w-0 flex-1">
       <p className="text-sm">{displayAnswer}</p>
+      {outOfDomain && (
+        <p className="text-xs font-medium text-amber-700 dark:text-amber-400" title={OUT_OF_DOMAIN_VOTE_MESSAGE}>
+          Fora das opções atuais
+        </p>
+      )}
 
       <AnswerMetaRow
         respondentNames={respondentNames}
@@ -226,14 +246,18 @@ function AnswerBody({
 function VoteOverlay({
   displayAnswer,
   readOnly,
+  outOfDomain,
   onVote,
   title,
 }: {
   displayAnswer: string;
   readOnly: boolean;
+  /** Resposta fora das opções atuais: o card não tem alvo de voto. */
+  outOfDomain: boolean;
   onVote: () => void;
   title: string | undefined;
 }) {
+  if (outOfDomain) return null;
   return (
     <button
       type="button"
