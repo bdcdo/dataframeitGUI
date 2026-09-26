@@ -14,7 +14,7 @@
 --   (c) `set_error_resolution` aceita o contexto pedido antes de uma edição
 --       que só esclarece, grava o recalculado, e recusa o pedido antes de
 --       uma mudança de hash;
---   (d) grants: a função nova fica fechada para o cliente, e o RPC continua
+--   (d) grants: as funções novas ficam fechadas para o cliente, e o RPC continua
 --       DEFINER com search_path vazio e os grants de antes;
 --   (e) o valor é julgado pela definição atual na gravação: o branco pedido
 --       antes de a pergunta perder a condição é recusado, e a resposta do LLM
@@ -23,7 +23,10 @@
 --   (f) o branco pedido diante de uma condição e confirmado depois de ela ser
 --       trocada é recusado, porque o contexto gravado traria a condição nova
 --       e a leitura o daria como valendo; o valor não branco continua
---       gravando.
+--       gravando. O branco é o da leitura (`isBlankAnswer`): texto só de tab
+--       ou NBSP conta, e "Ambos corretos" com branco comum também cai. Sem a
+--       chave `condition` e `condition: null` são a mesma pergunta sem
+--       condição.
 --
 -- Roda numa transação e não deixa fixture no banco local.
 
@@ -326,7 +329,12 @@ DECLARE
 BEGIN
   FOR kase IN SELECT * FROM (VALUES
       ('Erro humano', 'q6', 'llm_correct', NULL::JSONB), ('Erro do LLM', 'q7', 'researchers_correct', '""'::JSONB),
-      ('Todos errados', 'q7', 'all_wrong', '""'::JSONB)) AS v(label, field, decision, value) LOOP
+      ('Todos errados', 'q7', 'all_wrong', '""'::JSONB),
+      ('Erro do LLM com tab', 'q7', 'researchers_correct', to_jsonb(E'\t'::TEXT)),
+      ('Erro do LLM com NBSP', 'q7', 'researchers_correct', to_jsonb(E'\u00A0'::TEXT)),
+      ('Todos errados com tab', 'q7', 'all_wrong', to_jsonb(E'\t'::TEXT)),
+      ('Todos errados com NBSP', 'q7', 'all_wrong', to_jsonb(E'\u00A0'::TEXT)),
+      ('Ambos corretos com branco comum', 'q6', 'both_correct', '""'::JSONB)) AS v(label, field, decision, value) LOOP
     BEGIN
       PERFORM pg_temp.try_decide(kase.field, kase.decision,
         (SELECT context FROM hash_requested WHERE label = kase.field || ' antes da troca'), kase.value);
@@ -343,11 +351,56 @@ BEGIN
      OR pg_temp.try_decide('q7', 'llm_correct', (SELECT context FROM hash_requested WHERE label = 'q7 antes da troca')) IS NOT NULL THEN
     RAISE EXCEPTION 'FALHOU: a troca da condição recusou um valor não branco';
   END IF;
-  -- O contexto pedido depois da troca grava o branco.
-  IF pg_temp.try_decide('q6', 'llm_correct', pg_temp.requested('q6', 'dec40000-0000-0000-0000-000000000006')) IS NOT NULL THEN
+  -- O contexto pedido depois da troca grava o branco, inclusive o só de
+  -- espaço, que a validação do valor aceita.
+  IF pg_temp.try_decide('q6', 'llm_correct', pg_temp.requested('q6', 'dec40000-0000-0000-0000-000000000006')) IS NOT NULL
+     OR pg_temp.try_decide('q6', 'both_correct', pg_temp.requested('q6', 'dec40000-0000-0000-0000-000000000006'), '""') IS NOT NULL
+     OR pg_temp.try_decide('q7', 'researchers_correct', pg_temp.requested('q7', 'dec40000-0000-0000-0000-000000000007'), to_jsonb(E'\t'::TEXT)) IS NOT NULL
+     OR pg_temp.try_decide('q7', 'all_wrong', pg_temp.requested('q7', 'dec40000-0000-0000-0000-000000000007'), to_jsonb(E'\u00A0'::TEXT)) IS NOT NULL THEN
     RAISE EXCEPTION 'FALHOU: o branco pedido depois da troca foi recusado';
   END IF;
   RAISE NOTICE 'OK: o branco segue a condição do pedido na gravação';
+END $$;
+RESET ROLE;
+
+-- Sem a chave e `condition: null`, nos dois sentidos, em q3, que o bloco (e)
+-- deixou sem condição. O branco é um tab, que a validação de texto aceita
+-- fora de pergunta condicional; com a condição de verdade diferente, ele
+-- levaria 40001.
+SET LOCAL ROLE authenticated;
+INSERT INTO hash_requested VALUES ('q3 sem a chave', pg_temp.requested('q3', 'dec40000-0000-0000-0000-000000000003'));
+RESET ROLE;
+SELECT pg_temp.patch_field('q3', '{"condition":null}');
+SET LOCAL ROLE authenticated;
+INSERT INTO hash_requested VALUES ('q3 com null', pg_temp.requested('q3', 'dec40000-0000-0000-0000-000000000003'));
+DO $$
+BEGIN
+  IF (SELECT context #> '{field_definition}' ? 'condition' FROM hash_requested WHERE label = 'q3 sem a chave')
+     OR (SELECT context #> '{field_definition,condition}' FROM hash_requested WHERE label = 'q3 com null') IS DISTINCT FROM 'null'::JSONB THEN
+    RAISE EXCEPTION 'FALHOU: o fixture de q3 não tem os dois formatos da condição ausente';
+  END IF;
+  IF pg_temp.try_decide('q3', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q3 sem a chave'), to_jsonb(E'\t'::TEXT)) IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: o branco pedido sem a chave foi recusado';
+  END IF;
+EXCEPTION WHEN serialization_failure THEN
+  RAISE EXCEPTION 'FALHOU: o branco pedido sem a chave foi recusado diante de condition null (%)', SQLERRM;
+END $$;
+RESET ROLE;
+UPDATE public.projects
+SET pydantic_fields = (
+  SELECT jsonb_agg(CASE WHEN f->>'name' = 'q3' THEN f - 'condition' ELSE f END ORDER BY i)
+  FROM jsonb_array_elements(pydantic_fields) WITH ORDINALITY AS t(f, i)),
+    schema_revision = schema_revision + 1
+WHERE id = 'dec10000-0000-0000-0000-000000000001';
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF pg_temp.try_decide('q3', 'researchers_correct', (SELECT context FROM hash_requested WHERE label = 'q3 com null'), to_jsonb(E'\t'::TEXT)) IS NOT NULL THEN
+    RAISE EXCEPTION 'FALHOU: o branco pedido com condition null foi recusado';
+  END IF;
+  RAISE NOTICE 'OK: sem a chave e condition null são a mesma pergunta sem condição';
+EXCEPTION WHEN serialization_failure THEN
+  RAISE EXCEPTION 'FALHOU: o branco pedido com condition null foi recusado sem a chave (%)', SQLERRM;
 END $$;
 RESET ROLE;
 
@@ -360,6 +413,11 @@ BEGIN
      OR has_function_privilege('anon', 'public.error_resolution_context_current(jsonb,jsonb)', 'EXECUTE')
      OR has_function_privilege('service_role', 'public.error_resolution_context_current(jsonb,jsonb)', 'EXECUTE') THEN
     RAISE EXCEPTION 'FALHOU: error_resolution_context_current exposta ao cliente';
+  END IF;
+  IF has_function_privilege('authenticated', 'public.error_resolution_blank(jsonb)', 'EXECUTE')
+     OR has_function_privilege('anon', 'public.error_resolution_blank(jsonb)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.error_resolution_blank(jsonb)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'FALHOU: error_resolution_blank exposta ao cliente';
   END IF;
   SELECT p.prosecdef, p.proconfig INTO v_proc FROM pg_proc p
   WHERE p.oid = 'public.set_error_resolution(uuid,uuid,text,text,jsonb,uuid,timestamptz,text,jsonb)'::regprocedure;

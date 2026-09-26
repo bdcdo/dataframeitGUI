@@ -83,6 +83,29 @@ $$;
 REVOKE ALL ON FUNCTION public.error_resolution_context_current(JSONB, JSONB)
   FROM PUBLIC, anon, authenticated, service_role;
 
+-- Branco no sentido de `isBlankAnswer` (frontend/src/lib/error-resolution.ts):
+-- JSON null, [] ou texto só de espaço no sentido do trim() do JS. btrim tira
+-- só o espaço comum, e [[:space:]] depende da localidade e deixa NBSP e U+FEFF
+-- de fora: a classe é explícita. O NULL do SQL (valor ausente) não é branco
+-- aqui; quem precisa dele como branco o testa antes, como `v_llm_blank` faz
+-- com `present`.
+CREATE FUNCTION public.error_resolution_blank(p_value JSONB)
+RETURNS BOOLEAN
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT COALESCE(pg_catalog.jsonb_typeof(p_value) = 'null'
+    OR p_value = '[]'::JSONB
+    OR (pg_catalog.jsonb_typeof(p_value) = 'string'
+        AND (p_value #>> '{}')
+          ~ E'^[\t\n\u000B\f\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$'), false);
+$$;
+
+-- Interna, como a de cima.
+REVOKE ALL ON FUNCTION public.error_resolution_blank(JSONB)
+  FROM PUBLIC, anon, authenticated, service_role;
+
 -- ── set_error_resolution ──────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.set_error_resolution(
   p_project_id UUID, p_document_id UUID, p_field_name TEXT,
@@ -159,16 +182,10 @@ BEGIN
   -- O vazio canonico do tipo, o unico branco que se grava, para que export e
   -- Gabarito leiam um unico vazio por tipo. Definicao sem `type` cai no "".
   v_blank := CASE WHEN v_field->>'type' = 'multi' THEN '[]'::JSONB ELSE '""'::JSONB END;
-  -- O LLM em branco no sentido de `isBlankAnswer`: sem a chave, null, [] ou
-  -- texto so de espaco no sentido do trim() do JS. btrim tira so o espaco
-  -- comum, e [[:space:]] depende da localidade e deixa NBSP e U+FEFF de fora:
-  -- a classe e explicita.
+  -- O LLM em branco no sentido de `isBlankAnswer`: sem a chave ou com valor
+  -- branco.
   v_llm_blank := NOT (v_context->'llm_value'->>'present')::BOOLEAN
-    OR COALESCE(pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'null'
-                OR v_context->'llm_value'->'value' = '[]'::JSONB
-                OR (pg_catalog.jsonb_typeof(v_context->'llm_value'->'value') = 'string'
-                    AND (v_context->'llm_value'->>'value')
-                      ~ E'^[\t\n\u000B\f\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]*$'), false);
+    OR public.error_resolution_blank(v_context->'llm_value'->'value');
 
   -- O valor comum de "Ambos corretos", conferido contra o contexto.
   IF v_common IS NOT NULL THEN
@@ -247,9 +264,11 @@ BEGIN
   -- pergunta no documento, e o contexto gravado, que é o recalculado, faria a
   -- leitura (`approvedUnderCurrent`) dar o branco como valendo. A comparação
   -- é a do JSONB, que não depende da ordem das chaves; sem a chave e JSON null
-  -- contam como a mesma pergunta sem condição, como na cópia TypeScript.
+  -- contam como a mesma pergunta sem condição, como na cópia TypeScript. O
+  -- branco do valor escolhido é o da leitura, e não só o vazio canônico: um
+  -- texto só de tab passa pela validação acima e a leitura o toma por branco.
   IF ((p_decision = 'llm_correct' AND v_llm_blank)
-      OR (p_decision IN ('researchers_correct', 'all_wrong') AND p_value = v_blank)
+      OR (p_decision IN ('researchers_correct', 'all_wrong') AND public.error_resolution_blank(p_value))
       OR (v_common IS NOT NULL AND v_llm_blank))
     AND COALESCE(p_expected_context #> '{field_definition,condition}', 'null'::JSONB)
       IS DISTINCT FROM COALESCE(v_field->'condition', 'null'::JSONB) THEN
