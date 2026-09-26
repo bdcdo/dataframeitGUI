@@ -40,8 +40,9 @@
 --       - campo renomeado ou removido encerra os ciclos do nome antigo
 --         ('field_removed'), sem ciclo novo;
 --       - reconcile_auto_review_cycles tambem encerra ciclo que nao vale
---         ('question_changed'), como defesa se algum caminho escapar do
---         gatilho, e o rotaciona como qualquer outro;
+--         ('question_changed') e o rotaciona como qualquer outro, porque um
+--         ciclo aberto durante o save do schema escapa do gatilho (a corrida
+--         esta descrita antes do corpo da funcao);
 --       - a view final_answers marca 'pergunta_alterada' o ciclo que nao vale
 --         e o campo que a geracao LLM nao respondeu (campo renomeado ou criado
 --         depois da rodada), em vez de fabricar 'consenso' com resposta nula.
@@ -572,6 +573,15 @@ GRANT SELECT ON public.final_answers TO authenticated, service_role;
 -- reprova; e nomeia os motivos 'field_removed' (campo fora do schema) e
 -- 'question_changed' (carimbo de outra versao). A rotacao recarimba pelo
 -- gatilho stamp_field_review_field_hash (UPDATE OF cycle_no).
+--
+-- A corrida que exige o encerramento aqui, e nao so no gatilho de `projects`:
+-- o reconciliador le `projects` sem trava. Com o save do schema em curso e
+-- ainda nao confirmado, ele ve o schema antigo, passa na conferencia do
+-- `pydantic_hash` e insere o ciclo, que o carimbo tambem faz com o hash
+-- antigo. O DELETE do gatilho, na transacao do save, nao ve esse ciclo, e ele
+-- nasce com o carimbo de uma pergunta que ja mudou. Quando o documento volta
+-- ao reconciliador, o ciclo e encerrado como 'question_changed'; ate la a
+-- view o marca 'pergunta_alterada'.
 CREATE OR REPLACE FUNCTION public.reconcile_auto_review_cycles(
   p_groups JSONB
 ) RETURNS JSONB

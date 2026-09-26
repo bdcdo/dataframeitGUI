@@ -79,9 +79,13 @@ export function isFieldStale({
 // proveniência: aquela é a leitura da tela (avisar o revisor), esta decide se
 // um julgamento já feito cai.
 //
-// Só há esta cópia: o banco não arquiva o par quando a pergunta muda (a
-// resposta recodificada com outro valor já o arquiva pelo gatilho de
-// resposta), e todo leitor de par passa por `filterCurrentEquivalencePairs`.
+// A cópia SQL é `response_answers_current_question`, com a mesma matriz de
+// casos nos testes: com ela o banco recusa gravar o par de outra versão
+// (`record_response_equivalences`) e, no save do schema, leva ao reconciliador
+// o documento cujo par deixou de valer. O banco não arquiva o par quando a
+// pergunta muda (a resposta recodificada com outro valor já o arquiva pelo
+// gatilho de resposta), e todo leitor de par passa por
+// `filterCurrentEquivalencePairs`.
 export function answersCurrentQuestion(
   answerFieldHashes: AnswerFieldHashes | undefined,
   field: Pick<PydanticField, "name" | "hash"> | undefined,
