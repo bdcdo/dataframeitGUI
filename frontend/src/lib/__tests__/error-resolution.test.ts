@@ -6,6 +6,7 @@ import {
   prefillLosesItems, prefillFromValue, prefillFromVerdict, startsBlank,
   type ErrorDecision, type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
+import { fieldHashOf } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
 const context: ErrorResolutionContext = {
@@ -69,6 +70,203 @@ describe("resolução explícita de divergência", () => {
     r.current_context = structuredClone(r.context);
     r.current_context!.source.verdict = "outro";
     expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+  });
+});
+
+// Os mesmos casos de llm_error_decision_follows_field_hash.test.sql, a cópia
+// SQL da regra.
+describe("a decisão segue o hash do campo, não a definição inteira", () => {
+  const question = { name: "q", type: "single" as const, options: ["A", "B"], description: "Pergunta", help_text: "Ajuda" };
+  // A resposta do LLM é uma das opções, para que só a regra do hash decida.
+  function withDefinitions(saved: Record<string, unknown>, current: Record<string, unknown>): ErrorResolutionRow {
+    const r = row("llm_correct");
+    r.context!.llm_value.value = "A";
+    r.context!.field_definition = saved as ErrorResolutionContext["field_definition"];
+    r.current_context = structuredClone(r.context);
+    r.current_context!.field_definition = current as ErrorResolutionContext["field_definition"];
+    return r;
+  }
+  const stamped = { ...question, hash: "h1" };
+
+  it.each([
+    ["help_text que só esclarece", { help_text: "Ajuda reescrita" }],
+    ["condição nova", { condition: { field: "g0", equals: "Sim" } }],
+    ["required", { required: true }],
+    ["justification_prompt", { justification_prompt: "Por quê?" }],
+  ])("%s com o mesmo hash mantém a decisão", (_label, patch) => {
+    expect(effectiveErrorResolution(withDefinitions(stamped, { ...stamped, ...patch })).status).toBe("approved");
+  });
+
+  it.each([
+    ["descrição nova", { description: "Outra pergunta", hash: "h2" }],
+    ["opções novas", { options: ["A", "B", "C"], hash: "h3" }],
+    ["revisão da question", { question_revision: 1, hash: "h4" }],
+  ])("%s, que muda o hash, derruba a decisão", (_label, patch) => {
+    expect(effectiveErrorResolution(withDefinitions(stamped, { ...stamped, ...patch }))).toEqual({ status: "stale" });
+  });
+
+  it("o hash carimbado vence o derivado: hashes diferentes derrubam mesmo com as partes iguais", () => {
+    expect(effectiveErrorResolution(withDefinitions(stamped, { ...question, hash: "outra-formula" }))).toEqual({ status: "stale" });
+  });
+
+  it("o resto do contexto continua valendo inteiro", () => {
+    const r = withDefinitions(stamped, { ...stamped, help_text: "Ajuda reescrita" });
+    r.current_context!.human_value.value = "alterado";
+    expect(effectiveErrorResolution(r)).toEqual({ status: "stale" });
+  });
+
+  it("definição gravada antes do carimbo tem o hash derivado pela mesma fórmula", () => {
+    const hash = fieldHashOf(question);
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, help_text: "Ajuda reescrita", hash })).status).toBe("approved");
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, help_text: "Ajuda reescrita" })).status).toBe("approved");
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, description: "Outra pergunta", hash: "h2" }))).toEqual({ status: "stale" });
+  });
+
+  it("o contador de revisão entra no hash derivado", () => {
+    expect(effectiveErrorResolution(withDefinitions(question, { ...question, question_revision: 1 }))).toEqual({ status: "stale" });
+  });
+
+  it("definição sem as partes da fórmula cai para a comparação da definição inteira", () => {
+    const withoutDescription = { name: "q", type: "single", options: ["A", "B"], help_text: "Ajuda" };
+    expect(effectiveErrorResolution(withDefinitions(withoutDescription, { ...withoutDescription })).status).toBe("approved");
+    expect(effectiveErrorResolution(withDefinitions(withoutDescription, { ...withoutDescription, help_text: "Ajuda reescrita" }))).toEqual({ status: "stale" });
+  });
+});
+
+// O hash não cobre `condition`, `allow_other` nem `subfields`: a decisão
+// sobrevive à mudança deles, e o valor que ela põe no gabarito é julgado pela
+// definição atual.
+describe("o valor aprovado é julgado pela definição atual", () => {
+  const hash = "abcdefabcdef";
+  const condition = { field: "g0", equals: "Sim" };
+  function decided(
+    decision: ErrorDecision, saved: Record<string, unknown>, current: Record<string, unknown>,
+    patch: Partial<ErrorResolutionRow> = {},
+  ): ErrorResolutionRow {
+    const r = { ...row(decision), ...patch };
+    r.context!.field_definition = { name: "q", description: "Pergunta", hash, ...saved } as ErrorResolutionContext["field_definition"];
+    r.current_context = structuredClone(r.context);
+    r.current_context!.field_definition = { name: "q", description: "Pergunta", hash, ...current } as ErrorResolutionContext["field_definition"];
+    return r;
+  }
+
+  describe("o branco aprovado cai quando a condição muda", () => {
+    const text = { type: "text", options: null };
+    const swapped = { field: "g0", equals: "Não" };
+    it("Erro humano sobre o LLM sem a chave", () => {
+      const absent = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value = { present: false, value: null };
+        r.current_context!.llm_value = { present: false, value: null };
+        return r;
+      };
+      expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition })))
+        .toEqual({ status: "approved", value: "", isLlmError: false });
+      expect(effectiveErrorResolution(absent({ ...text, condition }, text))).toEqual({ status: "stale" });
+    });
+    it("Erro humano sobre o LLM que respondeu o branco", () => {
+      const blankLlm = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value.value = "";
+        r.current_context!.llm_value.value = "";
+        return r;
+      };
+      expect(effectiveErrorResolution(blankLlm({ ...text, condition }, { ...text, condition })).status).toBe("approved");
+      expect(effectiveErrorResolution(blankLlm({ ...text, condition }, text))).toEqual({ status: "stale" });
+      // Pergunta que nunca foi condicional: fora da regra, como antes.
+      expect(effectiveErrorResolution(blankLlm(text, text)).status).toBe("approved");
+    });
+    it.each([
+      ["Erro do LLM", "researchers_correct", { type: "text", options: null }, ""],
+      ["Todos errados", "all_wrong", { type: "text", options: null }, ""],
+      ["Ambos corretos", "both_correct", { type: "multi", options: ["A", "B"] }, []],
+    ] as const)("%s com o branco canônico", (_label, decision, field, blank) => {
+      expect(effectiveErrorResolution(decided(decision, { ...field, condition }, { ...field, condition }, { approved_value: blank })).status)
+        .toBe("approved");
+      expect(effectiveErrorResolution(decided(decision, { ...field, condition }, field, { approved_value: blank })))
+        .toEqual({ status: "stale" });
+      expect(effectiveErrorResolution(decided(decision, { ...field, condition }, { ...field, condition: swapped }, { approved_value: blank })))
+        .toEqual({ status: "stale" });
+    });
+
+    // A condição trocada pode acionar a pergunta no documento, e o gate do
+    // export não acusa o branco, que não contradiz condição nenhuma.
+    describe("Erro humano sobre o LLM sem a chave", () => {
+      const absent = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value = { present: false, value: null };
+        r.current_context!.llm_value = { present: false, value: null };
+        return r;
+      };
+      it("a condição trocada derruba o branco", () => {
+        expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition: swapped }))).toEqual({ status: "stale" });
+      });
+      it("a condição idêntica, com as chaves em outra ordem, mantém o branco", () => {
+        expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition: { equals: "Sim", field: "g0" } })))
+          .toEqual({ status: "approved", value: "", isLlmError: false });
+      });
+      it("a condição removida continua derrubando o branco", () => {
+        expect(effectiveErrorResolution(absent({ ...text, condition }, text))).toEqual({ status: "stale" });
+        expect(effectiveErrorResolution(absent({ ...text, condition }, { ...text, condition: null }))).toEqual({ status: "stale" });
+      });
+    });
+    it("a condição nova numa pergunta sem condição derruba o branco; a chave nula conta como ausente", () => {
+      const blankLlm = (saved: Record<string, unknown>, current: Record<string, unknown>) => {
+        const r = decided("llm_correct", saved, current);
+        r.context!.llm_value.value = "";
+        r.current_context!.llm_value.value = "";
+        return r;
+      };
+      expect(effectiveErrorResolution(blankLlm(text, { ...text, condition }))).toEqual({ status: "stale" });
+      expect(effectiveErrorResolution(blankLlm(text, { ...text, condition: null })).status).toBe("approved");
+    });
+    it("a condição trocada não derruba valor não branco", () => {
+      for (const current of [{ ...text, condition: swapped }, text]) {
+        expect(effectiveErrorResolution(decided("researchers_correct", { ...text, condition }, current, { approved_value: "Texto" })))
+          .toEqual({ status: "approved", value: "Texto", isLlmError: true });
+        const human = decided("llm_correct", { ...text, condition }, current);
+        expect(effectiveErrorResolution(human)).toEqual({ status: "approved", value: human.context!.llm_value.value, isLlmError: false });
+      }
+    });
+  });
+
+  describe("fora do domínio atual, pela régua do veredito", () => {
+    const single = { type: "single", options: ["A", "B"] };
+    it.each([
+      ["Erro do LLM", "researchers_correct"],
+      ["Todos errados", "all_wrong"],
+      ["Ambos corretos", "both_correct"],
+    ] as const)("%s com Outro depois que allow_other é desligado", (_label, decision) => {
+      const patch = { approved_value: "Outro: C" };
+      expect(effectiveErrorResolution(decided(decision, { ...single, allow_other: true }, { ...single, allow_other: true }, patch)).status)
+        .toBe("approved");
+      expect(effectiveErrorResolution(decided(decision, { ...single, allow_other: true }, { ...single, allow_other: false }, patch)))
+        .toEqual({ status: "stale" });
+    });
+    it("Erro humano com a resposta do LLM fora do domínio", () => {
+      const llm = (value: string | string[], field: Record<string, unknown>) => {
+        const r = decided("llm_correct", { ...field, allow_other: true }, field);
+        r.context!.llm_value.value = value;
+        r.current_context!.llm_value.value = value;
+        return r;
+      };
+      expect(effectiveErrorResolution(llm("Outro: C", { ...single, allow_other: true })).status).toBe("approved");
+      expect(effectiveErrorResolution(llm("Outro: C", single))).toEqual({ status: "stale" });
+      const multi = { type: "multi", options: ["A", "B"] };
+      expect(effectiveErrorResolution(llm(["A", "Outro: C"], { ...multi, allow_other: true })).status).toBe("approved");
+      expect(effectiveErrorResolution(llm(["A", "Outro: C"], multi))).toEqual({ status: "stale" });
+      expect(effectiveErrorResolution(llm(["A", "B"], multi)).status).toBe("approved");
+    });
+  });
+
+  // `verdictInDomain` não mede registro de subcampos: o subcampo removido não
+  // derruba a decisão, como não derruba o veredito da Comparação.
+  it("subcampo removido com valor no registro não derruba a decisão", () => {
+    const subfields = [{ key: "a", label: "A" }, { key: "b", label: "B" }];
+    const r = decided("researchers_correct",
+      { type: "text", options: null, subfields }, { type: "text", options: null, subfields: subfields.slice(0, 1) },
+      { approved_value: { a: "x", b: "y" } });
+    expect(effectiveErrorResolution(r)).toEqual({ status: "approved", value: { a: "x", b: "y" }, isLlmError: true });
   });
 });
 

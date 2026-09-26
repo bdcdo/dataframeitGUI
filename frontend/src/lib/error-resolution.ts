@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { stableStringify } from "@/lib/schema-utils";
+import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
 import { OTHER_PREFIX, isOtherValue } from "@/lib/other-option";
 import { resolveAllowOther } from "@/lib/pydantic-field";
 import { NOT_INFORMED } from "@/lib/sentinels";
 import { isSubfieldRecord } from "@/lib/subfield-value";
 import { arePartsValid, parseDatePartsForUI } from "@/lib/date-parts";
+import { verdictInDomain, type DomainField } from "@/lib/review-validity";
 import type { PydanticField } from "@/lib/types";
 
 // A ordem é a dos botões no card: quem errou (um lado, nenhum, os dois) e,
@@ -101,12 +102,50 @@ export type EffectiveErrorResolution =
   | { status: "upheld"; llmValue: unknown; verdictValue?: unknown }
   | { status: "approved"; value: unknown; isLlmError: boolean };
 
-// A decisão só vale enquanto as fontes em que ela se apoiou seguem iguais.
+// A decisão só vale enquanto as fontes em que ela se apoiou seguem iguais e a
+// pergunta é a mesma. A pergunta se mede pelo hash do campo, como no veredito
+// da Comparação, no par "=" e na auto-revisão: `help_text` que só esclarece,
+// `condition`, `required` e `justification_prompt` não entram no hash e não
+// derrubam a decisão. A condição nova, quem aplica ao valor é o gate do
+// export, e ao branco aprovado, `approvedUnderCurrent`. A cópia
+// SQL é `error_resolution_context_current`
+// (20260927171000_llm_decision_follows_field_hash.sql), que não deriva o hash:
+// lá os dois contextos saem do mesmo schema na mesma confirmação.
 function contextIsCurrent(row: ErrorResolutionRow, context: ErrorResolutionContext): boolean {
-  return !!row.current_context &&
-    context.project_id === row.project_id && context.document_id === row.document_id &&
-    context.field_name === row.field_name &&
-    stableStringify(context) === stableStringify(row.current_context);
+  const current = row.current_context;
+  if (!current || context.project_id !== row.project_id || context.document_id !== row.document_id ||
+    context.field_name !== row.field_name) return false;
+  const { field_definition: savedDefinition, ...savedRest } = context;
+  const { field_definition: currentDefinition, ...currentRest } = current;
+  return stableStringify(savedRest) === stableStringify(currentRest) &&
+    sameQuestion(savedDefinition, currentDefinition);
+}
+
+// Sem hash de algum lado, a regra anterior: a definição inteira.
+function sameQuestion(saved: unknown, current: unknown): boolean {
+  const savedHash = questionHash(saved);
+  const currentHash = questionHash(current);
+  return savedHash !== undefined && currentHash !== undefined
+    ? savedHash === currentHash
+    : stableStringify(saved) === stableStringify(current);
+}
+
+// As partes da definição que a fórmula do hash lê (`computeFieldHash`).
+const hashedPartsSchema = z.object({
+  name: z.string(), type: z.string(), options: z.array(z.string()).nullish(),
+  description: z.string(), question_revision: z.number().nullish(),
+});
+
+// O hash que o save carimbou na definição; se ela é anterior ao carimbo, o
+// derivado pela mesma fórmula, desde que a definição traga as partes que a
+// fórmula lê. Sem elas, não há hash a comparar.
+function questionHash(definition: unknown): string | undefined {
+  if (!isSubfieldRecord(definition)) return undefined;
+  if (typeof definition.hash === "string") return definition.hash;
+  const parts = hashedPartsSchema.safeParse(definition);
+  if (!parts.success) return undefined;
+  const { name, type, options, description, question_revision: revision } = parts.data;
+  return computeFieldHash(name, type, options ?? null, description, revision);
 }
 
 function upheldResolution(context: ErrorResolutionContext): EffectiveErrorResolution {
@@ -121,13 +160,70 @@ function hasApprovedValue(row: Pick<ErrorResolutionRow, "approved_value">): bool
   return row.approved_value !== undefined && row.approved_value !== null;
 }
 
+// A definição que julga o valor aprovado é a atual (`current_context`), não a
+// gravada. O hash não cobre `condition` nem `allow_other`, então a decisão
+// sobrevive à mudança deles; o valor, não. O branco aprovado deixa de valer
+// quando a condição gravada difere da atual, inclusive quando ela some ou
+// aparece: a condição nova pode acionar a pergunta no documento, e o export
+// gravaria o branco onde a resposta é devida sem que o gate acuse, porque
+// branco não contradiz nada (`judgedCell`). Com a condição idêntica, o branco
+// continua valendo, também na pergunta que nunca foi condicional (o "Erro
+// humano" sobre o LLM que respondeu `""`). Valor não branco não depende da
+// condição: o gate do export confere se a pergunta se aplica. Fora do
+// domínio atual (o "Outro: ..." depois que `allow_other` foi desligado, a
+// opção que saiu do formulário) a decisão cai pela mesma régua do veredito da
+// Comparação (`verdictInDomain`, motivo `fora_do_dominio`), senão a célula
+// ficaria com o valor que a regra do veredito acabou de recusar.
+// `verdictInDomain` não mede registro de subcampos, e um subcampo removido não
+// derruba a decisão, como não derruba o veredito. Na gravação, `set_error_resolution` valida contra a definição
+// atual e recusa o valor do LLM fora do domínio dela e o branco pedido diante
+// de outra condição, para que nenhuma decisão nasça sem valer.
+function approvedUnderCurrent(
+  row: ErrorResolutionRow, value: unknown, isLlmError: boolean,
+): EffectiveErrorResolution {
+  const current = row.current_context?.field_definition;
+  if ((isBlankAnswer(value) && conditionChanged(row)) || !valueInDomain(current, value)) return { status: "stale" };
+  return { status: "approved", value, isLlmError };
+}
+
+// Se a condição gravada difere da atual. Sem ela, `null`, para que a chave
+// ausente e a `condition: null` contem como a mesma pergunta sem condição.
+function conditionChanged(row: ErrorResolutionRow): boolean {
+  const conditionOf = (definition: unknown) =>
+    stableStringify(isSubfieldRecord(definition) ? definition.condition ?? null : null);
+  return conditionOf(row.context?.field_definition) !== conditionOf(row.current_context?.field_definition);
+}
+
+const domainFieldSchema = z.object({
+  type: z.string(), options: z.array(z.string()).nullish(), allow_other: z.boolean().nullish(),
+});
+
+// Sem as partes que o domínio lê, não há domínio a conferir.
+function valueInDomain(definition: unknown, value: unknown): boolean {
+  const parsed = domainFieldSchema.safeParse(definition);
+  const verdict = asVerdict(value);
+  if (!parsed.success || verdict === undefined) return true;
+  return verdictInDomain(verdict, parsed.data as DomainField);
+}
+
+// O valor na forma de `responses.answers` escrito como veredito: o de `multi`
+// é o JSON `{opção: true}` que a grade grava. Registro de subcampos não tem
+// forma de veredito que o domínio meça.
+function asVerdict(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+    return JSON.stringify(Object.fromEntries(value.map((item) => [item, true])));
+  }
+  return undefined;
+}
+
 // "Ambos corretos" com o valor comum (#758): o veredito ficou para trás, e os
 // pesquisadores atuais e o LLM concordam no valor que vai ao gabarito. Nenhum
 // dos lados errou, então não é erro do LLM, e "Erro humano" deixa de ser o
 // único jeito de gravar esse valor.
 function bothCorrectResolution(row: ErrorResolutionRow, context: ErrorResolutionContext): EffectiveErrorResolution {
   return hasApprovedValue(row)
-    ? { status: "approved", value: row.approved_value, isLlmError: false }
+    ? approvedUnderCurrent(row, row.approved_value, false)
     : upheldResolution(context);
 }
 
@@ -137,7 +233,7 @@ function bothCorrectResolution(row: ErrorResolutionRow, context: ErrorResolution
 // aprovável até ser confirmada de novo.
 function chosenValueResolution(row: ErrorResolutionRow): EffectiveErrorResolution {
   if (!hasApprovedValue(row)) return { status: "stale" };
-  return { status: "approved", value: row.approved_value, isLlmError: true };
+  return approvedUnderCurrent(row, row.approved_value, true);
 }
 
 // Pergunta condicional cujo gatilho não a aciona fica sem a chave em
@@ -186,11 +282,14 @@ export function llmValueIsBlank(context: ErrorResolutionContext): boolean {
 }
 
 // "Erro humano" aprova a resposta do LLM. Sem o campo nela, só há o que
-// aprovar quando o campo é condicional: o LLM respondeu "em branco".
-function llmCorrectResolution(context: ErrorResolutionContext): EffectiveErrorResolution {
-  if (context.llm_value.present) return { status: "approved", value: context.llm_value.value, isLlmError: false };
-  const blank = conditionalBlank(context.field_definition);
-  return blank === undefined ? { status: "stale" } : { status: "approved", value: blank, isLlmError: false };
+// aprovar quando o campo é condicional na definição atual e a condição é a
+// mesma da decisão: o LLM respondeu "em branco", e o branco segue a regra de
+// `approvedUnderCurrent`. O domínio não entra, porque o branco de condicional
+// não é opção de nenhum tipo.
+function llmCorrectResolution(row: ErrorResolutionRow, context: ErrorResolutionContext): EffectiveErrorResolution {
+  if (context.llm_value.present) return approvedUnderCurrent(row, context.llm_value.value, false);
+  const blank = conditionalBlank(row.current_context?.field_definition);
+  return blank === undefined || conditionChanged(row) ? { status: "stale" } : { status: "approved", value: blank, isLlmError: false };
 }
 
 export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): EffectiveErrorResolution {
@@ -201,7 +300,7 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
   if (row.decision === "discussion") return { status: "discussion" };
   if (row.decision === "both_correct") return bothCorrectResolution(row, context);
   if (choosesValue(row.decision)) return chosenValueResolution(row);
-  return llmCorrectResolution(context);
+  return llmCorrectResolution(row, context);
 }
 
 /**
