@@ -69,6 +69,8 @@ jobs:
         run: npm run test:db:reviews-field-hash
       - name: Mudança da pergunta derruba os julgamentos presos a respostas
         run: npm run test:db:judgments-follow-question
+      - name: Ambos corretos grava o valor comum
+        run: npm run test:db:both-correct-value
 
       # As fixtures destes precisam estar commitadas (duas conexões dblink veem
       # o mesmo estado), então eles sujam o banco e ficam por último.
