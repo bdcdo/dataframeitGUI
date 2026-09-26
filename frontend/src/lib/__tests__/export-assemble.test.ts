@@ -1467,4 +1467,39 @@ describe("assembleExport: branco legítimo e branco pendente", () => {
       expect(d.verdicts.rows.map((r) => r[0])).toEqual(["A"]);
     });
   });
+
+  describe("motivo da divergência sem comparação atribuída", () => {
+    const campo = field("campo");
+    const diverge = [
+      { id: "h1", document_id: "A", respondent_name: "h1", respondent_type: "humano", is_partial: false, answers: { campo: "Sim" } },
+      { id: "l", document_id: "A", respondent_name: "l", respondent_type: "llm", is_partial: false, answers: { campo: "Não" } },
+    ] satisfies ExportResponse[];
+    const reasonOf = (overrides: Partial<AssembleInput>) =>
+      pendingOf(run({ fields: [campo], documents: [doc("A")], responses: diverge, ...overrides }));
+
+    it("sem atribuição de comparação na rodada atual: divergência sem comparação atribuída", () => {
+      expect(reasonOf({ comparedDocumentIds: new Set(["B"]) })).toEqual([["campo", "divergência sem comparação atribuída"]]);
+    });
+
+    it("com atribuição: aguarda arbitragem", () => {
+      expect(reasonOf({ comparedDocumentIds: new Set(["A"]) })).toEqual([["campo", "aguarda arbitragem"]]);
+    });
+
+    it("sem o campo (chamador antigo): aguarda arbitragem", () => {
+      expect(reasonOf({})).toEqual([["campo", "aguarda arbitragem"]]);
+    });
+
+    it("campo fora da Comparação: o motivo continua dizendo isso, com ou sem atribuição", () => {
+      const humanOnly = field("campo", { target: "human_only" });
+      const humans = diverge.map((r) => ({ ...r, respondent_type: "humano" }));
+      expect(reasonOf({ fields: [humanOnly], responses: humans, comparedDocumentIds: new Set() }))
+        .toEqual([["campo", "respostas divergem e o campo não entra na Comparação"]]);
+    });
+
+    it("pesquisadores divergentes entre si mantêm o motivo próprio sem atribuição", () => {
+      const humans = [diverge[0], { ...diverge[0], id: "h2", answers: { campo: "Não" } }];
+      expect(reasonOf({ responses: humans, comparedDocumentIds: new Set() }))
+        .toEqual([["campo", "divergência entre pesquisadores"]]);
+    });
+  });
 });

@@ -8,9 +8,11 @@ import {
   type TableResults,
   type WriteCall,
   type RpcCall,
+  type FilterCall,
 } from "./supabase-mock";
 
 let writeCalls: WriteCall[];
+let filterCalls: FilterCall[];
 let rpcCalls: RpcCall[];
 let serverTableResults: TableResults | undefined;
 
@@ -33,6 +35,7 @@ vi.mock("@/lib/supabase/server", () => ({
       makeSupabaseMock({
         tableResults: serverTableResults,
         writeCalls,
+        filterCalls,
         rpcCalls,
       }),
     ),
@@ -67,6 +70,7 @@ function projectSelectedColumns(client: ReturnType<typeof makeSupabaseMock>) {
 
 beforeEach(() => {
   writeCalls = [];
+  filterCalls = [];
   rpcCalls = [];
   serverTableResults = undefined;
   hoisted.requireCoordinator.mockResolvedValue({
@@ -300,5 +304,48 @@ describe("getExportDataset: pares \"=\" e auto-revisão", () => {
     };
     const r = await (await loadAction())("proj-1");
     expect(r).toEqual({ error: "boom na view" });
+  });
+});
+
+// As atribuições de comparação decidem o motivo da divergência nas Pendências:
+// só as da rodada atual contam, e o projeto sem rodada atual não as usa.
+describe("getExportDataset: atribuições de comparação da rodada atual", () => {
+  const campo = [{ name: "campo", type: "text", options: null, description: "" }];
+  const resposta = (id: string, type: string, value: string) => ({
+    id, document_id: "d1", respondent_name: id, respondent_type: type, is_partial: false, answers: { campo: value },
+  });
+  const tables = (currentRound: string | null, assignments: unknown[]): TableResults => ({
+    projects: [{ data: { name: "P", pydantic_fields: campo, min_responses_for_comparison: 2, current_round_id: currentRound } }],
+    documents: [{ data: [{ id: "d1", external_id: "EXT-1", title: null, created_at: "2024-01-01", metadata: null }] }],
+    responses: [{ data: [resposta("h1", "humano", "Sim"), resposta("l", "llm", "Não")] }],
+    reviews: [{ data: [] }],
+    assignments: [{ data: assignments }],
+  });
+  const reasonOf = async (results: TableResults) => {
+    serverTableResults = results;
+    const r = await (await loadAction())("proj-1");
+    if ("error" in r) throw new Error(r.error);
+    return r.pending.rows.map((row) => row[3]);
+  };
+
+  it("atribuição na rodada atual: aguarda arbitragem", async () => {
+    expect(await reasonOf(tables("r2", [{ document_id: "d1", round_id: "r2" }]))).toEqual(["aguarda arbitragem"]);
+    expect(filterCalls.filter((c) => c.table === "assignments")).toEqual([
+      { table: "assignments", method: "eq", column: "project_id", value: "proj-1" },
+      { table: "assignments", method: "eq", column: "type", value: "comparacao" },
+    ]);
+  });
+
+  it("atribuição só em rodada anterior: divergência sem comparação atribuída", async () => {
+    expect(await reasonOf(tables("r2", [{ document_id: "d1", round_id: "r1" }]))).toEqual(["divergência sem comparação atribuída"]);
+  });
+
+  it("projeto sem rodada atual: aguarda arbitragem", async () => {
+    expect(await reasonOf(tables(null, []))).toEqual(["aguarda arbitragem"]);
+  });
+
+  it("propaga o erro da leitura das atribuições", async () => {
+    serverTableResults = { ...tables("r2", []), assignments: [{ error: { message: "boom nas atribuições" } }] };
+    expect(await (await loadAction())("proj-1")).toEqual({ error: "boom nas atribuições" });
   });
 });

@@ -118,6 +118,14 @@ export interface AssembleInput {
    * opção ligada ou não, marcados em `DRAFT_COLUMN`.
    */
   includeDrafts?: boolean;
+  /**
+   * Os documentos (`documents.id`) com alguma atribuição de comparação, aberta
+   * ou concluída, na rodada atual do projeto. Separa, nas Pendências, a
+   * divergência que já tem quem a arbitre ("aguarda arbitragem") da que
+   * ninguém foi chamado a arbitrar. Sem o campo, todo documento conta como
+   * atribuído, e o motivo é sempre "aguarda arbitragem".
+   */
+  comparedDocumentIds?: ReadonlySet<string>;
 }
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
@@ -281,11 +289,13 @@ function cellKey(documentId: string, fieldName: string): string {
   return `${documentId}:${fieldName}`;
 }
 
-// Motivos da aba Pendências. Saem só do que o export já lê: nenhum deles
-// justifica uma consulta a mais.
+// Motivos da aba Pendências. Saem do que o export já lê para montar o
+// Gabarito, mais as atribuições de comparação da rodada atual
+// (`AssembleInput.comparedDocumentIds`).
 const PENDING_REASON = {
   discussion: "em discussão no LLM Insights",
   arbitration: "aguarda arbitragem",
+  unassigned: "divergência sem comparação atribuída",
   autoReview: "auto-revisão pendente",
   questionChanged: "pergunta alterada",
   ambiguous: "ambíguo ou pular",
@@ -408,6 +418,7 @@ interface CellContext {
   discussed: ReadonlySet<string>;
   pairsByDoc: ReturnType<typeof buildEquivalenceMap>;
   fillFromLlm: boolean;
+  comparedDocumentIds: ReadonlySet<string> | undefined;
 }
 
 // A linha do Gabarito em montagem, na forma das respostas, para que as
@@ -529,7 +540,7 @@ function resolveCell(
   const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
   const signals = pendingSignals(field, doc, applicable, agree, ctx.minResponses);
-  return { reason: pendingReason(cellKey(docId, field.name), ctx, signals) };
+  return { reason: pendingReason(docId, field.name, ctx, signals) };
 }
 
 // Célula sem pesquisador entre as respostas que contam: não há gabarito. Só o
@@ -573,7 +584,8 @@ function pendingSignals(
   };
 }
 
-function pendingReason(key: string, ctx: CellContext, signals: PendingSignals): string {
+function pendingReason(docId: string, fieldName: string, ctx: CellContext, signals: PendingSignals): string {
+  const key = cellKey(docId, fieldName);
   // Pesquisadores que divergem entre si vêm antes da auto-revisão: o ciclo de
   // auto-revisão confronta o LLM com um pesquisador só (`field_reviews` tem uma
   // linha por documento e campo), e a divergência com os demais é resolvida na
@@ -586,10 +598,12 @@ function pendingReason(key: string, ctx: CellContext, signals: PendingSignals): 
   // validade (`review-validity.ts`), porque a pergunta mudou depois delas.
   if (ctx.reviewedCells.has(key)) return PENDING_REASON.questionChanged;
   if (signals.fewResponses) return PENDING_REASON.fewResponses;
-  // Sem ler as atribuições não se sabe se a comparação já foi aberta; o que se
-  // sabe é se a regra da Comparação vê a divergência. Quando não vê (campo
-  // `human_only`), ninguém vai arbitrar.
-  return signals.inComparison ? PENDING_REASON.arbitration : PENDING_REASON.uncompared;
+  // Quando a regra da Comparação não vê a divergência (campo `human_only`),
+  // ninguém vai arbitrar. Quando vê, a divergência só tem quem a arbitre se o
+  // documento tem atribuição de comparação na rodada atual.
+  if (!signals.inComparison) return PENDING_REASON.uncompared;
+  const unassigned = ctx.comparedDocumentIds !== undefined && !ctx.comparedDocumentIds.has(docId);
+  return unassigned ? PENDING_REASON.unassigned : PENDING_REASON.arbitration;
 }
 
 // O contexto das células sem veredito, montado do que o export leu.
@@ -602,6 +616,7 @@ function buildCellContext(input: AssembleInput, baseReviews: ExportReview[], fil
     discussed: new Set(discussed.map((row) => cellKey(row.document_id, row.field_name))),
     pairsByDoc: buildEquivalenceMap(input.equivalences ?? []),
     fillFromLlm,
+    comparedDocumentIds: input.comparedDocumentIds,
   };
 }
 
