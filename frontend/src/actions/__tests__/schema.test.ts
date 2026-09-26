@@ -16,6 +16,10 @@ const state = vi.hoisted(() => ({
   rpcResults: undefined as Record<string, TableResult | TableResult[]> | undefined,
 }));
 const fetchMock = vi.hoisted(() => vi.fn());
+// Espião na fronteira: a regra da ressincronização tem teste próprio
+// (compare-assignment-sync.test.ts); aqui só interessa QUE o save a dispara.
+const resyncMock = vi.hoisted(() => vi.fn(async () => ({ checked: 0, changes: [] })));
+vi.mock("@/lib/compare-assignment-sync", () => ({ resyncProjectCompareAssignments: resyncMock }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ getAuthUser: async () => ({ id: "userCoord" }) }));
@@ -57,6 +61,68 @@ beforeEach(() => {
   state.tables = undefined;
   state.rpcResults = undefined;
   fetchMock.mockReset();
+  resyncMock.mockClear();
+});
+
+// Uma mudança de schema pode tirar a validade de vereditos (hash da pergunta,
+// opções) e mudar a divergência (piso de versão). O status do assignment de
+// comparação só era recalculado no voto, e o parecer ficava "concluido" com
+// campos pendentes.
+describe("gravar o schema ressincroniza os assignments de comparação", () => {
+  it("save gravado dispara a ressincronização do projeto", async () => {
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(resyncMock).toHaveBeenCalledTimes(1);
+    expect(resyncMock).toHaveBeenCalledWith(expect.anything(), "p1");
+  });
+
+  it("falha da ressincronização não desfaz o save", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    resyncMock.mockRejectedValueOnce(new Error("rede"));
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
+
+    const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("rede"));
+    error.mockRestore();
+  });
+
+  it.each([
+    ["conflito", { data: commitRow({ status: "conflict", schema_revision: 4 }) }],
+    ["erro", { error: { message: "histórico indisponível" } }],
+  ])("save com %s não ressincroniza", async (_label, rpcResult) => {
+    state.tables = { projects: PROJECT_SELECT };
+    state.rpcResults = { commit_project_schema: rpcResult };
+
+    await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
+
+    expect(resyncMock).not.toHaveBeenCalled();
+  });
+
+  it("publicar MAJOR ressincroniza: o piso de versão muda a divergência", async () => {
+    state.tables = {
+      projects: {
+        data: {
+          ...(PROJECT_SELECT.data as object),
+          pydantic_fields: [FIELD],
+          pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
+          schema_revision: 7,
+        },
+      },
+    };
+    state.rpcResults = { commit_project_schema: { data: commitRow({ schema_revision: 8, schema_version_major: 1 }) } };
+
+    const result = await publishMajorVersion("p1", { revision: 7 });
+
+    expect(result.status).toBe("saved");
+    expect(resyncMock).toHaveBeenCalledWith(expect.anything(), "p1");
+  });
 });
 
 describe("saveSchemaFromGUI", () => {

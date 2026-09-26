@@ -93,7 +93,7 @@ function attachWriteOps(
   };
 }
 
-// Mock filter-aware: aplica eq/neq/is/in/limit às linhas de state.tableData[table]
+// Mock filter-aware: aplica eq/neq/is/in/limit/range às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Usado por comparisons-retry.test.ts,
 // auto-comparison.test.ts e compare-sync.test.ts. `state` deve ser passado como
 // objeto fresco a cada chamada de makeClient() local (não memoizar), para
@@ -114,8 +114,15 @@ export function makeFilterAwareSupabaseMock(state: {
       const ins: Array<[string, unknown[]]> = [];
       const opRef: OpRef = { current: "select" };
       let limitN: number | null = null;
+      let rangeN: [number, number] | null = null;
       const builder: Record<string, unknown> = {};
       builder.select = () => builder;
+      // Ordem: as linhas já saem na ordem de `tableData`, que o teste controla.
+      builder.order = () => builder;
+      builder.range = (from: number, to: number) => {
+        rangeN = [from, to];
+        return builder;
+      };
       builder.eq = (c: string, v: unknown) => {
         eqs.push([c, v]);
         return builder;
@@ -147,7 +154,8 @@ export function makeFilterAwareSupabaseMock(state: {
           for (const [c, vals] of ins) if (!vals.includes(r[c])) return false;
           return true;
         });
-        return limitN != null ? filtered.slice(0, limitN) : filtered;
+        const ranged = rangeN ? filtered.slice(rangeN[0], rangeN[1] + 1) : filtered;
+        return limitN != null ? ranged.slice(0, limitN) : ranged;
       };
       const err = () => state.queryErrors?.[`${table}:${opRef.current}`] ?? null;
       builder.single = () =>

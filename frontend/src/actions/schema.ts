@@ -17,6 +17,7 @@ import {
   type SchemaPersistencePlan,
 } from "@/lib/schema-utils";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
+import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
 import { errorMessage } from "@/lib/utils";
 import {
   generateFieldId,
@@ -317,6 +318,22 @@ function mapCommitResult(
   };
 }
 
+// Depois de um commit de schema: a pergunta nova pode tirar a validade de
+// vereditos e o piso de versão pode mudar a divergência, e o status do
+// assignment de comparação só era recalculado quando alguém votava. A
+// ressincronização é best-effort: o schema já foi gravado, e uma falha aqui
+// vira log, não erro de save. Usa o client de quem salvou: o commit só passa
+// para coordenador, criador ou master, os mesmos que a policy "Coordinators
+// manage assignments" deixa atualizar os assignments do projeto.
+async function afterSchemaCommit(supabase: SupabaseServerClient, projectId: string): Promise<void> {
+  try {
+    await resyncProjectCompareAssignments(supabase, projectId);
+  } catch (e) {
+    console.error(`[schema] falha ao ressincronizar os assignments de comparação: ${errorMessage(e)}`);
+  }
+  revalidateSchemaConsumers(projectId);
+}
+
 function revalidateSchemaConsumers(projectId: string): void {
   revalidatePath(`/projects/${projectId}/analyze/code`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
@@ -537,7 +554,7 @@ async function persistSchema(
     )
     .single();
   const result = mapCommitResult(rpc, data as SchemaCommitRow | null, error);
-  if (result.status === "saved") revalidateSchemaConsumers(projectId);
+  if (result.status === "saved") await afterSchemaCommit(supabase, projectId);
   return result;
 }
 
@@ -761,7 +778,7 @@ async function runBackfill(
   );
   if (commit.status === "error") return commit;
   if (commit.status === "conflict") return commit;
-  revalidateSchemaConsumers(projectId);
+  await afterSchemaCommit(supabase, projectId);
   revalidatePath(`/projects/${projectId}/config/schema`);
   return { status: "saved", stats, snapshot: commit.snapshot };
 }
@@ -815,7 +832,7 @@ export async function publishMajorVersion(
     data as SchemaCommitRow | null,
     error,
   );
-  if (result.status === "saved") revalidateSchemaConsumers(projectId);
+  if (result.status === "saved") await afterSchemaCommit(supabase, projectId);
   return result;
 }
 

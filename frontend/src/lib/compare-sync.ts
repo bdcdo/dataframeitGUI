@@ -1,101 +1,16 @@
 import "server-only";
 
 import type { SupabaseServerClient } from "@/lib/supabase/server";
-import type { PydanticField } from "@/lib/types";
-import { buildEquivalenceMap } from "@/lib/compare-divergence";
-import { comparisonSet, type ComparisonCandidate } from "@/lib/comparison-set";
+import type { ComparisonCandidate } from "@/lib/comparison-set";
 import {
-  resolveCompareStatus,
-  type CompareAssignmentStatus,
-} from "@/lib/compare-assignment-status";
-import { versionGate } from "@/lib/compare-version";
-import { reviewIsValid } from "@/lib/review-validity";
-
-const PG_UNIQUE_VIOLATION = "23505";
-// O índice parcial criado pelo #490 (uma comparação ATIVA por documento;
-// concluídas ficam fora do predicado). É o único unique de `assignments`
-// alcançável por um UPDATE que só toca status/completed_at — a outra,
-// UNIQUE(document_id, user_id, type), tem colunas que este UPDATE não mexe.
-// Casar pelo nome mantém o skip preso a ESTA regra: um índice futuro sobre
-// `status` propaga em vez de ser engolido junto.
-const ACTIVE_COMPARACAO_INDEX = "assignments_one_active_comparacao_per_doc";
-
-interface UpdateCompareAssignmentStatusParams {
-  supabase: SupabaseServerClient;
-  projectId: string;
-  documentId: string;
-  userId: string;
-  assignment: { id: string; status: string };
-  next: CompareAssignmentStatus;
-}
-
-async function updateCompareAssignmentStatus({
-  supabase,
-  projectId,
-  documentId,
-  userId,
-  assignment,
-  next,
-}: UpdateCompareAssignmentStatusParams): Promise<void> {
-  const { error } = await supabase
-    .from("assignments")
-    .update({
-      status: next,
-      completed_at: next === "concluido" ? new Date().toISOString() : null,
-    })
-    .eq("id", assignment.id);
-
-  if (!error) return;
-
-  if (
-    error.code === PG_UNIQUE_VIOLATION &&
-    error.message.includes(ACTIVE_COMPARACAO_INDEX) &&
-    assignment.status === "concluido" &&
-    next !== "concluido"
-  ) {
-    console.warn(
-      `[compare-sync] ${JSON.stringify({
-        event: "regression_blocked_by_active_assignment",
-        projectId,
-        documentId,
-        assignmentId: assignment.id,
-        userId,
-        previousStatus: assignment.status,
-        intendedStatus: next,
-        errorCode: error.code,
-      })}`,
-    );
-    return;
-  }
-
-  throw new Error(error.message, { cause: error });
-}
-
-interface ReopenCandidate {
-  user_id: string;
-  status: string | null;
-  completed_at: string | null;
-}
-
-// Ordem de reabertura: ativa primeiro, depois concluídas da mais recente para
-// a mais antiga, com `user_id` como desempate para o resultado não depender da
-// ordem em que o Postgres devolveu as linhas. "Ativa" usa o MESMO predicado do
-// índice parcial (status IS DISTINCT FROM 'concluido'), incluindo o status
-// nulo — a coluna é NULLABLE desde o 001_initial_schema.
-function sortByReopenPriority<T extends ReopenCandidate>(rows: T[]): T[] {
-  const isConcluded = (r: T) => (r.status === "concluido" ? 1 : 0);
-  return [...rows].sort((a, b) => {
-    const byActive = isConcluded(a) - isConcluded(b);
-    if (byActive !== 0) return byActive;
-    // Mais recente primeiro; `completed_at` nulo vai para o fim (não há como
-    // afirmar que é a rodada corrente). Comparação lexicográfica basta: a
-    // coluna é timestamptz serializada em ISO 8601 pelo PostgREST.
-    const at = a.completed_at ?? "";
-    const bt = b.completed_at ?? "";
-    if (at !== bt) return at < bt ? 1 : -1;
-    return a.user_id < b.user_id ? -1 : a.user_id > b.user_id ? 1 : 0;
-  });
-}
+  COMPARE_EQUIVALENCE_SELECT,
+  COMPARE_PROJECT_SELECT,
+  COMPARE_RESPONSE_SELECT,
+  compareAssignmentStatusFor,
+  sortByReopenPriority,
+  updateCompareAssignmentStatus,
+  type CompareProjectRow,
+} from "@/lib/compare-assignment-sync";
 
 // Recomputes assignment status for EVERY reviewer with a "comparacao"
 // assignment on the document. Equivalences are shared across reviewers
@@ -173,18 +88,10 @@ export async function syncCompareAssignment(
     { data: reviews },
     { data: equivalences },
   ] = await Promise.all([
-    supabase
-      .from("projects")
-      .select(
-        "pydantic_fields, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch",
-      )
-      .eq("id", projectId)
-      .single(),
+    supabase.from("projects").select(COMPARE_PROJECT_SELECT).eq("id", projectId).single(),
     supabase
       .from("responses")
-      .select(
-        "id, respondent_type, respondent_id, is_latest, is_partial, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, answers, answer_field_hashes",
-      )
+      .select(COMPARE_RESPONSE_SELECT)
       .eq("project_id", projectId)
       .eq("document_id", documentId),
     supabase
@@ -195,55 +102,31 @@ export async function syncCompareAssignment(
       .eq("reviewer_id", userId),
     supabase
       .from("response_equivalences")
-      .select(
-        "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot",
-      )
+      .select(COMPARE_EQUIVALENCE_SELECT)
       .eq("project_id", projectId)
       .eq("document_id", documentId)
       .is("superseded_at", null),
   ]);
 
-  const fields = (project?.pydantic_fields as PydanticField[]) || [];
-
-  // Só veredito que ainda vale resolve a divergência: o mesmo critério do
-  // Gabarito e da fila da Comparação (`review-validity.ts`). Um veredito dado
-  // sobre outra versão da pergunta fecharia o parecer com uma célula que o
-  // Gabarito não tem, e ninguém seria chamado a rearbitrá-la.
-  const fieldByName = new Map(fields.map((f) => [f.name, f]));
-  const reviewedFields = new Set(
-    (reviews ?? []).flatMap((r) => (reviewIsValid(r, fieldByName.get(r.field_name)) ? [r.field_name] : [])),
-  );
-
-  // O fecho lê a divergência a resolver do conjunto de comparação
-  // (comparison-set.ts), a mesma que a fila mostra no estado default: resolver
-  // tudo o que a tela mostra fecha o parecer (#217/#218). O piso é o
-  // `versionGate`, o mesmo do gatilho; lentes da URL não redefinem "concluído".
-  const { minVersion, ctx: versionCtx } = versionGate(project ?? {});
-  const set = comparisonSet({
-    fields,
+  // A regra (validade do veredito, conjunto de comparação, piso de versão) é
+  // a de `compareAssignmentStatusFor`, a mesma da ressincronização do
+  // projeto. `null`: menos de 2 respostas que contam, e o status fica.
+  const next = compareAssignmentStatusFor({
+    project: (project ?? { pydantic_fields: [] }) as CompareProjectRow,
+    documentId,
     responses: (responses ?? []) as unknown as ComparisonCandidate[],
-    minVersion,
-    versionCtx,
-    equivalencesByField: buildEquivalenceMap(equivalences).get(documentId),
+    reviews: reviews ?? [],
+    equivalences: equivalences ?? [],
   });
+  if (next === null) return;
 
-  // Sem ao menos 2 respostas que contam não há par a comparar, e a divergência
-  // vazia viraria "concluido" num documento que ninguém comparou na versão
-  // corrente (ex.: só codificações pré-versionamento, ou rodadas abaixo do piso
-  // depois de um bump estrutural). Preserva o status atual; "concluido" fica
-  // para o caso de >= 2 respostas com toda divergência resolvida ou fundida.
-  if (set.counted.length < 2) return;
-  const divergentFields = set.toResolve;
-
-  // `resolveCompareStatus` trata o caso `divergentFields.length === 0` (ex.:
-  // todas as divergências fundidas por equivalência): vira `concluido` em vez de
-  // ficar preso. Atualiza só quando o status muda, limpando `completed_at` em
-  // qualquer regressão (ex.: desmarcar uma equivalência reabre a divergência).
-  // Uma comparação concluída pertence ao histórico da rodada. Se já houver
-  // outra comparação ativa para o documento, o índice parcial do banco impede
-  // atomicamente que a antiga seja reaberta; nesse caso preservamos a concluída
-  // de propósito e `updateCompareAssignmentStatus` registra o bloqueio (#497).
-  const next = resolveCompareStatus(divergentFields, reviewedFields);
+  // Atualiza só quando o status muda, limpando `completed_at` em qualquer
+  // regressão (ex.: desmarcar uma equivalência reabre a divergência). Uma
+  // comparação concluída pertence ao histórico da rodada. Se já houver outra
+  // comparação ativa para o documento, o índice parcial do banco impede
+  // atomicamente que a antiga seja reaberta; nesse caso preservamos a
+  // concluída de propósito e `updateCompareAssignmentStatus` registra o
+  // bloqueio (#497).
   if (assignment.status !== next) {
     await updateCompareAssignmentStatus({
       supabase,
