@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "crypto";
 import { readFileSync } from "node:fs";
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   computeFieldHash,
   classifyChange,
@@ -105,7 +105,9 @@ interface FieldHashParityCase {
 
 const FIELD_HASH_PARITY_CASES = JSON.parse(
   readFileSync(
-    path.resolve(process.cwd(), "../backend/tests/field_hash_parity_cases.json"),
+    fileURLToPath(
+      new URL("../../../../backend/tests/field_hash_parity_cases.json", import.meta.url),
+    ),
     "utf8",
   ),
 ) as FieldHashParityCase[];

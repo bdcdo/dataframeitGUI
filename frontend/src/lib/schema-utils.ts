@@ -465,11 +465,14 @@ function sha256Hex(input: string): string {
 // ela. Os casos ficam em backend/tests/field_hash_parity_cases.json, que as
 // suítes dos dois lados leem.
 
-// O que `str.isprintable()` do Python recusa: as categorias Unicode "Other"
-// (Cc, Cf, Cs, Co, Cn) e "Separator" (Zl, Zp, Zs), menos o espaço ASCII. O
-// `repr` escapa esses caracteres. Limite: o Cn (não atribuído) depende da
-// versão do Unicode de cada runtime, então um caractere atribuído numa versão
-// mais nova do que a do Python do backend ainda diverge.
+// O `repr` do Python escapa todo caractere que `str.isprintable()` recusa, e
+// essa recusa é definida por categoria Unicode (os grupos "Other" e
+// "Separator"), com o espaço ASCII como única exceção, tratada no teste de
+// `char` mais abaixo. O regex é a tradução dessa regra para o TS: um caractere
+// que ele deixasse passar sem escape entraria cru na string do hash de um lado
+// só. Limite: a categoria dos não atribuídos depende da versão do Unicode de
+// cada runtime, então um caractere atribuído numa versão mais nova do que a do
+// Python do backend ainda diverge.
 const PYTHON_NON_PRINTABLE = /[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}\p{Zs}]/u;
 
 function pythonHexEscape(codePoint: number): string {

@@ -157,11 +157,14 @@ repos:
       # Os .env.*.example sao a excecao inevitavel: sao a fonte canonica das
       # variaveis obrigatorias e o teste do contrato afirma os nomes que eles
       # declaram, mas nao tem extensao pela qual casar.
+      # O field_hash_parity_cases.json do backend também entra pelo nome: a
+      # suíte do frontend o lê para conferir a paridade do hash de campo com o
+      # Python, e um push que mude só esse arquivo precisa rodar os dois lados.
       - id: vitest
         name: vitest run (full suite, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^frontend/(.*\.(mjs|mts|ts|tsx|sh)|\.env\.(local|e2e)\.example)$
+        files: ^(frontend/(.*\.(mjs|mts|ts|tsx|sh)|\.env\.(local|e2e)\.example)|backend/tests/field_hash_parity_cases\.json)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -271,6 +274,8 @@ repos:
 
       # pytest do backend como gate de pre-push: roda a suite inteira (auth,
       # rotas, cors) quando o push toca codigo ou o grafo/deploy do backend.
+      # O field_hash_parity_cases.json entra pelo nome porque não é .py e o
+      # teste de paridade do hash de campo depende dele.
       # Diferente do semgrep
       # (fail-open em erro de infra), pytest e fail-CLOSED — sem `uv` o push
       # e barrado com mensagem, pois e um gate de verdade. `package = false`
@@ -279,7 +284,7 @@ repos:
         name: pytest backend (pre-push)
         entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para rodar os testes do backend" >&2; exit 1; }; cd backend && exec uv run pytest -q'
         language: system
-        files: ^(backend/(.*\.py|pyproject\.toml|uv\.lock|Dockerfile|\.dockerignore)|docker-compose\.yml)$
+        files: ^(backend/(.*\.py|pyproject\.toml|uv\.lock|Dockerfile|\.dockerignore|tests/field_hash_parity_cases\.json)|docker-compose\.yml)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
