@@ -26,6 +26,7 @@ describe("rpcAcceptsResolutionValue: a régua de set_error_resolution", () => {
   it.each<[string, PydanticField, unknown, boolean, LlmValue?]>([
     ["single: opção atual", single, "Sim", true],
     ["single: fora das opções", single, "Talvez", false],
+    ["single sem allow_other: Outro com complemento", single, "Outro: x", false],
     ["single com allow_other: Outro com complemento", singleOther, "Outro: parcial", true],
     ["single com allow_other: Outro sem complemento", singleOther, "Outro:  ", false],
     ["multi: opções atuais", multi, ["A", "B"], true],
@@ -34,11 +35,16 @@ describe("rpcAcceptsResolutionValue: a régua de set_error_resolution", () => {
     ["multi: opção extinta", multi, ["A", "C"], false],
     ["texto: não vazio", text, "qualquer", true],
     ["texto: só espaço", text, "   ", false],
+    // btrim tira só o espaço comum: tab sozinho é valor.
+    ["texto: só tab", text, "\t", true],
     ["data: parcial", date, "XX/03/2020", true],
+    ["data: parcial sem nenhum dígito", date, "XX/XX/XXXX", false],
+    ["data: parcial com sufixo", date, "01/03/2020x", false],
     ["data: sentinela do campo", date, "Sem data", true],
     ["data: sentinela geral", date, NOT_INFORMED, true],
     ["data: texto solto", date, "ambiguo", false],
     ["grupo: objeto com subcampo conhecido", group, { anos: "3" }, true],
+    ["grupo: um subcampo preenchido e outro vazio", group, { anos: "3", meses: "" }, true],
     ["grupo: subcampo desconhecido", group, { dias: "3" }, false],
     ["grupo: objeto sem valor", group, { anos: " " }, false],
     // O último ELSIF da RPC aceita texto solto em grupo de subcampos.
@@ -51,7 +57,9 @@ describe("rpcAcceptsResolutionValue: a régua de set_error_resolution", () => {
     ["condicional: branco canônico com o LLM respondendo", conditionalText, "", true],
     ["condicional: branco com o LLM também em branco", conditionalText, "", false, llm(" ")],
     ["condicional: branco com o LLM sem a chave", conditionalText, "", false, llm(null, false)],
+    ["condicional: branco com o LLM null", conditionalText, "", false, llm(null)],
     ["condicional multi: [] com o LLM respondendo", conditionalMulti, [], true],
+    ["condicional multi: [] com o LLM []", conditionalMulti, [], false, llm([])],
     ["não condicional: branco", text, "", false],
   ])("%s", (_label, field, value, expected, llmValue = LLM_ANSWERED) => {
     expect(rpcAcceptsResolutionValue({ field_definition: field, llm_value: llmValue }, value)).toBe(expected);
