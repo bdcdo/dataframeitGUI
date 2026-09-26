@@ -27,6 +27,7 @@ vi.mock("sonner", () => ({
   toast: { success: toastSuccess, error: toastError, warning: toastWarning },
 }));
 
+import { TEXT_CHANGE_WITH_RESPONSES_MESSAGE } from "@/lib/upload-chunking";
 import { useDocumentUpload } from "../useDocumentUpload";
 
 // Faz o mock do Papa.parse chamar o callback `complete` como o handleFile espera.
@@ -361,6 +362,47 @@ describe("useDocumentUpload — replace destrutivo falhando", () => {
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(expect.stringContaining("removidas"))
     );
+  });
+});
+
+describe("useDocumentUpload — pré-checagem de texto trocado mantendo respostas", () => {
+  // Sem a pré-checagem, a guarda do banco recusaria por chunk: num CSV com
+  // vários chunks, os anteriores ficariam gravados antes da recusa.
+  const analysisWithNewText = {
+    duplicates: [{ csvIndex: 0, existingDocId: "d1", matchType: "external_id" }],
+    duplicatesWithResponses: 1,
+    respondedDuplicatesWithNewText: 1,
+  };
+
+  async function reachAnalysis() {
+    checkDuplicates.mockResolvedValue(analysisWithNewText);
+    uploadDocuments.mockResolvedValue({ count: 1 });
+    const hook = renderHook(() => useDocumentUpload("p1"));
+    await primeMapping(hook.result);
+    await act(async () => {
+      await hook.result.current.handleCheckAndUpload();
+    });
+    expect(hook.result.current.phase.kind).toBe("analysis");
+    return hook.result;
+  }
+
+  it("manter respostas recusa antes do primeiro chunk, com a mensagem da guarda", async () => {
+    const result = await reachAnalysis();
+
+    act(() => result.current.handleReplaceAndImport(false));
+
+    expect(toastError).toHaveBeenCalledWith(TEXT_CHANGE_WITH_RESPONSES_MESSAGE);
+    expect(uploadDocuments).not.toHaveBeenCalled();
+    expect(result.current.phase.kind).toBe("analysis");
+  });
+
+  it("apagar respostas segue para o upload", async () => {
+    const result = await reachAnalysis();
+
+    act(() => result.current.handleReplaceAndImport(true));
+
+    await waitFor(() => expect(uploadDocuments).toHaveBeenCalled());
+    expect(toastError).not.toHaveBeenCalled();
   });
 });
 

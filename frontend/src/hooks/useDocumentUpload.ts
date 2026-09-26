@@ -13,6 +13,7 @@ import { errorMessage } from "@/lib/utils";
 import {
   MAX_CHUNK_BYTES,
   PAYLOAD_TOO_LARGE_MESSAGE,
+  TEXT_CHANGE_WITH_RESPONSES_MESSAGE,
   buildDocs,
   buildUploadErrorMessage,
   buildUploadSuccessMessage,
@@ -34,6 +35,7 @@ interface AnalysisResult {
   docs: UploadDoc[];
   duplicates: DuplicateMatch[];
   duplicatesWithResponses: number;
+  respondedDuplicatesWithNewText: number;
   matchType: "external_id" | "text_hash";
 }
 
@@ -190,10 +192,8 @@ export function useDocumentUpload(projectId: string) {
     setPhase({ kind: "checking" });
 
     try {
-      const { duplicates, duplicatesWithResponses } = await checkDuplicatesInChunks(
-        projectId,
-        docs
-      );
+      const { duplicates, duplicatesWithResponses, respondedDuplicatesWithNewText } =
+        await checkDuplicatesInChunks(projectId, docs);
 
       if (duplicates.length === 0) {
         // No duplicates — upload directly; a failure returns to mapping.
@@ -209,6 +209,7 @@ export function useDocumentUpload(projectId: string) {
             docs,
             duplicates,
             duplicatesWithResponses,
+            respondedDuplicatesWithNewText,
             matchType: hasExternalIdMatch ? "external_id" : "text_hash",
           },
         });
@@ -238,6 +239,16 @@ export function useDocumentUpload(projectId: string) {
   const handleReplaceAndImport = (deleteResponses: boolean) => {
     if (phase.kind !== "analysis") return;
     const { analysis } = phase;
+    // Pré-checagem só de leitura: o banco recusaria esse envio na guarda de
+    // replace_and_add_documents, mas por chunk. Se a recusa caísse num chunk
+    // posterior, os anteriores já estariam gravados, e o novo envio com
+    // "apagar" reenviaria o CSV inteiro, duplicando os documentos novos sem
+    // external_id. Recusando aqui, nada é gravado. A guarda do banco segue
+    // sendo a autoridade (text_hash NULL escapa desta conta).
+    if (!deleteResponses && analysis.respondedDuplicatesWithNewText > 0) {
+      toast.error(TEXT_CHANGE_WITH_RESPONSES_MESSAGE);
+      return;
+    }
     void doUpload(analysis.docs, phase, {
       mode: "replace_and_add",
       duplicateMap: analysis.duplicates,

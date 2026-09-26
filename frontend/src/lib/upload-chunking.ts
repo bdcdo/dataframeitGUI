@@ -22,6 +22,16 @@ export interface Csv {
 export const PAYLOAD_TOO_LARGE_MESSAGE =
   "O envio excedeu o limite do servidor. Tente importar menos documentos por vez ou divida o CSV em partes menores.";
 
+// Recusa de replace_and_add mantendo respostas quando algum documento já
+// respondido receberia texto diferente. É o texto do RAISE da guarda em
+// replace_and_add_documents (migration
+// 20260927160000_replace_documents_keeps_judged_text.sql), repetido aqui porque
+// a pré-checagem do upload devolve o mesmo erro antes de gravar o primeiro
+// chunk; upload-chunking.test.ts confere que os dois continuam iguais. Sem
+// dígitos, por causa de isPayloadTooLarge.
+export const TEXT_CHANGE_WITH_RESPONSES_MESSAGE =
+  "Há documentos já respondidos cujo texto no arquivo difere do texto atual, mesmo que só na formatação (quebra de linha, espaço no fim). As respostas valem para o texto atual. Para manter esses documentos como estão, use \"Importar apenas novos\" (ou \"Voltar ao mapeamento\", se não houver novos). Para trocar o texto, use \"Substituir duplicatas e importar novos\" com \"Apagar respostas e exigir re-codificação\", que apaga as respostas de todas as duplicatas do envio, inclusive as de texto igual.";
+
 // Vercel Server Actions reject payloads above ~4.5 MB (FUNCTION_PAYLOAD_TOO_LARGE).
 // Pack docs by aggregate UTF-8 byte size to stay safely under that, with a count cap to avoid latency spikes.
 export const MAX_CHUNK_BYTES = 3_500_000;

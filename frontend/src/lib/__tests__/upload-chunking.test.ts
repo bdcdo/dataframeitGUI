@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import Papa from "papaparse";
 import {
   MAX_CHUNK_BYTES,
   MAX_DOCS_PER_CHUNK,
   PAYLOAD_TOO_LARGE_MESSAGE,
+  TEXT_CHANGE_WITH_RESPONSES_MESSAGE,
   buildDocs,
   buildUploadErrorMessage,
   buildUploadSuccessMessage,
@@ -36,6 +39,22 @@ describe("isPayloadTooLarge", () => {
   it("é falso para mensagem vazia ou não relacionada", () => {
     expect(isPayloadTooLarge("")).toBe(false);
     expect(isPayloadTooLarge("Erro de rede genérico")).toBe(false);
+  });
+});
+
+// A pré-checagem do upload e a guarda de replace_and_add_documents devolvem a
+// mesma recusa; o texto vive nos dois lados e este teste os prende juntos.
+describe("TEXT_CHANGE_WITH_RESPONSES_MESSAGE", () => {
+  it("é o texto do RAISE da guarda no banco e não vira erro de payload", () => {
+    const sql = readFileSync(
+      join(__dirname, "..", "..", "..", "supabase", "migrations",
+        "20260927160000_replace_documents_keeps_judged_text.sql"),
+      "utf8",
+    );
+    const raised = /RAISE EXCEPTION\s+'([^']*)'/.exec(sql)?.[1];
+    expect(raised).toBe(TEXT_CHANGE_WITH_RESPONSES_MESSAGE);
+    expect(TEXT_CHANGE_WITH_RESPONSES_MESSAGE).not.toMatch(/[0-9]/);
+    expect(isPayloadTooLarge(TEXT_CHANGE_WITH_RESPONSES_MESSAGE)).toBe(false);
   });
 });
 

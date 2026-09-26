@@ -43,6 +43,7 @@ export async function checkDuplicates(
 ): Promise<{
   duplicates: DuplicateMatch[];
   duplicatesWithResponses: number;
+  respondedDuplicatesWithNewText: number;
 }> {
   const supabase = await createSupabaseServer();
 
@@ -58,13 +59,19 @@ export async function checkDuplicates(
 
   const duplicates: DuplicateMatch[] = [];
   const matchedCsvIndices = new Set<number>();
+  // Documentos casados por external_id cujo text_hash gravado difere do hash do
+  // texto que chega. Casamento por text_hash nunca entra: o hash é o mesmo por
+  // construção. text_hash NULL também não entra, porque aqui não dá para
+  // decidir; quem decide é a guarda de replace_and_add_documents, que compara o
+  // texto no banco.
+  const docIdsWithNewText = new Set<string>();
 
   // 1. Match by external_id (excluidos sao ignorados — re-upload de doc
   //    excluido por engano cria um novo registro normal)
   if (externalIds.length > 0) {
     const { data: byExtId, error: byExtIdErr } = await supabase
       .from("documents")
-      .select("id, external_id")
+      .select("id, external_id, text_hash")
       .eq("project_id", projectId)
       .is("excluded_at", null)
       .in(
@@ -77,16 +84,19 @@ export async function checkDuplicates(
       );
 
     if (byExtId) {
-      const extIdMap = new Map(byExtId.map((d) => [d.external_id, d.id]));
+      const extIdMap = new Map(byExtId.map((d) => [d.external_id, d]));
       for (const { id, index } of externalIds) {
-        const existingId = extIdMap.get(id!);
-        if (existingId) {
+        const existing = extIdMap.get(id!);
+        if (existing) {
           duplicates.push({
             csvIndex: indexFor(index),
-            existingDocId: existingId,
+            existingDocId: existing.id,
             matchType: "external_id",
           });
           matchedCsvIndices.add(index);
+          if (existing.text_hash && existing.text_hash !== hashes[index]) {
+            docIdsWithNewText.add(existing.id);
+          }
         }
       }
     }
@@ -125,8 +135,11 @@ export async function checkDuplicates(
     }
   }
 
-  // 3. Count duplicates that have responses
+  // 3. Count duplicates that have responses, and among them the ones whose
+  //    text would change: the upload refuses replace_and_add keeping responses
+  //    before writing the first chunk when this second count is not zero.
   let duplicatesWithResponses = 0;
+  let respondedDuplicatesWithNewText = 0;
   if (duplicates.length > 0) {
     const docIds = duplicates.map((d) => d.existingDocId);
     const { data: responses, error: responsesErr } = await supabase
@@ -141,13 +154,15 @@ export async function checkDuplicates(
 
     if (responses) {
       const docsWithResponses = new Set(responses.map((r) => r.document_id));
-      duplicatesWithResponses = docIds.filter((id) =>
-        docsWithResponses.has(id)
+      const respondedIds = docIds.filter((id) => docsWithResponses.has(id));
+      duplicatesWithResponses = respondedIds.length;
+      respondedDuplicatesWithNewText = respondedIds.filter((id) =>
+        docIdsWithNewText.has(id)
       ).length;
     }
   }
 
-  return { duplicates, duplicatesWithResponses };
+  return { duplicates, duplicatesWithResponses, respondedDuplicatesWithNewText };
 }
 
 export interface UploadOptions {
