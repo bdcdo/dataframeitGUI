@@ -262,6 +262,7 @@ const PENDING_REASON = {
   uncompared: "respostas divergem e o campo não entra na Comparação",
   llmOnly: "só o LLM respondeu",
   nobody: "ninguém respondeu o campo",
+  contradiction: (parent: string) => `julgamento contradiz o campo ${parent}`,
 } as const;
 
 // O que cada proveniência da view `final_answers` faz com a célula: "decidido"
@@ -404,11 +405,34 @@ function conditionOutcome(field: PydanticField, row: GabaritoRow): CellOutcome |
 }
 
 // `value: undefined` é o branco legítimo: a condição não se cumpre na linha.
-type CellOutcome = { value: string | undefined } | { reason: string };
+// `notApplicable` marca o motivo que, mesmo deixando a célula nas Pendências,
+// dá o campo como fora da linha (ver `judgedCell`).
+type CellOutcome = { value: string | undefined } | { reason: string; notApplicable?: true };
+
+// Uma célula com julgamento explícito (veredito do revisor, decisão do LLM
+// Insights, auto-revisão decidida) diante da condição do campo na linha. O
+// julgamento não passa por cima da condição: se o pai no Gabarito diz que o
+// campo não se aplica e o julgamento pôs valor nele, os dois se contradizem, e
+// a célula fica em branco nas Pendências até alguém decidir qual dos dois
+// cede. Branco não contradiz nada: é o que a condição pede, e é o que "Erro
+// humano" aprova quando o LLM deixou de fora o campo condicional. Pai ainda
+// pendente também não: o julgamento entra, porque não há o que contradizer.
+// Na contradição, o campo sai da linha como não aplicável (`settleCell` com
+// `undefined`), o mesmo estado do branco legítimo: é o que o pai no Gabarito
+// diz, e assim o neto segue a linha como ela está, em vez de esperar por um
+// filho que, com esse pai, nunca terá valor.
+function judgedCell(field: PydanticField, row: GabaritoRow, cell: string): CellOutcome {
+  const parent = field.condition?.field;
+  const gate = conditionOutcome(field, row);
+  if (parent && gate && "value" in gate && cell !== "") {
+    return { reason: PENDING_REASON.contradiction(parent), notApplicable: true };
+  }
+  return { value: cell };
+}
 
 // Uma célula sem veredito: o valor que ela recebe ou o motivo de ficar em
-// branco. Ordem: auto-revisão decidida, condição na linha do Gabarito,
-// concordância, e então o motivo.
+// branco. Ordem: auto-revisão decidida (pesada contra a condição por
+// `judgedCell`), condição na linha do Gabarito, concordância, e então o motivo.
 function resolveCell(
   docId: string,
   field: PydanticField,
@@ -417,7 +441,7 @@ function resolveCell(
   ctx: CellContext,
 ): CellOutcome {
   const auto = ctx.autoReview.get(cellKey(docId, field.name));
-  if (auto && AUTO_REVIEW_CELL[auto.provenance] === "decidido") return { value: formatExportValue(auto.answer) };
+  if (auto && AUTO_REVIEW_CELL[auto.provenance] === "decidido") return judgedCell(field, row, formatExportValue(auto.answer));
   const gate = conditionOutcome(field, row);
   if (gate) return gate;
   const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
@@ -498,11 +522,12 @@ function buildCellContext(input: AssembleInput, baseReviews: ExportReview[]): Ce
   };
 }
 
-// As células de um documento, na ordem do schema: as que a auto-revisão ou a
-// concordância preenchem, e as que ficam em branco, com o motivo. Célula com
-// veredito só volta como pendente quando o veredito é o branco de "Em
-// discussão"; as demais entram na linha como estão, porque o veredito é
-// julgamento explícito e vale acima da condição.
+// As células de um documento, na ordem do schema: as que o veredito, a
+// auto-revisão ou a concordância preenchem, e as que ficam em branco, com o
+// motivo. O veredito (com as decisões do LLM Insights, que chegam pelo mesmo
+// mapa em `applyExportResolutions`) vale acima da concordância, mas não acima
+// da condição: passa por `judgedCell` como a auto-revisão decidida. O branco
+// de "Em discussão" vai para as Pendências antes disso.
 function resolveDocCells(
   docId: string,
   doc: DocResponses,
@@ -515,14 +540,14 @@ function resolveDocCells(
   const row: GabaritoRow = {};
   for (const field of fields) {
     const verdict = verdictFields?.get(field.name);
-    if (verdict !== undefined) {
-      if (ctx.discussed.has(cellKey(docId, field.name))) pending.push([field.name, PENDING_REASON.discussion]);
-      else settleCell(row, field, verdict);
+    if (verdict !== undefined && ctx.discussed.has(cellKey(docId, field.name))) {
+      pending.push([field.name, PENDING_REASON.discussion]);
       continue;
     }
-    const outcome = resolveCell(docId, field, doc, row, ctx);
+    const outcome = verdict !== undefined ? judgedCell(field, row, verdict) : resolveCell(docId, field, doc, row, ctx);
     if ("reason" in outcome) {
       pending.push([field.name, outcome.reason]);
+      if (outcome.notApplicable) settleCell(row, field, undefined);
       continue;
     }
     if (outcome.value !== undefined) filled.set(field.name, outcome.value);
@@ -651,12 +676,11 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     .filter((id) => verdictsByDoc.has(id) || filledByDoc.has(id));
   const gabaritoSet = new Set(gabaritoIds);
 
-  // Prioridade por campo: veredicto do revisor (com as decisões do LLM
-  // Insights) > auto-revisão decidida > concordância > vazio.
+  // Cada célula vem de `resolveDocCells`, que aplica a prioridade: veredicto
+  // do revisor (com as decisões do LLM Insights) > auto-revisão decidida >
+  // concordância > vazio, com a condição na linha acima dos julgamentos.
   const verdictFieldValue = (docId: string, fieldName: string): string =>
-    verdictsByDoc.get(docId)?.fields.get(fieldName) ??
-    filledByDoc.get(docId)?.get(fieldName) ??
-    "";
+    filledByDoc.get(docId)?.get(fieldName) ?? "";
 
   const sourceOf = (respondentType: string): string =>
     respondentType === "llm" ? "llm" : "codificacao";

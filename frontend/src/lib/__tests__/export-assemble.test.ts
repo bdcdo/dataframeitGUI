@@ -836,13 +836,87 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(late)).toEqual([["A", "pai", "ninguém respondeu o campo"]]);
     });
 
-    it("auto-revisão resolvida vale acima da condição na linha", () => {
-      const d = withChain({
-        responses: [answering("h1", "humano", { pai: "não" }), answering("l", "llm", { pai: "sim", filho: "Sim" })],
-        reviews: [paiVerdict("não")],
-        finalAnswers: [{ document_id: "A", field_name: "filho", provenance: "arbitrado", answer: "Sim" }],
+    describe("julgamento explícito diante da condição", () => {
+      const verdictOn = (fieldName: string, verdict: string) => ({
+        ...paiVerdict(verdict), id: `rv-${fieldName}-${verdict}`, field_name: fieldName,
       });
-      expect(cell(d, "filho")).toBe("Sim");
+      const contradicted = [
+        answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+        answering("h2", "humano", { pai: "não" }),
+        answering("l", "llm", { pai: "não" }),
+      ];
+
+      it("veredito no filho com o pai no Gabarito sem cumprir a condição: branco e Pendências", () => {
+        const d = withChain({ responses: contradicted, reviews: [paiVerdict("não"), verdictOn("filho", "Sim")] });
+        expect(cell(d, "pai")).toBe("não");
+        expect(cell(d, "filho")).toBe("");
+        // O filho sai da linha como não aplicável: o neto fica no branco
+        // legítimo, sem esperar por ele.
+        expect(cell(d, "neto")).toBe("");
+        expect(pendingOf(d)).toEqual([["A", "filho", "julgamento contradiz o campo pai"]]);
+      });
+
+      it("veredito em branco no filho não contradiz o pai", () => {
+        const d = withChain({ responses: contradicted, reviews: [paiVerdict("não"), verdictOn("filho", "")] });
+        expect(cell(d, "filho")).toBe("");
+        expect(d.pending.rows).toEqual([]);
+      });
+
+      it("veredito no filho com o pai pendente: entra, porque não há o que contradizer", () => {
+        const d = withChain({
+          responses: [
+            answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+            answering("h2", "humano", { pai: "não" }),
+            answering("l", "llm", { pai: "sim", filho: "Sim" }),
+          ],
+          reviews: [verdictOn("filho", "Sim")],
+        });
+        expect(cell(d, "filho")).toBe("Sim");
+        expect(pendingOf(d)).toEqual([["A", "pai", "divergência entre pesquisadores"]]);
+      });
+
+      it("auto-revisão decidida no filho contradizendo o pai: branco e Pendências", () => {
+        const d = withChain({
+          responses: [answering("h1", "humano", { pai: "não" }), answering("l", "llm", { pai: "sim", filho: "Sim" })],
+          reviews: [paiVerdict("não")],
+          finalAnswers: [{ document_id: "A", field_name: "filho", provenance: "arbitrado", answer: "Sim" }],
+        });
+        expect(cell(d, "filho")).toBe("");
+        expect(pendingOf(d)).toEqual([["A", "filho", "julgamento contradiz o campo pai"]]);
+      });
+
+      it("auto-revisão decidida no filho com o pai pendente: entra", () => {
+        const d = withChain({
+          responses: [
+            answering("h1", "humano", { pai: "sim", filho: "Sim" }),
+            answering("h2", "humano", { pai: "não" }),
+            answering("l", "llm", { pai: "sim", filho: "Não" }),
+          ],
+          finalAnswers: [{ document_id: "A", field_name: "filho", provenance: "arbitrado", answer: "Sim" }],
+        });
+        expect(cell(d, "filho")).toBe("Sim");
+        expect(pendingOf(d)).toEqual([["A", "pai", "divergência entre pesquisadores"]]);
+      });
+
+      // A decisão do LLM Insights chega pelo mesmo mapa dos vereditos
+      // (`applyExportResolutions`), e a regra vale igual para ela.
+      it("decisão do LLM Insights no filho contradizendo o pai: branco e Pendências", () => {
+        const x = field("x", { condition: { field: "pai", equals: "sim" } });
+        const d = exported({
+          fields: [pai, x],
+          documents: [doc("doc1")],
+          responses: [
+            { id: "rllm", document_id: "doc1", respondent_name: "LLM", respondent_type: "llm", answers: { pai: "sim", x: "LLM" } },
+            { id: "rh", document_id: "doc1", respondent_name: "R1", respondent_type: "humano", answers: { pai: "sim", x: "Humano" } },
+          ],
+          reviews: [{ ...paiVerdict("não"), document_id: "doc1" }],
+          errorResolutions: [resolutionFixture("llm_correct")],
+        });
+        const row = d.verdicts.rows.find((r) => r[0] === "doc1")!;
+        expect(row[idx(d.verdicts, "x")]).toBe("");
+        expect(row[idx(d.verdicts, "reviewer_comments")]).toContain("Erro humano");
+        expect(pendingOf(d)).toEqual([["doc1", "x", "julgamento contradiz o campo pai"]]);
+      });
     });
 
     it("um único pesquisador viu o filho: a célula recebe a resposta dele", () => {
