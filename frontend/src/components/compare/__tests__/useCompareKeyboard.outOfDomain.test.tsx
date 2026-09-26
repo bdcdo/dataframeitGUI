@@ -37,7 +37,7 @@ function setup() {
   return { onPrepareVerdict };
 }
 
-describe("useCompareKeyboard — voto em resposta fora das opções atuais", () => {
+describe("useCompareKeyboard: voto em resposta fora das opções atuais", () => {
   it("não prepara o rascunho e avisa o motivo", () => {
     const { onPrepareVerdict } = setup();
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "2" }));

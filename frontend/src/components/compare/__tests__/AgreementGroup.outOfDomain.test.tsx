@@ -39,7 +39,7 @@ function renderGroup(domainField: Props["domainField"], answers: string[]) {
 const voteTarget = (answer: string) =>
   screen.queryByRole("button", { name: `Selecionar esta resposta para confirmar: ${answer}` });
 
-describe("AgreementGroup — resposta fora das opções atuais", () => {
+describe("AgreementGroup: resposta fora das opções atuais", () => {
   const single = { type: "single" as const, options: ["Sim", "Não"], allow_other: false };
 
   it("opção que saiu do formulário fica marcada e sem voto; a atual continua votável", () => {

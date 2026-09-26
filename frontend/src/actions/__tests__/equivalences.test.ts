@@ -205,7 +205,7 @@ describe("confirmEquivalentVerdict", () => {
   });
 });
 
-describe("confirmEquivalentVerdict — gabarito fora das opções atuais", () => {
+describe("confirmEquivalentVerdict: gabarito fora das opções atuais", () => {
   it("recusa antes de gravar par ou veredito", async () => {
     serverTableResults = {
       projects: { data: { pydantic_fields: [{

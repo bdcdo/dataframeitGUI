@@ -65,7 +65,7 @@ describe("LlmErrorCard — veredito anterior em branco", () => {
   });
 });
 
-describe("LlmErrorCard — decisão sobre veredito que perdeu a validade", () => {
+describe("LlmErrorCard: decisão sobre veredito que perdeu a validade", () => {
   const resolution = {
     id: "res1", project_id: "proj1", document_id: "doc1", field_name: "x",
     decision: "llm_correct" as const, context: null, current_context: null,

@@ -207,7 +207,7 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
 // saído das opções; gravar esse voto dava sucesso, mas o veredito nascia fora
 // do domínio (`review-validity.ts`), não contava no fecho e a tela recarregada
 // o mostrava como anterior à mudança da pergunta.
-describe("submitVerdict — voto copiado fora das opções atuais", () => {
+describe("submitVerdict: voto copiado fora das opções atuais", () => {
   const SINGLE = {
     id: "00000000-0000-4000-8000-000000000002", name: "q2", type: "single",
     options: ["Sim", "Não"], description: "", hash: "bbbbbbbbbbbb",

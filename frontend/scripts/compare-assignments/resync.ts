@@ -1,5 +1,5 @@
 /**
- * compare-assignments/resync.ts — recalcula o status dos assignments de
+ * compare-assignments/resync.ts: recalcula o status dos assignments de
  * comparação de um projeto (ou de todos) pela regra de `syncCompareAssignment`.
  *
  * Existe para rodar uma vez depois do deploy da validade do veredito por
