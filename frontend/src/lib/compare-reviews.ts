@@ -25,6 +25,15 @@ export interface StaleVerdictInfo extends VerdictInfo {
 
 export type StaleReviewsByDoc = Record<string, Record<string, StaleVerdictInfo>>;
 
+/** O veredito sem validade do revisor numa célula, se houver. */
+export function staleVerdictOf(
+  staleReviews: StaleReviewsByDoc | undefined,
+  documentId: string,
+  fieldName: string,
+): StaleVerdictInfo | null {
+  return staleReviews?.[documentId]?.[fieldName] ?? null;
+}
+
 /**
  * Mescla os vereditos do servidor com os overrides otimistas. Override vence
  * por campo (merge raso por documento). Retorna a referência de `existing`

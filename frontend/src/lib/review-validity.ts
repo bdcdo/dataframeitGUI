@@ -192,7 +192,7 @@ function isNewer(candidate: OrderableReview, incumbent: OrderableReview): boolea
   return candidate.id > incumbent.id;
 }
 
-export function cellKey(documentId: string, fieldName: string): string {
+function cellKey(documentId: string, fieldName: string): string {
   return `${documentId}:${fieldName}`;
 }
 

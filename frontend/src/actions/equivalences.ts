@@ -30,6 +30,39 @@ export interface ConfirmEquivalentVerdictInput {
   responseSnapshot?: ResponseSnapshotEntry[];
 }
 
+// Um par canônico (a < b) por combinação das respostas marcadas, sem repetir.
+function canonicalPairRows(
+  responseIds: readonly string[],
+  cell: { projectId: string; documentId: string; fieldName: string; reviewerId: string },
+) {
+  const seen = new Set<string>();
+  const rows: Array<{
+    project_id: string;
+    document_id: string;
+    field_name: string;
+    response_a_id: string;
+    response_b_id: string;
+    reviewer_id: string;
+  }> = [];
+  for (let i = 0; i < responseIds.length; i++) {
+    for (let j = i + 1; j < responseIds.length; j++) {
+      const [a, b] = canonicalPair(responseIds[i], responseIds[j]);
+      const key = `${a}|${b}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        project_id: cell.projectId,
+        document_id: cell.documentId,
+        field_name: cell.fieldName,
+        response_a_id: a,
+        response_b_id: b,
+        reviewer_id: cell.reviewerId,
+      });
+    }
+  }
+  return rows;
+}
+
 export async function confirmEquivalentVerdict({
   projectId,
   documentId,
@@ -60,32 +93,7 @@ export async function confirmEquivalentVerdict({
     return { error: OUT_OF_DOMAIN_VOTE_MESSAGE };
   }
 
-  // Build canonical pairs (a < b) for every combination, dedup.
-  const seen = new Set<string>();
-  const rows: Array<{
-    project_id: string;
-    document_id: string;
-    field_name: string;
-    response_a_id: string;
-    response_b_id: string;
-    reviewer_id: string;
-  }> = [];
-  for (let i = 0; i < responseIds.length; i++) {
-    for (let j = i + 1; j < responseIds.length; j++) {
-      const [a, b] = canonicalPair(responseIds[i], responseIds[j]);
-      const key = `${a}|${b}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push({
-        project_id: projectId,
-        document_id: documentId,
-        field_name: fieldName,
-        response_a_id: a,
-        response_b_id: b,
-        reviewer_id: reviewerId,
-      });
-    }
-  }
+  const rows = canonicalPairRows(responseIds, { projectId, documentId, fieldName, reviewerId });
 
   try {
     const { error: equivErr } = await supabase.rpc(

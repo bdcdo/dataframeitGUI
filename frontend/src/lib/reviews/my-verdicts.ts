@@ -62,23 +62,40 @@ export function buildMyVerdictItems({
   return [...pickValidCellReviews(reviews, fieldByName).values()].flatMap((r) => {
     const myAnswer = myAnswersByDoc.get(r.document_id)?.[r.field_name];
     if (myAnswer === undefined) return [];
-    const field = fieldByName.get(r.field_name);
-    const fieldType = (field?.type || "text") as VerdictItem["fieldType"];
-    const ack = acknowledgments.get(r.id);
-    return [{
-      reviewId: r.id,
-      documentId: r.document_id,
-      documentTitle: docTitles.get(r.document_id) || r.document_id,
-      fieldName: r.field_name,
-      fieldDescription: field?.description || r.field_name,
-      fieldType,
-      verdict: r.verdict,
-      coordinatorComment: r.comment,
-      myAnswer,
-      isCorrect: isAnswerCorrect(myAnswer, r.verdict, fieldType),
-      responseSnapshot: r.response_snapshot as VerdictItem["responseSnapshot"],
-      acknowledgmentStatus: (ack?.status as VerdictItem["acknowledgmentStatus"]) ?? null,
-      acknowledgmentComment: ack?.comment ?? null,
-    }];
+    return [toVerdictItem(r, myAnswer, fieldByName.get(r.field_name), docTitles, acknowledgments.get(r.id))];
   });
+}
+
+function toVerdictItem(
+  r: MyVerdictReviewRow,
+  myAnswer: unknown,
+  field: PydanticField | undefined,
+  docTitles: ReadonlyMap<string, string>,
+  ack: { status: string; comment: string | null } | undefined,
+): VerdictItem {
+  const fieldType = (field?.type || "text") as VerdictItem["fieldType"];
+  return {
+    reviewId: r.id,
+    documentId: r.document_id,
+    documentTitle: docTitles.get(r.document_id) || r.document_id,
+    fieldName: r.field_name,
+    fieldDescription: field?.description || r.field_name,
+    fieldType,
+    verdict: r.verdict,
+    coordinatorComment: r.comment,
+    myAnswer,
+    isCorrect: isAnswerCorrect(myAnswer, r.verdict, fieldType),
+    responseSnapshot: r.response_snapshot as VerdictItem["responseSnapshot"],
+    ...acknowledgmentOf(ack),
+  };
+}
+
+function acknowledgmentOf(
+  ack: { status: string; comment: string | null } | undefined,
+): Pick<VerdictItem, "acknowledgmentStatus" | "acknowledgmentComment"> {
+  if (!ack) return { acknowledgmentStatus: null, acknowledgmentComment: null };
+  return {
+    acknowledgmentStatus: ack.status as VerdictItem["acknowledgmentStatus"],
+    acknowledgmentComment: ack.comment,
+  };
 }

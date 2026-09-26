@@ -14,7 +14,7 @@ import { useCompareFieldData } from "./useCompareFieldData";
 import { useCompareVerdicts } from "./useCompareVerdicts";
 import { useCompareKeyboard } from "./useCompareKeyboard";
 import { useUrlState } from "@/hooks/useUrlState";
-import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
+import { staleVerdictOf, type ReviewsByDoc, type StaleReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
 import {
@@ -28,6 +28,11 @@ import {
 } from "./compare-types";
 
 const LIST_COLLAPSED_KEY = "compare:listCollapsed";
+
+// O rótulo do campo no painel: a descrição, ou o nome quando não há.
+function fieldLabelOf(field: PydanticField | undefined, fieldName: string): string {
+  return field?.description || fieldName;
+}
 
 interface ComparePageProps {
   projectId: string;
@@ -614,7 +619,7 @@ export function ComparePage({
           documentId: currentDoc.id,
           documentTitle: docTitle,
           fieldName: currentFieldName,
-          fieldDescription: currentField?.description || currentFieldName,
+          fieldDescription: fieldLabelOf(currentField, currentFieldName),
           fieldHelpText: currentField?.help_text,
           fieldType: currentField?.type,
           fieldOptions: currentField?.options,
@@ -623,7 +628,7 @@ export function ComparePage({
           totalFields: docFields.length,
           responses: fieldResponses,
           existingVerdict: currentVerdict,
-          staleVerdict: staleReviews?.[currentDoc.id]?.[currentFieldName] ?? null,
+          staleVerdict: staleVerdictOf(staleReviews, currentDoc.id, currentFieldName),
           reviewed,
           isDivergent: isCurrentFieldDivergent,
           docStatus: isCurrentDocComplete

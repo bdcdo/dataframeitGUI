@@ -16,8 +16,8 @@ import type { LapsedDecision } from "@/lib/llm-error-metrics";
  * apoiaram mudaram. Sem esta linha elas sumiriam em silêncio, e o revisor não
  * saberia que uma decisão dele deixou de valer no Gabarito.
  */
-export function LapsedDecisionsNotice({ decisions }: { decisions: LapsedDecision[] }) {
-  if (decisions.length === 0) return null;
+export function LapsedDecisionsNotice({ decisions }: { decisions?: readonly LapsedDecision[] }) {
+  if (!decisions || decisions.length === 0) return null;
   const count = decisions.length;
   return (
     <Collapsible className="rounded-md border bg-muted/30 px-3 py-2 text-sm">

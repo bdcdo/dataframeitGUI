@@ -67,6 +67,7 @@ interface MockComparisonPanel {
   isSavingVerdict: boolean;
   onConfirmEquivalent: RealPanelProps["onConfirmEquivalent"];
   onMarkReviewed: () => void;
+  staleVerdict: RealPanelProps["staleVerdict"];
 }
 
 vi.mock("@/components/compare/CompareWorkspace", () => ({
@@ -88,6 +89,11 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
         toggle list
       </button>
       <span data-testid="field-name">{comparisonPanel.fieldName}</span>
+      <span data-testid="stale-verdict">
+        {comparisonPanel.staleVerdict
+          ? `${comparisonPanel.staleVerdict.invalidReason}:${comparisonPanel.staleVerdict.verdict}`
+          : ""}
+      </span>
       <span data-testid="pending-verdict">
         {comparisonPanel.pendingVerdict
           ? pendingVerdictLabel(comparisonPanel.pendingVerdict)
@@ -369,6 +375,26 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+// O veredito do revisor que perdeu a validade chega ao painel da célula
+// certa, com o motivo, só como referência (#758).
+describe("ComparePage: veredito sem validade da célula", () => {
+  it("vai ao painel do campo dele e some ao trocar de campo", async () => {
+    const user = userEvent.setup();
+    render(
+      <ComparePage
+        {...makeProps()}
+        staleReviews={{ d1: { campoA: { ...verdict("Sim"), invalidReason: "fora_do_dominio" } } }}
+      />,
+    );
+    expect(text("stale-verdict")).toBe("fora_do_dominio:Sim");
+
+    await user.click(screen.getByTestId("next-field"));
+
+    expect(text("field-name")).toBe("campoB");
+    expect(text("stale-verdict")).toBe("");
+  });
+});
 
 describe("ComparePage — comentário (fix no-derived-state)", () => {
   it("semeia o comentário do veredito existente já na montagem", () => {

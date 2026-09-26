@@ -33,6 +33,35 @@ interface UseCompareKeyboardParams {
   hasPendingVerdict: boolean;
 }
 
+// A tecla do número do card prepara o voto nele. A resposta fora das opções
+// atuais não vira rascunho: o card dela não oferece voto (`AnswerCard`,
+// `outOfDomain`), e o veredito copiado nasceria sem validade, que
+// `submitVerdict` só recusaria na confirmação.
+function prepareGroupVote(
+  group: FieldResponse[],
+  currentField: PydanticField | undefined,
+  origin: VerdictOrigin,
+  onPrepareVerdict: (pending: PendingVerdict) => void,
+): void {
+  const answer = group[0].answer;
+  const displayAnswer =
+    answer == null
+      ? ""
+      : Array.isArray(answer)
+        ? answer.join(", ")
+        : String(answer);
+  if (!copiedVerdictInDomain(displayAnswer, currentField)) {
+    toast.error(OUT_OF_DOMAIN_VOTE_MESSAGE, { id: "compare-out-of-domain" });
+    return;
+  }
+  onPrepareVerdict({
+    kind: "response",
+    verdict: displayAnswer,
+    chosenResponseId: group[0].id,
+    origin,
+  });
+}
+
 /**
  * Atalhos de teclado da Comparação. Extraído de `ComparePage`: o corpo do
  * effect só chama callbacks recebidos por prop (`onToggleFullscreen`,
@@ -110,27 +139,7 @@ export function useCompareKeyboard({
 
       const num = parseInt(e.key);
       if (num >= 1 && num <= answerGroups.length) {
-        const group = answerGroups[num - 1];
-        const answer = group[0].answer;
-        const displayAnswer =
-          answer == null
-            ? ""
-            : Array.isArray(answer)
-              ? answer.join(", ")
-              : String(answer);
-        // O card dessa resposta não oferece voto (`AnswerCard`, `outOfDomain`),
-        // e o teclado segue a mesma regra: o veredito copiado nasceria sem
-        // validade, e `submitVerdict` o recusaria só na confirmação.
-        if (!copiedVerdictInDomain(displayAnswer, currentField)) {
-          toast.error(OUT_OF_DOMAIN_VOTE_MESSAGE, { id: "compare-out-of-domain" });
-          return;
-        }
-        onPrepareVerdict({
-          kind: "response",
-          verdict: displayAnswer,
-          chosenResponseId: group[0].id,
-          origin,
-        });
+        prepareGroupVote(answerGroups[num - 1], currentField, origin, onPrepareVerdict);
         return;
       }
 
