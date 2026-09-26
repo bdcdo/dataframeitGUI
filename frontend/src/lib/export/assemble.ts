@@ -258,6 +258,7 @@ const PENDING_REASON = {
   questionChanged: "pergunta alterada",
   ambiguous: "ambíguo ou pular",
   fewResponses: "poucas respostas",
+  researchers: "divergência entre pesquisadores",
   uncompared: "divergência sem comparação",
 } as const;
 
@@ -384,11 +385,24 @@ function resolveCell(
   const agree = groupAgreement(field, applicable, pairs);
   const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
-  return { reason: pendingReason(docId, field.name, doc, ctx) };
+  const researchersDiverge = applicable.humans.length >= 2 && !agree(applicable.humans);
+  return { reason: pendingReason(docId, field.name, doc, researchersDiverge, ctx) };
 }
 
-function pendingReason(docId: string, fieldName: string, doc: DocResponses, ctx: CellContext): string {
+function pendingReason(
+  docId: string,
+  fieldName: string,
+  doc: DocResponses,
+  researchersDiverge: boolean,
+  ctx: CellContext,
+): string {
   const key = cellKey(docId, fieldName);
+  const compared = () => ctx.comparisonDivergence(docId, doc).has(fieldName);
+  // Pesquisadores que divergem entre si vêm antes da auto-revisão: o ciclo de
+  // auto-revisão confronta o LLM com um pesquisador só (`field_reviews` tem uma
+  // linha por documento e campo), e a divergência com os demais é resolvida na
+  // Comparação, também nos projetos de auto-revisão.
+  if (researchersDiverge && compared()) return PENDING_REASON.researchers;
   const auto = ctx.autoReview.get(key);
   const autoReason = auto ? AUTO_REVIEW_CELL[auto.provenance] : null;
   if (autoReason) return autoReason;
@@ -399,9 +413,7 @@ function pendingReason(docId: string, fieldName: string, doc: DocResponses, ctx:
   // Sem ler as atribuições não se sabe se a comparação já foi aberta; o que se
   // sabe é se a regra da Comparação vê a divergência. Quando não vê (campo
   // `human_only`), ninguém vai arbitrar.
-  return ctx.comparisonDivergence(docId, doc).has(fieldName)
-    ? PENDING_REASON.arbitration
-    : PENDING_REASON.uncompared;
+  return compared() ? PENDING_REASON.arbitration : PENDING_REASON.uncompared;
 }
 
 // A divergência pela regra da Comparação, calculada uma vez por documento e só

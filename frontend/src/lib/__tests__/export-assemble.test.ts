@@ -683,7 +683,7 @@ describe("assembleExport: células sem veredito", () => {
     const [h1, h2, llm] = [resp("h1", "humano", "NI"), resp("h2", "humano", "N/A"), resp("l", "llm", "Sim")];
     const d = exported({ responses: [h1, h2, llm], equivalences: [pair(h1, h2, "Não informado")] });
     expect(cellOf(d)).toBe("");
-    expect(pendingOf(d)).toEqual([["A", "campo", "aguarda arbitragem"]]);
+    expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
   });
 
   describe("campo condicional: quem não vê o campo não vota", () => {
@@ -762,6 +762,14 @@ describe("assembleExport: células sem veredito", () => {
       const d = exported({ responses, finalAnswers: [answer(provenance)] });
       expect(cellOf(d)).toBe("");
       expect(pendingOf(d)).toEqual([["A", "campo", reason]]);
+    });
+
+    it("pesquisadores divergentes entre si: o motivo aponta a Comparação, não o ciclo pendente", () => {
+      const d = exported({
+        responses: [resp("h1", "humano", "Saúde suplementar"), resp("h2", "humano", "Saúde pública"), resp("l", "llm", "Saúde pública")],
+        finalAnswers: [answer("aguarda_auto_revisao")],
+      });
+      expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
     });
 
     it("consenso da view não decide nada: a concordância das respostas é que vale", () => {
