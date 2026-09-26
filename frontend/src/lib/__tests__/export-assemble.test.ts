@@ -961,6 +961,96 @@ describe("assembleExport: células sem veredito", () => {
     });
   });
 
+  describe("opção de preencher com o LLM onde nenhum pesquisador respondeu", () => {
+    // `pai` é respondido por todos; `extra` nasceu depois da codificação
+    // humana e só o LLM o respondeu; `interno` é `llm_only`; `oculto`, `none`.
+    const pai = field("pai");
+    const extra = field("extra");
+    const interno = field("interno", { target: "llm_only" });
+    const oculto = field("oculto", { target: "none" });
+    const before = { answer_field_hashes: { pai: "h" } };
+    const human = (id: string): ExportResponse => ({
+      id, document_id: "A", respondent_name: id, respondent_type: "humano", answers: { pai: "sim" }, ...before,
+    });
+    const llm = (answers: Record<string, unknown>): ExportResponse => ({
+      id: "l", document_id: "A", respondent_name: "LLM", respondent_type: "llm", answers,
+    });
+    const base = (overrides: Partial<AssembleInput> = {}) => exported({
+      fields: [pai, extra, interno, oculto],
+      responses: [human("h1"), human("h2"), llm({ pai: "sim", extra: "do LLM", interno: "só dele", oculto: "x" })],
+      ...overrides,
+    });
+    const cell = (d: ReturnType<typeof run>, name: string) =>
+      d.verdicts.rows.find((r) => r[0] === "A")?.[idx(d.verdicts, name)] ?? "";
+
+    it("desligada: a célula só do LLM segue nas Pendências, e o campo llm_only fica fora", () => {
+      const d = base();
+      expect(cell(d, "extra")).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "extra", "só o LLM respondeu"]]);
+      expect(d.llmOnly.rows).toEqual([]);
+      expect(d.verdicts.headers).not.toContain("interno");
+      expect(d.responses.headers).not.toContain("interno");
+    });
+
+    it("ligada: a célula recebe o valor do LLM, sai das Pendências e entra em \"Só LLM\"", () => {
+      const d = base({ fillFromLlm: true });
+      expect(cell(d, "pai")).toBe("sim");
+      expect(cell(d, "extra")).toBe("do LLM");
+      expect(d.pending.rows).toEqual([]);
+      expect(d.llmOnly.headers).toEqual(["document_id", "document_title", "campo"]);
+      expect(d.llmOnly.rows).toEqual([["A", "", "extra"], ["A", "", "interno"]]);
+    });
+
+    it("ligada: o campo llm_only entra nas colunas e o none continua fora", () => {
+      const d = base({ fillFromLlm: true });
+      expect(cell(d, "interno")).toBe("só dele");
+      expect(d.verdicts.headers).toContain("interno");
+      const llmRow = d.responses.rows.find((r) => r[idx(d.responses, "respondent_type")] === "llm")!;
+      expect(llmRow[idx(d.responses, "interno")]).toBe("só dele");
+      expect(d.verdicts.headers).not.toContain("oculto");
+      expect(d.responses.headers).not.toContain("oculto");
+      expect(d.csv.headers).not.toContain("oculto");
+    });
+
+    it("ligada: o branco do pesquisador legado no campo llm_only não diverge do LLM", () => {
+      // Sem `answer_field_hashes`, a resposta conta como tendo visto todo campo.
+      const legacy = (id: string): ExportResponse => ({
+        id, document_id: "A", respondent_name: id, respondent_type: "humano", answers: { pai: "sim" },
+      });
+      const d = base({ fillFromLlm: true, fields: [pai, interno], responses: [legacy("h1"), legacy("h2"), llm({ pai: "sim", interno: "só dele" })] });
+      expect(cell(d, "interno")).toBe("só dele");
+      expect(d.pending.rows).toEqual([]);
+      expect(d.llmOnly.rows).toEqual([["A", "", "interno"]]);
+    });
+
+    it("ligada: resposta do LLM em branco não preenche e segue nas Pendências", () => {
+      const d = base({
+        fillFromLlm: true,
+        responses: [human("h1"), human("h2"), llm({ pai: "sim", extra: "", interno: "só dele" })],
+      });
+      expect(cell(d, "extra")).toBe("");
+      expect(pendingOf(d)).toEqual([["A", "extra", "só o LLM respondeu"]]);
+      expect(d.llmOnly.rows).toEqual([["A", "", "interno"]]);
+    });
+
+    it("ligada: a condição que não se cumpre na linha continua deixando a célula em branco", () => {
+      const filho = field("filho", { condition: { field: "pai", equals: "sim" } });
+      const d = exported({
+        fillFromLlm: true,
+        fields: [pai, filho],
+        responses: [
+          { ...human("h1"), answers: { pai: "não" } },
+          { ...human("h2"), answers: { pai: "não" } },
+          llm({ pai: "sim", filho: "Sim" }),
+        ],
+      });
+      expect(cell(d, "pai")).toBe("não");
+      expect(cell(d, "filho")).toBe("");
+      expect(d.pending.rows).toEqual([]);
+      expect(d.llmOnly.rows).toEqual([]);
+    });
+  });
+
   describe("auto-revisão (view final_answers)", () => {
     const answer = (provenance: ExportFinalAnswer["provenance"], value: unknown = null): ExportFinalAnswer => ({
       document_id: "A", field_name: "campo", provenance, answer: value,

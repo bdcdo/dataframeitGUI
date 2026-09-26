@@ -40,6 +40,8 @@ export interface ExportDataset {
   verdicts: ExportSheet;
   /** Células do Gabarito em branco, com o motivo. Só vai para o XLSX. */
   pending: ExportSheet;
+  /** Células do Gabarito preenchidas pela opção `fillFromLlm`. Só vai para o XLSX. */
+  llmOnly: ExportSheet;
   csv: ExportSheet;
 }
 
@@ -93,6 +95,14 @@ export interface AssembleInput {
   equivalences?: EquivalenceRow[];
   /** Vazio quando o projeto não usa auto-revisão. */
   finalAnswers?: ExportFinalAnswer[];
+  /**
+   * Preenche com a resposta do LLM a célula do Gabarito que nenhum
+   * pesquisador respondeu, e põe os campos `llm_only` nas colunas. Desligado
+   * por padrão porque o Gabarito serve para medir o LLM: uma célula com o valor
+   * dele contaria como acerto dele mesmo. Ligado, o arquivo serve para usar o
+   * dado, e as células que só o LLM preencheu ficam listadas na aba "Só LLM".
+   */
+  fillFromLlm?: boolean;
 }
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
@@ -329,10 +339,16 @@ function groupValue(fieldName: string, group: ExportResponse[], llm: ExportRespo
 // aplicável, por `isFieldApplicable`, o mesmo predicado da Comparação e da view
 // `final_answers`: quem codificou antes de o campo existir, ou respondeu o
 // campo pai com outro valor e por isso não viu este, não tem resposta a
-// comparar, e o branco dele não conta como voto nem como divergência.
+// comparar, e o branco dele não conta como voto nem como divergência. Campo
+// `llm_only` (que só chega aqui com `fillFromLlm`) não aparece na codificação
+// humana, e o pesquisador nunca o responde: a resposta legada, sem
+// `answer_field_hashes`, passaria por `isFieldApplicable` e o branco dela
+// divergiria do LLM.
 function applicableResponses(field: PydanticField, doc: DocResponses): DocResponses {
   return splitResponses(
-    doc.all.filter((r) => isFieldApplicable(field, r.answers, r.answer_field_hashes ?? undefined)),
+    doc.all.filter((r) =>
+      (field.target !== "llm_only" || r.respondent_type === "llm") &&
+      isFieldApplicable(field, r.answers, r.answer_field_hashes ?? undefined)),
   );
 }
 
@@ -369,6 +385,7 @@ interface CellContext {
   /** Células que a decisão "Em discussão" do LLM Insights deixou em branco. */
   discussed: ReadonlySet<string>;
   pairsByDoc: ReturnType<typeof buildEquivalenceMap>;
+  fillFromLlm: boolean;
 }
 
 // A linha do Gabarito em montagem, na forma das respostas, para que as
@@ -396,7 +413,7 @@ function settleCell(row: GabaritoRow, field: PydanticField, cell: string | undef
 // Devolve null quando o campo se aplica. O schema só aceita condição sobre
 // campo anterior (`conditionTrigger` em pydantic-field.ts), então, percorrendo
 // os campos na ordem dele, o pai já passou por aqui; pai fora do Gabarito
-// (`llm_only`, `none`) nunca se decide, e o filho espera.
+// (`none`, e `llm_only` sem `fillFromLlm`) nunca se decide, e o filho espera.
 function conditionOutcome(field: PydanticField, row: GabaritoRow): CellOutcome | null {
   const parent = field.condition?.field;
   if (!parent) return null;
@@ -407,7 +424,8 @@ function conditionOutcome(field: PydanticField, row: GabaritoRow): CellOutcome |
 // `value: undefined` é o branco legítimo: a condição não se cumpre na linha.
 // `notApplicable` marca o motivo que, mesmo deixando a célula nas Pendências,
 // dá o campo como fora da linha (ver `judgedCell`).
-type CellOutcome = { value: string | undefined } | { reason: string; notApplicable?: true };
+// `fromLlm` marca a célula que só o LLM preencheu, pela opção `fillFromLlm`.
+type CellOutcome = { value: string | undefined; fromLlm?: true } | { reason: string; notApplicable?: true };
 
 // Uma célula com julgamento explícito (veredito do revisor, decisão do LLM
 // Insights, auto-revisão decidida) diante da condição do campo na linha. O
@@ -446,20 +464,28 @@ function resolveCell(
   if (gate) return gate;
   const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
   const applicable = applicableResponses(field, doc);
-  // Sem pesquisador entre as respostas que contam, não há gabarito. Só o LLM:
-  // ele é o que o gabarito serve para medir, e uma célula com o valor dele
-  // contaria como acerto dele mesmo. Ninguém: a linha diz que o campo se
-  // aplica, mas nenhum respondente o viu nessa condição (o pai no Gabarito veio
-  // de um veredito que ninguém tinha escolhido, ou o campo nasceu depois da
-  // codificação), e o branco precisa de quem o preencha.
-  if (applicable.humans.length === 0) {
-    return { reason: applicable.all.length > 0 ? PENDING_REASON.llmOnly : PENDING_REASON.nobody };
-  }
+  // Vem depois da condição na linha: o LLM não preenche campo que ela diz não
+  // se aplicar.
+  if (applicable.humans.length === 0) return uncodedCell(field, applicable, ctx.fillFromLlm);
   const agree = groupAgreement(field, applicable, pairs);
   const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
   const signals = pendingSignals(field, doc, applicable, agree, ctx.minResponses);
   return { reason: pendingReason(cellKey(docId, field.name), ctx, signals) };
+}
+
+// Célula sem pesquisador entre as respostas que contam: não há gabarito. Só o
+// LLM: ele é o que o gabarito serve para medir, e uma célula com o valor dele
+// contaria como acerto dele mesmo, salvo quando quem exporta pede o valor dele
+// com `fillFromLlm` (a resposta em branco não tem o que preencher e segue
+// pendente). Ninguém: a linha diz que o campo se aplica, mas nenhum
+// respondente o viu nessa condição (o pai no Gabarito veio de um veredito que
+// ninguém tinha escolhido, ou o campo nasceu depois da codificação), e o
+// branco precisa de quem o preencha.
+function uncodedCell(field: PydanticField, applicable: DocResponses, fillFromLlm: boolean): CellOutcome {
+  const llmCell = fillFromLlm && applicable.llm ? formatExportValue(applicable.llm.answers?.[field.name]) : "";
+  if (llmCell !== "") return { value: llmCell, fromLlm: true };
+  return { reason: applicable.all.length > 0 ? PENDING_REASON.llmOnly : PENDING_REASON.nobody };
 }
 
 // O que decide o motivo de uma célula que ficou sem consenso.
@@ -519,6 +545,7 @@ function buildCellContext(input: AssembleInput, baseReviews: ExportReview[]): Ce
     reviewedCells: new Set(baseReviews.map((r) => cellKey(r.document_id, r.field_name))),
     discussed: new Set(discussed.map((row) => cellKey(row.document_id, row.field_name))),
     pairsByDoc: buildEquivalenceMap(input.equivalences ?? []),
+    fillFromLlm: input.fillFromLlm ?? false,
   };
 }
 
@@ -534,9 +561,10 @@ function resolveDocCells(
   verdictFields: ReadonlyMap<string, string> | undefined,
   fields: PydanticField[],
   ctx: CellContext,
-): { filled: Map<string, string>; pending: [string, string][] } {
+): { filled: Map<string, string>; pending: [string, string][]; fromLlm: string[] } {
   const filled = new Map<string, string>();
   const pending: [string, string][] = [];
+  const fromLlm: string[] = [];
   const row: GabaritoRow = {};
   for (const field of fields) {
     const verdict = verdictFields?.get(field.name);
@@ -551,9 +579,10 @@ function resolveDocCells(
       continue;
     }
     if (outcome.value !== undefined) filled.set(field.name, outcome.value);
+    if (outcome.fromLlm) fromLlm.push(field.name);
     settleCell(row, field, outcome.value);
   }
-  return { filled, pending };
+  return { filled, pending, fromLlm };
 }
 
 function splitResponses(all: ExportResponse[] = []): DocResponses {
@@ -565,7 +594,7 @@ function splitResponses(all: ExportResponse[] = []): DocResponses {
 }
 
 // Percorre os documentos: as células preenchidas vão para `filledByDoc`, as em
-// branco viram linhas de Pendências.
+// branco viram linhas de Pendências, e as que só o LLM preencheu, de "Só LLM".
 function resolveOpenCells(input: {
   baseDocs: ExportDocument[];
   identity: ReadonlyMap<string, DocIdentity>;
@@ -573,31 +602,36 @@ function resolveOpenCells(input: {
   verdictsByDoc: ReadonlyMap<string, VerdictEntry>;
   responses: ExportResponse[];
   ctx: CellContext;
-}): { filledByDoc: Map<string, Map<string, string>>; pendingRows: string[][] } {
+}): { filledByDoc: Map<string, Map<string, string>>; pendingRows: string[][]; llmOnlyRows: string[][] } {
   const responsesByDoc = groupBy(input.responses, (r) => r.document_id);
   const filledByDoc = new Map<string, Map<string, string>>();
   const pendingRows: string[][] = [];
+  const llmOnlyRows: string[][] = [];
   for (const { id: docId } of input.baseDocs) {
     const doc = splitResponses(responsesByDoc.get(docId));
     const verdictFields = input.verdictsByDoc.get(docId)?.fields;
-    const { filled, pending } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
+    const { filled, pending, fromLlm } = resolveDocCells(docId, doc, verdictFields, input.exportableFields, input.ctx);
     if (filled.size > 0) filledByDoc.set(docId, filled);
     // Entram nas Pendências os documentos que têm linha no Gabarito ou alguma
     // codificação humana. Documento só com a resposta do LLM ainda não foi
     // codificado, e listá-lo campo a campo só esconderia os brancos que importam.
+    // Com `fillFromLlm`, o LLM preenche o documento e ele passa a ter linha.
     const hasGabaritoRow = filled.size > 0 || verdictFields !== undefined;
     if (!hasGabaritoRow && doc.humans.length === 0) continue;
     const { displayId, title } = input.identity.get(docId)!;
     for (const [fieldName, reason] of pending) pendingRows.push([displayId, title, fieldName, reason]);
+    for (const fieldName of fromLlm) llmOnlyRows.push([displayId, title, fieldName]);
   }
-  return { filledByDoc, pendingRows };
+  return { filledByDoc, pendingRows, llmOnlyRows };
 }
 
 export function assembleExport(input: AssembleInput): ExportDataset {
   const { projectName, fields, documents, responses, reviews } = input;
 
+  // `llm_only` só entra com `fillFromLlm`: sem ela, nenhuma célula dele teria
+  // gabarito, porque nenhum pesquisador o responde.
   const exportableFields = fields.filter(
-    (f) => f.target !== "llm_only" && f.target !== "none"
+    (f) => f.target !== "none" && (input.fillFromLlm === true || f.target !== "llm_only")
   );
   const fieldNames = exportableFields.map((f) => f.name);
   const fieldNameSet = new Set(fieldNames);
@@ -661,7 +695,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
   const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName);
   applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
-  const { filledByDoc, pendingRows } = resolveOpenCells({
+  const { filledByDoc, pendingRows, llmOnlyRows } = resolveOpenCells({
     baseDocs,
     identity,
     exportableFields,
@@ -758,6 +792,12 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     rows: pendingRows,
   };
 
+  // --- Visão Só LLM --- (só no XLSX, como Pendências)
+  const llmOnlySheet: ExportSheet = {
+    headers: ["document_id", "document_title", "campo"],
+    rows: llmOnlyRows,
+  };
+
   // --- CSV unificado: respostas + gabaritos + documentos órfãos ---
   const docsWithResponse = new Set(baseResponses.map((r) => r.document_id));
   const responseCsvRows = baseResponses.map((r) => {
@@ -819,6 +859,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     responses: responsesSheet,
     verdicts: verdictsSheet,
     pending: pendingSheet,
+    llmOnly: llmOnlySheet,
     csv: csvSheet,
   };
 }

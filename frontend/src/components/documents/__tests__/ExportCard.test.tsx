@@ -25,6 +25,7 @@ function makeDataset(overrides: Partial<ExportDataset> = {}): ExportDataset {
     responses: empty,
     verdicts: empty,
     pending: empty,
+    llmOnly: empty,
     csv: {
       headers: ["document_id", "document_title", "source"],
       rows: [["EXT-1", "T", "documento"]],
@@ -55,12 +56,30 @@ describe("ExportCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
 
     await waitFor(() =>
-      expect(hoisted.getExportDataset).toHaveBeenCalledWith("p1"),
+      expect(hoisted.getExportDataset).toHaveBeenCalledWith("p1", { fillFromLlm: false }),
     );
     expect(await screen.findByText(/Prévia \(1 linha\)/)).toBeTruthy();
     // Cabeçalhos da visão unificada aparecem na prévia.
     expect(screen.getByText("source")).toBeTruthy();
     expect(screen.getByText("document_id")).toBeTruthy();
+  });
+
+  it("a opção de preencher com o LLM vem desligada e, marcada, chega à action e descarta a prévia", async () => {
+    hoisted.getExportDataset.mockResolvedValue(makeDataset());
+    render(<ExportCard projectId="p1" />);
+    const option = screen.getByRole("checkbox", { name: "Preencher com o LLM onde nenhum pesquisador respondeu" });
+    expect(option.getAttribute("aria-checked")).toBe("false");
+
+    await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+    await screen.findByText(/Prévia \(1 linha\)/);
+    await userEvent.click(option);
+    // A prévia foi montada sem a opção e sai da tela.
+    expect(screen.queryByText(/Prévia \(/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Gerar prévia" }));
+    await waitFor(() =>
+      expect(hoisted.getExportDataset).toHaveBeenLastCalledWith("p1", { fillFromLlm: true }),
+    );
   });
 
   it("erro da action é exibido, sem prévia", async () => {
