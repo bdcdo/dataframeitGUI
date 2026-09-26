@@ -110,6 +110,8 @@ describe("verdictInDomain", () => {
 
   it("só o espaço comum é aparado, como o btrim da cópia SQL", () => {
     expect(verdictInDomain("Sim\t", singleField)).toBe(false);
+    expect(verdictInDomain("A\t", multiField)).toBe(false);
+    expect(verdictInDomain("A, B\t", multiField)).toBe(false);
   });
 });
 

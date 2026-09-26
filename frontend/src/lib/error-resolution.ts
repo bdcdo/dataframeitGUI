@@ -312,8 +312,8 @@ function isAllowedOption(field: PydanticField, value: unknown): boolean {
 
 /**
  * Se o valor do seletor basta para ir ao gabarito. Segue a validação de
- * `set_error_resolution` e é igual a ela ou mais restritiva, para que o botão
- * só habilite o que a RPC aceita. É mais restritiva em quatro pontos:
+ * `set_error_resolution` e, fora das duas regras do último parágrafo, é igual
+ * a ela ou mais restritiva. É mais restritiva em quatro pontos:
  * - grupo de subcampos: a RPC aceita qualquer texto não vazio no lugar do
  *   registro, e aqui só entram o registro de subcampos ou `NOT_INFORMED`
  *   (`hasGroupValue`);
@@ -324,10 +324,9 @@ function isAllowedOption(field: PydanticField, value: unknown): boolean {
  * - data: parte completa fora do intervalo, como dia 32, mês 13 ou ano 0999,
  *   fica de fora (`arePartsValid`), e a RPC a aceita.
  *
- * Duas regras da RPC não moram aqui. O formato só de dígitos da data, com até
- * dois no dia e no mês e até quatro no ano, quem garante é o controle de data
- * do FieldRenderer, que descarta o que não é dígito e corta no tamanho: um
- * valor pré-carregado como "ab/cd/efgh" passa nesta função e a RPC o recusa.
+ * Duas regras da RPC não moram aqui. A data só de dígitos (até 2/2/4) é
+ * garantida pelo controle de data do FieldRenderer: um valor pré-carregado
+ * como "ab/cd/efgh" passa nesta função e a RPC o recusa.
  * E a recusa do branco quando o LLM também deixou em branco depende do
  * contexto, e fica em `canConfirmValue`, no diálogo.
  */
