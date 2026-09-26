@@ -94,7 +94,7 @@ describe("decisão individual em Insights", () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
     await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(expect.stringContaining("Nenhuma resposta humana ativa")));
-    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ preferredHumanResponseId: "rh" }));
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ preferredHumanResponseId: "rh", decision: "llm_correct" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -140,6 +140,11 @@ describe("decisão individual em Insights", () => {
     show({ ...errorCase(), currentHumanAnswers: [{ name: "Ana", answer: "LLM" }], bothCorrectValue: { value: "LLM" } });
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     const dialog = await screen.findByRole("dialog");
+    // O contexto é pedido com a decisão e o valor comum: com eles o servidor
+    // dispensa a fonte válida, como nas demais decisões com valor.
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({
+      preferredHumanResponseId: "rh", decision: "both_correct", bothCorrectValue: { value: "LLM" },
+    }));
     expect(dialog.textContent).toContain("Valor que irá para o gabarito");
     expect(dialog.textContent).toContain("Ana");
     await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
