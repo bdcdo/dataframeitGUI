@@ -166,6 +166,14 @@ interface ReviewValidityRow extends ValidatableReview {
   project_id: string;
 }
 
+async function decisionsWithContext(): Promise<DecisionRow[]> {
+  return fetchAll<DecisionRow>(
+    "error_resolutions",
+    "id, project_id, document_id, field_name, decision, context, approved_value",
+    (q) => q.not("context", "is", null),
+  );
+}
+
 // As decisões do LLM Insights que dependem do veredito de origem ("Ambos
 // corretos", "Em discussão", legado) e o apontam, com a validade dessa fonte
 // pelas DUAS cópias da regra: `reviewIsValid` (TS, a que Gabarito, export e
@@ -180,11 +188,7 @@ async function scanSourceDependentDecisions(): Promise<
   { decision: DecisionRow; sourceId: string; tsValid: boolean; sqlValid: boolean }[]
 > {
   const [decisions, projects] = await Promise.all([
-    fetchAll<DecisionRow>(
-      "error_resolutions",
-      "id, project_id, document_id, field_name, decision, context, approved_value",
-      (q) => q.not("context", "is", null),
-    ),
+    decisionsWithContext(),
     fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
   ]);
   const anchored = decisions.flatMap((decision) => {
@@ -218,29 +222,6 @@ async function scanSourceDependentDecisions(): Promise<
 let sourceScan: ReturnType<typeof scanSourceDependentDecisions> | undefined;
 function sourceDependentDecisions() {
   return (sourceScan ??= scanSourceDependentDecisions());
-}
-
-// O que o contexto congelado de uma decisão diz sobre o veredito da fonte e a
-// resposta do LLM, pela regra da métrica (`verdictMatchesAnswer`). O contexto
-// não guarda os pares "=", e dos demais pesquisadores guarda só o hash das
-// codificações (`cell_answers_hash`), que não se lê de volta; o que depende
-// deles fica de fora de propósito, para que a leitura só afirme o que o
-// contexto prova.
-function frozenContextReading(d: DecisionRow) {
-  const c = d.context!;
-  const field = (c.field_definition ?? {}) as PydanticField;
-  const llm = c.llm_value.present ? c.llm_value.value : undefined;
-  const verdict = typeof c.source.verdict === "string" ? c.source.verdict : "";
-  const verdictIsLlm = c.source.chosen_response_id === c.llm_response_id || verdictMatchesAnswer(field, verdict, llm);
-  return { field, llm, verdictIsLlm, fromComparison: c.source.kind === "comparacao" };
-}
-
-async function decisionsWithContext(): Promise<DecisionRow[]> {
-  return fetchAll<DecisionRow>(
-    "error_resolutions",
-    "id, project_id, document_id, field_name, decision, context, approved_value",
-    (q) => q.not("context", "is", null),
-  );
 }
 
 const invariants: Invariant[] = [
@@ -1114,7 +1095,17 @@ invariants.push(
     run: async () =>
       (await decisionsWithContext()).flatMap((d) => {
         if (d.decision !== "both_correct" || d.approved_value === null || d.approved_value === undefined) return [];
-        const { field, llm, verdictIsLlm, fromComparison } = frozenContextReading(d);
+        // Só o que o contexto congelado prova, pela regra da métrica
+        // (`verdictMatchesAnswer`). O contexto não guarda os pares "=", e dos
+        // demais pesquisadores guarda só o hash das codificações
+        // (`cell_answers_hash`), que não se lê de volta; o que depende deles
+        // fica de fora de propósito.
+        const c = d.context!;
+        const field = (c.field_definition ?? {}) as PydanticField;
+        const llm = c.llm_value.present ? c.llm_value.value : undefined;
+        const verdict = typeof c.source.verdict === "string" ? c.source.verdict : "";
+        const verdictIsLlm = c.source.chosen_response_id === c.llm_response_id || verdictMatchesAnswer(field, verdict, llm);
+        const fromComparison = c.source.kind === "comparacao";
         const expected = isBlankAnswer(llm) ? (isConditionalField(field) ? blankAnswerFor(field) : undefined) : llm;
         const problem = !fromComparison ? "fonte não é a Comparação"
           : verdictIsLlm ? "o veredito já era a resposta do LLM"
