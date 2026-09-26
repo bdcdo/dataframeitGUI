@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { syncCompareAssignment } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
 import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE, reviewIsValid } from "@/lib/review-validity";
-import type { PydanticField } from "@/lib/types";
+import { fetchFieldDefinition } from "@/lib/reviews/field-definition";
 
 export interface ResponseSnapshotEntry {
   id: string;
@@ -46,9 +46,7 @@ export async function submitVerdict({
   const { user, memberUserId: effectiveId } = actor;
 
   try {
-    const { data: project } = await supabase
-      .from("projects").select("pydantic_fields").eq("id", projectId).single();
-    const field = ((project?.pydantic_fields ?? []) as PydanticField[]).find((f) => f.name === fieldName);
+    const field = await fetchFieldDefinition(supabase, projectId, fieldName);
 
     // Voto copiado de uma resposta cujo valor saiu das opções: gravaria com
     // sucesso um veredito que nasce sem validade (`review-validity.ts`). O

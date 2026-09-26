@@ -314,6 +314,22 @@ interface MetricsContext {
   codingIsComplete: (response: MetricsResponse) => boolean;
 }
 
+// A validade de TODA review do projeto, e não só da escolhida por célula: a
+// decisão que depende da fonte vale enquanto a review de origem vale.
+function indexReviewValidity(
+  reviews: readonly MetricsReview[],
+  fieldMap: ReadonlyMap<string, PydanticField>,
+): Pick<MetricsContext, "validReviewIds" | "invalidReviewReasons"> {
+  const validReviewIds = new Set<string>();
+  const invalidReviewReasons = new Map<string, ReviewInvalidReason>();
+  for (const review of reviews) {
+    const validity = reviewValidity(review, fieldMap.get(review.field_name));
+    if (validity.valid) validReviewIds.add(review.id);
+    else invalidReviewReasons.set(review.id, validity.reason);
+  }
+  return { validReviewIds, invalidReviewReasons };
+}
+
 function buildContext(input: LlmErrorMetricsInput): MetricsContext {
   const { fields, documentTitles, responses, equivalences, errorResolutions } = input;
   const fieldMap = new Map(fields.map((f) => [f.name, f]));
@@ -388,13 +404,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     return complete;
   };
 
-  const validReviewIds = new Set<string>();
-  const invalidReviewReasons = new Map<string, ReviewInvalidReason>();
-  for (const review of input.reviews) {
-    const validity = reviewValidity(review, fieldMap.get(review.field_name));
-    if (validity.valid) validReviewIds.add(review.id);
-    else invalidReviewReasons.set(review.id, validity.reason);
-  }
+  const { validReviewIds, invalidReviewReasons } = indexReviewValidity(input.reviews, fieldMap);
 
   return {
     fieldMap,
@@ -829,10 +839,19 @@ function revivedCase(
     llmResponseId: saved.llm_response_id, chosenResponseId: saved.human_response_id,
     source: autoReview ? "auto_revisao" : "comparacao",
     sourceId,
-    ...(autoReview || !sourceId || ctx.validReviewIds.has(sourceId)
-      ? {}
-      : { sourceInvalidReason: ctx.invalidReviewReasons.get(sourceId) ?? "veredito_apagado" }),
+    ...sourceInvalidity(autoReview, sourceId, ctx),
   };
+}
+
+// Só a fonte da Comparação é review; a da auto-revisão já é conferida por
+// `llm_error_context` contra o `field_reviews` corrente.
+function sourceInvalidity(
+  autoReview: boolean,
+  sourceId: string | null,
+  ctx: MetricsContext,
+): Pick<LlmError, "sourceInvalidReason"> {
+  if (autoReview || !sourceId || ctx.validReviewIds.has(sourceId)) return {};
+  return { sourceInvalidReason: ctx.invalidReviewReasons.get(sourceId) ?? "veredito_apagado" };
 }
 
 export function computeLlmErrorMetrics(input: LlmErrorMetricsInput): {

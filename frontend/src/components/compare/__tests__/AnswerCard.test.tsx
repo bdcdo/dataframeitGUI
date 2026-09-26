@@ -23,6 +23,7 @@ function renderCard(props: Partial<Parameters<typeof AnswerCard>[0]> = {}) {
         isChosen={false}
         isPending={false}
         versions={["1.0.0"]}
+        outOfDomain={false}
         onVote={onVote}
         {...props}
       />
@@ -118,6 +119,7 @@ describe("AnswerCard — slot de confirmação", () => {
           staleCount={0}
           isChosen={false}
           isPending={false}
+          outOfDomain={false}
           versions={["1.0.0"]}
           onVote={vi.fn()}
           confirmSlot={slot}

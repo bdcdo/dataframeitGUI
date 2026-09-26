@@ -243,31 +243,34 @@ function groupBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, T[
   return grouped;
 }
 
-/**
- * Recalcula o status de TODOS os assignments de comparação do projeto, com a
- * mesma regra de `syncCompareAssignment`, e grava os que mudaram. Idempotente:
- * rodar duas vezes seguidas não muda nada na segunda. Com `dryRun`, só lê e
- * devolve o que mudaria.
- *
- * Quatro leituras paginadas do projeto em vez de quatro por assignment, para
- * caber no save do schema. Dentro de um documento as gravações seguem
- * `sortByReopenPriority`: só uma comparação pode estar ativa por documento, e
- * a ordem decide qual rodada reabre.
- */
-export async function resyncProjectCompareAssignments(
+interface ProjectCompareState {
+  project: CompareProjectRow;
+  assignments: AssignmentRow[];
+  responses: ResponseRow[];
+  reviews: ReviewRow[];
+  equivalences: EquivalenceRow[];
+}
+
+interface PlannedChange {
+  change: CompareAssignmentChange;
+  row: AssignmentRow;
+}
+
+// Quatro leituras paginadas do projeto em vez de quatro por assignment, para
+// caber no save do schema. `null`: projeto sem assignment de comparação.
+async function loadProjectCompareState(
   supabase: SupabaseServerClient,
   projectId: string,
-  options: { dryRun?: boolean } = {},
-): Promise<CompareResyncReport> {
-  const { data: project, error: projectError } = await supabase
+): Promise<ProjectCompareState | null> {
+  const { data: project, error } = await supabase
     .from("projects").select(COMPARE_PROJECT_SELECT).eq("id", projectId).single();
-  if (projectError) throw new Error(`projects: ${projectError.message}`, { cause: projectError });
-  if (!project) return { checked: 0, changes: [] };
+  if (error) throw new Error(`projects: ${error.message}`, { cause: error });
+  if (!project) return null;
 
   const assignments = await fetchAll<AssignmentRow>(
     supabase, "assignments", "id, document_id, user_id, status, completed_at", projectId,
     (q) => q.eq("type", "comparacao"));
-  if (assignments.length === 0) return { checked: 0, changes: [] };
+  if (assignments.length === 0) return null;
 
   const [responses, reviews, equivalences] = await Promise.all([
     fetchAll<ResponseRow>(supabase, "responses", COMPARE_RESPONSE_SELECT, projectId),
@@ -276,42 +279,69 @@ export async function resyncProjectCompareAssignments(
     fetchAll<EquivalenceRow>(supabase, "response_equivalences", COMPARE_EQUIVALENCE_SELECT, projectId,
       (q) => q.is("superseded_at", null)),
   ]);
+  return { project: project as CompareProjectRow, assignments, responses, reviews, equivalences };
+}
 
-  const responsesByDoc = groupBy(responses, (r) => r.document_id);
-  const reviewsByDocUser = groupBy(reviews, (r) => `${r.document_id}:${r.reviewer_id}`);
-  const equivalencesByDoc = groupBy(equivalences, (e) => e.document_id);
+// As mudanças por documento, cada lista já na ordem de reabertura.
+function planCompareResync(state: ProjectCompareState): PlannedChange[][] {
+  const responsesByDoc = groupBy(state.responses, (r) => r.document_id);
+  const reviewsByDocUser = groupBy(state.reviews, (r) => `${r.document_id}:${r.reviewer_id}`);
+  const equivalencesByDoc = groupBy(state.equivalences, (e) => e.document_id);
 
-  const changesByDoc = new Map<string, Array<CompareAssignmentChange & { row: AssignmentRow }>>();
-  for (const [documentId, docAssignments] of groupBy(assignments, (a) => a.document_id)) {
+  const plan: PlannedChange[][] = [];
+  for (const [documentId, docAssignments] of groupBy(state.assignments, (a) => a.document_id)) {
+    const docPlan: PlannedChange[] = [];
     for (const row of sortByReopenPriority(docAssignments)) {
       const next = compareAssignmentStatusFor({
-        project: project as CompareProjectRow,
+        project: state.project,
         documentId,
         responses: responsesByDoc.get(documentId) ?? [],
         reviews: reviewsByDocUser.get(`${documentId}:${row.user_id}`) ?? [],
         equivalences: equivalencesByDoc.get(documentId) ?? [],
       });
       if (next === null || next === row.status) continue;
-      const change = { assignmentId: row.id, documentId, userId: row.user_id, from: row.status, to: next, row };
-      const bucket = changesByDoc.get(documentId);
-      if (bucket) bucket.push(change);
-      else changesByDoc.set(documentId, [change]);
+      docPlan.push({ change: { assignmentId: row.id, documentId, userId: row.user_id, from: row.status, to: next }, row });
     }
+    if (docPlan.length > 0) plan.push(docPlan);
   }
+  return plan;
+}
 
-  const changes = [...changesByDoc.values()].flat().map(({ row: _row, ...change }) => change);
-  if (options.dryRun) return { checked: assignments.length, changes };
-
-  // Documentos em paralelo; dentro de um documento, em série, na ordem de
-  // reabertura.
-  await Promise.all([...changesByDoc.values()].map(async (docChanges) => {
-    for (const change of docChanges) {
+// Documentos em paralelo; dentro de um documento, em série, na ordem de
+// reabertura: só uma comparação pode estar ativa por documento, e a ordem
+// decide qual rodada reabre.
+async function applyCompareResync(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  plan: PlannedChange[][],
+): Promise<void> {
+  await Promise.all(plan.map(async (docPlan) => {
+    for (const { change, row } of docPlan) {
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
       await updateCompareAssignmentStatus({
         supabase, projectId, documentId: change.documentId, userId: change.userId,
-        assignment: { id: change.row.id, status: change.row.status }, next: change.to,
+        assignment: { id: row.id, status: row.status }, next: change.to,
       });
     }
   }));
-  return { checked: assignments.length, changes };
+}
+
+/**
+ * Recalcula o status de TODOS os assignments de comparação do projeto, com a
+ * mesma regra de `syncCompareAssignment`, e grava os que mudaram. Idempotente:
+ * rodar duas vezes seguidas não muda nada na segunda. Com `dryRun`, só lê e
+ * devolve o que mudaria.
+ */
+export async function resyncProjectCompareAssignments(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  options: { dryRun?: boolean } = {},
+): Promise<CompareResyncReport> {
+  const state = await loadProjectCompareState(supabase, projectId);
+  if (!state) return { checked: 0, changes: [] };
+  const plan = planCompareResync(state);
+  const changes = plan.flat().map(({ change }) => change);
+  if (options.dryRun) return { checked: state.assignments.length, changes };
+  await applyCompareResync(supabase, projectId, plan);
+  return { checked: state.assignments.length, changes };
 }

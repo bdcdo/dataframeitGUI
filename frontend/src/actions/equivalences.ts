@@ -13,7 +13,7 @@ import { errorMessage } from "@/lib/utils";
 import { ZeroRowsError } from "@/lib/supabase/rls-guard";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
 import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
-import type { PydanticField } from "@/lib/types";
+import { fetchFieldDefinition } from "@/lib/reviews/field-definition";
 
 // Marks two or more responses as equivalent for a (document, field) and at the
 // same time records the verdict pointing to `gabaritoId` — the response that
@@ -56,10 +56,7 @@ export async function confirmEquivalentVerdict({
   // O veredito copia a resposta do gabarito: fora das opções atuais, nasceria
   // sem validade, como no voto em card de `submitVerdict`. A recusa vem antes
   // de gravar o par, para não deixar equivalência sem o veredito que a motivou.
-  const { data: project } = await supabase
-    .from("projects").select("pydantic_fields").eq("id", projectId).single();
-  const field = ((project?.pydantic_fields ?? []) as PydanticField[]).find((f) => f.name === fieldName);
-  if (!copiedVerdictInDomain(verdictDisplay, field)) {
+  if (!copiedVerdictInDomain(verdictDisplay, await fetchFieldDefinition(supabase, projectId, fieldName))) {
     return { error: OUT_OF_DOMAIN_VOTE_MESSAGE };
   }
 

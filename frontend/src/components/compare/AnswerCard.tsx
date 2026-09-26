@@ -69,7 +69,7 @@ interface AnswerCardProps {
    * veredito sem validade (`submitVerdict` o recusa). O card fica marcado e
    * sem o alvo de voto; continua legível e disponível para equivalência.
    */
-  outOfDomain?: boolean;
+  outOfDomain: boolean;
   onVote: () => void;
 
   // Confirmação do rascunho, renderizada DENTRO do card quando ele é o que
@@ -99,7 +99,7 @@ export function AnswerCard({
   isChosen,
   isPending,
   versions,
-  outOfDomain = false,
+  outOfDomain,
   onVote,
   confirmSlot,
   equivalenceMode,
@@ -117,21 +117,19 @@ export function AnswerCard({
       // lia `parentElement.className` atrás de uma classe de borda — sobrevivia
       // por acidente da estrutura e quebraria em qualquer wrapper novo.
       data-pending={isPending || undefined}
-      data-out-of-domain={outOfDomain || undefined}
       className={cn(
         "relative isolate w-full rounded-lg border p-2.5 text-left transition-colors hover:bg-accent/50",
         "has-[[data-vote-target]:focus-visible]:outline-none has-[[data-vote-target]:focus-visible]:ring-2 has-[[data-vote-target]:focus-visible]:ring-ring has-[[data-vote-target]:focus-visible]:ring-offset-2",
         cardStateClass({ isChosen, isPending, equivalenceMode }),
       )}
     >
-      {!outOfDomain && (
-        <VoteOverlay
-          displayAnswer={displayAnswer}
-          readOnly={readOnly}
-          onVote={onVote}
-          title={voteTitle}
-        />
-      )}
+      <VoteOverlay
+        displayAnswer={displayAnswer}
+        readOnly={readOnly}
+        outOfDomain={outOfDomain}
+        onVote={onVote}
+        title={voteTitle}
+      />
       <div className="flex items-start gap-2">
         <EquivalenceCheckbox mode={equivalenceMode} readOnly={readOnly} />
         <span className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-xs font-medium">
@@ -156,17 +154,20 @@ export function AnswerCard({
         <GabaritoRadio mode={equivalenceMode} readOnly={readOnly} />
       </div>
 
-      {/*
-        `relative z-[2]` pela mesma regra do comentário do overlay acima: filho
-        interativo precisa ficar ACIMA do botão de voto que cobre o card
-        inteiro. Sem isso, clicar em "Confirmar" acertaria o overlay e apenas
-        re-prepararia o rascunho.
-      */}
-      {isPending && confirmSlot && (
-        <div className="relative z-[2]">{confirmSlot}</div>
-      )}
+      <PendingConfirmSlot isPending={isPending} slot={confirmSlot} />
     </div>
   );
+}
+
+/**
+ * A confirmação do rascunho, só no card preparado. `relative z-[2]` pela mesma
+ * regra do overlay de voto: filho interativo precisa ficar ACIMA do botão que
+ * cobre o card inteiro. Sem isso, clicar em "Confirmar" acertaria o overlay e
+ * apenas re-prepararia o rascunho.
+ */
+function PendingConfirmSlot({ isPending, slot }: { isPending: boolean; slot?: ReactNode }) {
+  if (!isPending || !slot) return null;
+  return <div className="relative z-[2]">{slot}</div>;
 }
 
 /**
@@ -245,14 +246,18 @@ function AnswerBody({
 function VoteOverlay({
   displayAnswer,
   readOnly,
+  outOfDomain,
   onVote,
   title,
 }: {
   displayAnswer: string;
   readOnly: boolean;
+  /** Resposta fora das opções atuais: o card não tem alvo de voto. */
+  outOfDomain: boolean;
   onVote: () => void;
   title: string | undefined;
 }) {
+  if (outOfDomain) return null;
   return (
     <button
       type="button"
