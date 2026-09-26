@@ -1,4 +1,6 @@
 import { normalizeForComparison } from "@/lib/utils";
+import { answersCurrentQuestion } from "@/lib/answer-staleness";
+import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 export interface EquivalenceEdge {
   response_a_id: string;
@@ -104,6 +106,35 @@ export function buildResponseGroupKeys<T extends { id: string }>(
   const result = new Map<string, string>();
   for (const r of responses) result.set(r.id, find(r.id));
   return result;
+}
+
+// As classes de equivalência das respostas de um documento para um campo:
+// `filterCurrentEquivalencePairs` com a regra da versão da pergunta, seguido de
+// `buildResponseGroupKeys` pela resposta normalizada. Par "=" com resposta
+// dada a outra versão da pergunta, ou cujo snapshot não bate com a resposta
+// atual, não funde nada. Quais responses entram é decisão do chamador.
+export function answerGroupKeys(
+  docResponses: readonly {
+    id: string;
+    answers: Record<string, unknown> | null;
+    answer_field_hashes?: AnswerFieldHashes | null;
+  }[],
+  pairs: readonly EquivalencePair[],
+  field: PydanticField | undefined,
+  fieldName: string,
+): Map<string, string> {
+  const items = docResponses.map((response) => ({
+    id: response.id,
+    answer: response.answers?.[fieldName],
+    answerFieldHashes: response.answer_field_hashes ?? undefined,
+  }));
+  const current = filterCurrentEquivalencePairs(
+    items,
+    [...pairs],
+    (item) => item.answer,
+    (item) => answersCurrentQuestion(item.answerFieldHashes, field),
+  );
+  return buildResponseGroupKeys(items, current, (item) => normalizeForComparison(item.answer));
 }
 
 export function canonicalPair(a: string, b: string): [string, string] {

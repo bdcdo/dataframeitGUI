@@ -38,7 +38,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 // Monta o XLSX com exceljs (import dinâmico — pesado, lazy). Aba Documentos
-// sempre presente; Respostas/Gabarito só quando houver linhas.
+// sempre presente; Respostas/Gabarito/Pendências só quando houver linhas.
 async function buildXlsxBlob(data: ExportDataset): Promise<Blob> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
@@ -50,6 +50,7 @@ async function buildXlsxBlob(data: ExportDataset): Promise<Blob> {
   addSheet("Documentos", data.documents);
   if (data.responses.rows.length > 0) addSheet("Respostas", data.responses);
   if (data.verdicts.rows.length > 0) addSheet("Gabarito", data.verdicts);
+  if (data.pending.rows.length > 0) addSheet("Pendências", data.pending);
   const buffer = await wb.xlsx.writeBuffer();
   return new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

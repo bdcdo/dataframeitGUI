@@ -24,6 +24,7 @@ function makeDataset(overrides: Partial<ExportDataset> = {}): ExportDataset {
     documents: { headers: ["document_id", "document_title"], rows: [["EXT-1", "T"]] },
     responses: empty,
     verdicts: empty,
+    pending: empty,
     csv: {
       headers: ["document_id", "document_title", "source"],
       rows: [["EXT-1", "T", "documento"]],

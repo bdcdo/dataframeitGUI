@@ -16,13 +16,8 @@
 // para o mesmo (documento, campo) — não há constraint cruzada impedindo — daí
 // a deduplicação em `pickWinner`.
 import { normalizeForComparison } from "@/lib/utils";
-import {
-  buildResponseGroupKeys,
-  filterCurrentEquivalencePairs,
-  type EquivalencePair,
-} from "@/lib/equivalence";
+import { answerGroupKeys, type EquivalencePair } from "@/lib/equivalence";
 import { isFieldApplicable } from "@/lib/compare-divergence";
-import { answersCurrentQuestion } from "@/lib/answer-staleness";
 import {
   multiSelectionSets,
   multiSelectionsAgree,
@@ -396,7 +391,10 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     const cacheKey = `${docId}:${fieldName}`;
     const cached = groupKeyCache.get(cacheKey);
     if (cached) return cached;
-    const groupKeys = groupKeysOf(
+    // Todas as responses do documento entram, inclusive rodadas anteriores:
+    // `chosen_response_id` pode apontar para uma resposta que não é mais a
+    // `is_latest`, e é justamente por essas que o fecho transitivo passa.
+    const groupKeys = answerGroupKeys(
       responsesByDoc.get(docId) ?? [],
       equivalencesFor(docId, fieldName),
       fieldMap.get(fieldName),
@@ -441,31 +439,6 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     equivalencesFor,
     codingIsComplete,
   };
-}
-
-// As classes de equivalência das respostas de um documento para um campo.
-// Todas as responses do documento entram, inclusive rodadas anteriores:
-// `chosen_response_id` pode apontar para uma resposta que não é mais a
-// `is_latest`, e é justamente por essas que o fecho transitivo passa. Par "="
-// com resposta dada a outra versão da pergunta não conta.
-function groupKeysOf(
-  docResponses: readonly MetricsResponse[],
-  pairs: readonly EquivalencePair[],
-  field: PydanticField | undefined,
-  fieldName: string,
-): Map<string, string> {
-  const items = docResponses.map((response) => ({
-    id: response.id,
-    answer: response.answers?.[fieldName],
-    answerFieldHashes: response.answer_field_hashes ?? undefined,
-  }));
-  const current = filterCurrentEquivalencePairs(
-    items,
-    [...pairs],
-    (item) => item.answer,
-    (item) => answersCurrentQuestion(item.answerFieldHashes, field),
-  );
-  return buildResponseGroupKeys(items, current, (item) => normalizeForComparison(item.answer));
 }
 
 // A response que a arbitragem escolheu, por id e no documento da própria
@@ -635,7 +608,7 @@ export function bothCorrectCommonValue(input: BothCorrectInput): { value: unknow
     return null;
   }
 
-  const groupKeys = groupKeysOf(input.documentResponses, input.equivalences, field, field.name);
+  const groupKeys = answerGroupKeys(input.documentResponses, input.equivalences, field, field.name);
   if (!verdictDivergesFromLlm({ ...input, groupKeys })) return null;
   if (currentHumans.length === 0) return null;
   const llmKey = groupKeys.get(llmResponse.id);
