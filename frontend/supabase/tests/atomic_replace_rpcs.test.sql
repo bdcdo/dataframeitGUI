@@ -118,20 +118,22 @@ END $$;
 
 -- ----- #284: caminho feliz atualiza um doc duplicado (passo UPDATE) -----
 -- Sem deletes nem inserts: só o UPDATE dos duplicados, que antes não tinha
--- cobertura. Atualiza D1 (text + external_id) e confere que pegou.
+-- cobertura. Atualiza D1 (title + external_id) e confere que pegou. O texto
+-- fica o mesmo porque D1 tem resposta e as respostas são mantidas: trocar o
+-- texto nesse caso é recusado (replace_documents_keeps_judged_text.test.sql).
 DO $$
-DECLARE v_text text; v_ext text;
+DECLARE v_title text; v_ext text;
 BEGIN
   PERFORM public.replace_and_add_documents(
     '11111111-1111-1111-1111-111111111111'::uuid,
     ARRAY[]::uuid[],
     false,           -- sem deletes
-    '[{"id":"22222222-2222-2222-2222-222222222222","text":"d1 atualizado","title":"D1 upd","external_id":"DUP-UPD","text_hash":"h-d1-upd","metadata":null}]'::jsonb,
+    '[{"id":"22222222-2222-2222-2222-222222222222","text":"texto d1","title":"D1 upd","external_id":"DUP-UPD","text_hash":"h-d1","metadata":null}]'::jsonb,
     '[]'::jsonb      -- sem inserts
   );
-  SELECT text, external_id INTO v_text, v_ext
+  SELECT title, external_id INTO v_title, v_ext
     FROM public.documents WHERE id = '22222222-2222-2222-2222-222222222222';
-  IF v_text <> 'd1 atualizado' THEN RAISE EXCEPTION 'FALHOU: UPDATE nao alterou text (text=%)', v_text; END IF;
+  IF v_title <> 'D1 upd' THEN RAISE EXCEPTION 'FALHOU: UPDATE nao alterou title (title=%)', v_title; END IF;
   IF v_ext  <> 'DUP-UPD'       THEN RAISE EXCEPTION 'FALHOU: UPDATE nao alterou external_id (ext=%)', v_ext; END IF;
   RAISE NOTICE 'OK #284: passo UPDATE atualizou o doc duplicado';
 END $$;
