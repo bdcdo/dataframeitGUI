@@ -5,7 +5,7 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
-import { choosesValue, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
+import { choosesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 async function withResolutionAction(
   projectId: string,
@@ -265,6 +265,8 @@ async function pickHumanResponse(
 export async function prepareErrorResolution(input: {
   projectId: string; documentId: string; fieldName: string;
   llmResponseId: string; preferredHumanResponseId?: string | null; sourceKind: LlmErrorSource; sourceId: string;
+  /** A decisão que o revisor vai confirmar: decide se a fonte precisa valer. */
+  decision: ErrorDecision;
 }): Promise<{ context?: ErrorResolutionContext; error?: string }> {
   try {
     if (!await getAuthUser()) return { error: "Não autenticado" };
@@ -280,6 +282,10 @@ export async function prepareErrorResolution(input: {
       p_project_id: input.projectId, p_document_id: input.documentId, p_field_name: input.fieldName,
       p_llm_response_id: input.llmResponseId, p_human_response_id: humanResponseId,
       p_source_kind: input.sourceKind, p_source_id: input.sourceId,
+      // Sobre veredito que perdeu a validade, as decisões que gravam valor
+      // próprio continuam possíveis; as que dependem dele, não. A mesma regra
+      // em `set_error_resolution`, que recalcula o contexto com o mesmo flag.
+      p_require_valid_source: decisionDependsOnSource(input.decision),
     });
     if (error) return { error: error.message };
     const parsed = errorResolutionContextSchema.safeParse(data);

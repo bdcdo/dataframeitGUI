@@ -392,16 +392,64 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- Redecidir e decisao nova: recusada enquanto a fonte for invalida.
-  SELECT * INTO item FROM public.error_resolutions
+  -- Decisao nova que depende da fonte e recusada enquanto a fonte for
+  -- invalida, com mensagem que diz o que fazer (e nao "recarregue").
+  FOR item IN
+    SELECT resolution.id, resolution.context, resolution.resolved_at, decision.kind
+    FROM public.error_resolutions AS resolution
+    CROSS JOIN (VALUES ('both_correct'), ('discussion')) AS decision(kind)
+    WHERE resolution.document_id = '5e200000-0000-0000-0000-000000000003' AND resolution.field_name = 't'
+  LOOP
+    BEGIN
+      PERFORM public.set_error_resolution('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 't',
+        item.kind, item.context, item.id, item.resolved_at);
+      RAISE EXCEPTION 'FALHOU: decisao "%" aceita sobre veredito invalido', item.kind;
+    EXCEPTION WHEN invalid_parameter_value THEN
+      IF SQLERRM NOT LIKE 'O veredito anterior não vale mais%' THEN
+        RAISE EXCEPTION 'FALHOU: recusa de "%" sem a mensagem da fonte: %', item.kind, SQLERRM;
+      END IF;
+    END;
+  END LOOP;
+  RAISE NOTICE 'OK: so as decisoes que dependem da fonte caem, e decisao nova que depende dela e recusada';
+END;
+$$;
+
+-- A decisao com valor proprio sobre fonte invalida nao fica presa: e
+-- redecidida entre as que gravam valor, com o contexto pedido sem exigir a
+-- fonte, como `prepareErrorResolution` pede. "Erro humano" (doc 3) vira
+-- "Todos errados" e volta a "Erro humano".
+DO $$
+DECLARE
+  v_context JSONB;
+  v_saved JSONB;
+  v_row public.error_resolutions%ROWTYPE;
+BEGIN
+  SELECT * INTO v_row FROM public.error_resolutions
   WHERE document_id = '5e200000-0000-0000-0000-000000000003' AND field_name = 't';
-  BEGIN
-    PERFORM public.set_error_resolution('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 't',
-      'llm_correct', item.context, item.id, item.resolved_at);
-    RAISE EXCEPTION 'FALHOU: decisao nova aceita sobre veredito invalido';
-  EXCEPTION WHEN serialization_failure THEN NULL;
-  END;
-  RAISE NOTICE 'OK: so as decisoes que dependem da fonte caem, e decisao nova e recusada';
+  v_context := public.llm_error_context('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 't',
+    '5e300000-0000-0000-0000-000000000003', '5e300000-0000-0000-0000-000000000013',
+    'comparacao', '5e400000-0000-0000-0000-000000000023', false);
+  IF v_context IS NULL THEN
+    RAISE EXCEPTION 'FALHOU: contexto sem exigir a fonte deveria existir';
+  END IF;
+  v_saved := public.set_error_resolution('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 't',
+    'all_wrong', v_context, v_row.id, v_row.resolved_at, NULL, '"Valor novo"');
+  IF v_saved->>'decision' IS DISTINCT FROM 'all_wrong' THEN
+    RAISE EXCEPTION 'FALHOU: "Todos errados" sobre fonte invalida nao foi gravada';
+  END IF;
+  v_saved := public.set_error_resolution('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 't',
+    'llm_correct', v_context, (v_saved->>'id')::UUID, (v_saved->>'resolved_at')::TIMESTAMPTZ);
+  IF v_saved->>'decision' IS DISTINCT FROM 'llm_correct' THEN
+    RAISE EXCEPTION 'FALHOU: "Erro humano" sobre fonte invalida nao foi regravada';
+  END IF;
+  -- Reabrir continua valendo sobre fonte invalida.
+  PERFORM public.set_error_resolution('5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000003', 't',
+    NULL, NULL, (v_saved->>'id')::UUID, (v_saved->>'resolved_at')::TIMESTAMPTZ);
+  IF EXISTS (SELECT 1 FROM public.error_resolutions
+             WHERE document_id = '5e200000-0000-0000-0000-000000000003' AND field_name = 't') THEN
+    RAISE EXCEPTION 'FALHOU: reabrir sobre fonte invalida nao apagou a decisao';
+  END IF;
+  RAISE NOTICE 'OK: decisao com valor proprio sobre fonte invalida e redecidida e reaberta';
 END;
 $$;
 RESET ROLE;

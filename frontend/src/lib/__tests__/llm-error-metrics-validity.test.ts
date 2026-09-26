@@ -290,3 +290,41 @@ describe("fila: decisão ressuscitada só enquanto vale", () => {
     expect(reviewedEntries).toEqual([expect.objectContaining({ isError: true })]);
   });
 });
+
+describe("fila: decisão com valor próprio sobre veredito que perdeu a validade", () => {
+  const reviews = [
+    review({ id: "stale", verdict: "B", field_hash: OLD_HASH, created_at: "2026-01-01T00:00:00Z" }),
+  ];
+
+  it.each<[ErrorDecision]>([["llm_correct"], ["researchers_correct"], ["all_wrong"]])(
+    "%s volta com o motivo da invalidade da fonte",
+    (kind) => {
+      const { errors } = run({
+        responses: [llm("A"), response({ answers: { x: "A" } })],
+        reviews,
+        errorResolutions: new Map([["doc1:x", decision(kind, "stale")]]),
+      });
+      expect(errors).toEqual([expect.objectContaining({ sourceId: "stale", sourceInvalidReason: "pergunta_alterada" })]);
+    },
+  );
+
+  it("fonte válida não leva motivo", () => {
+    const { errors } = run({
+      responses: [llm("A"), response({ answers: { x: "A" } })],
+      reviews: [review({ id: "valid", verdict: "A" })],
+      errorResolutions: new Map([["doc1:x", decision("llm_correct", "valid")]]),
+    });
+    expect(errors).toHaveLength(1);
+    expect(errors[0].sourceInvalidReason).toBeUndefined();
+  });
+
+  it("veredito fora das opções atuais leva o motivo certo", () => {
+    const { errors } = run({
+      fields: [field({ type: "single", options: ["A", "B"] })],
+      responses: [llm("A"), response({ answers: { x: "A" } })],
+      reviews: [review({ id: "fora", verdict: "Talvez", field_hash: null })],
+      errorResolutions: new Map([["doc1:x", decision("llm_correct", "fora")]]),
+    });
+    expect(errors).toEqual([expect.objectContaining({ sourceInvalidReason: "fora_do_dominio" })]);
+  });
+});

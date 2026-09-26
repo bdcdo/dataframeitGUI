@@ -44,6 +44,17 @@ export type ReviewValidity =
   | { valid: true }
   | { valid: false; reason: ReviewInvalidReason };
 
+/**
+ * Como a tela nomeia o veredito que não vale, por motivo. Fonte única dos
+ * rótulos da Comparação, do Gabarito e do LLM Insights: cada tela diz o
+ * motivo real, e não "mudança da pergunta" para todos.
+ */
+export const INVALID_VERDICT_LABELS: Record<ReviewInvalidReason, string> = {
+  pergunta_alterada: "Veredito anterior à mudança da pergunta",
+  fora_do_dominio: "Veredito fora das opções atuais da pergunta",
+  campo_removido: "Veredito de pergunta removida do formulário",
+};
+
 type DomainField = Pick<PydanticField, "type" | "options" | "allow_other">;
 
 // Marcadores da Comparação que nunca são resposta (ver compare-types.ts). O

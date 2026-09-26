@@ -123,7 +123,7 @@ export function LlmInsightsView({
       try {
         const result = await prepareErrorResolution({ projectId, documentId: error.documentId,
           fieldName: error.fieldName, llmResponseId: error.llmResponseId,
-          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId! });
+          preferredHumanResponseId: error.chosenResponseId, sourceKind: error.source, sourceId: error.sourceId!, decision });
         if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
         setPendingDecision({ error, decision, context: result.context });
       } catch {

@@ -30,7 +30,7 @@ import { isCodingComplete } from "@/lib/coding-completeness";
 import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import { formatCardAnswer } from "@/lib/verdict-display";
-import { pickValidCellReviews, reviewIsValid } from "@/lib/review-validity";
+import { pickValidCellReviews, reviewValidity, type ReviewInvalidReason } from "@/lib/review-validity";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { applicableErrorResolution, isBlankAnswer, type EffectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
 
@@ -64,8 +64,19 @@ export interface LlmError {
   chosenResponseId: string | null;
   source: LlmErrorSource;
   sourceId?: string | null;
+  /**
+   * Presente quando a review de origem (`sourceId`, fonte da Comparação) não
+   * vale mais: só acontece na decisão ressuscitada que grava valor próprio,
+   * a única que sobrevive à fonte inválida (`applicableErrorResolution`).
+   * "veredito_apagado" é a review que nem existe mais na leitura. O card usa
+   * o motivo para rotular o veredito e para desabilitar as decisões que
+   * dependem dele (`decisionDependsOnSource`).
+   */
+  sourceInvalidReason?: SourceInvalidReason;
   resolution?: ErrorResolutionRow;
 }
+
+export type SourceInvalidReason = ReviewInvalidReason | "veredito_apagado";
 
 // Todo (doc, campo) que o LLM respondeu e que já tem veredito humano — de
 // qualquer das duas fontes — após as mesmas supressões aplicadas a `errors`.
@@ -295,6 +306,8 @@ interface MetricsContext {
   llmLatestByDoc: Map<string, MetricsResponse>;
   /** Ids das reviews que valem como gabarito (`review-validity.ts`). */
   validReviewIds: ReadonlySet<string>;
+  /** O motivo de cada review que não vale, pelo id. */
+  invalidReviewReasons: ReadonlyMap<string, ReviewInvalidReason>;
   /** Classes de equivalência por (documento, campo), memoizadas. */
   groupKeysFor: (docId: string, fieldName: string) => Map<string, string>;
   /** `isCodingComplete` da response, memoizado por id. */
@@ -375,6 +388,14 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     return complete;
   };
 
+  const validReviewIds = new Set<string>();
+  const invalidReviewReasons = new Map<string, ReviewInvalidReason>();
+  for (const review of input.reviews) {
+    const validity = reviewValidity(review, fieldMap.get(review.field_name));
+    if (validity.valid) validReviewIds.add(review.id);
+    else invalidReviewReasons.set(review.id, validity.reason);
+  }
+
   return {
     fieldMap,
     isActiveDocument: (docId) => documentTitles.has(docId),
@@ -384,9 +405,8 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     responsesByDoc,
     responseById,
     llmLatestByDoc,
-    validReviewIds: new Set(
-      input.reviews.filter((review) => reviewIsValid(review, fieldMap.get(review.field_name))).map((review) => review.id),
-    ),
+    validReviewIds,
+    invalidReviewReasons,
     groupKeysFor,
     codingIsComplete,
   };
@@ -767,7 +787,9 @@ export function usesAutoReviewSource(automationMode: string | null): boolean {
 // salvo, para a decisão continuar visível e reabrível. Só enquanto ela vale:
 // contexto corrente (não `stale`) e, se ela depende do veredito de origem
 // ("Ambos corretos", "Em discussão"), veredito ainda válido. Decisão que grava
-// valor próprio vale mesmo com a fonte inválida (`applicableErrorResolution`).
+// valor próprio vale mesmo com a fonte inválida (`applicableErrorResolution`),
+// e volta com `sourceInvalidReason`: ela pode ser redecidida entre as outras
+// decisões com valor próprio, mas não virar uma que dependa da fonte.
 // As que perderam a validade vão para `lapsed`, que a fila conta à parte;
 // documento excluído e campo fora da métrica saem sem contar, como antes.
 type RevivedOutcome = { kind: "revived"; error: LlmError } | { kind: "lapsed"; lapsed: LapsedDecision } | { kind: "ignored" };
@@ -793,6 +815,7 @@ function revivedCase(
   ctx: MetricsContext,
 ): LlmError {
   const autoReview = saved.source.kind === "auto_revisao";
+  const sourceId = typeof saved.source.id === "string" ? saved.source.id : null;
   return {
     documentId: resolution.document_id, documentTitle: ctx.titleOf(resolution.document_id),
     fieldName: resolution.field_name, fieldDescription: field.description,
@@ -805,7 +828,10 @@ function revivedCase(
     reviewedAt: resolution.resolved_at, schemaVersion: null,
     llmResponseId: saved.llm_response_id, chosenResponseId: saved.human_response_id,
     source: autoReview ? "auto_revisao" : "comparacao",
-    sourceId: typeof saved.source.id === "string" ? saved.source.id : null,
+    sourceId,
+    ...(autoReview || !sourceId || ctx.validReviewIds.has(sourceId)
+      ? {}
+      : { sourceInvalidReason: ctx.invalidReviewReasons.get(sourceId) ?? "veredito_apagado" }),
   };
 }
 
