@@ -139,6 +139,12 @@ export interface FieldResponse {
   justification: string | undefined;
   is_latest: boolean;
   isFieldStale: boolean;
+  /**
+   * Se a resposta foi dada à versão atual da pergunta (`answersCurrentQuestion`).
+   * Só ela pode entrar num par "=": a RPC recusa o par com resposta de outra
+   * versão. Diferente de `isFieldStale`, a resposta sem hash não reprova.
+   */
+  answersCurrentQuestion: boolean;
   schemaVersion: string | null;
 }
 

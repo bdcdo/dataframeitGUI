@@ -6,7 +6,7 @@ import {
   buildResponseGroupKeys,
   filterCurrentEquivalencePairs,
 } from "@/lib/equivalence";
-import { buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
+import { answersCurrentQuestion, buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { PydanticField } from "@/lib/types";
 import type {
   CompareDocument,
@@ -88,10 +88,11 @@ export function useCompareFieldData({
           justification: r.justifications?.[currentFieldName],
           is_latest: r.is_latest,
           isFieldStale: stale,
+          answersCurrentQuestion: answersCurrentQuestion(r.answer_field_hashes, currentField),
           schemaVersion: version,
         };
       }),
-    [docResponses, currentFieldName, currentFieldHashes, projectPydanticHash],
+    [docResponses, currentFieldName, currentField, currentFieldHashes, projectPydanticHash],
   );
 
   const fieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
@@ -107,6 +108,7 @@ export function useCompareFieldData({
       present,
       fieldEquivalences,
       (response) => response.answer,
+      (response) => response.answersCurrentQuestion,
     );
   }, [fieldResponses, fieldEquivalences]);
 

@@ -32,6 +32,7 @@ interface AgreementResponse {
   justification?: string;
   is_latest: boolean;
   isFieldStale: boolean;
+  answersCurrentQuestion: boolean;
   schemaVersion?: string | null;
 }
 
@@ -97,7 +98,12 @@ interface RenderedGroup {
   displayAnswer: string;
   responses: AgreementResponse[];
   variants: EquivalentVariant[];
+  /** A primeira resposta dada à versão atual da pergunta; `null` sem nenhuma. */
+  representativeId: string | null;
 }
+
+const EQUIVALENCE_UNAVAILABLE =
+  '"=" indisponível: esta resposta foi dada a outra versão da pergunta e não pode ser fundida.';
 
 /**
  * Os cards a renderizar: respostas presentes agrupadas por equivalência, com as
@@ -115,6 +121,7 @@ function buildRenderedGroups(
   const groups = groupByEquivalenceKey(present, equivalences);
   for (const group of groups) {
     group.variants = variantsWithinGroup(group, equivalences);
+    group.representativeId = group.responses.find((r) => r.answersCurrentQuestion)?.id ?? null;
   }
   return groups.toSorted((a, b) => b.responses.length - a.responses.length);
 }
@@ -145,6 +152,7 @@ function groupByEquivalenceKey(
       displayAnswer: formatCardAnswer(r.answer),
       responses: [r],
       variants: [],
+      representativeId: null,
     });
   }
   return Array.from(map.values());
@@ -222,18 +230,22 @@ function describeGroup(
  * num card não selecionado irrepresentável — deixa de valer aqui.
  */
 function equivalenceModeFor({
+  representativeId,
   isSelected,
   showGabarito,
   isGabarito,
   onToggle,
   onSetGabarito,
 }: {
+  representativeId: string | null;
   isSelected: boolean;
   showGabarito: boolean;
   isGabarito: boolean;
   onToggle: () => void;
   onSetGabarito: () => void;
 }): EquivalenceMode {
+  // Sem resposta da versão atual da pergunta no grupo não há par a gravar.
+  if (!representativeId) return { selected: false, unavailableReason: EQUIVALENCE_UNAVAILABLE };
   if (!isSelected) return { selected: false, onToggle };
   return {
     selected: true,
@@ -321,6 +333,7 @@ export function AgreementGroup({
               equivalenceMode={
                 allowEquivalence
                   ? equivalenceModeFor({
+                      representativeId: group.representativeId,
                       isSelected: equivalence.selectionSet.has(group.groupKey),
                       showGabarito: equivalence.showGabarito,
                       isGabarito:

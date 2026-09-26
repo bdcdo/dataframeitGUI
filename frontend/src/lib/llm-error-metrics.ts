@@ -22,6 +22,7 @@ import {
   type EquivalencePair,
 } from "@/lib/equivalence";
 import { isFieldApplicable } from "@/lib/compare-divergence";
+import { answersCurrentQuestion } from "@/lib/answer-staleness";
 import {
   multiSelectionSets,
   multiSelectionsAgree,
@@ -133,7 +134,8 @@ export type AutoReviewProvenance =
   | "arbitrado"
   | "aguarda_reconciliacao"
   | "aguarda_auto_revisao"
-  | "aguarda_arbitragem";
+  | "aguarda_arbitragem"
+  | "pergunta_alterada";
 
 // Linha da view `final_answers` (uma por documento com LLM × campo do schema).
 export interface MetricsFinalAnswer {
@@ -269,6 +271,10 @@ const AUTO_REVIEW_OUTCOME = {
   aguarda_reconciliacao: "pendente",
   aguarda_auto_revisao: "pendente",
   aguarda_arbitragem: "pendente",
+  // O ciclo foi aberto sob outra versão da pergunta, ou a geração LLM não
+  // respondeu o campo (renomeado ou criado depois da rodada): nada a medir
+  // até a pergunta atual ser julgada.
+  pergunta_alterada: "pendente",
 } satisfies Record<
   AutoReviewProvenance,
   "acerto" | "pendente" | "depende_do_veredito"
@@ -373,11 +379,14 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     const items = (responsesByDoc.get(docId) ?? []).map((response) => ({
       id: response.id,
       answer: response.answers?.[fieldName],
+      answerFieldHashes: response.answer_field_hashes ?? undefined,
     }));
+    const field = fieldMap.get(fieldName);
     const pairs = filterCurrentEquivalencePairs(
       items,
       equivByDocField.get(docId)?.get(fieldName) ?? [],
       (item) => item.answer,
+      (item) => answersCurrentQuestion(item.answerFieldHashes, field),
     );
     const groupKeys = buildResponseGroupKeys(items, pairs, (item) =>
       normalizeForComparison(item.answer),

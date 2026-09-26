@@ -81,6 +81,30 @@ describe("computeDivergentFieldNames", () => {
     ).toEqual([]);
   });
 
+  // O par "=" é uma decisão sobre dois valores respondidos para UMA versão da
+  // pergunta: quando ela muda, o par deixa de fundir as respostas mesmo com os
+  // valores intactos (e volta a haver divergência).
+  it("par fundindo respostas não vale quando uma delas é de outra versão da pergunta", () => {
+    const fields = [field({ name: "a", type: "text", hash: "novo00000000" })];
+    const responses = [
+      { id: "1", answers: { a: "alpha" }, answerFieldHashes: { a: "novo00000000" } },
+      { id: "2", answers: { a: "beta" }, answerFieldHashes: { a: "velho0000000" } },
+    ];
+    const pairs: EquivalencePair[] = [
+      {
+        response_a_id: "1",
+        response_b_id: "2",
+        response_a_answer_snapshot: "alpha",
+        response_b_answer_snapshot: "beta",
+      },
+    ];
+    const equivalencesByField = new Map<string, EquivalencePair[]>([["a", pairs]]);
+    expect(computeDivergentFieldNames(fields, responses, equivalencesByField)).toEqual(["a"]);
+
+    const current = responses.map((r) => ({ ...r, answerFieldHashes: { a: "novo00000000" } }));
+    expect(computeDivergentFieldNames(fields, current, equivalencesByField)).toEqual([]);
+  });
+
   it("free-text: pair fusing only some divergent answers leaves divergence", () => {
     const fields = [field({ name: "a", type: "text" })];
     const responses = [

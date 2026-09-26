@@ -25,6 +25,7 @@ export interface ComparisonResponse {
   justification?: string;
   is_latest: boolean;
   isFieldStale: boolean;
+  answersCurrentQuestion: boolean;
   schemaVersion?: string | null;
 }
 
@@ -261,6 +262,7 @@ function SingleAnswerGroup({
         justification: r.justification,
         is_latest: r.is_latest,
         isFieldStale: r.isFieldStale,
+        answersCurrentQuestion: r.answersCurrentQuestion,
         schemaVersion: r.schemaVersion,
       }))}
       existingVerdict={existingVerdict}

@@ -123,6 +123,18 @@ describe("métrica: o LLM é medido contra o valor do veredito", () => {
     expect(errors).toHaveLength(0);
   });
 
+  it("par = com resposta de outra versão da pergunta não tira o erro", () => {
+    const { errors } = run({
+      responses: [
+        response({ id: "rllm", respondent_type: "llm", answers: { x: "A'" }, answer_field_hashes: { x: HASH } }),
+        response({ answers: { x: "A" }, answer_field_hashes: { x: OLD_HASH } }),
+      ],
+      reviews: [review({ verdict: "A" })],
+      equivalences: [equiv("rh", "rllm", "A", "A'")],
+    });
+    expect(errors).toHaveLength(1);
+  });
+
   it("par = com resposta editada para longe do veredito não tira o erro", () => {
     const { errors } = run({
       responses: [llm("B'"), response({ answers: { x: "B" } })],

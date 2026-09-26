@@ -13,7 +13,7 @@ type Props = Parameters<typeof AgreementGroup>[0];
 type Resp = Props["responses"][number];
 
 function resp(id: string, answer: unknown): Resp {
-  return { id, respondent_type: "humano", respondent_name: id, answer, is_latest: true, isFieldStale: false };
+  return { id, respondent_type: "humano", respondent_name: id, answer, is_latest: true, isFieldStale: false, answersCurrentQuestion: true };
 }
 
 function renderGroup(domainField: Props["domainField"], answers: string[]) {

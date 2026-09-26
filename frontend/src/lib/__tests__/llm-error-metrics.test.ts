@@ -457,6 +457,7 @@ describe("computeLlmErrorMetrics — fonte Auto-revisão", () => {
       { provenance: "aguarda_auto_revisao", esperado: "fora" },
       { provenance: "aguarda_arbitragem", esperado: "fora" },
       { provenance: "aguarda_reconciliacao", esperado: "fora" },
+      { provenance: "pergunta_alterada", esperado: "fora" },
     ];
 
     for (const { provenance, final_verdict, esperado } of cases) {

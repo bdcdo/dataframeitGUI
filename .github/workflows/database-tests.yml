@@ -67,6 +67,8 @@ jobs:
         run: npm run test:db:reviews-round
       - name: Veredito vale enquanto a pergunta não muda
         run: npm run test:db:reviews-field-hash
+      - name: Mudança da pergunta derruba os julgamentos presos a respostas
+        run: npm run test:db:judgments-follow-question
 
       # As fixtures destes precisam estar commitadas (duas conexões dblink veem
       # o mesmo estado), então eles sujam o banco e ficam por último.

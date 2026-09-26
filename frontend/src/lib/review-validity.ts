@@ -160,6 +160,26 @@ export function reviewIsValid(
   return reviewValidity(review, field).valid;
 }
 
+/**
+ * Se um ciclo de auto-revisão (`field_reviews`) vale contra o schema atual. O
+ * ciclo carimba em `field_hash` o hash do campo quando é aberto ou
+ * rotacionado, e toda mudança da pergunta o encerra; vale enquanto o campo
+ * existe e o carimbo é o hash atual, ou é `null` (legado, sem como provar). A
+ * mesma política de `reviewValidity`: campo atual sem hash com ciclo
+ * carimbado reprova.
+ *
+ * A cópia SQL é `field_review_question_current` (migration
+ * 20260927130000_judgments_follow_question.sql), usada pela view
+ * `final_answers`, pelo reconciliador e pelo gatilho do save do schema.
+ */
+export function fieldReviewIsCurrent(
+  fieldHash: string | null,
+  field: Pick<PydanticField, "hash"> | undefined,
+): boolean {
+  if (!field) return false;
+  return fieldHash === null || fieldHash === field.hash;
+}
+
 /** O que `pickCellReview` precisa para desempatar. */
 export interface OrderableReview {
   id: string;

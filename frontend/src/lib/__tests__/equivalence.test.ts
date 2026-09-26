@@ -5,6 +5,7 @@ import {
   filterCurrentEquivalencePairs,
   type EquivalenceEdge,
 } from "@/lib/equivalence";
+import { answersCurrentQuestion } from "@/lib/answer-staleness";
 
 interface Resp {
   id: string;
@@ -146,7 +147,7 @@ describe("filterCurrentEquivalencePairs", () => {
       response_b_answer_snapshot: "current-b",
     }];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual(pairs);
   });
 
@@ -158,7 +159,7 @@ describe("filterCurrentEquivalencePairs", () => {
       response_b_answer_snapshot: "current-b",
     }];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual([]);
   });
 
@@ -167,7 +168,7 @@ describe("filterCurrentEquivalencePairs", () => {
       { response_a_id: "a", response_b_id: "b" },
     ] as unknown as Parameters<typeof filterCurrentEquivalencePairs>[1];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual([]);
   });
 
@@ -179,7 +180,91 @@ describe("filterCurrentEquivalencePairs", () => {
       response_b_answer_snapshot: "current-b",
     }];
     expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer),
+      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
     ).toEqual(pairs);
+  });
+
+  // O par diz que dois VALORES são a mesma resposta para UMA pergunta. Quando
+  // a pergunta muda, uma das respostas passa a ser resposta a outra versão, e
+  // o par cai mesmo com os valores intactos.
+  it("descarta o par quando uma das respostas é de outra versão da pergunta", () => {
+    const pairs = [{
+      response_a_id: "a",
+      response_b_id: "b",
+      response_a_answer_snapshot: "current-a",
+      response_b_answer_snapshot: "current-b",
+    }];
+    for (const outdatedId of ["a", "b"]) {
+      expect(
+        filterCurrentEquivalencePairs(
+          responses,
+          pairs,
+          (response) => response.answer,
+          (response) => response.id !== outdatedId,
+        ),
+      ).toEqual([]);
+    }
+  });
+});
+
+// Par "=" x evento, com a regra real de `answersCurrentQuestion`. A matriz das
+// outras duas colunas (auto-revisão e decisão do LLM Insights) está em
+// `supabase/tests/judgments_follow_question.test.sql`, onde os eventos são
+// escritas no banco.
+describe("par \"=\" x evento sobre a pergunta", () => {
+  interface Coded {
+    id: string;
+    answers: Record<string, unknown>;
+    hashes: Record<string, string>;
+  }
+  const HASH = "aaaaaaaaaaaa";
+  const pair = {
+    response_a_id: "h1",
+    response_b_id: "llm",
+    response_a_answer_snapshot: "NI",
+    response_b_answer_snapshot: "N/A",
+  };
+  const before: Coded[] = [
+    { id: "h1", answers: { q: "NI" }, hashes: { q: HASH } },
+    { id: "llm", answers: { q: "N/A" }, hashes: { q: HASH } },
+  ];
+  const keeps = (fields: Array<{ name: string; hash: string }>, responses: Coded[]) => {
+    const field = fields.find((candidate) => candidate.name === "q");
+    return filterCurrentEquivalencePairs(
+      responses,
+      [pair],
+      (response) => response.answers.q,
+      (response) => answersCurrentQuestion(response.hashes, field),
+    ).length === 1;
+  };
+
+  it.each([
+    {
+      evento: "rodada nova com a pergunta idêntica",
+      fields: [{ name: "q", hash: HASH }],
+      responses: before,
+      vale: true,
+    },
+    {
+      evento: "pergunta alterada",
+      fields: [{ name: "q", hash: "bbbbbbbbbbbb" }],
+      responses: before,
+      vale: false,
+    },
+    {
+      evento: "resposta editada",
+      fields: [{ name: "q", hash: HASH }],
+      responses: [{ ...before[0], answers: { q: "Não informado" } }, before[1]],
+      vale: false,
+    },
+    {
+      evento: "campo renomeado",
+      fields: [{ name: "q2", hash: "cccccccccccc" }],
+      responses: before,
+      vale: false,
+    },
+    { evento: "campo removido", fields: [], responses: before, vale: false },
+  ])("$evento: o par vale = $vale", ({ fields, responses, vale }) => {
+    expect(keeps(fields, responses)).toBe(vale);
   });
 });

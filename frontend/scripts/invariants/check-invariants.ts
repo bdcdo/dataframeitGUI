@@ -25,7 +25,7 @@ import {
   type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
 import { computeFieldHash } from "@/lib/schema-utils";
-import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
+import { fieldReviewIsCurrent, reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import {
   decisionDependsOnSource,
   type ErrorDecision,
@@ -1049,6 +1049,32 @@ invariants.push(
           key: d.decision.id,
           detail: `decisão '${d.decision.decision}' em ${d.decision.document_id}/${d.decision.field_name}: fonte ${d.sourceId} válida pela regra TS, inválida para o banco`,
         })),
+  },
+);
+
+invariants.push(
+  {
+    name: "ciclo-operacional-e-da-pergunta-atual",
+    motivation:
+      "o save do schema encerra, na mesma transação, todo ciclo de `field_reviews` aberto sob outra versão da pergunta ou de campo renomeado/removido (gatilho archive_judgments_on_question_change), e o reconciliador encerra o que escapar. Ciclo operacional de outra versão fica na fila de auto-revisão e de arbitragem, que não conferem o carimbo. FAIL = caminho de escrita de schema que pulou o gatilho",
+    run: async () => {
+      const [cycles, projects] = await Promise.all([
+        fetchAll<{ id: string; project_id: string; document_id: string; field_name: string; field_hash: string | null }>(
+          "field_reviews",
+          "id, project_id, document_id, field_name, field_hash",
+        ),
+        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
+      ]);
+      const fieldsOf = new Map(
+        projects.map((p) => [p.id, new Map((p.pydantic_fields ?? []).map((f) => [f.name, f]))]),
+      );
+      return cycles
+        .filter((c) => !fieldReviewIsCurrent(c.field_hash, fieldsOf.get(c.project_id)?.get(c.field_name)))
+        .map((c) => ({
+          key: c.id,
+          detail: `ciclo em ${c.document_id}/${c.field_name} carimbado ${c.field_hash}, campo atual ${fieldsOf.get(c.project_id)?.get(c.field_name)?.hash ?? "ausente"}`,
+        }));
+    },
   },
 );
 

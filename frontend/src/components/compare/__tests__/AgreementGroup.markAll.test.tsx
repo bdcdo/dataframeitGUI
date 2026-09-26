@@ -18,6 +18,7 @@ function resp(over: Partial<Resp> & { id: string; answer: unknown }): Resp {
     respondent_name: "Anon",
     is_latest: true,
     isFieldStale: false,
+    answersCurrentQuestion: true,
     ...over,
   } as Resp;
 }
