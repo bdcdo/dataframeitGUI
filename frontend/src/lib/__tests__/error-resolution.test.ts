@@ -6,7 +6,6 @@ import {
   prefillLosesItems, prefillFromValue, prefillFromVerdict, startsBlank,
   type ErrorDecision, type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
-import { resolutionFixture } from "./error-resolution-fixture";
 import type { PydanticField } from "@/lib/types";
 
 const context: ErrorResolutionContext = {
