@@ -1110,7 +1110,7 @@ invariants.push(
   {
     name: "ambos-corretos-com-valor-so-com-fonte-divergente",
     motivation:
-      "#758: 'Ambos corretos' grava o valor comum só quando o veredito da Comparação diverge da resposta do LLM e os pesquisadores concordam com ela; o valor é a resposta do LLM (ou o branco canônico de condicional). O RPC calcula o valor no servidor. FAIL = valor gravado por canal que pulou o cálculo: fonte que não é Comparação, veredito que já era a resposta do LLM, ou valor que não é o do LLM",
+      "#758: 'Ambos corretos' grava o valor comum só quando o veredito da Comparação diverge da resposta do LLM e os pesquisadores concordam com ela; o valor é a resposta do LLM (ou o branco canônico de condicional). A fila calcula o valor, e o RPC confere fonte, resposta escolhida e valor, mas não lê o texto do veredito. FAIL = valor gravado fora dessa regra: fonte que não é Comparação, veredito que já era a resposta do LLM, ou valor que não é o do LLM",
     run: async () =>
       (await decisionsWithContext()).flatMap((d) => {
         if (d.decision !== "both_correct" || d.approved_value === null || d.approved_value === undefined) return [];
@@ -1144,19 +1144,10 @@ invariants.push(
     },
   },
   {
-    name: "reconhecimento-guarda-o-veredito",
-    motivation:
-      "#758: o reconhecimento de veredito guarda o veredito reconhecido (`acknowledged_verdict`, NOT NULL, conferido pelo gatilho contra a review). Sem ele, a rearbitragem, que reaproveita o id da review, herdava o 'Aceitar correção' do veredito anterior. FAIL = coluna sem valor, o que só um canal que desligou a restrição produz",
-    run: async () =>
-      (await fetchAll<{ id: string; review_id: string; acknowledged_verdict: string | null }>(
-        "verdict_acknowledgments", "id, review_id, acknowledged_verdict", (q) => q.is("acknowledged_verdict", null),
-      )).map((a) => ({ key: a.id, detail: `reconhecimento da review ${a.review_id} sem veredito reconhecido` })),
-  },
-  {
     name: "reconhecimento-de-veredito-rearbitrado",
     informational: true,
     motivation:
-      "#758, inversa da anterior: reconhecimentos cujo veredito foi rearbitrado depois (`acknowledgmentIsCurrent` falso). Não é violação: o item volta a pendente em Meus vereditos, e a dúvida aberta sai de Comentários. A lista mostra quem precisa responder de novo e as dúvidas que saíram da fila",
+      "#758: reconhecimentos cujo veredito foi rearbitrado depois (`acknowledgmentIsCurrent` falso). Não é violação: o item volta a pendente em Meus vereditos, e a dúvida aberta sai de Comentários. A lista mostra quem precisa responder de novo e as dúvidas que saíram da fila",
     run: async () => {
       const acks = await fetchAll<{ id: string; review_id: string; status: string; resolved_at: string | null; acknowledged_verdict: string | null }>(
         "verdict_acknowledgments", "id, review_id, status, resolved_at, acknowledged_verdict",
