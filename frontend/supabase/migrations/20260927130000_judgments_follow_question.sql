@@ -38,7 +38,8 @@
 --         valer. O reconciliador abre um ciclo novo, pendente, se a
 --         divergencia persistir sob a pergunta nova;
 --       - campo renomeado ou removido encerra os ciclos do nome antigo
---         ('field_removed'), sem ciclo novo;
+--         ('field_removed'), sem ciclo novo; se o nome volta ao schema, o
+--         documento desses ciclos volta ao reconciliador;
 --       - reconcile_auto_review_cycles tambem encerra ciclo que nao vale
 --         ('question_changed') e o rotaciona como qualquer outro, porque um
 --         ciclo aberto durante o save do schema escapa do gatilho (a corrida
@@ -272,6 +273,7 @@ DECLARE
   v_documents UUID[];
   v_requeue UUID[];
   v_stale_pairs UUID[];
+  v_returning UUID[];
 BEGIN
   SELECT * INTO v_project FROM public.projects WHERE id = p_project_id;
   IF NOT FOUND THEN
@@ -361,9 +363,27 @@ BEGIN
       OR (public.response_answers_current_question(response_a.answer_field_hashes, field.previous_value)
           AND public.response_answers_current_question(response_b.answer_field_hashes, field.previous_value)));
 
+  -- Campo que volta ao schema (renomeacao desfeita, campo removido e
+  -- readicionado): o save que o tirou arquivou os ciclos como 'field_removed'
+  -- sem enfileirar, e na volta nao ha ciclo a arquivar. Entram so os
+  -- documentos com ciclo arquivado por remocao daquele nome, e nao os que tem
+  -- resposta no campo, que na renomeacao desfeita seriam o projeto inteiro.
+  -- Campo novo sem esse historico nao enfileira nada.
+  IF p_previous_fields IS NOT NULL THEN
+    SELECT pg_catalog.array_agg(DISTINCT history.document_id)
+    INTO v_returning
+    FROM pg_catalog.jsonb_array_elements(v_project.pydantic_fields) AS field(value)
+    JOIN public.field_review_cycle_history_entries AS history
+      ON history.project_id = v_project.id
+      AND history.field_name = field.value->>'name'
+      AND history.superseded_reason = 'field_removed'
+    WHERE public.pydantic_field_by_name(p_previous_fields, field.value->>'name') IS NULL;
+  END IF;
+
   v_requeue := ARRAY(
     SELECT DISTINCT document_id
-    FROM pg_catalog.unnest(COALESCE(v_requeue, '{}'::UUID[]) || COALESCE(v_stale_pairs, '{}'::UUID[]))
+    FROM pg_catalog.unnest(COALESCE(v_requeue, '{}'::UUID[]) || COALESCE(v_stale_pairs, '{}'::UUID[])
+                           || COALESCE(v_returning, '{}'::UUID[]))
       AS documents(document_id)
   );
 

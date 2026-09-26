@@ -24,7 +24,10 @@
 --       na view, no reconciliador e em llm_error_context;
 --   (g) decisao do LLM Insights cai com a edicao de QUALQUER resposta humana
 --       da celula, e nao cai com rascunho nem com resposta que nao toca o
---       campo; o backfill do hash da celula nao derruba decisao viva.
+--       campo; o backfill do hash da celula nao derruba decisao viva;
+--   (h) campo que volta ao schema (renomeado e desfeito, removido e
+--       readicionado) leva ao reconciliador o documento cujo ciclo caiu na
+--       saida dele, e so esse; campo novo sem historico nao enfileira nada.
 --
 -- Roda numa transacao e nao deixa fixture no banco local.
 
@@ -795,6 +798,117 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: final_answers deu consenso com par "=" de outra definicao do campo readicionado';
   END IF;
   RAISE NOTICE 'OK: campo removido e readicionado leva o par "=" caido ao reconciliador';
+END;
+$$;
+
+-- (h) Campo que volta ao schema. Projeto proprio, humano e LLM divergentes em
+-- todo campo: o documento 21 tem ciclo decidido em `r`, o 22 em `x`, e o 23
+-- nenhum. A saida do campo arquiva o ciclo como 'field_removed' sem
+-- enfileirar; sem a volta do documento ao reconciliador, a view dava
+-- 'consenso' com a resposta do LLM.
+INSERT INTO public.projects (id, name, created_by, automation_mode, pydantic_hash, pydantic_fields) VALUES
+  ('7a100000-0000-0000-0000-000000000002', 'campo que volta',
+   '7a000000-0000-0000-0000-000000000001', 'auto_review_llm', 'schema-v1',
+   '[{"id":"7af00000-0000-4000-8000-000000000011","name":"r","type":"text","target":"all","description":"Renomeada","hash":"r00000000001"},
+     {"id":"7af00000-0000-4000-8000-000000000012","name":"x","type":"text","target":"all","description":"Removida","hash":"x00000000001"}]');
+INSERT INTO public.project_members (project_id, user_id, role) VALUES
+  ('7a100000-0000-0000-0000-000000000002', '7a000000-0000-0000-0000-000000000002', 'pesquisador');
+INSERT INTO public.documents (id, project_id, title, text)
+SELECT ('7a200000-0000-0000-0000-0000000000' || n)::UUID, '7a100000-0000-0000-0000-000000000002', 'Doc ' || n, 'Texto'
+FROM generate_series(21, 23) AS n;
+INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_partial)
+SELECT ('7a300000-0000-0000-0000-0000000000' || (n + 30))::UUID, '7a100000-0000-0000-0000-000000000002',
+  ('7a200000-0000-0000-0000-0000000000' || n)::UUID, NULL, 'llm',
+  '{"r":"sim","x":"sim"}', '{"r":"r00000000001","x":"x00000000001"}', false
+FROM generate_series(21, 23) AS n;
+INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_partial)
+SELECT ('7a300000-0000-0000-0000-0000000000' || (n + 40))::UUID, '7a100000-0000-0000-0000-000000000002',
+  ('7a200000-0000-0000-0000-0000000000' || n)::UUID, '7a000000-0000-0000-0000-000000000002', 'humano',
+  '{"r":"nao","x":"nao"}', '{"r":"r00000000001","x":"x00000000001"}', false
+FROM generate_series(21, 23) AS n;
+DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000002';
+INSERT INTO public.field_reviews (project_id, document_id, field_name, human_response_id, llm_response_id,
+                                  self_reviewer_id, self_verdict, self_reviewed_at)
+VALUES
+  ('7a100000-0000-0000-0000-000000000002', '7a200000-0000-0000-0000-000000000021', 'r',
+   '7a300000-0000-0000-0000-000000000061', '7a300000-0000-0000-0000-000000000051',
+   '7a000000-0000-0000-0000-000000000002', 'admite_erro', now()),
+  ('7a100000-0000-0000-0000-000000000002', '7a200000-0000-0000-0000-000000000022', 'x',
+   '7a300000-0000-0000-0000-000000000062', '7a300000-0000-0000-0000-000000000052',
+   '7a000000-0000-0000-0000-000000000002', 'admite_erro', now());
+
+CREATE FUNCTION pg_temp.returning_field_queue() RETURNS UUID[] LANGUAGE sql AS $$
+  SELECT COALESCE(array_agg(document_id ORDER BY document_id), '{}')
+  FROM public.auto_review_reconciliation_requests
+  WHERE project_id = '7a100000-0000-0000-0000-000000000002';
+$$;
+
+-- Renomear `r` para `r2` e desfazer: a pergunta de volta e a mesma, mas o
+-- ciclo ja caiu na renomeacao.
+UPDATE public.projects
+SET pydantic_fields = jsonb_set(pydantic_fields, '{0}', pydantic_fields->0 || '{"name":"r2","hash":"r20000000001"}'),
+    schema_revision = schema_revision + 1
+WHERE id = '7a100000-0000-0000-0000-000000000002';
+UPDATE public.projects
+SET pydantic_fields = jsonb_set(pydantic_fields, '{0}', pydantic_fields->0 || '{"name":"r","hash":"r00000000001"}'),
+    schema_revision = schema_revision + 1
+WHERE id = '7a100000-0000-0000-0000-000000000002';
+
+DO $$
+BEGIN
+  IF pg_temp.returning_field_queue() IS DISTINCT FROM ARRAY['7a200000-0000-0000-0000-000000000021'::UUID] THEN
+    RAISE EXCEPTION 'FALHOU: renomear e desfazer deveria levar so o documento do ciclo caido ao reconciliador (%)',
+      pg_temp.returning_field_queue();
+  END IF;
+  IF (SELECT provenance FROM public.final_answers
+      WHERE document_id = '7a200000-0000-0000-0000-000000000021' AND field_name = 'r')
+     IS DISTINCT FROM 'aguarda_reconciliacao' THEN
+    RAISE EXCEPTION 'FALHOU: final_answers deu consenso depois de renomear e desfazer o campo com ciclo';
+  END IF;
+  RAISE NOTICE 'OK: renomear e desfazer leva o documento do ciclo caido ao reconciliador';
+END;
+$$;
+
+-- Remover `x` e readicionar com outra definicao.
+DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000002';
+UPDATE public.projects
+SET pydantic_fields = pydantic_fields - 1,
+    schema_revision = schema_revision + 1
+WHERE id = '7a100000-0000-0000-0000-000000000002';
+DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000002';
+UPDATE public.projects
+SET pydantic_fields = pydantic_fields || '[{"id":"7af00000-0000-4000-8000-000000000013","name":"x","type":"text","target":"all","description":"Readicionada","hash":"x00000000002"}]',
+    schema_revision = schema_revision + 1
+WHERE id = '7a100000-0000-0000-0000-000000000002';
+
+DO $$
+BEGIN
+  IF pg_temp.returning_field_queue() IS DISTINCT FROM ARRAY['7a200000-0000-0000-0000-000000000022'::UUID] THEN
+    RAISE EXCEPTION 'FALHOU: remover e readicionar deveria levar so o documento do ciclo caido ao reconciliador (%)',
+      pg_temp.returning_field_queue();
+  END IF;
+  IF (SELECT provenance FROM public.final_answers
+      WHERE document_id = '7a200000-0000-0000-0000-000000000022' AND field_name = 'x')
+     IS DISTINCT FROM 'aguarda_reconciliacao' THEN
+    RAISE EXCEPTION 'FALHOU: final_answers deu consenso depois de remover e readicionar o campo com ciclo';
+  END IF;
+  RAISE NOTICE 'OK: remover e readicionar leva o documento do ciclo caido ao reconciliador';
+END;
+$$;
+
+-- Campo novo, sem historico com o nome: nada vai para a fila.
+DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000002';
+UPDATE public.projects
+SET pydantic_fields = pydantic_fields || '[{"id":"7af00000-0000-4000-8000-000000000014","name":"n","type":"text","target":"all","description":"Nova","hash":"n00000000001"}]',
+    schema_revision = schema_revision + 1
+WHERE id = '7a100000-0000-0000-0000-000000000002';
+
+DO $$
+BEGIN
+  IF pg_temp.returning_field_queue() <> '{}' THEN
+    RAISE EXCEPTION 'FALHOU: campo novo sem historico enfileirou documentos (%)', pg_temp.returning_field_queue();
+  END IF;
+  RAISE NOTICE 'OK: campo novo sem historico nao enfileira nada';
 END;
 $$;
 
