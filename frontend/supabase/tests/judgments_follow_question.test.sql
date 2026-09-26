@@ -137,6 +137,15 @@ INSERT INTO public.responses (id, project_id, document_id, respondent_id, respon
    '7a200000-0000-0000-0000-000000000006', '7a000000-0000-0000-0000-000000000003', 'humano',
    '{"a":"outro","q":"outro"}', '{"a":"a00000000001","q":"q00000000001"}', false);
 
+-- Documento 7: geracao LLM legada, com mapa de hashes vazio.
+INSERT INTO public.documents (id, project_id, title, text) VALUES
+  ('7a200000-0000-0000-0000-000000000007', '7a100000-0000-0000-0000-000000000001', 'Doc 7', 'Texto');
+INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_partial) VALUES
+  ('7a300000-0000-0000-0000-000000000007', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000007', NULL, 'llm', '{"a":"llm"}', '{}', false),
+  ('7a300000-0000-0000-0000-000000000017', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000007', '7a000000-0000-0000-0000-000000000002', 'humano', '{"a":"llm"}', '{}', false);
+
 -- Os INSERTs enfileiraram reconciliacao; a fixture parte do estado reconciliado.
 DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
 
@@ -149,6 +158,21 @@ FROM generate_series(1, 5) AS n, unnest(ARRAY['a', 'q', 'e', 'r', 'x']) AS field
 UPDATE public.field_reviews
 SET self_verdict = 'admite_erro', self_reviewed_at = now()
 WHERE project_id = '7a100000-0000-0000-0000-000000000001';
+
+-- Filas abertas so em `q`: no documento 4 a auto-revisao esta pendente, no 5
+-- o ciclo foi contestado e espera a arbitragem, com os assignments que a fila
+-- projeta.
+UPDATE public.field_reviews SET self_verdict = NULL, self_reviewed_at = NULL
+WHERE document_id = '7a200000-0000-0000-0000-000000000004' AND field_name = 'q';
+UPDATE public.field_reviews
+SET self_verdict = 'contesta_llm', self_justification = 'discordo',
+    arbitrator_id = '7a000000-0000-0000-0000-000000000003'
+WHERE document_id = '7a200000-0000-0000-0000-000000000005' AND field_name = 'q';
+INSERT INTO public.assignments (project_id, document_id, user_id, type, status) VALUES
+  ('7a100000-0000-0000-0000-000000000001', '7a200000-0000-0000-0000-000000000004',
+   '7a000000-0000-0000-0000-000000000002', 'auto_revisao', 'pendente'),
+  ('7a100000-0000-0000-0000-000000000001', '7a200000-0000-0000-0000-000000000005',
+   '7a000000-0000-0000-0000-000000000003', 'arbitragem', 'pendente');
 
 -- (c) Carimbo: cada ciclo nasce com o hash atual do seu campo.
 DO $$
@@ -170,28 +194,95 @@ BEGIN
 END;
 $$;
 
--- (d) Par "=": a escrita so aceita respostas vigentes. Uma resposta humana
--- antiga (nao vigente) do documento 1 e o par que a usaria.
+-- (d) Par "=": a escrita so aceita respostas dadas a versao atual da
+-- pergunta. A rodada nao entra: resposta nao vigente e congelada, e o par com
+-- ela vale enquanto a pergunta nao muda.
+DO $$
+DECLARE
+  current_field CONSTANT JSONB := '{"name":"q","type":"text","description":"P","hash":"aaaaaaaaaaaa"}';
+  item RECORD;
+BEGIN
+  -- A mesma matriz de `answersCurrentQuestion` em answer-staleness.test.ts.
+  FOR item IN
+    SELECT * FROM (VALUES
+      ('hash igual ao atual', '{"q":"aaaaaaaaaaaa"}'::JSONB, current_field, true),
+      ('hash de outra versao da pergunta', '{"q":"ffffffffffff"}'::JSONB, current_field, false),
+      ('campo removido ou renomeado', '{"q":"aaaaaaaaaaaa"}'::JSONB, NULL::JSONB, false),
+      ('mapa nulo (legado)', NULL::JSONB, current_field, true),
+      ('mapa vazio (legado)', '{}'::JSONB, current_field, true),
+      ('chave ausente em mapa nao vazio', '{"outro":"bbbbbbbbbbbb"}'::JSONB, current_field, true),
+      ('hash nulo do campo', '{"q":null}'::JSONB, current_field, true),
+      ('campo atual sem hash e resposta com hash', '{"q":"aaaaaaaaaaaa"}'::JSONB, '{"name":"q"}'::JSONB, false),
+      ('campo atual sem hash e resposta sem hash', '{"q":null}'::JSONB, '{"name":"q"}'::JSONB, true)
+    ) AS matrix(label, hashes, field, expected)
+  LOOP
+    IF public.response_answers_current_question(item.hashes, item.field) IS DISTINCT FROM item.expected THEN
+      RAISE EXCEPTION 'FALHOU: caso "%" deveria dar %', item.label, item.expected;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'OK: matriz da resposta na pergunta atual';
+END;
+$$;
+
+-- Respostas extras do documento 1: uma de rodada anterior (nao vigente) na
+-- pergunta atual, uma de outra versao de `a`, e uma sem hash (legado).
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_latest, is_partial) VALUES
   ('7a300000-0000-0000-0000-000000000031', '7a100000-0000-0000-0000-000000000001',
    '7a200000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000003', 'humano',
-   '{"a":"antiga"}', '{"a":"a00000000001"}', false, false);
+   '{"a":"antiga"}', '{"a":"a00000000001"}', false, false),
+  ('7a300000-0000-0000-0000-000000000032', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000003', 'humano',
+   '{"a":"outra versao"}', '{"a":"a0000000000f"}', false, false),
+  ('7a300000-0000-0000-0000-000000000033', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000001', '7a000000-0000-0000-0000-000000000003', 'humano',
+   '{"a":"sem hash"}', '{}', false, false);
+
+CREATE FUNCTION pg_temp.pair_row(p_a TEXT, p_b TEXT) RETURNS JSONB LANGUAGE sql AS $$
+  SELECT jsonb_build_object(
+    'project_id', '7a100000-0000-0000-0000-000000000001', 'document_id', '7a200000-0000-0000-0000-000000000001',
+    'field_name', 'a', 'response_a_id', '7a300000-0000-0000-0000-0000000000' || p_a,
+    'response_b_id', '7a300000-0000-0000-0000-0000000000' || p_b, 'reviewer_id', '7a000000-0000-0000-0000-000000000001');
+$$;
 
 DO $$
+DECLARE
+  item RECORD;
+  v_message TEXT;
 BEGIN
-  BEGIN
-    PERFORM public.record_response_equivalences(jsonb_build_array(jsonb_build_object(
-      'project_id', '7a100000-0000-0000-0000-000000000001', 'document_id', '7a200000-0000-0000-0000-000000000001',
-      'field_name', 'a', 'response_a_id', '7a300000-0000-0000-0000-000000000011',
-      'response_b_id', '7a300000-0000-0000-0000-000000000031', 'reviewer_id', '7a000000-0000-0000-0000-000000000001')));
-    RAISE EXCEPTION 'FALHOU: par "=" com resposta que nao e vigente foi gravado';
-  EXCEPTION WHEN check_violation THEN NULL;
-  END;
-  IF EXISTS (SELECT 1 FROM public.response_equivalences WHERE response_b_id = '7a300000-0000-0000-0000-000000000031'
-                                                          OR response_a_id = '7a300000-0000-0000-0000-000000000031') THEN
-    RAISE EXCEPTION 'FALHOU: a recusa deixou o par gravado';
+  -- Recusa, e nada gravado, com a resposta de outra versao em qualquer lado do
+  -- par e no lote de varios pares da Comparacao (confirmEquivalentVerdict).
+  FOR item IN
+    SELECT * FROM (VALUES
+      ('lado b de outra versao', jsonb_build_array(pg_temp.pair_row('01', '32'))),
+      ('lado a de outra versao', jsonb_build_array(pg_temp.pair_row('32', '33'))),
+      ('lote da Comparacao com um par de outra versao',
+       jsonb_build_array(pg_temp.pair_row('01', '11'), pg_temp.pair_row('01', '32'), pg_temp.pair_row('11', '32')))
+    ) AS cases(label, payload)
+  LOOP
+    v_message := NULL;
+    BEGIN
+      PERFORM public.record_response_equivalences(item.payload);
+    EXCEPTION WHEN check_violation THEN
+      v_message := SQLERRM;
+    END;
+    IF v_message IS NULL OR v_message NOT LIKE '%outra versão da pergunta%' THEN
+      RAISE EXCEPTION 'FALHOU: par "=" x %: deveria recusar explicando a versao da pergunta (%)', item.label, v_message;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM public.response_equivalences WHERE document_id = '7a200000-0000-0000-0000-000000000001') THEN
+    RAISE EXCEPTION 'FALHOU: a recusa deixou par gravado';
   END IF;
-  RAISE NOTICE 'OK: par "=" de resposta nao vigente e recusado';
+
+  -- Aceita: resposta de rodada anterior na pergunta atual (o par do LLM
+  -- Insights, markLlmEquivalent, com a resposta escolhida de outra rodada) e
+  -- resposta sem hash.
+  PERFORM public.record_response_equivalences(jsonb_build_array(pg_temp.pair_row('01', '31')));
+  PERFORM public.record_response_equivalences(jsonb_build_array(pg_temp.pair_row('01', '33')));
+  IF (SELECT count(*) FROM public.response_equivalences WHERE document_id = '7a200000-0000-0000-0000-000000000001') <> 2 THEN
+    RAISE EXCEPTION 'FALHOU: par de resposta nao vigente ou sem hash na pergunta atual deveria ser gravado';
+  END IF;
+  DELETE FROM public.response_equivalences WHERE document_id = '7a200000-0000-0000-0000-000000000001';
+  RAISE NOTICE 'OK: par "=" recusa resposta de outra versao da pergunta e aceita a de outra rodada';
 END;
 $$;
 
@@ -271,6 +362,17 @@ BEGIN
     END IF;
   END LOOP;
 
+  -- Sem ciclo pendente, a fila do documento fecha no proprio save do schema:
+  -- a auto-revisao do documento 4 conclui e a arbitragem do 5 sai.
+  IF (SELECT status FROM public.assignments
+      WHERE document_id = '7a200000-0000-0000-0000-000000000004' AND type = 'auto_revisao') IS DISTINCT FROM 'concluido' THEN
+    RAISE EXCEPTION 'FALHOU: a auto-revisao do documento continuou aberta sem ciclo pendente';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.assignments
+             WHERE document_id = '7a200000-0000-0000-0000-000000000005' AND type = 'arbitragem') THEN
+    RAISE EXCEPTION 'FALHOU: a arbitragem aberta continuou sem ciclo a arbitrar';
+  END IF;
+
   -- So a pergunta alterada (campo que continua existindo) reabre ciclo: os
   -- documentos 1..5 voltam para a fila do reconciliador.
   IF (SELECT count(*) FROM public.auto_review_reconciliation_requests
@@ -292,6 +394,8 @@ BEGIN
     SELECT * FROM (VALUES
       ('7a200000-0000-0000-0000-000000000006'::UUID, 'a', 'consenso'),
       ('7a200000-0000-0000-0000-000000000006'::UUID, 'r2', 'pergunta_alterada'),
+      -- Mapa legado vazio nao prova que o LLM deixou o campo de fora.
+      ('7a200000-0000-0000-0000-000000000007'::UUID, 'r2', 'consenso'),
       ('7a200000-0000-0000-0000-000000000001'::UUID, 'q', 'aguarda_reconciliacao')
     ) AS matrix(document_id, field_name, provenance)
   LOOP
@@ -508,16 +612,38 @@ END;
 $$;
 RESET ROLE;
 
--- Backfill: decisao gravada sem `cell_answers_hash` (anterior a migration)
--- recebe o hash de agora e continua valendo.
+-- Backfill: as decisoes do documento 6 voltam ao formato anterior a
+-- migration (sem `cell_answers_hash`) e passam pelo backfill que a migration
+-- roda, `backfill_error_resolution_cell_answers_hash`. Sem a chave a decisao
+-- viva cai; depois dele volta a valer.
 UPDATE public.error_resolutions
 SET context = context #- '{source,cell_answers_hash}'
-WHERE document_id = '7a200000-0000-0000-0000-000000000006' AND field_name = 'a';
-UPDATE public.error_resolutions AS resolution
-SET context = jsonb_set(resolution.context, '{source,cell_answers_hash}',
-  to_jsonb(public.error_resolution_cell_answers_hash(resolution.project_id, resolution.document_id, resolution.field_name)))
-WHERE jsonb_typeof(resolution.context->'source') = 'object'
-  AND resolution.document_id = '7a200000-0000-0000-0000-000000000006' AND resolution.field_name = 'a';
+WHERE document_id = '7a200000-0000-0000-0000-000000000006';
+
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM public.read_error_resolutions('7a100000-0000-0000-0000-000000000001') AS resolution
+    WHERE resolution.document_id = '7a200000-0000-0000-0000-000000000006' AND resolution.field_name = 'a'
+      AND resolution.current_context = resolution.context
+  ) THEN
+    RAISE EXCEPTION 'FALHOU: fixture do backfill: sem a chave a decisao deveria estar caida';
+  END IF;
+END;
+$$;
+RESET ROLE;
+
+DO $$
+BEGIN
+  IF public.backfill_error_resolution_cell_answers_hash() <> 3 THEN
+    RAISE EXCEPTION 'FALHOU: o backfill deveria gravar o hash da celula nas 3 decisoes sem ele';
+  END IF;
+  IF public.backfill_error_resolution_cell_answers_hash() <> 0 THEN
+    RAISE EXCEPTION 'FALHOU: o backfill deveria ser idempotente';
+  END IF;
+END;
+$$;
 
 SET LOCAL ROLE authenticated;
 DO $$
@@ -527,7 +653,7 @@ BEGIN
     WHERE resolution.document_id = '7a200000-0000-0000-0000-000000000006' AND resolution.field_name = 'a'
       AND resolution.current_context = resolution.context
   ) THEN
-    RAISE EXCEPTION 'FALHOU: o backfill do hash da celula derrubou decisao viva';
+    RAISE EXCEPTION 'FALHOU: o backfill do hash da celula nao revalidou a decisao viva';
   END IF;
   RAISE NOTICE 'OK: backfill do hash da celula preserva decisao viva';
 END;

@@ -1058,7 +1058,6 @@ invariants.push(
 interface PairResponseRow {
   id: string;
   project_id: string;
-  is_latest: boolean;
   answers: Record<string, unknown> | null;
   answer_field_hashes: AnswerFieldHashes | undefined;
 }
@@ -1075,11 +1074,13 @@ interface PairRow {
 }
 
 // Todo par operacional com a leitura do PRODUTO (`filterCurrentEquivalencePairs`,
-// a mesma chamada dos leitores) e a leitura independente do estado: as duas
-// respostas vigentes, os valores iguais aos do par e as duas respostas dadas à
-// versão atual da pergunta. As duas invariantes do par comparam uma com a outra.
+// a mesma chamada dos leitores) e a leitura independente do estado: os valores
+// iguais aos do par e as duas respostas dadas à versão atual da pergunta. A
+// rodada não entra: resposta que deixou de ser `is_latest` fica congelada e
+// pode ser parte do par. As duas invariantes do par comparam uma leitura com a
+// outra.
 async function pairUsage(): Promise<
-  { pair: PairRow; used: boolean; latest: boolean; snapshotsMatch: boolean; currentQuestion: boolean }[]
+  { pair: PairRow; used: boolean; snapshotsMatch: boolean; currentQuestion: boolean }[]
 > {
   const [pairs, projects] = await Promise.all([
     fetchAll<PairRow>(
@@ -1092,7 +1093,7 @@ async function pairUsage(): Promise<
   const responses = new Map(
     (await fetchByIds<PairResponseRow>(
       "responses",
-      "id, project_id, is_latest, answers, answer_field_hashes",
+      "id, project_id, answers, answer_field_hashes",
       [...new Set(pairs.flatMap((p) => [p.response_a_id, p.response_b_id]))],
     )).map((r) => [r.id, r]),
   );
@@ -1119,7 +1120,6 @@ async function pairUsage(): Promise<
     return {
       pair,
       used,
-      latest: !!a?.is_latest && !!b?.is_latest,
       snapshotsMatch: !!a && !!b
         && normalizeForComparison(pair.response_a_answer_snapshot) === normalizeForComparison(answer(a))
         && normalizeForComparison(pair.response_b_answer_snapshot) === normalizeForComparison(answer(b)),
@@ -1182,27 +1182,27 @@ const COUNTED_PROVENANCES = new Set(["consenso", "auto_corrigido", "equivalente"
 
 invariants.push(
   {
-    name: "equivalencia-usada-e-vigente-da-pergunta-atual",
+    name: "equivalencia-usada-e-da-pergunta-atual",
     motivation:
-      "par \"=\" que o produto usa (`filterCurrentEquivalencePairs`) funde respostas na Comparação, na fila e na métrica do LLM Insights. Ele só pode ligar respostas vigentes (`is_latest`, que `record_response_equivalences` passou a exigir e o gatilho de resposta arquiva ao demover) dadas à versão atual da pergunta. FAIL = par gravado antes da guarda de escrita, ou leitor que voltou a aceitar resposta de outra versão",
+      "par \"=\" que o produto usa (`filterCurrentEquivalencePairs`) funde respostas na Comparação, na fila e na métrica do LLM Insights. Ele só pode ligar respostas dadas à versão atual da pergunta, a regra que `record_response_equivalences` passou a exigir na escrita. FAIL = leitor que voltou a aceitar resposta de outra versão",
     run: async () =>
       (await pairUsage())
-        .filter((u) => u.used && (!u.latest || !u.currentQuestion))
+        .filter((u) => u.used && !u.currentQuestion)
         .map((u) => ({
           key: u.pair.id,
-          detail: `par em ${u.pair.document_id}/${u.pair.field_name} usado com ${!u.latest ? "resposta não vigente" : "resposta de outra versão da pergunta"}`,
+          detail: `par em ${u.pair.document_id}/${u.pair.field_name} usado com resposta de outra versão da pergunta`,
         })),
   },
   {
-    name: "equivalencia-vigente-da-pergunta-atual-e-usada",
+    name: "equivalencia-da-pergunta-atual-e-usada",
     motivation:
-      "inversa da anterior: par de respostas vigentes, com os valores de quando foi marcado e as duas respostas na versão atual da pergunta, que o produto descarta, desfaz em silêncio uma equivalência que o revisor declarou (os cards voltam a divergir). FAIL = o filtro dos leitores ficou mais estrito que a regra",
+      "inversa da anterior: par com os valores de quando foi marcado e as duas respostas na versão atual da pergunta que o produto descarta desfaz em silêncio uma equivalência que o revisor declarou (os cards voltam a divergir). FAIL = o filtro dos leitores ficou mais estrito que a regra",
     run: async () =>
       (await pairUsage())
-        .filter((u) => !u.used && u.latest && u.snapshotsMatch && u.currentQuestion)
+        .filter((u) => !u.used && u.snapshotsMatch && u.currentQuestion)
         .map((u) => ({
           key: u.pair.id,
-          detail: `par vigente em ${u.pair.document_id}/${u.pair.field_name} descartado pelo produto`,
+          detail: `par da pergunta atual em ${u.pair.document_id}/${u.pair.field_name} descartado pelo produto`,
         })),
   },
   {
@@ -1243,6 +1243,19 @@ invariants.push(
           detail: `ciclo da pergunta atual em ${row.document_id}/${row.field_name} marcado pergunta_alterada`,
         }));
     },
+  },
+  {
+    name: "decisao-com-contexto-tem-hash-da-celula",
+    motivation:
+      "a decisão do LLM Insights só continua valendo com o contexto recalculado idêntico ao guardado, e o recalculado traz `source.cell_answers_hash` desde a migration 20260927130000, que a grava nas decisões existentes. Decisão com contexto sem a chave cai como 'Fontes alteradas' sem nada ter mudado. FAIL = backfill que não rodou, ou canal que grava contexto sem passar por `llm_error_context`",
+    run: async () =>
+      (await fetchAll<{ id: string; document_id: string; field_name: string; context: ErrorResolutionContext | null }>(
+        "error_resolutions",
+        "id, document_id, field_name, context",
+        (q) => q.not("context", "is", null),
+      ))
+        .filter((d) => d.context?.source && !Object.hasOwn(d.context.source, "cell_answers_hash"))
+        .map((d) => ({ key: d.id, detail: `decisão em ${d.document_id}/${d.field_name} sem cell_answers_hash` })),
   },
   {
     name: "ciclo-operacional-e-da-pergunta-atual",

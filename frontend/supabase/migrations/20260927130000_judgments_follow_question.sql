@@ -16,7 +16,11 @@
 --     (frontend/src/lib/equivalence.ts); o banco nao arquiva o par, porque a
 --     resposta recodificada com outro valor ja o arquiva pelo gatilho de
 --     resposta. Aqui so entra a escrita: `record_response_equivalences` passa
---     a recusar par de resposta que nao e `is_latest`.
+--     a recusar par com resposta de outra versao da pergunta, pela copia SQL
+--     da regra (`response_answers_current_question`). A rodada nao entra:
+--     resposta que deixou de ser `is_latest` fica congelada e pode ser parte
+--     do par (o LLM Insights marca "=" com a resposta escolhida de outra
+--     rodada).
 --
 --   * Auto-revisao: o ciclo carimba em `field_reviews.field_hash` o hash do
 --     campo quando e aberto (INSERT) e quando e rotacionado (UPDATE OF
@@ -875,8 +879,31 @@ GRANT EXECUTE ON FUNCTION public.reconcile_auto_review_cycles(JSONB)
   TO service_role;
 
 
--- ── Par "=": so entre respostas vigentes ────────────────────────────────────
--- Corpo de 20260717120000 com a guarda de `is_latest` depois da de permissao.
+-- ── Par "=": so entre respostas dadas a versao atual da pergunta ────────────
+-- Copia SQL de `answersCurrentQuestion` (frontend/src/lib/answer-staleness.ts),
+-- com a mesma matriz de casos nos testes. So o hash gravado na resposta prova
+-- a versao; sem hash do campo (mapa NULL ou `{}`, chave ausente ou nula) a
+-- ausencia nao invalida sozinha. Campo fora do schema reprova, e campo atual
+-- sem hash com resposta carimbada tambem.
+CREATE FUNCTION public.response_answers_current_question(p_answer_field_hashes JSONB, p_field JSONB)
+RETURNS BOOLEAN
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT COALESCE(
+    pg_catalog.jsonb_typeof(p_field) = 'object'
+      AND (pg_catalog.jsonb_typeof(p_answer_field_hashes -> (p_field->>'name')) IS DISTINCT FROM 'string'
+           OR (p_answer_field_hashes ->> (p_field->>'name')) = (p_field->>'hash')),
+    false);
+$$;
+
+REVOKE ALL ON FUNCTION public.response_answers_current_question(JSONB, JSONB)
+  FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.response_answers_current_question(JSONB, JSONB) TO service_role;
+
+-- Corpo de 20260717120000 com a guarda da versao da pergunta depois da de
+-- permissao.
 CREATE OR REPLACE FUNCTION public.record_response_equivalences(p_rows JSONB)
 RETURNS INTEGER
 LANGUAGE plpgsql
@@ -934,21 +961,29 @@ BEGIN
     RAISE EXCEPTION 'not allowed to record equivalences for this reviewer/project';
   END IF;
 
-  -- O par é uma decisão sobre as respostas vigentes. Resposta que já deixou
-  -- de ser `is_latest` teria o par arquivado pelo gatilho
-  -- archive_review_dependencies_on_response_change no instante em que foi
-  -- substituída; gravá-lo agora criaria um par que nenhum gatilho arquiva.
+  -- O par e uma decisao sobre dois valores respondidos para UMA versao da
+  -- pergunta: as duas respostas precisam ter sido dadas a versao atual
+  -- (`response_answers_current_question`, a regra de leitura de
+  -- `filterCurrentEquivalencePairs`). A rodada nao entra: resposta de rodada
+  -- anterior fica congelada e pode ser parte do par. Sem esta guarda o par de
+  -- outra versao era gravado, a acao reportava sucesso e a leitura nunca o
+  -- usava.
   IF EXISTS (
     SELECT 1
     FROM pg_catalog.jsonb_array_elements(p_rows) AS rows(row)
+    LEFT JOIN public.projects AS project
+      ON project.id = (row->>'project_id')::UUID
     LEFT JOIN public.responses AS response_a
       ON response_a.id = (row->>'response_a_id')::UUID
     LEFT JOIN public.responses AS response_b
       ON response_b.id = (row->>'response_b_id')::UUID
-    WHERE response_a.is_latest IS DISTINCT FROM true
-       OR response_b.is_latest IS DISTINCT FROM true
+    CROSS JOIN LATERAL (
+      SELECT public.pydantic_field_by_name(project.pydantic_fields, row->>'field_name') AS value
+    ) AS field
+    WHERE NOT public.response_answers_current_question(response_a.answer_field_hashes, field.value)
+       OR NOT public.response_answers_current_question(response_b.answer_field_hashes, field.value)
   ) THEN
-    RAISE EXCEPTION 'As respostas do par "=" precisam ser as vigentes. Recarregue a página.'
+    RAISE EXCEPTION 'Uma das respostas foi dada a outra versão da pergunta e não pode ser marcada como equivalente. Só respostas à versão atual da pergunta podem ser fundidas com "=".'
       USING ERRCODE = '23514';
   END IF;
 
@@ -1151,12 +1186,47 @@ END $$;
 -- ela no contexto guardado toda decisao existente viraria "Fontes alteradas".
 -- O hash guardado e o de agora: a edicao de outro codificador feita entre a
 -- decisao e esta migration nao e detectada, porque nao ha registro do valor
--- de entao. Decisao ja stale por outro motivo continua stale.
-UPDATE public.error_resolutions AS resolution
-SET context = pg_catalog.jsonb_set(
-  resolution.context, '{source,cell_answers_hash}',
-  pg_catalog.to_jsonb(public.error_resolution_cell_answers_hash(
-    resolution.project_id, resolution.document_id, resolution.field_name)))
-WHERE pg_catalog.jsonb_typeof(resolution.context->'source') = 'object';
+-- de entao. Decisao ja stale por outro motivo continua stale. A funcao fica
+-- no banco para o teste SQL exercitar o backfill que a migration roda (os
+-- testes rodam depois das migrations e nao veem decisao anterior a ela), e so
+-- preenche decisao sem a chave. Devolve quantas preencheu.
+CREATE FUNCTION public.backfill_error_resolution_cell_answers_hash()
+RETURNS INTEGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+DECLARE
+  v_filled INTEGER;
+BEGIN
+  UPDATE public.error_resolutions AS resolution
+  SET context = pg_catalog.jsonb_set(
+    resolution.context, '{source,cell_answers_hash}',
+    pg_catalog.to_jsonb(public.error_resolution_cell_answers_hash(
+      resolution.project_id, resolution.document_id, resolution.field_name)))
+  WHERE pg_catalog.jsonb_typeof(resolution.context->'source') = 'object'
+    AND NOT (resolution.context->'source' ? 'cell_answers_hash');
+  GET DIAGNOSTICS v_filled = ROW_COUNT;
+  RETURN v_filled;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.backfill_error_resolution_cell_answers_hash()
+  FROM PUBLIC, anon, authenticated, service_role;
+
+DO $$
+DECLARE
+  v_filled INTEGER;
+BEGIN
+  v_filled := public.backfill_error_resolution_cell_answers_hash();
+  -- Nenhuma decisao com contexto pode sair desta migration sem a chave.
+  IF EXISTS (
+    SELECT 1 FROM public.error_resolutions
+    WHERE pg_catalog.jsonb_typeof(context->'source') = 'object'
+      AND NOT (context->'source' ? 'cell_answers_hash')
+  ) THEN
+    RAISE EXCEPTION 'error_resolutions: decisao com contexto sem cell_answers_hash depois do backfill';
+  END IF;
+  RAISE NOTICE 'error_resolutions: cell_answers_hash gravado em % decisao(oes)', v_filled;
+END $$;
 
 COMMIT;
