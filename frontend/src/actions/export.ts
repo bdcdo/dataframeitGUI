@@ -52,10 +52,11 @@ export async function getExportDataset(
     { data: reviews, error: reviewsError },
     { data: errorResolutions, error: resolutionsError },
     { data: equivalences, error: equivalencesError },
+    { data: comparisons, error: comparisonsError },
   ] = await Promise.all([
     supabase
       .from("projects")
-      .select("name, pydantic_fields, min_responses_for_comparison, automation_mode")
+      .select("name, pydantic_fields, min_responses_for_comparison, automation_mode, current_round_id")
       .eq("id", projectId)
       .single(),
     // Base exportada: documentos não excluídos. Exclusão apenas pendente
@@ -97,6 +98,17 @@ export async function getExportDataset(
         .is("superseded_at", null),
       ["id"],
     ),
+    // Atribuições de comparação de todas as rodadas: a rodada atual vem na
+    // leitura do projeto, que corre em paralelo, e o recorte é feito abaixo.
+    // Status não filtra: aberta ou concluída, a divergência tem quem a arbitre.
+    fetchAllPaged<{ document_id: string; round_id: string }>(() =>
+      supabase
+        .from("assignments")
+        .select("document_id, round_id")
+        .eq("project_id", projectId)
+        .eq("type", "comparacao"),
+      ["id"],
+    ),
   ]);
 
   const error = [
@@ -106,6 +118,7 @@ export async function getExportDataset(
     reviewsError,
     resolutionsError,
     equivalencesError,
+    comparisonsError,
   ].find(Boolean);
   if (error) return { error: error.message };
   if (!project) return { error: "Projeto não encontrado." };
@@ -125,6 +138,13 @@ export async function getExportDataset(
     : { data: [], error: null };
   if (finalAnswers.error) return { error: finalAnswers.error.message };
 
+  // Projeto sem rodada atual não tem como dizer quem foi atribuído: sem o
+  // conjunto, a montagem mantém "aguarda arbitragem".
+  const currentRound = project.current_round_id;
+  const comparedDocumentIds = currentRound
+    ? new Set(comparisons.filter((a) => a.round_id === currentRound).map((a) => a.document_id))
+    : undefined;
+
   // documents/responses/reviews já são arrays (fetchAllPaged nunca devolve null).
   return assembleExport({
     projectName: project.name || "Projeto",
@@ -136,6 +156,7 @@ export async function getExportDataset(
     errorResolutions,
     equivalences,
     finalAnswers: finalAnswers.data,
+    comparedDocumentIds,
     // O argumento chega do cliente: só o `true` literal liga as opções.
     fillFromLlm: options.fillFromLlm === true,
     includeDrafts: options.includeDrafts === true,
