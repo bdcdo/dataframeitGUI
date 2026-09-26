@@ -10,6 +10,12 @@
 --       essa fixture;
 --   (b) `read_error_resolutions` nao derruba a decisao com valor proprio
 --       quando a fonte perde a validade;
+--   (b2) `set_error_resolution` segue a mesma regra ao gravar, sobre o corpo
+--       mais recente da funcao (20260926121000): com a fonte invalida,
+--       "Ambos corretos" com o valor comum grava com o contexto pedido sem
+--       exigir a fonte, e sem o valor e recusado com a mensagem propria da
+--       fonte. O contexto gravado traz o hash das respostas humanas da
+--       celula (20260927130000);
 --   (c) o CHECK aceita valor em "Ambos corretos";
 --   (d) grants: a funcao interna fica fechada para o cliente.
 --
@@ -208,6 +214,60 @@ BEGIN
   RAISE NOTICE 'OK: só "Ambos corretos" sem valor depende da fonte';
 END $$;
 RESET ROLE;
+
+-- (b2) A mesma regra ao gravar. A decisao sem valor de (b) continua la, sobre
+-- a fonte que perdeu a validade.
+SELECT set_config('request.jwt.claims', '{"sub":"b0c00000-0000-0000-0000-000000000001","supabase_uid":"b0c00000-0000-0000-0000-000000000001"}', true);
+SET LOCAL ROLE authenticated;
+DO $$
+DECLARE
+  P CONSTANT UUID := 'b0c10000-0000-0000-0000-000000000001';
+  D CONSTANT UUID := 'b0c20000-0000-0000-0000-000000000001';
+  v_row public.error_resolutions%ROWTYPE;
+  v_saved JSONB;
+  item RECORD;
+BEGIN
+  SELECT * INTO v_row FROM public.error_resolutions WHERE project_id = P AND document_id = D AND field_name = 's';
+  IF v_row.id IS NULL THEN RAISE EXCEPTION 'FALHOU: fixture sem a decisão de (b)'; END IF;
+  -- Sem o valor comum, "Ambos corretos" depende da fonte: recusa que diz o
+  -- que fazer, e nao o "recarregue" do contexto nulo.
+  BEGIN
+    PERFORM public.set_error_resolution(P, D, 's', 'both_correct', v_row.context, v_row.id, v_row.resolved_at);
+    RAISE EXCEPTION 'FALHOU: "Ambos corretos" sem valor aceito sobre veredito inválido';
+  EXCEPTION WHEN invalid_parameter_value THEN
+    IF SQLERRM NOT LIKE 'O veredito anterior não vale mais%' THEN
+      RAISE EXCEPTION 'FALHOU: recusa de "Ambos corretos" sem valor sem a mensagem da fonte: %', SQLERRM;
+    END IF;
+  END;
+  -- Com o valor comum, grava: o contexto e recalculado sem exigir a fonte,
+  -- como o cliente o pediu.
+  v_saved := public.set_error_resolution(P, D, 's', 'both_correct', v_row.context, v_row.id, v_row.resolved_at, NULL, '"A"');
+  IF v_saved->'approved_value' IS DISTINCT FROM '"A"'::JSONB THEN
+    RAISE EXCEPTION 'FALHOU: "Ambos corretos" com o valor comum sobre fonte inválida gravou %', v_saved->'approved_value';
+  END IF;
+  SELECT * INTO item FROM public.read_error_resolutions(P) AS r WHERE r.field_name = 's';
+  IF item.current_context IS DISTINCT FROM item.context THEN
+    RAISE EXCEPTION 'FALHOU: "Ambos corretos" com o valor comum gravado sobre fonte inválida já nasce stale';
+  END IF;
+  RAISE NOTICE 'OK: set_error_resolution só exige a fonte de "Ambos corretos" sem valor';
+END $$;
+RESET ROLE;
+
+-- O hash das respostas da celula e do contexto que `llm_error_context` monta;
+-- a funcao do hash e fechada ao cliente, por isso a conferencia fica fora do
+-- papel authenticated.
+DO $$
+DECLARE v_context JSONB;
+BEGIN
+  SELECT context INTO v_context FROM public.error_resolutions
+  WHERE project_id = 'b0c10000-0000-0000-0000-000000000001' AND document_id = 'b0c20000-0000-0000-0000-000000000001' AND field_name = 's';
+  IF v_context->'source'->>'cell_answers_hash' IS NULL
+     OR v_context->'source'->>'cell_answers_hash' IS DISTINCT FROM public.error_resolution_cell_answers_hash(
+       'b0c10000-0000-0000-0000-000000000001', 'b0c20000-0000-0000-0000-000000000001', 's') THEN
+    RAISE EXCEPTION 'FALHOU: contexto gravado por "Ambos corretos" sem o hash das respostas da célula: %', v_context->'source'->'cell_answers_hash';
+  END IF;
+  RAISE NOTICE 'OK: o contexto gravado traz o hash das respostas da célula';
+END $$;
 
 -- (c) CHECK: "Ambos corretos" aceita valor; as decisoes sem valor seguem sem.
 DO $$

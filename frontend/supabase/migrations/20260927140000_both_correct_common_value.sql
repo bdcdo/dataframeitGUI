@@ -26,7 +26,9 @@
 --
 -- Com valor proprio, "Ambos corretos" deixa de depender da fonte, como as
 -- demais decisoes com valor: `read_error_resolutions` so exige veredito valido
--- das decisoes sem valor. A copia TypeScript e `decisionDependsOnSource`.
+-- das decisoes sem valor, e `set_error_resolution` so recusa sobre veredito
+-- invalido as decisoes sem valor. A copia TypeScript e
+-- `decisionDependsOnSource`.
 --
 -- CHECK: `error_resolution_value_iff_chosen` vira
 -- `error_resolution_value_by_decision`: valor obrigatorio em "Erro do LLM" e
@@ -118,12 +120,17 @@ ALTER TABLE public.error_resolutions
 
 -- ── set_error_resolution ──────────────────────────────────────────────────
 
--- A de 20260924120000_error_resolutions_resposta_em_branco.sql com tres
--- pontos alterados: o valor comum de "Ambos corretos" (conferido contra o
--- contexto e gravado), a exigencia de resposta do LLM em "Ambos corretos"
--- (dispensada quando ha o branco comum de condicional) e a validacao por
--- tipo, agora em `error_resolution_value_problem`. A assinatura nao muda,
--- entao `OR REPLACE` preserva os grants.
+-- A de 20260926121000_llm_error_context_review_valid.sql, a definicao mais
+-- recente, com quatro pontos alterados: o valor comum de "Ambos corretos"
+-- (conferido contra o contexto e gravado), a guarda da fonte, que passa a
+-- dispensar "Ambos corretos" com o valor comum (grava valor proprio, como em
+-- `read_error_resolutions` abaixo), a exigencia de resposta do LLM em "Ambos
+-- corretos" (dispensada quando ha o branco comum de condicional) e a
+-- validacao por tipo, agora em `error_resolution_value_problem`. O resto e o
+-- corpo de la sem mudanca: a mensagem propria da fonte invalida e o oitavo
+-- argumento de `llm_error_context`, que recalcula o contexto com o mesmo
+-- flag que o cliente usou ao pedi-lo. A assinatura nao muda, entao
+-- `OR REPLACE` preserva os grants.
 CREATE OR REPLACE FUNCTION public.set_error_resolution(
   p_project_id UUID, p_document_id UUID, p_field_name TEXT,
   p_decision TEXT, p_expected_context JSONB, p_expected_id UUID,
@@ -141,6 +148,7 @@ DECLARE
   v_llm_blank BOOLEAN;
   v_common JSONB;
   v_problem TEXT;
+  v_requires_source BOOLEAN;
 BEGIN
   IF v_actor IS NULL OR NOT COALESCE((
     p_project_id IN (SELECT public.auth_user_coordinator_or_creator_project_ids())
@@ -161,9 +169,31 @@ BEGIN
     RETURN pg_catalog.jsonb_build_object('reopened', true);
   END IF;
 
+  -- "Ambos corretos" com o valor comum. Se ha valor comum e a fila que decide,
+  -- porque depende dos demais pesquisadores e dos pares "=", que o contexto
+  -- nao guarda; mais abaixo se confere o que o contexto prova. Sem valor
+  -- (NULL ou JSON null), o veredito continua valendo.
+  v_common := CASE WHEN p_decision = 'both_correct' THEN NULLIF(p_value, 'null'::JSONB) END;
+
+  -- Decisao que depende do veredito da fonte ("Ambos corretos" sem o valor
+  -- comum, "Em discussao") nao nasce sobre veredito que perdeu a validade. A
+  -- mensagem propria existe porque o NULL do contexto abaixo mandaria
+  -- recarregar uma pagina que nao vai mudar. A lista e a das decisoes com
+  -- valor proprio, como em `read_error_resolutions`, para que um tipo novo
+  -- nasca exigindo a fonte.
+  v_requires_source := p_decision NOT IN ('llm_correct', 'researchers_correct', 'all_wrong')
+    AND v_common IS NULL;
+  IF v_requires_source AND p_expected_context->'source'->>'kind' = 'comparacao'
+    AND EXISTS (SELECT 1 FROM public.reviews WHERE id = (p_expected_context->'source'->>'id')::UUID
+                  AND project_id = p_project_id AND document_id = p_document_id AND field_name = p_field_name)
+    AND NOT public.review_is_valid((p_expected_context->'source'->>'id')::UUID) THEN
+    RAISE EXCEPTION 'O veredito anterior não vale mais: "Ambos corretos" e "Em discussão" dependem dele. Rearbitre a célula na Comparação.'
+      USING ERRCODE = '22023';
+  END IF;
   v_context := public.llm_error_context(p_project_id, p_document_id, p_field_name,
     (p_expected_context->>'llm_response_id')::UUID, (p_expected_context->>'human_response_id')::UUID,
-    p_expected_context->'source'->>'kind', (p_expected_context->'source'->>'id')::UUID);
+    p_expected_context->'source'->>'kind', (p_expected_context->'source'->>'id')::UUID,
+    v_requires_source);
   IF v_context IS NULL OR v_context IS DISTINCT FROM p_expected_context THEN
     RAISE EXCEPTION 'As respostas mudaram. Recarregue antes de confirmar.' USING ERRCODE = '40001';
   END IF;
@@ -185,11 +215,7 @@ BEGIN
                     AND (v_context->'llm_value'->>'value')
                       ~ E'^[\t\n\u000B\f\r    -     　﻿]*$'), false);
 
-  -- "Ambos corretos" com o valor comum. Se ha valor comum e a fila que decide,
-  -- porque depende dos demais pesquisadores e dos pares "=", que o contexto
-  -- nao guarda; aqui se confere o que o contexto prova. Sem valor (NULL ou
-  -- JSON null), o veredito continua valendo.
-  v_common := CASE WHEN p_decision = 'both_correct' THEN NULLIF(p_value, 'null'::JSONB) END;
+  -- O valor comum de "Ambos corretos", conferido contra o contexto.
   IF v_common IS NOT NULL THEN
     -- Na auto-revisao o veredito e a propria resposta humana do contexto, e
     -- ela nao fica para tras.

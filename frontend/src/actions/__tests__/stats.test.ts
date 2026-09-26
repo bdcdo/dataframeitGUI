@@ -310,6 +310,25 @@ describe("resolveError / reopenError", () => {
     expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_require_valid_source: required }));
   });
 
+  // #758: com o valor comum que a fila calculou, "Ambos corretos" grava valor
+  // próprio e deixa de pedir a fonte, como `set_error_resolution` ao gravar.
+  // O branco comum ("" ou []) também é valor.
+  it.each([["A"], [""], [[]]])("Ambos corretos com o valor comum %j não pede a fonte", async (value) => {
+    humansInRound(["rh"]);
+    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
+    const { prepareErrorResolution } = await loadStats();
+    await prepareErrorResolution({ ...prepareInput, decision: "both_correct", bothCorrectValue: { value } });
+    expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_require_valid_source: false }));
+  });
+
+  it("o valor comum só dispensa a fonte em Ambos corretos", async () => {
+    humansInRound(["rh"]);
+    hoisted.rpc.mockResolvedValue({ data: row.context, error: null });
+    const { prepareErrorResolution } = await loadStats();
+    await prepareErrorResolution({ ...prepareInput, decision: "discussion", bothCorrectValue: { value: "A" } });
+    expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_require_valid_source: true }));
+  });
+
   it("auto-revisão não troca de humana: sem a do field_reviews na rodada, explica e não chama a RPC", async () => {
     humansInRound(["rh2", "rh3"]);
     const { prepareErrorResolution } = await loadStats();

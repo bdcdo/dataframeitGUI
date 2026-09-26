@@ -100,6 +100,19 @@ describe("LlmErrorCard: decisão sobre veredito que perdeu a validade", () => {
     expect(screen.getByText(/dependem do veredito anterior/)).toBeTruthy();
   });
 
+  // #758: com o valor comum, "Ambos corretos" grava valor próprio e, como as
+  // demais decisões com valor, não depende do veredito anterior.
+  it("com o valor comum, Ambos corretos fica ativa e Em discussão não", () => {
+    render(
+      <LlmErrorCard
+        error={{ ...llmError("comparacao"), sourceId: "review1", sourceInvalidReason: "pergunta_alterada", resolution, bothCorrectValue: { value: "" } }}
+        projectId="proj1" isPending={false} canResolve onDecide={vi.fn()} onReopen={vi.fn()}
+      />,
+    );
+    expect((screen.getByRole("button", { name: "Ambos corretos" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Em discussão" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("rotula o veredito anterior como sem validade, com o motivo", () => {
     renderInvalid();
     expect(screen.getByText("Veredito anterior à mudança da pergunta (sem validade):")).toBeTruthy();
