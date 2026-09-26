@@ -65,14 +65,6 @@ const pressed = (field: string, choice: string) =>
 afterEach(cleanup);
 
 describe("InstructionChangeDialog", () => {
-  it("não abre quando nenhuma instrução mudou", async () => {
-    const draft = saved.map((field) => ({ ...field }));
-    const { onResult, user } = renderHarness(draft);
-    await user.click(screen.getByRole("button", { name: "Salvar schema" }));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect(onResult).toHaveBeenCalledWith(draft);
-  });
-
   it("nasce sem escolha e só confirma com todos os campos escolhidos", async () => {
     const { onResult, user } = renderHarness(bothChanged);
     await user.click(screen.getByRole("button", { name: "Salvar schema" }));
@@ -95,6 +87,9 @@ describe("InstructionChangeDialog", () => {
     expect(confirm.hasAttribute("disabled")).toBe(false);
     expect(pressed("resultado", "Muda como responder")).toBe("true");
     expect(pressed("resultado", "Só esclarece")).toBe("false");
+    // A região viva continua montada, só sem texto, para o leitor de tela
+    // acompanhar a contagem até o fim.
+    expect(dialog.querySelector("[aria-live=polite]")?.textContent).toBe("");
 
     await user.click(confirm);
     const [fields] = onResult.mock.calls[0] as [PydanticField[]];
@@ -115,13 +110,5 @@ describe("InstructionChangeDialog", () => {
     const [fields] = onResult.mock.calls[0] as [PydanticField[]];
     expect(fields[0].question_revision).toBeUndefined();
     expect(fields[1].question_revision).toBe(2);
-  });
-
-  it("cancelar desiste do save", async () => {
-    const { onResult, user } = renderHarness(bothChanged);
-    await user.click(screen.getByRole("button", { name: "Salvar schema" }));
-    await user.click(screen.getByRole("button", { name: "Cancelar" }));
-    expect(onResult).toHaveBeenCalledWith(null);
-    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });

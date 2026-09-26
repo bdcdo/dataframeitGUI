@@ -70,6 +70,11 @@ function FieldChoice({
   );
 }
 
+function missingLabel(missing: number): string {
+  if (missing === 0) return "";
+  return missing === 1 ? "Falta a escolha de 1 campo" : `Falta a escolha de ${missing} campos`;
+}
+
 export function InstructionChangeDialog({
   open,
   fields,
@@ -110,11 +115,11 @@ export function InstructionChangeDialog({
           ))}
         </ul>
         <AlertDialogFooter>
-          {missing > 0 && (
-            <p className="mr-auto self-center text-xs text-muted-foreground" aria-live="polite">
-              {missing === 1 ? "Falta a escolha de 1 campo" : `Falta a escolha de ${missing} campos`}
-            </p>
-          )}
+          {/* Sempre montada, só o texto muda: região viva que aparece junto
+              com o texto não é anunciada por todo leitor de tela. */}
+          <p className="mr-auto self-center text-xs text-muted-foreground" aria-live="polite">
+            {missingLabel(missing)}
+          </p>
           <AlertDialogCancel>Cancelar</AlertDialogCancel>
           <AlertDialogAction disabled={missing > 0} onClick={() => onConfirm(choices)}>
             Salvar
