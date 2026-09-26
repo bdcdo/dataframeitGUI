@@ -205,6 +205,37 @@ describe("confirmEquivalentVerdict", () => {
   });
 });
 
+describe("confirmEquivalentVerdict: falha do sync pós-commit", () => {
+  // O sync roda depois de gravar par e review, fora do try que devolve
+  // `{ error }`. Se a falha dele subisse, o client refaria uma escrita já
+  // persistida e a revalidação nem rodaria.
+  it("grava par e veredito, retorna {} e só loga", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSyncCompareAssignment.mockRejectedValueOnce(new Error("sync boom"));
+    serverTableResults = {
+      reviews: { error: null },
+    };
+    const { confirmEquivalentVerdict } = await loadActions();
+
+    const result = await confirmEquivalentVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      responseIds: ["r1", "r2"],
+      gabaritoId: "r1",
+      verdictDisplay: "resposta fundida",
+    });
+
+    expect(result).toEqual({});
+    expect(rpcCalls).toHaveLength(1);
+    expect(upsertsOn("reviews")).toHaveLength(1);
+    expect(mockSyncCompareAssignment).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy.mock.calls[0][0]).toContain("sync boom");
+    errorSpy.mockRestore();
+  });
+});
+
 describe("confirmEquivalentVerdict: gabarito fora das opções atuais", () => {
   it("recusa antes de gravar par ou veredito", async () => {
     serverTableResults = {

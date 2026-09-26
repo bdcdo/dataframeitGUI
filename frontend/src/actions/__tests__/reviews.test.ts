@@ -54,14 +54,21 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => makeClient(),
 }));
-// syncCompareAssignment curto-circuita: assignment ausente => retorno imediato.
+// syncCompareAssignment resolve sem efeito por padrão. É um vi.fn para que um
+// teste possa fazê-lo REJEITAR: o sync lança em erro de leitura e quando falta
+// o assignment, e a action tem de absorver essa falha depois de gravar.
+const { mockSyncCompareAssignment } = vi.hoisted(() => ({
+  mockSyncCompareAssignment: vi.fn(async () => {}),
+}));
 vi.mock("@/lib/compare-sync", () => ({
-  syncCompareAssignment: async () => {},
+  syncCompareAssignment: mockSyncCompareAssignment,
 }));
 
 beforeEach(() => {
   opCalls = [];
   tableData = {};
+  mockSyncCompareAssignment.mockReset();
+  mockSyncCompareAssignment.mockImplementation(async () => {});
 });
 
 async function loadSubmit() {
@@ -243,5 +250,33 @@ describe("submitVerdict: voto copiado fora das opções atuais", () => {
 
     expect(result).toEqual({});
     expect(opCalls.filter((c) => c.op === "upsert" && c.table === "reviews")).toHaveLength(1);
+  });
+});
+
+// O sync roda depois do upsert do review e fora do try que devolve `{ error }`.
+// Se a falha dele subisse, o revisor veria "falha ao salvar" para um veredito
+// já gravado e tentaria de novo, reescrevendo o mesmo dado.
+describe("submitVerdict: falha do sync pós-commit", () => {
+  it("grava o veredito, retorna {} e só loga", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockSyncCompareAssignment.mockRejectedValueOnce(new Error("sync boom"));
+    tableData = {
+      projects: { pydantic_fields: [{ id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "", hash: "aaaaaaaaaaaa" }] },
+      reviews: [],
+    };
+    const submitVerdict = await loadSubmit();
+
+    const result = await submitVerdict({
+      projectId: "p1", documentId: "doc1", fieldName: "q1", verdict: "concordo",
+    });
+
+    expect(result).toEqual({});
+    expect(
+      opCalls.filter((c) => c.op === "upsert" && c.table === "reviews"),
+    ).toHaveLength(1);
+    expect(mockSyncCompareAssignment).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy.mock.calls[0][0]).toContain("sync boom");
+    errorSpy.mockRestore();
   });
 });
