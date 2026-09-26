@@ -82,9 +82,10 @@ function ErrorCardActions({ error, projectId, isPending, canResolve, onDecide, o
     )}
     {canResolve && <>
       {errorDecisionSchema.options.map((decision) => {
-        const needsValidSource = !!error.sourceInvalidReason && decisionDependsOnSource({
-          decision, approved_value: decision === "both_correct" ? error.bothCorrectValue?.value ?? null : null,
-        });
+        // `sourceInvalidReason` só vem no caso ressuscitado da fila, e o valor
+        // comum só no caso vivo: com a fonte inválida, "Ambos corretos" é
+        // sempre a decisão sem valor, que depende da fonte.
+        const needsValidSource = !!error.sourceInvalidReason && decisionDependsOnSource({ decision, approved_value: null });
         return (
           <Button key={decision} variant="outline" size="sm" disabled={isPending || !error.sourceId || needsValidSource}
             title={needsValidSource ? SOURCE_REQUIRED_REASON : undefined} onClick={() => onDecide(decision)}>
