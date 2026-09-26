@@ -18,7 +18,8 @@
 --       `fieldReviewIsCurrent` em `review-validity.test.ts`;
 --   (c) carimbo do ciclo e imutabilidade para o cliente;
 --   (d) `record_response_equivalences` so aceita respostas vigentes;
---   (e) matriz julgamento x evento, com o save do schema real;
+--   (e) matriz julgamento x evento, com o save do schema real, e o par "="
+--       que deixou de valer levando o documento de volta ao reconciliador;
 --   (f) defesas: ciclo carimbado com outra versao que escapou do gatilho cai
 --       na view, no reconciliador e em llm_error_context;
 --   (g) decisao do LLM Insights cai com a edicao de QUALQUER resposta humana
@@ -55,8 +56,10 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: faltam os gatilhos de carimbo, imutabilidade ou mudanca da pergunta';
   END IF;
 
-  IF has_function_privilege('authenticated', 'public.archive_question_changed_field_reviews(uuid)', 'EXECUTE')
-     OR has_function_privilege('service_role', 'public.archive_question_changed_field_reviews(uuid)', 'EXECUTE')
+  IF has_function_privilege('authenticated', 'public.archive_question_changed_field_reviews(uuid,jsonb)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.archive_question_changed_field_reviews(uuid,jsonb)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.response_answers_current_question(jsonb,jsonb)', 'EXECUTE')
+     OR has_function_privilege('service_role', 'public.response_answers_current_question(jsonb,jsonb)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.error_resolution_cell_answers_hash(uuid,uuid,text)', 'EXECUTE')
      OR has_function_privilege('anon', 'public.field_review_question_current(text,jsonb)', 'EXECUTE')
      OR NOT has_function_privilege('authenticated', 'public.field_review_question_current(text,jsonb)', 'EXECUTE')
@@ -145,6 +148,20 @@ INSERT INTO public.responses (id, project_id, document_id, respondent_id, respon
    '7a200000-0000-0000-0000-000000000007', NULL, 'llm', '{"a":"llm"}', '{}', false),
   ('7a300000-0000-0000-0000-000000000017', '7a100000-0000-0000-0000-000000000001',
    '7a200000-0000-0000-0000-000000000007', '7a000000-0000-0000-0000-000000000002', 'humano', '{"a":"llm"}', '{}', false);
+
+-- Documento 8: LLM e humano divergem so em `q`, e um par "=" os funde, entao
+-- nao ha ciclo. Nenhum ciclo arquivado o levaria de volta ao reconciliador.
+INSERT INTO public.documents (id, project_id, title, text) VALUES
+  ('7a200000-0000-0000-0000-000000000008', '7a100000-0000-0000-0000-000000000001', 'Doc 8', 'Texto');
+INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_partial) VALUES
+  ('7a300000-0000-0000-0000-000000000008', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000008', NULL, 'llm',
+   '{"a":"v","q":"sim","e":"v","r":"v","x":"v"}',
+   '{"a":"a00000000001","q":"q00000000001","e":"e00000000001","r":"r00000000001","x":"x00000000001"}', false),
+  ('7a300000-0000-0000-0000-000000000018', '7a100000-0000-0000-0000-000000000001',
+   '7a200000-0000-0000-0000-000000000008', '7a000000-0000-0000-0000-000000000002', 'humano',
+   '{"a":"v","q":"yes","e":"v","r":"v","x":"v"}',
+   '{"a":"a00000000001","q":"q00000000001","e":"e00000000001","r":"r00000000001","x":"x00000000001"}', false);
 
 -- Os INSERTs enfileiraram reconciliacao; a fixture parte do estado reconciliado.
 DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
@@ -302,6 +319,11 @@ BEGIN
 END;
 $$;
 
+SELECT public.record_response_equivalences(jsonb_build_array(jsonb_build_object(
+  'project_id', '7a100000-0000-0000-0000-000000000001', 'document_id', '7a200000-0000-0000-0000-000000000008',
+  'field_name', 'q', 'response_a_id', '7a300000-0000-0000-0000-000000000008',
+  'response_b_id', '7a300000-0000-0000-0000-000000000018', 'reviewer_id', '7a000000-0000-0000-0000-000000000001')));
+
 -- (e) Os eventos. Resposta editada: o humano do documento 3 muda `e`.
 UPDATE public.responses SET answers = answers || '{"e":"humano editado"}'
 WHERE id = '7a300000-0000-0000-0000-000000000013';
@@ -354,7 +376,7 @@ BEGIN
   -- Par "=" x evento no banco: a pergunta alterada nao arquiva o par (a regra
   -- e de leitura); a resposta editada, sim, pelo gatilho de resposta.
   FOR item IN
-    SELECT * FROM (VALUES ('a', 5), ('q', 5), ('e', 4), ('r', 5), ('x', 5)) AS matrix(field_name, operational)
+    SELECT * FROM (VALUES ('a', 5), ('q', 6), ('e', 4), ('r', 5), ('x', 5)) AS matrix(field_name, operational)
   LOOP
     IF (SELECT count(*) FROM public.response_equivalences
         WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = item.field_name) <> item.operational THEN
@@ -373,10 +395,18 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: a arbitragem aberta continuou sem ciclo a arbitrar';
   END IF;
 
+  -- O par "=" do documento 8 deixou de valer com a pergunta: sem ciclo, so a
+  -- fila o leva de volta ao reconciliador, que abre o ciclo se `q` divergir.
+  IF NOT EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
+                 WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
+    RAISE EXCEPTION 'FALHOU: documento com par "=" que deixou de valer nao voltou para a fila do reconciliador';
+  END IF;
+
   -- So a pergunta alterada (campo que continua existindo) reabre ciclo: os
-  -- documentos 1..5 voltam para a fila do reconciliador.
+  -- documentos 1..5, pelos ciclos, e o 8, pelo par, voltam para a fila do
+  -- reconciliador.
   IF (SELECT count(*) FROM public.auto_review_reconciliation_requests
-      WHERE project_id = '7a100000-0000-0000-0000-000000000001') <> 5 THEN
+      WHERE project_id = '7a100000-0000-0000-0000-000000000001') <> 6 THEN
     RAISE EXCEPTION 'FALHOU: pergunta alterada deveria enfileirar a reconciliacao dos documentos';
   END IF;
   RAISE NOTICE 'OK: matriz auto-revisao e par "=" x evento';
@@ -396,7 +426,9 @@ BEGIN
       ('7a200000-0000-0000-0000-000000000006'::UUID, 'r2', 'pergunta_alterada'),
       -- Mapa legado vazio nao prova que o LLM deixou o campo de fora.
       ('7a200000-0000-0000-0000-000000000007'::UUID, 'r2', 'consenso'),
-      ('7a200000-0000-0000-0000-000000000001'::UUID, 'q', 'aguarda_reconciliacao')
+      ('7a200000-0000-0000-0000-000000000001'::UUID, 'q', 'aguarda_reconciliacao'),
+      -- O par de outra versao nao sustenta mais o consenso do documento 8.
+      ('7a200000-0000-0000-0000-000000000008'::UUID, 'q', 'aguarda_reconciliacao')
     ) AS matrix(document_id, field_name, provenance)
   LOOP
     IF (SELECT provenance FROM public.final_answers
@@ -587,6 +619,25 @@ UPDATE public.projects
 SET pydantic_fields = jsonb_set(pydantic_fields, '{1}', pydantic_fields->1 || '{"description":"Terceira versao","hash":"q00000000003"}'),
     schema_revision = schema_revision + 1
 WHERE id = '7a100000-0000-0000-0000-000000000001';
+
+-- O par "=" do documento 8 ja nao valia antes deste save, e foi enfileirado
+-- pelo save que o derrubou: este nao o reenfileira. O backfill da migration,
+-- sem schema anterior, enfileira todo par que nao vale.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
+             WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
+    RAISE EXCEPTION 'FALHOU: save que nao mudou o par "=" ja caido reenfileirou o documento';
+  END IF;
+  PERFORM public.archive_question_changed_field_reviews('7a100000-0000-0000-0000-000000000001', NULL);
+  IF NOT EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
+                 WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
+    RAISE EXCEPTION 'FALHOU: o backfill deveria enfileirar o documento com par "=" que nao vale';
+  END IF;
+  DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
+  RAISE NOTICE 'OK: par "=" caido entra na fila uma vez';
+END;
+$$;
 
 SET LOCAL ROLE authenticated;
 DO $$

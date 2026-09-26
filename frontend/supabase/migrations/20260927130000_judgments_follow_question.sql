@@ -15,12 +15,16 @@
 --     de leitura e vive em `filterCurrentEquivalencePairs`
 --     (frontend/src/lib/equivalence.ts); o banco nao arquiva o par, porque a
 --     resposta recodificada com outro valor ja o arquiva pelo gatilho de
---     resposta. Aqui so entra a escrita: `record_response_equivalences` passa
---     a recusar par com resposta de outra versao da pergunta, pela copia SQL
---     da regra (`response_answers_current_question`). A rodada nao entra:
---     resposta que deixou de ser `is_latest` fica congelada e pode ser parte
---     do par (o LLM Insights marca "=" com a resposta escolhida de outra
---     rodada).
+--     resposta. No banco entram duas coisas, pela copia SQL da regra
+--     (`response_answers_current_question`):
+--       - `record_response_equivalences` passa a recusar par com resposta de
+--         outra versao da pergunta. A rodada nao entra: resposta que deixou
+--         de ser `is_latest` fica congelada e pode ser parte do par (o LLM
+--         Insights marca "=" com a resposta escolhida de outra rodada);
+--       - o save do schema enfileira a reconciliacao do documento cujo par
+--         deixou de valer. O par pode ser o que fazia o campo nao divergir, e
+--         sem ciclo nada mais levaria o documento de volta a fila: a view
+--         seguiria dando 'consenso' com a resposta do LLM.
 --
 --   * Auto-revisao: o ciclo carimba em `field_reviews.field_hash` o hash do
 --     campo quando e aberto (INSERT) e quando e rotacionado (UPDATE OF
@@ -30,8 +34,9 @@
 --       - o gatilho de `projects` (archive_judgments_on_question_change)
 --         arquiva, na mesma transacao do save do schema, todo ciclo que deixou
 --         de valer, e enfileira a reconciliacao dos documentos cujo campo
---         continua existindo. O reconciliador abre um ciclo novo, pendente,
---         se a divergencia persistir sob a pergunta nova;
+--         continua existindo, junto dos documentos com par "=" que deixou de
+--         valer. O reconciliador abre um ciclo novo, pendente, se a
+--         divergencia persistir sob a pergunta nova;
 --       - campo renomeado ou removido encerra os ciclos do nome antigo
 --         ('field_removed'), sem ciclo novo;
 --       - reconcile_auto_review_cycles tambem encerra ciclo que nao vale
@@ -93,6 +98,31 @@ REVOKE ALL ON FUNCTION public.pydantic_field_by_name(JSONB, TEXT) FROM PUBLIC, a
 GRANT EXECUTE ON FUNCTION public.pydantic_field_by_name(JSONB, TEXT) TO authenticated, service_role;
 REVOKE ALL ON FUNCTION public.field_review_question_current(TEXT, JSONB) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.field_review_question_current(TEXT, JSONB) TO authenticated, service_role;
+
+-- ── Resposta dada a versao atual da pergunta ─────────────────────────────────
+-- Copia SQL de `answersCurrentQuestion` (frontend/src/lib/answer-staleness.ts),
+-- com a mesma matriz de casos nos testes. So o hash gravado na resposta prova
+-- a versao; sem hash do campo (mapa NULL ou `{}`, chave ausente ou nula) a
+-- ausencia nao invalida sozinha. Campo fora do schema reprova, e campo atual
+-- sem hash com resposta carimbada tambem.
+CREATE FUNCTION public.response_answers_current_question(p_answer_field_hashes JSONB, p_field JSONB)
+RETURNS BOOLEAN
+LANGUAGE sql
+IMMUTABLE
+SET search_path = ''
+AS $$
+  SELECT COALESCE(
+    pg_catalog.jsonb_typeof(p_field) = 'object'
+      AND (pg_catalog.jsonb_typeof(p_answer_field_hashes -> (p_field->>'name')) IS DISTINCT FROM 'string'
+           OR (p_answer_field_hashes ->> (p_field->>'name')) = (p_field->>'hash')),
+    false);
+$$;
+
+-- Interna: so funcoes DEFINER a chamam (record_response_equivalences e
+-- archive_question_changed_field_reviews). Vem antes delas porque o backfill
+-- desta migration ja a executa.
+REVOKE ALL ON FUNCTION public.response_answers_current_question(JSONB, JSONB)
+  FROM PUBLIC, anon, authenticated, service_role;
 
 -- ── Carimbo do ciclo ─────────────────────────────────────────────────────────
 -- A coluna entra nas duas tabelas, no fim, para que `INSERT ... SELECT
@@ -244,10 +274,14 @@ REVOKE ALL ON FUNCTION public.archive_field_review_before_delete()
   FROM PUBLIC, anon, authenticated, service_role;
 
 -- ── Mudanca da pergunta encerra o ciclo, no save do schema ───────────────────
--- Arquiva todo ciclo do projeto que nao vale contra o schema atual. Idempotente:
--- o gatilho de `projects` a chama a cada save de schema, e o backfill abaixo,
--- uma vez por projeto. Devolve quantos ciclos arquivou.
-CREATE FUNCTION public.archive_question_changed_field_reviews(p_project_id UUID)
+-- Arquiva todo ciclo do projeto que nao vale contra o schema atual e enfileira
+-- a reconciliacao dos documentos afetados. Idempotente: o gatilho de
+-- `projects` a chama a cada save de schema, com o schema anterior em
+-- `p_previous_fields`, e o backfill abaixo, uma vez por projeto, com NULL.
+-- Devolve quantos ciclos arquivou.
+CREATE FUNCTION public.archive_question_changed_field_reviews(
+  p_project_id UUID, p_previous_fields JSONB
+)
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -258,6 +292,7 @@ DECLARE
   v_archived INTEGER;
   v_documents UUID[];
   v_requeue UUID[];
+  v_stale_pairs UUID[];
 BEGIN
   SELECT * INTO v_project FROM public.projects WHERE id = p_project_id;
   IF NOT FOUND THEN
@@ -280,42 +315,76 @@ BEGIN
   INTO v_archived, v_documents, v_requeue
   FROM archived;
 
-  IF v_archived = 0 THEN
-    RETURN 0;
+  IF v_archived > 0 THEN
+    -- A mesma manutencao de assignments de archive_review_dependencies_on_response_change:
+    -- sem ciclo pendente, a auto-revisao do documento fecha e a arbitragem aberta sai.
+    UPDATE public.assignments AS assignment
+    SET status = 'concluido', completed_at = pg_catalog.now()
+    WHERE assignment.project_id = v_project.id
+      AND assignment.document_id = ANY(v_documents)
+      AND assignment.type = 'auto_revisao'
+      AND assignment.status <> 'concluido'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.field_reviews AS review
+        WHERE review.project_id = assignment.project_id
+          AND review.document_id = assignment.document_id
+          AND review.self_reviewer_id = assignment.user_id
+          AND review.self_verdict IS NULL
+      );
+
+    DELETE FROM public.assignments AS assignment
+    WHERE assignment.project_id = v_project.id
+      AND assignment.document_id = ANY(v_documents)
+      AND assignment.type = 'arbitragem'
+      AND assignment.status <> 'concluido'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.field_reviews AS review
+        WHERE review.project_id = assignment.project_id
+          AND review.document_id = assignment.document_id
+          AND review.arbitrator_id = assignment.user_id
+          AND review.final_verdict IS NULL
+      );
   END IF;
 
-  -- A mesma manutencao de assignments de archive_review_dependencies_on_response_change:
-  -- sem ciclo pendente, a auto-revisao do documento fecha e a arbitragem aberta sai.
-  UPDATE public.assignments AS assignment
-  SET status = 'concluido', completed_at = pg_catalog.now()
-  WHERE assignment.project_id = v_project.id
-    AND assignment.document_id = ANY(v_documents)
-    AND assignment.type = 'auto_revisao'
-    AND assignment.status <> 'concluido'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM public.field_reviews AS review
-      WHERE review.project_id = assignment.project_id
-        AND review.document_id = assignment.document_id
-        AND review.self_reviewer_id = assignment.user_id
-        AND review.self_verdict IS NULL
-    );
+  -- Par "=" vivo que deixou de valer num campo que continua existindo. O par
+  -- pode ser a unica razao de o campo nao divergir: sem ciclo, nada arquivado
+  -- acima levaria o documento ao reconciliador, que ja le o par pela regra da
+  -- versao (filterCurrentEquivalencePairs) e abre o ciclo se a divergencia
+  -- aparecer. No gatilho entra so o par que valia sob o schema anterior: o que
+  -- ja nao valia foi enfileirado no save que o derrubou, e reenfileira-lo a
+  -- cada save poria o documento em 'aguarda_reconciliacao' sem mudanca nenhuma
+  -- nele. Com `p_previous_fields` NULL (o backfill) entra todo par que nao
+  -- vale.
+  SELECT pg_catalog.array_agg(DISTINCT equivalence.document_id)
+  INTO v_stale_pairs
+  FROM public.response_equivalences AS equivalence
+  JOIN public.responses AS response_a ON response_a.id = equivalence.response_a_id
+  JOIN public.responses AS response_b ON response_b.id = equivalence.response_b_id
+  CROSS JOIN LATERAL (
+    SELECT
+      public.pydantic_field_by_name(v_project.pydantic_fields, equivalence.field_name) AS current_value,
+      public.pydantic_field_by_name(p_previous_fields, equivalence.field_name) AS previous_value
+  ) AS field
+  WHERE equivalence.project_id = v_project.id
+    AND equivalence.superseded_at IS NULL
+    AND field.current_value IS NOT NULL
+    AND NOT (
+      public.response_answers_current_question(response_a.answer_field_hashes, field.current_value)
+      AND public.response_answers_current_question(response_b.answer_field_hashes, field.current_value))
+    AND (
+      p_previous_fields IS NULL
+      OR (public.response_answers_current_question(response_a.answer_field_hashes, field.previous_value)
+          AND public.response_answers_current_question(response_b.answer_field_hashes, field.previous_value)));
 
-  DELETE FROM public.assignments AS assignment
-  WHERE assignment.project_id = v_project.id
-    AND assignment.document_id = ANY(v_documents)
-    AND assignment.type = 'arbitragem'
-    AND assignment.status <> 'concluido'
-    AND NOT EXISTS (
-      SELECT 1
-      FROM public.field_reviews AS review
-      WHERE review.project_id = assignment.project_id
-        AND review.document_id = assignment.document_id
-        AND review.arbitrator_id = assignment.user_id
-        AND review.final_verdict IS NULL
-    );
+  v_requeue := ARRAY(
+    SELECT DISTINCT document_id
+    FROM pg_catalog.unnest(COALESCE(v_requeue, '{}'::UUID[]) || COALESCE(v_stale_pairs, '{}'::UUID[]))
+      AS documents(document_id)
+  );
 
-  IF v_requeue IS NULL THEN
+  IF pg_catalog.cardinality(v_requeue) = 0 THEN
     RETURN v_archived;
   END IF;
 
@@ -368,7 +437,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.archive_question_changed_field_reviews(UUID)
+REVOKE ALL ON FUNCTION public.archive_question_changed_field_reviews(UUID, JSONB)
   FROM PUBLIC, anon, authenticated, service_role;
 
 CREATE FUNCTION public.archive_judgments_on_question_change()
@@ -378,7 +447,7 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 BEGIN
-  PERFORM public.archive_question_changed_field_reviews(NEW.id);
+  PERFORM public.archive_question_changed_field_reviews(NEW.id, OLD.pydantic_fields);
   RETURN NULL;
 END;
 $$;
@@ -393,13 +462,14 @@ WHEN (OLD.pydantic_fields IS DISTINCT FROM NEW.pydantic_fields)
 EXECUTE FUNCTION public.archive_judgments_on_question_change();
 
 -- Ciclo que o backfill ja carimbou com hash de outra versao da pergunta, ou de
--- campo que saiu do schema: a mesma regra do gatilho, uma vez por projeto,
--- para o estado nascer coerente.
+-- campo que saiu do schema, e par "=" que ja nao vale: a mesma regra do
+-- gatilho, uma vez por projeto e sem schema anterior, para o estado nascer
+-- coerente.
 DO $$
 DECLARE
   v_archived BIGINT;
 BEGIN
-  SELECT COALESCE(pg_catalog.sum(public.archive_question_changed_field_reviews(project.id)), 0)
+  SELECT COALESCE(pg_catalog.sum(public.archive_question_changed_field_reviews(project.id, NULL)), 0)
   INTO v_archived
   FROM public.projects AS project;
   RAISE NOTICE 'field_reviews: % ciclo(s) fora da pergunta atual arquivado(s) no backfill', v_archived;
@@ -880,28 +950,6 @@ GRANT EXECUTE ON FUNCTION public.reconcile_auto_review_cycles(JSONB)
 
 
 -- ── Par "=": so entre respostas dadas a versao atual da pergunta ────────────
--- Copia SQL de `answersCurrentQuestion` (frontend/src/lib/answer-staleness.ts),
--- com a mesma matriz de casos nos testes. So o hash gravado na resposta prova
--- a versao; sem hash do campo (mapa NULL ou `{}`, chave ausente ou nula) a
--- ausencia nao invalida sozinha. Campo fora do schema reprova, e campo atual
--- sem hash com resposta carimbada tambem.
-CREATE FUNCTION public.response_answers_current_question(p_answer_field_hashes JSONB, p_field JSONB)
-RETURNS BOOLEAN
-LANGUAGE sql
-IMMUTABLE
-SET search_path = ''
-AS $$
-  SELECT COALESCE(
-    pg_catalog.jsonb_typeof(p_field) = 'object'
-      AND (pg_catalog.jsonb_typeof(p_answer_field_hashes -> (p_field->>'name')) IS DISTINCT FROM 'string'
-           OR (p_answer_field_hashes ->> (p_field->>'name')) = (p_field->>'hash')),
-    false);
-$$;
-
-REVOKE ALL ON FUNCTION public.response_answers_current_question(JSONB, JSONB)
-  FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.response_answers_current_question(JSONB, JSONB) TO service_role;
-
 -- Corpo de 20260717120000 com a guarda da versao da pergunta depois da de
 -- permissao.
 CREATE OR REPLACE FUNCTION public.record_response_equivalences(p_rows JSONB)
