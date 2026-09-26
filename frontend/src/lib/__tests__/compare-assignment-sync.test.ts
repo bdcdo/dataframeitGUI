@@ -144,9 +144,9 @@ describe("resyncProjectCompareAssignments", () => {
   });
 
   // Só uma comparação pode estar ativa por documento (índice parcial
-  // assignments_one_active_comparacao_per_doc). Com duas concluídas de rodadas
-  // diferentes que regridem, reabre a da rodada mais recente; a antiga bate
-  // no índice e fica concluída.
+  // assignments_one_active_comparacao_per_doc). Com duas concluídas de
+  // revisores diferentes que regridem, reabre a concluída mais recentemente; a
+  // outra bate no índice e fica concluída.
   it("com duas concluídas no mesmo documento e nenhuma ativa, reabre a mais recente", async () => {
     tableData.assignments = [
       { ...assignment("a-antiga", "doc2", "concluido", "rev1"), completed_at: "2026-08-01T00:00:00Z" },
@@ -178,6 +178,15 @@ describe("resyncProjectCompareAssignments", () => {
     expect(updates()).toEqual([expect.objectContaining({ payload: { status: "pendente", completed_at: null } })]);
   });
 
+  it("projeto sem rodada corrente não tem o que ressincronizar", async () => {
+    (tableData.projects[0] as { current_round_id: string | null }).current_round_id = null;
+
+    const report = await resyncProjectCompareAssignments(client(), "p1");
+
+    expect(report).toEqual({ checked: 0, changes: [] });
+    expect(updates()).toHaveLength(0);
+  });
+
   it("não mexe em assignment de outro tipo", async () => {
     tableData.assignments = [{ ...assignment("a-doc2", "doc2", "concluido"), type: "codificacao" }];
 
@@ -191,7 +200,7 @@ describe("resyncProjectCompareAssignments", () => {
 describe("resyncProjects (o script de pós-deploy)", () => {
   it("falha num projeto sai com código 1, relatada, sem parar os outros", async () => {
     queryErrors["assignments:select"] = { message: "tempo esgotado" };
-    tableData.projects.push({ id: "p2", name: "Outro", pydantic_fields: [], pydantic_hash: null });
+    tableData.projects.push({ id: "p2", name: "Outro", pydantic_fields: [], pydantic_hash: null, current_round_id: "rodada-p2" });
     const lines: string[] = [];
 
     const code = await resyncProjects(client(), ["p1", "p2"], false, (line) => lines.push(line));

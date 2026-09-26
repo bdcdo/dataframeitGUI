@@ -1,6 +1,6 @@
 // O status do assignment de comparação a partir do estado do banco, por
-// documento (`syncCompareAssignment`, em compare-sync.ts) ou para o projeto
-// inteiro (`resyncProjectCompareAssignments`).
+// documento (`syncCompareAssignment`, em compare-sync.ts) ou para a rodada
+// corrente do projeto inteiro (`resyncProjectCompareAssignments`).
 //
 // O status só era recalculado quando o revisor gravava um veredito ou uma
 // equivalência. Uma mudança de schema que tira a validade de vereditos
@@ -221,19 +221,27 @@ interface PlannedChange {
 }
 
 // Quatro leituras paginadas do projeto em vez de quatro por assignment, para
-// caber no save do schema. `null`: projeto sem assignment de comparação.
+// caber no save do schema. `null`: nada a ressincronizar.
+//
+// Só a rodada corrente. Comparação de rodada antiga é histórico, e o veredito
+// antigo que perdeu a validade é rearbitrado na rodada corrente. Reabri-la
+// chamaria um segundo revisor para a célula que a rodada corrente já cobre, ou
+// bateria no gatilho contra autoarbitragem quando o revisor antigo codificou o
+// documento na rodada corrente, derrubando a ressincronização do projeto.
+// Projeto sem `current_round_id` (a coluna aceita nulo) não tem rodada
+// corrente, e todo assignment dele, com `round_id` obrigatório, é histórico.
 async function loadProjectCompareState(
   supabase: SupabaseServerClient,
   projectId: string,
 ): Promise<ProjectCompareState | null> {
   const { data: project, error } = await supabase
-    .from("projects").select(COMPARE_PROJECT_SELECT).eq("id", projectId).single();
+    .from("projects").select(`${COMPARE_PROJECT_SELECT}, current_round_id`).eq("id", projectId).single();
   if (error) throw new Error(`projects: ${error.message}`, { cause: error });
-  if (!project) return null;
+  if (!project?.current_round_id) return null;
 
   const assignments = rowsOrThrow("assignments", await fetchAllPaged<AssignmentRow>(() => supabase
     .from("assignments").select("id, document_id, user_id, status, completed_at")
-    .eq("project_id", projectId).eq("type", "comparacao"), ["id"]));
+    .eq("project_id", projectId).eq("type", "comparacao").eq("round_id", project.current_round_id), ["id"]));
   if (assignments.length === 0) return null;
 
   const [responses, reviews, equivalences] = await Promise.all([
@@ -282,7 +290,7 @@ function planCompareResync(state: ProjectCompareState): PlannedChange[][] {
 
 // Documentos em paralelo; dentro de um documento, em série, na ordem de
 // reabertura: só uma comparação pode estar ativa por documento, e a ordem
-// decide qual rodada reabre.
+// decide qual revisor reabre.
 async function applyCompareResync(
   supabase: SupabaseServerClient,
   projectId: string,
@@ -300,8 +308,9 @@ async function applyCompareResync(
 }
 
 /**
- * Recalcula o status de TODOS os assignments de comparação do projeto, com a
- * mesma regra de `syncCompareAssignment`, e grava os que mudaram. Idempotente:
+ * Recalcula o status dos assignments de comparação da rodada corrente do
+ * projeto, com a mesma regra de `syncCompareAssignment`, e grava os que
+ * mudaram. Os de rodadas antigas não são lidos nem gravados. Idempotente:
  * rodar duas vezes seguidas não muda nada na segunda. Com `dryRun`, só lê e
  * devolve o que mudaria.
  */
