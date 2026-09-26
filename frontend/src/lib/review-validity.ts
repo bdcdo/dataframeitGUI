@@ -169,7 +169,7 @@ export function reviewIsValid(
  * carimbado reprova.
  *
  * A cópia SQL é `field_review_question_current` (migration
- * 20260927120000_judgments_follow_question.sql), usada pela view
+ * 20260927130000_judgments_follow_question.sql), usada pela view
  * `final_answers`, pelo reconciliador e pelo gatilho do save do schema.
  */
 export function fieldReviewIsCurrent(
