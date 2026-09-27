@@ -78,6 +78,21 @@ describe("draftBackedComparisonViolations", () => {
     expect(keys(i)).toEqual(["cmp-outro"]);
   });
 
+  // A lista isenta a atribuição, não o documento: uma comparação nova criada
+  // sobre o mesmo rascunho é recaída do #678 e tem de aparecer.
+  it("a exceção não cobre outra comparação do mesmo doc", () => {
+    const i = input({
+      comparisons: [
+        { id: "cmp-listada", document_id: "doc-rascunho" },
+        { id: "cmp-nova", document_id: "doc-rascunho" },
+      ],
+      activeDocIds: new Set(["doc-rascunho"]),
+      humanLatest: [{ document_id: "doc-rascunho", is_partial: true }],
+      exceptions: new Map([["cmp-listada", "NT-1-SP"]]),
+    });
+    expect(keys(i)).toEqual(["cmp-nova"]);
+  });
+
   describe("exceção obsoleta vira violação", () => {
     it("quando o doc ganhou codificação submetida", () => {
       const violations = draftBackedComparisonViolations(

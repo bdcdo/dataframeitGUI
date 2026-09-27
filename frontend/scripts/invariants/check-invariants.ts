@@ -457,17 +457,18 @@ const invariants: Invariant[] = [
   {
     name: "comparacao-apoiada-so-em-rascunho",
     motivation:
-      "#678: `is_partial` humano é o veredito da régua de completude sobre o conjunto gravado (true também nas linhas do auto-save removido no #608), mas sorteio e comparação usavam `is_latest` como proxy de 'codificou' — 21 dos 194 documentos ativos do Zolgensma entraram na fila de comparação apoiados numa codificação parcial. Corrigido em duas fronteiras (view lottery_doc_stats e regra 2 de responseQualifiesForVersion); FAIL aqui = alguma delas voltou a contar rascunho, ou um canal de escrita novo criou comparação sem checar submissão. A lista REOPENED_FOR_RECODING isenta, pelo id, as comparações feitas sobre codificação submetida que o reparo do #584 reabriu depois (#597); a entrada que deixa de violar vira FAIL até ser removida",
+      "#678: `is_partial` humano é o veredito da régua de completude sobre o conjunto gravado (true também nas linhas do auto-save removido no #608), mas sorteio e comparação usavam `is_latest` como proxy de 'codificou' — 21 dos 194 documentos ativos do Zolgensma entraram na fila de comparação apoiados numa codificação parcial. Corrigido em duas fronteiras (view lottery_doc_stats e regra 2 de responseQualifiesForVersion); FAIL aqui = alguma delas voltou a contar rascunho, ou um canal de escrita novo criou comparação sem checar submissão. A lista REOPENED_FOR_RECODING isenta, pelo id, as comparações feitas sobre codificação submetida que o reparo do #584 reabriu depois (#597), mais uma de origem incerta que o comentário da lista explica; a entrada que deixa de violar vira FAIL até ser removida",
     run: async () => {
-      // Comparações feitas em junho e julho sobre codificações já submetidas,
-      // que o reparo do #584 (fase 2, 2026-07-24) reabriu depois
+      // Quase todas são comparações feitas em junho e julho sobre codificações
+      // já submetidas, que o reparo do #584 (fase 2, 2026-07-24) reabriu depois
       // (is_partial=true + assignment em_andamento) para o pesquisador preencher
       // o campo em branco: resposta apagada pela regravação em lote de junho ou,
       // num caso, campo criado depois da codificação (#597). Não é o defeito do
       // #678: a comparação nasceu apoiada numa codificação enviada, e as reviews
-      // que a escolheram seguem válidas. Triagem de 2026-09-26, todas do
-      // Zolgensma 0c6394da; cada entrada sai quando o pesquisador reenviar a
-      // codificação, e a invariante acusa a que ficar para trás.
+      // que a escolheram seguem válidas. Fica de fora a entrada de NT-2068-DF,
+      // que tem comentário próprio. Triagem de 2026-09-26, todas do Zolgensma
+      // 0c6394da; cada entrada sai quando o pesquisador reenviar a codificação,
+      // e a invariante acusa a que ficar para trás.
       const REOPENED_FOR_RECODING = new Map([
         ["1461d1f7-9e2d-4ed6-b1fe-70be86c05f40", "NT-857457256-SP"], // falta q12_mencao_parecer_conitec
         ["2ee5c9bf-541f-4837-9372-be97da472599", "NT-100352616-SP"], // falta medicamento, criado depois da codificação
@@ -482,7 +483,15 @@ const invariants: Invariant[] = [
         ["d8bcfc39-a4c2-43d9-93d4-b0850e2a3332", "NT-916865640-SP"], // falta q12_mencao_parecer_conitec
         ["d8fec23c-e6ed-46cd-8f7a-f09ff484fd21", "NT-3946-DF"], // falta q12_mencao_parecer_conitec; comparação pendente
         ["e50bd66d-0410-4565-a486-75f997de9198", "NT-105038440-SP"], // falta q12_mencao_parecer_conitec; comparação pendente
-        ["eb5354a8-7ad0-43df-9a7d-defafae96d87", "NT-2068-DF"], // faltam q20, q21 e q25
+        // Origem incerta. Faltam três campos do fim do formulário (q20, q21 e
+        // q25), fora do padrão de um ou dois campos da #597, e nada prova que a
+        // codificação estava enviada antes da reabertura de 2026-07-24: pode ter
+        // sido reaberta pelo reparo do #584 ou ter sido rascunho desde sempre,
+        // com a comparação criada sobre ele (#678). A comparação foi concluída
+        // em 2026-07-14, com vereditos, e apagar a atribuição destruiria esse
+        // trabalho; nos dois casos o desfecho é a pesquisadora completar os
+        // campos e reenviar, e a entrada sai quando a codificação for reenviada.
+        ["eb5354a8-7ad0-43df-9a7d-defafae96d87", "NT-2068-DF"],
         ["ecf1ebea-1fd5-4209-9476-e7874a92cfee", "NT-394707560-SP"], // falta q12_mencao_parecer_conitec
         ["f5d9ae1d-abaa-4013-a503-be51dd5a1392", "NT-518505064-SP"], // falta q12_mencao_parecer_conitec
       ]);
