@@ -35,6 +35,7 @@ import {
   type ErrorDecision,
   type ErrorResolutionContext,
 } from "@/lib/error-resolution";
+import { draftBackedComparisonViolations } from "@/lib/draft-backed-comparison";
 import { verdictMatchesAnswer } from "@/lib/llm-error-metrics";
 // Mesma primitiva de igualdade que o produto usa para decidir divergência
 // (`lib/compare-divergence.ts`, `lib/equivalence.ts`): se as duas réguas
@@ -456,48 +457,63 @@ const invariants: Invariant[] = [
   {
     name: "comparacao-apoiada-so-em-rascunho",
     motivation:
-      "#678: `is_partial` humano é o veredito da régua de completude sobre o conjunto gravado (true também nas linhas do auto-save removido no #608), mas sorteio e comparação usavam `is_latest` como proxy de 'codificou' — 21 dos 194 documentos ativos do Zolgensma entraram na fila de comparação apoiados numa codificação parcial. Corrigido em duas fronteiras (view lottery_doc_stats e regra 2 de responseQualifiesForVersion); FAIL aqui = alguma delas voltou a contar rascunho, ou um canal de escrita novo criou comparação sem checar submissão",
+      "#678: `is_partial` humano é o veredito da régua de completude sobre o conjunto gravado (true também nas linhas do auto-save removido no #608), mas sorteio e comparação usavam `is_latest` como proxy de 'codificou' — 21 dos 194 documentos ativos do Zolgensma entraram na fila de comparação apoiados numa codificação parcial. Corrigido em duas fronteiras (view lottery_doc_stats e regra 2 de responseQualifiesForVersion); FAIL aqui = alguma delas voltou a contar rascunho, ou um canal de escrita novo criou comparação sem checar submissão. A lista REOPENED_FOR_RECODING isenta, pelo id, as comparações feitas sobre codificação submetida que o reparo do #584 reabriu depois (#597), mais uma de origem incerta que o comentário da lista explica; a entrada que deixa de violar vira FAIL até ser removida",
     run: async () => {
-      const active = await activeDocIds();
-      const [assignments, responses] = await Promise.all([
+      // Quase todas são comparações feitas em junho e julho sobre codificações
+      // já submetidas, que o reparo do #584 (fase 2, 2026-07-24) reabriu depois
+      // (is_partial=true + assignment em_andamento) para o pesquisador preencher
+      // o campo em branco: resposta apagada pela regravação em lote de junho ou,
+      // num caso, campo criado depois da codificação (#597). Não é o defeito do
+      // #678: a comparação nasceu apoiada numa codificação enviada, e as reviews
+      // que a escolheram seguem válidas. Fica de fora a entrada de NT-2068-DF,
+      // que tem comentário próprio. Triagem de 2026-09-26, todas do Zolgensma
+      // 0c6394da; cada entrada sai quando o pesquisador reenviar a codificação,
+      // e a invariante acusa a que ficar para trás.
+      const REOPENED_FOR_RECODING = new Map([
+        ["1461d1f7-9e2d-4ed6-b1fe-70be86c05f40", "NT-857457256-SP"], // falta q12_mencao_parecer_conitec
+        ["2ee5c9bf-541f-4837-9372-be97da472599", "NT-100352616-SP"], // falta medicamento, criado depois da codificação
+        ["37d64783-668b-4bdd-937f-fca70eca2529", "NT-497533544-SP"], // falta q12_mencao_parecer_conitec
+        ["4329e7a7-e353-4e9f-a18a-9998b08e56dc", "NT-1145-DF"], // dois rascunhos, a cada um falta q12_mencao_parecer_conitec
+        ["46fef0a6-387e-4b4b-8364-77a2cb0ca38a", "NT-456999528-SP"], // falta q12_mencao_parecer_conitec
+        ["9725d194-9fd5-4907-a7a8-7744c4064ad6", "NT-3590-DF"], // falta q12_mencao_parecer_conitec
+        ["a89db7dc-192a-4682-a60a-7dffba18d94b", "NT-322781800-SP"], // falta q12_mencao_parecer_conitec
+        ["bc22be10-3bab-4439-942d-0b0d14973225", "NT-982499944-SP"], // falta q12_mencao_parecer_conitec
+        ["c18d8345-d5b3-4746-a959-f7f87f8228d8", "NT-663143016-SP"], // falta q12_mencao_parecer_conitec
+        ["d8a6b76e-da04-4c27-ab73-398ccd428293", "NT-798966376-SP"], // falta q12_mencao_parecer_conitec
+        ["d8bcfc39-a4c2-43d9-93d4-b0850e2a3332", "NT-916865640-SP"], // falta q12_mencao_parecer_conitec
+        ["d8fec23c-e6ed-46cd-8f7a-f09ff484fd21", "NT-3946-DF"], // falta q12_mencao_parecer_conitec; comparação pendente
+        ["e50bd66d-0410-4565-a486-75f997de9198", "NT-105038440-SP"], // falta q12_mencao_parecer_conitec; comparação pendente
+        // Origem incerta. Faltam três campos do fim do formulário (q20, q21 e
+        // q25), fora do padrão de um ou dois campos da #597, e nada prova que a
+        // codificação estava enviada antes da reabertura de 2026-07-24: pode ter
+        // sido reaberta pelo reparo do #584 ou ter sido rascunho desde sempre,
+        // com a comparação criada sobre ele (#678). A comparação foi concluída
+        // em 2026-07-14, com vereditos, e apagar a atribuição destruiria esse
+        // trabalho; nos dois casos o desfecho é a pesquisadora completar os
+        // campos e reenviar, e a entrada sai quando a codificação for reenviada.
+        ["eb5354a8-7ad0-43df-9a7d-defafae96d87", "NT-2068-DF"],
+        ["ecf1ebea-1fd5-4209-9476-e7874a92cfee", "NT-394707560-SP"], // falta q12_mencao_parecer_conitec
+        ["f5d9ae1d-abaa-4013-a503-be51dd5a1392", "NT-518505064-SP"], // falta q12_mencao_parecer_conitec
+      ]);
+      const [active, comparisons, humanLatest] = await Promise.all([
+        activeDocIds(),
         fetchAll<{ id: string; document_id: string }>(
           "assignments",
           "id, document_id",
           (q) => q.eq("type", "comparacao"),
         ),
-        fetchAll<{ document_id: string; respondent_id: string | null; is_partial: boolean | null }>(
+        fetchAll<{ document_id: string; is_partial: boolean | null }>(
           "responses",
-          "document_id, respondent_id, is_partial",
+          "document_id, is_partial",
           (q) => q.eq("respondent_type", "humano").eq("is_latest", true),
         ),
       ]);
-      // Conta, por documento, quantas codificações humanas SUBMETIDAS existem.
-      // `is_partial === true` é o único estado excluído: `null` é linha legada
-      // sem o sinal e conta como submetida, mesma escolha conservadora de
-      // 'codificacao-concluida-response-so-rascunho' — não falso-positivar sem
-      // prova de rascunho.
-      const submittedByDoc = new Map<string, number>();
-      const draftOnlyByDoc = new Map<string, number>();
-      for (const r of responses) {
-        const bucket = r.is_partial === true ? draftOnlyByDoc : submittedByDoc;
-        bucket.set(r.document_id, (bucket.get(r.document_id) ?? 0) + 1);
-      }
-      // Violação: existe comparação para o documento, mas NENHUMA codificação
-      // humana submetida a sustenta — e há ao menos um rascunho, que é o que
-      // explica a comparação ter sido criada. Sem essa segunda condição a
-      // invariante também pegaria comparação órfã por response apagada, que é
-      // outra família (e outra invariante).
-      return assignments
-        .filter(
-          (a) =>
-            active.has(a.document_id) &&
-            (submittedByDoc.get(a.document_id) ?? 0) === 0 &&
-            (draftOnlyByDoc.get(a.document_id) ?? 0) > 0,
-        )
-        .map((a) => ({
-          key: a.id,
-          detail: `comparação apoiada só em rascunho: doc ${a.document_id} tem ${draftOnlyByDoc.get(a.document_id)} codificação(ões) humana(s) nunca submetida(s) e nenhuma submetida`,
-        }));
+      return draftBackedComparisonViolations({
+        comparisons,
+        activeDocIds: active,
+        humanLatest,
+        exceptions: REOPENED_FOR_RECODING,
+      });
     },
   },
   {
