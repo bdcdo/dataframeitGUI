@@ -25,6 +25,7 @@ import {
   type PersistedLogEntryRow,
 } from "@/lib/schema-backfill";
 import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
+import { fieldHashesFromChangeLog, type FieldChangeLogRow } from "@/lib/field-hash-universe";
 import { fieldReviewIsCurrent, reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import {
   blankAnswerFor,
@@ -769,7 +770,7 @@ const invariants: Invariant[] = [
   {
     name: "answer-field-hashes-do-universo-do-projeto",
     motivation:
-      "versão fraca-mas-honesta da causa (c) (recarimbo #520): todo hash em answer_field_hashes deve ser derivável do schema do projeto — campos atuais ou qualquer versão registrada em schema_change_log (before/after). Hash fora do universo = mapa estampado com conteúdo que nunca existiu no projeto (corrupção, cruzamento de projeto, ou re-stamp com conteúdo errado). LIMITE DOCUMENTADO: o estado exato do #520 (recarimbo com hashes do schema corrente) é indistinguível de revisão per-campo legítima — a garantia contra ele é o write path (#528/#573/#575) e seus testes, não esta invariante. Também valida o shape (12 hex minúsculos). A allowlist enumera os 6 hashes de versões do Zolgensma anteriores à criação do schema_change_log (2026-04-01), fora do universo reconstruível por definição (triagem de 2026-07-23)",
+      "versão fraca-mas-honesta da causa (c) (recarimbo #520): todo hash em answer_field_hashes deve ser derivável do schema do projeto — campos atuais ou qualquer versão registrada em schema_change_log, seja lado completo (before/after) ou versão reconstruída aplicando as entradas parciais sobre o último lado completo (#777). Hash fora do universo = mapa estampado com conteúdo que nunca existiu no projeto (corrupção, cruzamento de projeto, ou re-stamp com conteúdo errado). LIMITE DOCUMENTADO: o estado exato do #520 (recarimbo com hashes do schema corrente) é indistinguível de revisão per-campo legítima — a garantia contra ele é o write path (#528/#573/#575) e seus testes, não esta invariante. Também valida o shape (12 hex minúsculos). A allowlist enumera os 6 hashes de versões do Zolgensma anteriores à criação do schema_change_log (2026-04-01), fora do universo reconstruível por definição (triagem de 2026-07-23)",
     run: async () => {
       // Versões de campo editadas antes de o schema_change_log existir não são
       // reconstruíveis — allowlist explícita e datada, não baseline silencioso.
@@ -784,11 +785,10 @@ const invariants: Invariant[] = [
       ]);
       const [projects, log] = await Promise.all([
         fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
-        fetchAll<{
-          project_id: string;
-          before_value: Partial<PydanticField> | null;
-          after_value: Partial<PydanticField> | null;
-        }>("schema_change_log", "project_id, before_value, after_value"),
+        fetchAll<FieldChangeLogRow & { project_id: string }>(
+          "schema_change_log",
+          "id, project_id, field_name, before_value, after_value, created_at",
+        ),
       ]);
 
       const hashOf = (f: Partial<PydanticField> | null): string | null => {
@@ -807,9 +807,17 @@ const invariants: Invariant[] = [
         universe.set(projectId, (universe.get(projectId) ?? new Set()).add(hash));
       };
       for (const p of projects) for (const f of p.pydantic_fields ?? []) add(p.id, hashOf(f));
+      // Além dos lados completos, as versões que o log só registra como
+      // entrada parcial (a versão de 6 minutos de #777 carregava um hash que só
+      // existe reconstruído).
+      const logByProject = new Map<string, FieldChangeLogRow[]>();
       for (const entry of log) {
-        add(entry.project_id, hashOf(entry.before_value));
-        add(entry.project_id, hashOf(entry.after_value));
+        const entries = logByProject.get(entry.project_id) ?? [];
+        entries.push(entry);
+        logByProject.set(entry.project_id, entries);
+      }
+      for (const [projectId, entries] of logByProject) {
+        for (const hash of fieldHashesFromChangeLog(entries)) add(projectId, hash);
       }
 
       const responses = await fetchAll<{
