@@ -326,7 +326,7 @@ class Analysis(BaseModel):
     houve_provimento: Literal["sim", "nao"] = Field(description="Houve provimento?")
     provimento_parcial: Optional[Literal["sim", "nao"]] = Field(
         description="Provimento foi parcial?",
-        json_schema_extra={"condition": {"field": "houve_provimento", "equals": "sim"}},
+        json_schema_extra={"visible_if": {"field": "houve_provimento", "equals": "sim"}},
     )
 """
     result = compile_pydantic(code, generate_missing_ids=True)
@@ -343,7 +343,7 @@ class Analysis(BaseModel):
     tipo: Literal["a", "b", "c"] = Field(description="Tipo")
     follow: Optional[str] = Field(
         description="Follow-up",
-        json_schema_extra={"condition": {"field": "tipo", "in": ["a", "b"]}},
+        json_schema_extra={"visible_if": {"field": "tipo", "in": ["a", "b"]}},
     )
 """
     result = compile_pydantic(code, generate_missing_ids=True)
@@ -359,7 +359,7 @@ class Analysis(BaseModel):
     note: Optional[str] = Field(description="note")
     extra: Optional[str] = Field(
         description="extra",
-        json_schema_extra={"condition": {"field": "note", "exists": True}},
+        json_schema_extra={"visible_if": {"field": "note", "exists": True}},
     )
 """
     result = compile_pydantic(code, generate_missing_ids=True)
@@ -382,7 +382,7 @@ from typing import Literal, Optional
 class Analysis(BaseModel):
     x: Optional[Literal["a"]] = Field(
         description="desc",
-        json_schema_extra={"condition": {"field": "other", "equals": "a"}},
+        json_schema_extra={"visible_if": {"field": "other", "equals": "a"}},
     )
 """
     h1 = _field(compile_pydantic(without, generate_missing_ids=True), "x")["hash"]
@@ -397,12 +397,46 @@ from typing import Literal, Optional
 class Analysis(BaseModel):
     x: Optional[Literal["a"]] = Field(
         description="desc",
-        json_schema_extra={"condition": {"wrong": "shape"}},
+        json_schema_extra={"visible_if": {"wrong": "shape"}},
     )
 """
     result = compile_pydantic(code, generate_missing_ids=True)
     f = _field(result, "x")
     assert "condition" not in f
+
+
+def test_legacy_condition_key_still_reads():
+    """Código gravado antes da troca para `visible_if` continua legível."""
+    code = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    tipo: Literal["a", "b"] = Field(description="Tipo")
+    follow: Optional[str] = Field(
+        description="Follow-up",
+        json_schema_extra={"condition": {"field": "tipo", "equals": "a"}},
+    )
+"""
+    result = compile_pydantic(code, generate_missing_ids=True)
+    assert _field(result, "follow")["condition"] == {"field": "tipo", "equals": "a"}
+
+
+def test_visible_if_takes_precedence_over_legacy_condition():
+    code = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class Analysis(BaseModel):
+    tipo: Literal["a", "b"] = Field(description="Tipo")
+    follow: Optional[str] = Field(
+        description="Follow-up",
+        json_schema_extra={
+            "visible_if": {"field": "tipo", "equals": "b"},
+            "condition": {"field": "tipo", "equals": "a"},
+        },
+    )
+"""
+    result = compile_pydantic(code, generate_missing_ids=True)
+    assert _field(result, "follow")["condition"] == {"field": "tipo", "equals": "b"}
 
 
 def test_multiline_help_text_round_trips():

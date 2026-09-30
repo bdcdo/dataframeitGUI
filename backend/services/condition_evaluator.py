@@ -15,7 +15,11 @@ invisíveis na UI de coding).
 
 from typing import Any
 
-from services.pydantic_compiler import CONDITION_OPERATORS, extract_json_schema_extra
+from services.pydantic_compiler import (
+    CONDITION_OPERATORS,
+    extract_json_schema_extra,
+    visibility_condition,
+)
 
 
 def _get_nested(data: dict, path: str) -> Any:
@@ -124,14 +128,15 @@ def evaluate_condition(condition: Any, field_data: dict, field_name: str = "") -
 def extract_field_conditions(model_class) -> dict:
     """Lê condições do modelo Pydantic compilado.
 
-    Fonte de verdade: ``json_schema_extra["condition"]`` do campo (populado por
-    ``generatePydanticCode`` e lido por ``compile_pydantic``). Nunca ler de
+    Fonte de verdade: a condição de visibilidade no ``json_schema_extra`` do
+    campo (``VISIBILITY_KEY`` em ``pydantic_compiler``, populada por
+    ``generatePydanticCode`` e lida por ``compile_pydantic``). Nunca ler de
     ``projects.pydantic_fields`` — regra do CLAUDE.md.
     """
     result: dict = {}
     for field_name, field_info in model_class.model_fields.items():
         extra = extract_json_schema_extra(field_info)
-        cond = extra.get("condition")
+        cond = visibility_condition(extra)
         if isinstance(cond, dict):
             result[field_name] = cond
     return result
