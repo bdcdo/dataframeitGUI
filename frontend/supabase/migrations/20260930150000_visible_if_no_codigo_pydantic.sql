@@ -29,24 +29,30 @@
 -- editor de schema tratar a mudança como revisão remota, e uma reconciliação
 -- de auto-revisão em curso é tentada de novo pelo compare-and-swap do hash.
 --
--- ORDEM DE ROLLOUT: indiferente. O código novo lê as duas chaves, e o antigo só
--- conhece `condition`; entre esta migration e o deploy, o build antigo leria o
--- código migrado sem condição e deixaria de podar os condicionais inativos numa
--- rodada de LLM, por isso migration e deploy vão em sequência imediata.
+-- ORDEM DE ROLLOUT: deploy antes, migration depois. O código novo lê as duas
+-- chaves, e o antigo só conhece `condition`. Com a migration antes, no
+-- intervalo o backend antigo leria o código migrado sem condição e deixaria de
+-- podar os condicionais inativos, o `recover-fields` perderia a condição, e um
+-- save pelo frontend antigo regravaria `condition` naquele projeto.
+--
+-- A atualização do backend para a dataframeit 0.10, que recusa `condition`,
+-- vem depois desta migration.
 
 BEGIN;
 
 -- A troca é textual e precisa ser a mesma que o gerador faz: `"condition": {`
--- só aparece em `json_schema_extra`, porque texto de usuário (descrição,
--- help_text) sai com as aspas escapadas (`\"condition\": {`), que o padrão não
--- casa. Função IMMUTABLE e pura para que o teste SQL exercite a regra.
+-- só aparece em `json_schema_extra`, porque o gerador escapa toda aspa de texto
+-- de usuário (descrição, help_text), e a aspa de fechamento escapada
+-- (`condition\":`) não casa o padrão. Medido na produção em 30/09/2026: todo
+-- `condition` do código armazenado está nesse formato. Função IMMUTABLE e pura
+-- para que o teste SQL exercite a regra.
 CREATE OR REPLACE FUNCTION public.pydantic_code_visibility_renamed(p_code text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
 SET search_path = ''
 AS $$
-  SELECT pg_catalog.regexp_replace(p_code, '(^|[^\\])"condition": \{', '\1"visible_if": {', 'g');
+  SELECT pg_catalog.regexp_replace(p_code, '"condition": \{', '"visible_if": {', 'g');
 $$;
 
 -- O hash é o mesmo que commit_project_schema grava (sha256 do texto, 16 hex),
@@ -64,7 +70,9 @@ SET pydantic_code = public.pydantic_code_visibility_renamed(p.pydantic_code),
 WHERE p.pydantic_code IS DISTINCT FROM public.pydantic_code_visibility_renamed(p.pydantic_code);
 
 -- Todo campo com condição em pydantic_fields tem de ter saído com `visible_if`
--- no código; se algum projeto divergir, falhar aqui, com o id nomeado.
+-- no código; se algum projeto divergir, falhar aqui, com o id nomeado. Projeto
+-- com pydantic_fields vazio e código gravado (o legado que recover-fields
+-- atende) fica fora da conferência, porque não há com o que comparar.
 DO $$
 DECLARE
   v_bad RECORD;
@@ -76,6 +84,7 @@ BEGIN
     INTO v_bad
     FROM public.projects p
    WHERE p.pydantic_code IS NOT NULL
+     AND jsonb_array_length(p.pydantic_fields) > 0
      AND (SELECT count(*) FROM jsonb_array_elements(p.pydantic_fields) AS f(value)
            WHERE jsonb_typeof(f.value->'condition') = 'object')
          IS DISTINCT FROM

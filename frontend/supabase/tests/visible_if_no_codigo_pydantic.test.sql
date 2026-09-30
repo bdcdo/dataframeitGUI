@@ -3,8 +3,8 @@
 -- `"condition"` para `"visible_if"`, só dentro de `json_schema_extra`.
 --
 -- pydantic_code_visibility_renamed é a regra que a migration aplicou. Os casos
--- conferem que ela troca a chave, não toca texto de usuário com as aspas
--- escapadas, é idempotente e preserva código sem condição e NULL; e que o
+-- conferem que ela troca a chave, não toca texto de usuário (o gerador escapa as
+-- aspas, e a de fechamento escapada, `condition\":`, não casa), é idempotente e preserva código sem condição e NULL; e que o
 -- UPDATE com a regra, o hash de commit_project_schema e o incremento de
 -- schema_revision passa pelo gatilho de revisão.
 --
