@@ -284,7 +284,7 @@ def _build_field_dict(
         allow_other=bool(extra.get("allowOther", False)),
         subfields=_extract_subfields(annotation),
         subfield_rule=_normalize_optional_str(extra.get("subfield_rule")),
-        condition=_sanitize_condition(extra.get("condition")),
+        condition=_sanitize_condition(visibility_condition(extra)),
         justification_prompt=_normalize_optional_str(extra.get("justification_prompt")),
         question_revision=_parse_question_revision(
             field_name, extra.get("question_revision")
@@ -354,6 +354,29 @@ def _field_hash(
     if question_revision and question_revision > 0:
         content += f"|r{question_revision}"
     return hashlib.sha256(content.encode()).hexdigest()[:12]
+
+
+VISIBILITY_KEY = "visible_if"
+"""Chave de `json_schema_extra` com a condição de visibilidade do campo.
+
+A biblioteca `dataframeit` usa `condition` em `json_schema_extra` com outro
+sentido (execução condicional na busca por campo) e recusa o modelo que a traz
+fora desse modo; por isso a visibilidade tem nome próprio no código gerado. O
+objeto de campo em `pydantic_fields` continua com `condition`, que funções SQL,
+o Zod e o contexto das decisões do LLM Insights leem. O gerador do frontend
+(`trailingExtras` em `schema-utils.ts`) emite esta mesma chave.
+"""
+
+LEGACY_VISIBILITY_KEY = "condition"
+"""Nome da chave no código gravado antes da troca; ainda lido, com precedência
+menor, para o código de uma janela de deploy e os snapshots de `llm_runs`."""
+
+
+def visibility_condition(extra: dict) -> object:
+    """A condição de visibilidade de um `json_schema_extra` já normalizado."""
+    if VISIBILITY_KEY in extra:
+        return extra[VISIBILITY_KEY]
+    return extra.get(LEGACY_VISIBILITY_KEY)
 
 
 CONDITION_OPERATORS = ("equals", "not_equals", "in", "not_in", "exists")

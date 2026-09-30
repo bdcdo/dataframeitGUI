@@ -135,8 +135,11 @@ function trailingExtras(field: PydanticField): string[] {
   if (field.help_text?.trim()) {
     extras.push(`"help_text": "${escapeString(field.help_text.trim())}"`);
   }
+  // `visible_if`, e não `condition`: a biblioteca dataframeit usa `condition`
+  // em `json_schema_extra` com outro sentido e recusa o modelo que a traz. Ver
+  // VISIBILITY_KEY em backend/services/pydantic_compiler.py.
   if (field.condition) {
-    extras.push(`"condition": ${conditionToPython(field.condition)}`);
+    extras.push(`"visible_if": ${conditionToPython(field.condition)}`);
   }
   if (field.justification_prompt?.trim()) {
     extras.push(

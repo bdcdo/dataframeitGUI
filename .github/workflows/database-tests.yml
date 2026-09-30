@@ -47,6 +47,8 @@ jobs:
         run: npm run test:db:identity
       - name: Shape de pydantic_fields (id canônico, sem id nem nome repetido)
         run: npm run test:db:pydantic-fields-shape
+      - name: Chave visible_if no código Pydantic armazenado
+        run: npm run test:db:visible-if
       - name: Mapping Clerk e snapshot em duas fases
         run: npm run test:db:clerk-mapping
       - name: Fechamento da fila de auto-revisão

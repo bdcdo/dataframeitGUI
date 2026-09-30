@@ -664,6 +664,29 @@ describe("generatePydanticCode round-trip surface", () => {
     expect(comRevisao.replace(', "question_revision": 2', "")).toBe(semRevisao);
   });
 
+  // A condição de visibilidade sai como `visible_if`, e não `condition`, que a
+  // biblioteca dataframeit reserva para outra coisa e recusa. A posição é a da
+  // chave antiga, e a migração que renomeou a chave nos projetos gravados
+  // depende disso para que o código regenerado saia byte-idêntico ao migrado.
+  it("emits the visibility condition as visible_if, between help_text and justification_prompt", () => {
+    const id = "00000000-0000-4000-8000-0000000000ad";
+    const code = generatePydanticCode([
+      baseField({ name: "q0", options: ["Sim", "Não"] }),
+      baseField({
+        id,
+        name: "q1",
+        options: ["A", "B"],
+        help_text: "Ajuda",
+        condition: { field: "q0", equals: "Sim" },
+        justification_prompt: "Cite o trecho.",
+      }),
+    ]);
+    expect(code).toContain(
+      `json_schema_extra={"id": "${id}", "help_text": "Ajuda", "visible_if": {"field": "q0", "equals": "Sim"}, "justification_prompt": "Cite o trecho."})`,
+    );
+    expect(code).not.toContain('"condition"');
+  });
+
   it("emits required in json_schema_extra when the field is optional", () => {
     const code = generatePydanticCode([
       baseField({ name: "q1", options: ["A", "B"], required: false }),

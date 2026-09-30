@@ -166,8 +166,16 @@ def test_extract_field_conditions_from_compiled_model():
         follow: Optional[Literal["a", "b"]] = Field(
             default=None,
             description="follow",
-            json_schema_extra={"condition": {"field": "trigger", "equals": "sim"}},
+            json_schema_extra={"visible_if": {"field": "trigger", "equals": "sim"}},
+        )
+        legado: Optional[Literal["a", "b"]] = Field(
+            default=None,
+            description="legado",
+            json_schema_extra={"condition": {"field": "trigger", "equals": "nao"}},
         )
 
     conds = extract_field_conditions(Analysis)
-    assert conds == {"follow": {"field": "trigger", "equals": "sim"}}
+    assert conds == {
+        "follow": {"field": "trigger", "equals": "sim"},
+        "legado": {"field": "trigger", "equals": "nao"},
+    }

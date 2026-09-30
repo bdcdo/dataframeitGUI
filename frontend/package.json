@@ -47,6 +47,7 @@
     "test:db:replace-keeps-judged-text": "npm run test:db:psql -- supabase/tests/replace_documents_keeps_judged_text.test.sql",
     "test:db:verdict-ack-pinned": "npm run test:db:psql -- supabase/tests/verdict_acknowledgments_pinned.test.sql",
     "test:db:note-resolution": "npm run test:db:psql -- supabase/tests/note_resolution_follows_note.test.sql",
+    "test:db:visible-if": "npm run test:db:psql -- supabase/tests/visible_if_no_codigo_pydantic.test.sql",
     "test:db:psql": "bash scripts/run-sql-test.sh",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
