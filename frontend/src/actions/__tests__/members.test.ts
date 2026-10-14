@@ -210,6 +210,7 @@ beforeEach(() => {
 // de contar contra os testes, sem mexer no timeout global.
 beforeAll(async () => {
   await import("@/actions/members");
+  await import("@/lib/clerk-sync");
 }, 30_000);
 
 function rpcArgs(fn: string): Record<string, unknown> {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 
 // Cobertura de regressão para o bug relatado na issue #366 ("não tá indo a
 // resposta da equivalencia"): antes da PR #362, estas actions lançavam Error
@@ -142,6 +142,11 @@ describe.each([
     extraChecks?.();
   });
 });
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/equivalences");
+}, 30_000);
 
 describe("confirmEquivalentVerdict", () => {
   it("upsert em reviews falha após response_equivalences já gravado → retorna { error }, não lança", async () => {

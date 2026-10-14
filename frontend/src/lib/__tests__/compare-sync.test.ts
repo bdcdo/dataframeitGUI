@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { PydanticField } from "@/lib/types";
 import {
   callsOf,
@@ -120,6 +120,11 @@ afterEach(() => {
 async function loadLib() {
   return import("@/lib/compare-sync");
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/compare-sync");
+}, 30_000);
 
 describe("syncCompareAssignment — piso de versão latest_major (#247/#286)", () => {
   // TRIP-WIRE do acoplamento visão==fecho: exercita o MÓDULO de produção (não

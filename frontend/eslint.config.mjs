@@ -5,6 +5,10 @@ import {
   RULE_NAME,
   serverActionExportsPlugin,
 } from "./eslint-rules/server-action-exports.mjs";
+import {
+  RULE_NAME as COLD_IMPORTS_RULE,
+  testColdImportsPlugin,
+} from "./eslint-rules/test-cold-imports.mjs";
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -16,6 +20,15 @@ const eslintConfig = defineConfig([
     },
     rules: {
       [`server-actions/${RULE_NAME}`]: "error",
+    },
+  },
+  {
+    files: ["src/**/*.test.{mts,ts,tsx}"],
+    plugins: {
+      "test-cold-imports": testColdImportsPlugin,
+    },
+    rules: {
+      [`test-cold-imports/${COLD_IMPORTS_RULE}`]: "error",
     },
   },
   // Override default ignores of eslint-config-next.

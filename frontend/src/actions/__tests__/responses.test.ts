@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { responseQualifiesForVersion } from "@/lib/compare-version";
@@ -231,6 +231,11 @@ async function loadSaveResponse() {
       ...opts,
     });
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/responses");
+}, 30_000);
 
 describe("saveResponse — gravação pelo envio explícito", () => {
   it("com todos os campos preenchidos promove assignment para concluido", async () => {

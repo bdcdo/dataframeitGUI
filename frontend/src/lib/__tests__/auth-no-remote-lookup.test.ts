@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import { makeFakeSession, type FakeSession } from "./auth-test-helpers";
 
 // RC-002 (FR-002): para um usuário com vínculo preparado, o caminho crítico não
@@ -31,6 +31,11 @@ beforeEach(() => {
 async function loadAuth() {
   return await import("@/lib/auth");
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/auth");
+}, 30_000);
 
 describe("RC-002 — sem lookup remoto por leitura no caminho preparado", () => {
   it("caminho preparado resolve com um número pequeno e fixo de lookups", async () => {

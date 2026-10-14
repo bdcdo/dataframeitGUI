@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AUTOMATION_MODES } from "@/lib/types";
 import {
   makeSupabaseMock,
@@ -67,6 +67,11 @@ async function updateMode(mode: string) {
     automation_mode: mode as (typeof AUTOMATION_MODES)[number]["value"],
   });
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/projects");
+}, 30_000);
 
 describe("createProject — modo de automação", () => {
   it("sem automation_mode no form → none", async () => {

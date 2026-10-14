@@ -1,3 +1,9 @@
+// O que estes testes medem é a própria avaliação do playwright.config, que lê
+// o arquivo de ambiente e grava em process.env. Avaliá-lo antes dos testes, como
+// a regra pede, deixaria E2E_PROJECT_ID preenchido antes do primeiro caso, e a
+// asserção sobre E2E_PROJECT_ID no caso do arquivo canônico deixaria de provar
+// que a avaliação o gravou.
+/* eslint-disable test-cold-imports/warm-dynamic-imports */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ reads: [] as string[] }));

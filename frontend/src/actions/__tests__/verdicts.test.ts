@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createProjectIdentityActionHarness } from "./project-identity-harness";
 const resolveMemberUserId = vi.hoisted(() =>
   vi.fn(async () => "canonical-member"),
@@ -14,6 +14,11 @@ beforeEach(() => {
   resolveMemberUserId.mockReset();
   resolveMemberUserId.mockResolvedValue("canonical-member");
 });
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/verdicts");
+}, 30_000);
 
 describe("acknowledgeVerdict", () => {
   it("grava o reconhecimento em nome do membro canônico", async () => {

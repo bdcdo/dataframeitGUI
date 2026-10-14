@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import {
   makeFilterAwareSupabaseMock,
   type QueryError,
@@ -97,6 +97,11 @@ async function expectAutoComparisonOutcome(
   expect(assignmentCalls()).toHaveLength(assigned ? 1 : 0);
   return result;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/auto-comparison");
+}, 30_000);
 
 describe("assignComparisonReviewer — pool e balanceamento", () => {
   it("exclui TODOS os codificadores do pool", async () => {
