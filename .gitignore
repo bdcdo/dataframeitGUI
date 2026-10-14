@@ -42,6 +42,10 @@ frontend/supabase/.temp/
 .playwright-mcp/
 strix_runs/
 AGENTS.md
+# O next dev cria frontend/AGENTS.md e frontend/CLAUDE.md quando nenhum dos dois
+# existe (agentRules do Next). O CLAUDE.md gerado so contem "@AGENTS.md"; sem
+# esta linha ele aparecia como untracked a cada dev server ou E2E local.
+frontend/CLAUDE.md
 
 # Claude Code — estado local por dev (configs/commands/agents compartilhados ficam versionados)
 .claude/projects/
