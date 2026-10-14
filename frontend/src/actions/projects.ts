@@ -5,14 +5,15 @@ import { getAuthUser } from "@/lib/auth";
 import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import type { AutomationMode } from "@/lib/types";
+import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
 
-const AUTOMATION_MODE_VALUES: ReadonlyArray<AutomationMode> = Object.freeze([
-  "none",
-  "auto_review_llm",
-  "compare_humans",
-  "compare_llm",
-]);
+// Valores aceitos derivados da fonte única dos modos, para que um modo novo em
+// AUTOMATION_MODES valha nas actions sem segunda edição. Não é exportado: num
+// arquivo "use server" toda exportação vira endpoint, e a regra de lint
+// async-value-exports só admite funções async.
+const AUTOMATION_MODE_VALUES: ReadonlyArray<AutomationMode> = Object.freeze(
+  AUTOMATION_MODES.map((m) => m.value),
+);
 
 export async function createProject(_prev: unknown, formData: FormData) {
   const user = await getAuthUser();
@@ -62,6 +63,15 @@ export async function updateProject(
     out_of_scope_enabled?: boolean;
   }
 ): Promise<{ error?: string }> {
+  // O tipo de `data` não vale em runtime: a Server Action recebe o que o
+  // cliente enviar. O CHECK da coluna também recusaria um modo desconhecido,
+  // mas com a mensagem crua do Postgres no toast.
+  if (
+    data.automation_mode !== undefined &&
+    !AUTOMATION_MODE_VALUES.includes(data.automation_mode)
+  ) {
+    return { error: "Modo de automação inválido." };
+  }
   const supabase = await createSupabaseServer();
   try {
     await updateOrThrow(supabase, "projects", data, { id: projectId }, {
