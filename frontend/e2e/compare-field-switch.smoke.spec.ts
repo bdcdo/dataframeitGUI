@@ -117,9 +117,9 @@ async function fixtureDocIds(
  * enquanto o cabeçalho ainda não chegou lá.
  *
  * Não é preciosismo. A tecla apertada antes da hidratação é engolida em
- * silêncio — o listener de `keydown` ainda não existe —, e não há sinal de DOM
- * confiável para "já hidratou" (`toHaveCount` é satisfeito pelo HTML do
- * servidor). Um `press` único falha de forma intermitente, e um `toPass`
+ * silêncio — o listener de `keydown` ainda não existe —, e `toHaveCount` é
+ * satisfeito pelo HTML do servidor. Um `press` único falha de forma
+ * intermitente, e um `toPass`
  * envolvendo o press passaria do alvo quando a asserção fosse só lenta. Reler o
  * cabeçalho a cada tentativa resolve os dois: nunca ultrapassa, nunca depende
  * de timing.
@@ -191,9 +191,19 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
       ).toBeVisible({
         timeout: 60_000,
       });
+      await expect(page.getByTestId("agreement-group")).toHaveCount(1);
       // Espera a hidratação antes da primeira tecla: sem isso o `n` é engolido e
       // toda a contagem sai deslocada em um campo (medido ao investigar a #613).
-      await expect(page.getByTestId("agreement-group")).toHaveCount(1);
+      // A contagem acima NÃO prova hidratação, porque o HTML do servidor já a
+      // satisfaz; o `aria-valuenow` do divisor, sim. A lib de painéis só o
+      // escreve numa atualização disparada do layout effect que monta o grupo
+      // no cliente, e o React roda os efeitos pendentes da hidratação (o
+      // listener de teclado incluso) antes de aplicar essa atualização.
+      await expect(page.getByRole("separator")).toHaveAttribute(
+        "aria-valuenow",
+        /\d/,
+        { timeout: 60_000 },
+      );
 
       // Posição do topo do primeiro card em cada campo. O critério 1 da #610 é
       // que ela NÃO se mova ao navegar: o cabeçalho fica acima da área rolável,
