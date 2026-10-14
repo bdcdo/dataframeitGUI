@@ -62,16 +62,25 @@ function renderList({
 
 // O gatilho e o botão de confirmação compartilham o rótulo "Remover"; dentro do
 // diálogo a busca é escopada para não casar com o gatilho que segue montado.
-function confirmButton() {
-  return within(screen.getByRole("alertdialog")).getByRole("button", {
-    name: "Remover",
-  });
+// A busca espera, em vez de consultar uma vez: enquanto a remoção pende, o mesmo
+// botão se chama "Removendo…", e o toast de erro é disparado de dentro da
+// transição, antes do render que devolve `isPending` a false. Logo depois do
+// `waitFor` do toast o botão ainda pode estar como "Removendo…"; sem carga o
+// React comita antes da consulta, mas com a CPU disputada o render atrasa e um
+// `getByRole` síncrono falha.
+async function findConfirmButton() {
+  const dialog = await screen.findByRole("alertdialog");
+  return within(dialog).findByRole("button", { name: "Remover" });
 }
 
 afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` zera as chamadas, mas não a fila de `mockResolvedValueOnce`.
+  // Sem o reset, um teste que falha antes de consumir a fila deixa a resposta
+  // seguinte para o próximo teste, e uma falha vira duas.
+  mocks.removeMember.mockReset();
   mocks.removeMember.mockResolvedValue(undefined);
 });
 
@@ -115,7 +124,7 @@ describe("MemberList — confirmação de remoção (#177)", () => {
     renderList();
 
     await user.click(screen.getByRole("button", { name: "Remover" }));
-    await user.click(confirmButton());
+    await user.click(await findConfirmButton());
 
     await waitFor(() =>
       expect(
@@ -138,7 +147,7 @@ describe("MemberList — confirmação de remoção (#177)", () => {
     renderList();
 
     await user.click(screen.getByRole("button", { name: "Remover" }));
-    await user.click(confirmButton());
+    await user.click(await findConfirmButton());
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith("Falha ao remover"),
@@ -146,7 +155,9 @@ describe("MemberList — confirmação de remoção (#177)", () => {
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog")).toBeTruthy();
 
-    await user.click(confirmButton());
+    const retryButton = await findConfirmButton();
+    expect(retryButton.hasAttribute("disabled")).toBe(false);
+    await user.click(retryButton);
 
     await waitFor(() => expect(mocks.removeMember).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
@@ -162,7 +173,7 @@ describe("MemberList — confirmação de remoção (#177)", () => {
     renderList();
 
     await user.click(screen.getByRole("button", { name: "Remover" }));
-    await user.click(confirmButton());
+    await user.click(await findConfirmButton());
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
@@ -171,7 +182,9 @@ describe("MemberList — confirmação de remoção (#177)", () => {
     );
     expect(screen.getByRole("alertdialog")).toBeTruthy();
 
-    await user.click(confirmButton());
+    const retryButton = await findConfirmButton();
+    expect(retryButton.hasAttribute("disabled")).toBe(false);
+    await user.click(retryButton);
 
     await waitFor(() => expect(mocks.removeMember).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
