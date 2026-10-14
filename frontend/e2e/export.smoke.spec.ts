@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { visivel } from "./visivel";
 
 // Smoke da feature 004 (exportação no topo de Documentos). Autentica como
 // coordenador via login-por-ticket do Clerk (mesmo mecanismo do dashboard.smoke:
@@ -39,7 +40,7 @@ test("exportação: card em Documentos, prévia, aba removida e rota 404", async
 
       // (a) Card de exportação presente na página Documentos.
       await page.goto(`/projects/${projectId}/config/documents`);
-      await expect(page.getByText("Exportar documentos")).toBeVisible({
+      await expect(visivel(page.getByText("Exportar documentos"))).toBeVisible({
         timeout: 15_000,
       });
 
@@ -48,14 +49,16 @@ test("exportação: card em Documentos, prévia, aba removida e rota 404", async
       const start = Date.now();
       await page.getByRole("button", { name: "Gerar prévia" }).click();
       await expect(
-        page.getByText(/Prévia \(|Nenhum documento para exportar/),
+        visivel(page.getByText(/Prévia \(|Nenhum documento para exportar/)),
       ).toBeVisible({ timeout: 10_000 });
       const elapsedMs = Date.now() - start;
       expect(elapsedMs).toBeLessThan(10_000);
 
       // (e) A aba "Exportar" não existe mais na navegação de Revisões.
       await page.goto(`/projects/${projectId}/reviews/gabarito`);
-      await expect(page.locator('a[href$="/reviews/export"]')).toHaveCount(0);
+      await expect(
+        visivel(page.locator('a[href$="/reviews/export"]')),
+      ).toHaveCount(0);
 
       // (f) Acesso direto à rota antiga retorna not-found (404).
       const resp = await page.goto(`/projects/${projectId}/reviews/export`);

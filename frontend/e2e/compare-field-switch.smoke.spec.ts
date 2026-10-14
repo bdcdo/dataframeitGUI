@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { visivel } from "./visivel";
 
 // Regressão da #613: navegar entre campos na Comparação deixava os cards do
 // campo ANTERIOR na tela, e clicar num deles gravava aquele valor no campo
@@ -129,7 +130,9 @@ async function fixtureDocIds(
  * navegam entre campos").
  */
 async function goToField(page: Page, target: number): Promise<void> {
-  const header = page.getByText(new RegExp(`Campo \\d+/${TOTAL_FIELDS}`)).first();
+  const header = visivel(
+    page.getByText(new RegExp(`Campo \\d+/${TOTAL_FIELDS}`)),
+  );
   for (let attempt = 0; attempt < TOTAL_FIELDS * 2; attempt++) {
     // A leitura do cabeçalho vai por `expect.poll` — e não por um `innerText`
     // direto — porque um re-render entre a asserção de visibilidade e a leitura
@@ -191,7 +194,7 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
       await page.goto(`/projects/${projectId}/analyze/compare?queue=all`);
 
       await expect(
-        page.getByText(new RegExp(`Campo 1/${TOTAL_FIELDS}`)),
+        visivel(page.getByText(new RegExp(`Campo 1/${TOTAL_FIELDS}`))),
       ).toBeVisible({
         timeout: 60_000,
       });
@@ -209,9 +212,9 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
       await expect
         .poll(
           () =>
-            page
-              .getByTestId("compare-header")
-              .evaluate((el) => el.getBoundingClientRect().width),
+            visivel(page.getByTestId("compare-header")).evaluate(
+              (el) => el.getBoundingClientRect().width,
+            ),
           { timeout: 30_000 },
         )
         .toBeGreaterThan(200);
@@ -229,11 +232,13 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
 
         // Critério de aceitação 1 da #613: uma raiz, sempre. Antes do fix isto
         // ia 1, 2, 3, 4, 5, 6.
-        await expect(page.getByTestId("agreement-group")).toHaveCount(1);
+        await expect(visivel(page.getByTestId("agreement-group"))).toHaveCount(
+          1,
+        );
 
         // Contagem exata dos cards: a igualdade de CONJUNTO sozinha mascararia um
         // card duplicado com o mesmo rótulo.
-        const cards = page.locator("button[data-vote-target]");
+        const cards = visivel(page.locator("button[data-vote-target]"));
         await expect(cards).toHaveCount(2);
 
         // E o conteúdo é do campo atual — as opções são disjuntas, então isto é
@@ -295,9 +300,9 @@ test("comparação: veredito confirmado após navegar grava no campo exibido", a
       // eles não garante o listener de teclado: quem absorve a tecla engolida
       // na hidratação é o `goToField`, que relê o cabeçalho a cada tentativa.
       await expect(
-        page.getByText(new RegExp(`Campo 1/${TOTAL_FIELDS}`)),
+        visivel(page.getByText(new RegExp(`Campo 1/${TOTAL_FIELDS}`))),
       ).toBeVisible({ timeout: 60_000 });
-      await expect(page.getByTestId("agreement-group")).toHaveCount(1);
+      await expect(visivel(page.getByTestId("agreement-group"))).toHaveCount(1);
 
       await goToField(page, 2);
 
@@ -309,7 +314,9 @@ test("comparação: veredito confirmado após navegar grava no campo exibido", a
 
       // Clica no PRIMEIRO card na tela: é a posição natural do clique e era
       // exatamente onde ficava o card fantasma do campo anterior.
-      const firstCard = page.locator("button[data-vote-target]").first();
+      const firstCard = visivel(
+        page.locator("button[data-vote-target]"),
+      ).first();
       await firstCard.click();
 
       // Confirma DENTRO do card. Além de fixar a ancoragem, este clique é a
@@ -320,12 +327,12 @@ test("comparação: veredito confirmado após navegar grava no campo exibido", a
       // Sem `.first()`: a contagem é sobre TODOS os cards preparados, senão o
       // `toHaveCount(1)` só poderia dar 0 ou 1 e a unicidade — que é o que se
       // quer provar — ficaria fora da asserção.
-      const card = page.locator(
-        '[data-testid="answer-card"][data-pending="true"]',
+      const card = visivel(
+        page.locator('[data-testid="answer-card"][data-pending="true"]'),
       );
       await expect(card).toHaveCount(1);
       await card.getByRole("button", { name: /^Confirmar$/ }).click();
-      await expect(page.getByText("Veredito salvo!")).toBeVisible({
+      await expect(visivel(page.getByText("Veredito salvo!"))).toBeVisible({
         timeout: 30_000,
       });
     },

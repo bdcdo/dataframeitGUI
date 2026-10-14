@@ -1,7 +1,8 @@
-import { test, expect, type Locator } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { visivel } from "./visivel";
 
 // Smoke do fluxo de SALVAMENTO de codificação — proteção de regressão da
 // família de bugs "codificação não salva" (#425, dedup de responses). O
@@ -44,26 +45,6 @@ function createAdminClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
-}
-
-// Restringe o locator ao que está na tela. Todo `getByText`/`getByPlaceholder`
-// que mira o conteúdo do CodingPage passa por aqui, porque o DOM pode ter uma
-// segunda cópia oculta do painel inteiro.
-//
-// De onde ela vem: o CodingPage fica dentro de um <Suspense>, e o SSR entrega
-// esse conteúdo num segmento à parte (`<div hidden id="S:n">`, no fim do body),
-// que o último script do documento (`$RC`) move para o lugar. Se o HTML termina
-// antes desse script (num pre-push com a máquina carregada, o dev server
-// registrou "The destination stream closed early"), o React vê a boundary ainda
-// pendente com o documento já carregado, renderiza o painel no cliente e o
-// segmento do servidor fica órfão, escondido. O usuário não o vê e ele sai da árvore de acessibilidade, então
-// `getByRole` já o ignora. `getByText` e `getByPlaceholder` não ignoram: a
-// cópia órfã vira strict mode violation e dobra o `toHaveCount`.
-//
-// Não trocar por `.first()`/`.nth()`: a ordem das cópias no DOM é detalhe do
-// streaming, e o índice errado afirmaria sobre um painel que ninguém vê.
-function visivel(locator: Locator): Locator {
-  return locator.filter({ visible: true });
 }
 
 test("codificação: enviar respostas persiste response e conclui assignment", async ({
@@ -165,7 +146,7 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
 
       await page.getByRole("button", { name: "Enviar respostas" }).click();
       await expect(
-        page.getByText("Respostas salvas!"),
+        visivel(page.getByText("Respostas salvas!")),
         "toast de sucesso não apareceu após Enviar respostas",
       ).toBeVisible({ timeout: 15_000 });
 
