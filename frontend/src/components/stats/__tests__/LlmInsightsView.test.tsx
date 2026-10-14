@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import type { LlmError } from "@/lib/llm-error-metrics";
@@ -26,6 +26,16 @@ function show(error = errorCase(), canResolve = true) {
     canResolve={canResolve} isCoordinator={false} summary={{ totalLlmDocs: 1 }} />);
 }
 
+// O diálogo abre de dentro da transição que prepara a decisão, e até ela
+// terminar o botão se chama "Salvando…". A espera pelo rótulo final consulta
+// só o diálogo: cada tentativa do findByRole calcula o nome acessível de todo
+// botão no escopo, e na tela inteira isso custava dezenas de vezes mais e
+// disputava a CPU com o render que encerra a transição.
+async function findConfirmButton() {
+  const dialog = await screen.findByRole("dialog");
+  return within(dialog).findByRole("button", { name: "Confirmar decisão" });
+}
+
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
@@ -41,7 +51,7 @@ describe("decisão individual em Insights", () => {
     await screen.findByRole("dialog");
     expect(mocks.resolve).not.toHaveBeenCalled();
     expect(screen.getByText("Valor que irá para o gabarito")).toBeTruthy();
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "llm_correct", context: row.context, expected: null, note: "",
     }));
@@ -64,7 +74,7 @@ describe("decisão individual em Insights", () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));
     await screen.findByRole("dialog");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     expect(mocks.error).toHaveBeenCalledWith("A decisão mudou.");
     expect(mocks.success).not.toHaveBeenCalled();
     expect(mocks.refresh).not.toHaveBeenCalled();
@@ -76,7 +86,7 @@ describe("decisão individual em Insights", () => {
     await userEvent.click(screen.getByRole("button", { name: "Em discussão" }));
     await screen.findByRole("dialog");
     expect(screen.getByText(/sem valor final aprovado/)).toBeTruthy();
-    await screen.findByRole("button", { name: "Confirmar decisão" });
+    await findConfirmButton();
     await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(mocks.resolve).not.toHaveBeenCalled();
   });
@@ -105,7 +115,7 @@ describe("decisão individual em Insights", () => {
     expect(screen.getByText("Veredito anterior")).toBeTruthy();
     expect(screen.queryByText(/saiu do formulário/)).toBeNull();
     expect((screen.getByPlaceholderText("Digite sua resposta...") as HTMLTextAreaElement).value).toBe("Humano");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "researchers_correct", context: row.context, expected: null, note: "", value: "Humano",
     }));
@@ -116,7 +126,7 @@ describe("decisão individual em Insights", () => {
     await userEvent.click(screen.getByRole("button", { name: "Todos errados" }));
     await screen.findByRole("dialog");
     await userEvent.type(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "all_wrong", context: row.context, expected: null, note: "", value: "Terceira",
     }));
@@ -126,7 +136,7 @@ describe("decisão individual em Insights", () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     await screen.findByRole("dialog");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "both_correct", context: row.context, expected: null, note: "",
     }));
@@ -147,7 +157,7 @@ describe("decisão individual em Insights", () => {
     }));
     expect(dialog.textContent).toContain("Valor que irá para o gabarito");
     expect(dialog.textContent).toContain("Ana");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "both_correct", context: row.context, expected: null, note: "", value: "LLM",
     }));
@@ -158,7 +168,7 @@ describe("decisão individual em Insights", () => {
     show({ ...errorCase(), bothCorrectValue: { value: "" } });
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     await screen.findByRole("dialog");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "both_correct", context: row.context, expected: null, note: "", value: "",
     }));
@@ -172,7 +182,7 @@ describe("decisão individual em Insights", () => {
     await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));
     await screen.findByRole("dialog");
     expect(screen.getByText(/saiu do formulário/)).toBeTruthy();
-    const confirm = await screen.findByRole("button", { name: "Confirmar decisão" });
+    const confirm = await findConfirmButton();
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByRole("radio", { name: "Não" }));
     await userEvent.click(confirm);
