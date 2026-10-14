@@ -4,12 +4,13 @@ import {
   linkSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { hostname } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 // Lock de projeto fixture entre execuções do Playwright na MESMA máquina.
 //
@@ -30,6 +31,13 @@ export interface FixtureLockOwner {
   token: string;
   pid: number;
   host: string;
+  /**
+   * Namespace de PID do dono (inode de /proc/self/ns/pid; ausente fora do
+   * Linux). Um processo em sandbox com `--unshare-pid` vê o pid de quem está
+   * fora como inexistente; sem comparar o namespace, ele julgaria abandonado o
+   * lock de um dono vivo e entraria junto.
+   */
+  pidNamespace?: string;
   cwd: string;
   label: string;
   acquiredAt: string;
@@ -50,6 +58,7 @@ export interface FixtureLockOptions {
   onWait?: (owner: FixtureLockOwner | null) => void;
   now?: () => number;
   isProcessAlive?: (pid: number) => boolean;
+  pidNamespace?: string;
 }
 
 export interface HeldFixtureLock {
@@ -86,7 +95,17 @@ export function defaultFixtureLockDir(
   env: Readonly<Record<string, string | undefined>> = process.env,
   cwd: string = __dirname,
 ): string {
-  if (env.E2E_FIXTURE_LOCK_DIR) return env.E2E_FIXTURE_LOCK_DIR;
+  const configured = env.E2E_FIXTURE_LOCK_DIR;
+  if (configured) {
+    // Relativo seria resolvido pelo cwd de cada worker, e cada worktree teria
+    // o próprio diretório: o lock deixaria de excluir sem nenhum erro.
+    if (!isAbsolute(configured)) {
+      throw new Error(
+        `E2E_FIXTURE_LOCK_DIR precisa ser caminho absoluto: "${configured}"`,
+      );
+    }
+    return configured;
+  }
   const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
     cwd,
     encoding: "utf8",
@@ -96,6 +115,14 @@ export function defaultFixtureLockDir(
 
 export function fixtureLockPath(dir: string, key: string): string {
   return join(dir, `${key.replace(/[^A-Za-z0-9_-]/g, "_")}.lock`);
+}
+
+function currentPidNamespace(): string | undefined {
+  try {
+    return readlinkSync("/proc/self/ns/pid");
+  } catch {
+    return undefined;
+  }
 }
 
 function defaultIsProcessAlive(pid: number): boolean {
@@ -160,30 +187,45 @@ function unlinkIfExists(path: string): void {
  * passam a se achar donos. O lock de roubo serializa os roubos, e a releitura
  * do token dentro dele garante que só sai o lock que foi julgado morto.
  */
-function stealIfStillOwnedBy(
+export function stealIfStillOwnedBy(
   path: string,
   staleToken: string,
   now: () => number,
 ): void {
   const stealPath = `${path}.steal`;
-  const stealOwner = `${process.pid}:${randomUUID()}`;
   const tmp = `${stealPath}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, stealOwner);
-  try {
-    linkSync(tmp, stealPath);
-  } catch (error) {
-    if (errorCode(error) !== "EEXIST") throw error;
+  writeFileSync(tmp, `${process.pid}`);
+  const takeStealLock = (): boolean => {
     try {
-      if (now() - statSync(stealPath).mtimeMs > STALE_STEAL_MS) {
-        unlinkIfExists(stealPath);
-      }
-    } catch (statError) {
-      if (errorCode(statError) !== "ENOENT") throw statError;
+      linkSync(tmp, stealPath);
+      return true;
+    } catch (error) {
+      if (errorCode(error) === "EEXIST") return false;
+      throw error;
     }
-    return;
+  };
+  const stealLockAbandoned = (): boolean => {
+    try {
+      return now() - statSync(stealPath).mtimeMs > STALE_STEAL_MS;
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return false;
+      throw error;
+    }
+  };
+  let taken: boolean;
+  try {
+    taken = takeStealLock();
+    // Lock de roubo abandonado (o ladrão morreu no meio): limpa e tenta uma vez
+    // mais. Se dois processos limparem juntos, a releitura do token abaixo
+    // continua impedindo que um apague o lock novo do outro.
+    if (!taken && stealLockAbandoned()) {
+      unlinkIfExists(stealPath);
+      taken = takeStealLock();
+    }
   } finally {
     unlinkSync(tmp);
   }
+  if (!taken) return;
   try {
     if (readOwner(path)?.token === staleToken) unlinkIfExists(path);
   } finally {
@@ -211,13 +253,18 @@ export async function acquireFixtureLock(
     token: randomUUID(),
     pid: process.pid,
     host: hostname(),
+    pidNamespace: options.pidNamespace ?? currentPidNamespace(),
     cwd: process.cwd(),
     label: options.label,
     acquiredAt: "",
   };
 
   const isAbandoned = (current: FixtureLockOwner): boolean => {
-    if (current.host === owner.host && !isProcessAlive(current.pid)) return true;
+    // O pid só diz algo quando os dois enxergam os mesmos processos.
+    const samePidView =
+      current.host === owner.host &&
+      current.pidNamespace === owner.pidNamespace;
+    if (samePidView && !isProcessAlive(current.pid)) return true;
     const acquiredAt = Date.parse(current.acquiredAt);
     return Number.isFinite(acquiredAt) && now() - acquiredAt > maxHoldMs;
   };
@@ -231,7 +278,10 @@ export async function acquireFixtureLock(
     const current = readOwner(path);
     if (current && isAbandoned(current)) {
       stealIfStillOwnedBy(path, current.token, now);
-      continue;
+      if (tryCreate(path, owner)) break;
+      // Roubo que não abriu vaga (outro processo está no meio de um roubo, ou
+      // ganhou a corrida pela vaga) cai na espera normal, com teto e sono.
+      // Voltar direto ao topo giraria em CPU, sem teto, enquanto durasse.
     }
     if (!warned) {
       warned = true;
@@ -262,4 +312,79 @@ export async function acquireFixtureLock(
   // libera na saída. SIGKILL não passa por aqui, e é o pid morto que cobre.
   process.once("exit", release);
   return { path, waitedMs, release };
+}
+
+// --- Uso por teste -------------------------------------------------------
+//
+// Fica aqui, e não no fixture do Playwright (fixture-lock-test.ts), para ser
+// testável sem o runner: o fixture só liga isto ao `testInfo` e ao teardown.
+
+// Teto da espera. Cobre um teste inteiro da outra execução (o maior timeout
+// entre os specs que mutam fixture é 180s) com folga; passado isso, a falha
+// nomeia o dono em vez de deixar uma asserção de banco acusar o produto.
+export const DEFAULT_FIXTURE_LOCK_WAIT_MS = 5 * 60_000;
+
+export function fixtureLockWaitMs(
+  env: Readonly<Record<string, string | undefined>>,
+): number {
+  const raw = env.E2E_FIXTURE_LOCK_WAIT_MS;
+  if (!raw) return DEFAULT_FIXTURE_LOCK_WAIT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`E2E_FIXTURE_LOCK_WAIT_MS inválido: "${raw}"`);
+  }
+  return parsed;
+}
+
+/** A parte do `TestInfo` do Playwright de que o holder precisa. */
+export interface TestTimeoutInfo {
+  timeout: number;
+  setTimeout: (timeout: number) => void;
+  titlePath: string[];
+}
+
+export interface FixtureLockHolderOptions {
+  dir: string;
+  waitMs: number;
+  onWait?: (key: string, owner: FixtureLockOwner | null) => void;
+  acquire?: typeof acquireFixtureLock;
+}
+
+export function createFixtureLockHolder(
+  testInfo: TestTimeoutInfo,
+  options: FixtureLockHolderOptions,
+): { hold: (key: string) => Promise<void>; releaseAll: () => void } {
+  const acquire = options.acquire ?? acquireFixtureLock;
+  const held = new Map<string, HeldFixtureLock>();
+
+  const hold = async (key: string) => {
+    // O lock não é reentrante: a segunda tentativa esperaria pela primeira, do
+    // próprio teste, até o teto. Melhor dizer logo.
+    if (held.has(key)) {
+      throw new Error(`holdFixtureLock("${key}") chamado duas vezes no mesmo teste`);
+    }
+    // `setTimeout` do Playwright fixa o orçamento TOTAL do teste, contado do
+    // início. Sem abrir espaço antes de esperar, uma espera maior que o
+    // restante do orçamento morreria em "Test timeout exceeded", sem o nome do
+    // dono; com ele, quem dispara primeiro é o teto do lock, com a mensagem.
+    // Obtido o lock, o orçamento volta a ser o original mais a espera real.
+    // Timeout 0 é "sem limite" e fica como está.
+    const base = testInfo.timeout;
+    if (base > 0) testInfo.setTimeout(base + options.waitMs);
+    const lock = await acquire(key, {
+      dir: options.dir,
+      label: testInfo.titlePath.join(" › "),
+      waitMs: options.waitMs,
+      onWait: (owner) => options.onWait?.(key, owner),
+    });
+    held.set(key, lock);
+    if (base > 0) testInfo.setTimeout(base + lock.waitedMs);
+  };
+
+  const releaseAll = () => {
+    for (const lock of [...held.values()].reverse()) lock.release();
+    held.clear();
+  };
+
+  return { hold, releaseAll };
 }

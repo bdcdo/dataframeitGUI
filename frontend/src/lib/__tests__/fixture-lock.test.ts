@@ -3,22 +3,30 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireFixtureLock,
+  createFixtureLockHolder,
+  DEFAULT_FIXTURE_LOCK_WAIT_MS,
   defaultFixtureLockDir,
   fixtureLockPath,
+  fixtureLockWaitMs,
   FixtureLockTimeoutError,
+  stealIfStillOwnedBy,
   type FixtureLockOwner,
+  type HeldFixtureLock,
 } from "../../../e2e/fixture-lock";
 
 const MODULE_PATH = resolve(__dirname, "../../../e2e/fixture-lock.ts");
+const PID_NAMESPACE = readlinkSync("/proc/self/ns/pid");
 
 let dir: string;
 
@@ -38,6 +46,7 @@ function writeForeignLock(owner: Partial<FixtureLockOwner>): string {
       token: "token-alheio",
       pid: 999_999,
       host: hostname(),
+      pidNamespace: PID_NAMESPACE,
       cwd: "/outra/worktree",
       label: "teste alheio",
       acquiredAt: new Date().toISOString(),
@@ -123,6 +132,20 @@ describe("acquireFixtureLock", () => {
       (JSON.parse(readFileSync(lock.path, "utf8")) as FixtureLockOwner).label,
     ).toBe("nova");
     lock.release();
+  });
+
+  it("pid morto em outro namespace de PID não prova abandono", async () => {
+    // Visto de dentro de um sandbox com --unshare-pid, o dono que está fora
+    // parece morto. Só a idade decide nesse caso.
+    writeForeignLock({ pid: 4242, pidNamespace: "pid:[outro]" });
+    await expect(
+      acquireFixtureLock("projeto", {
+        dir,
+        label: "nova",
+        waitMs: 0,
+        isProcessAlive: () => false,
+      }),
+    ).rejects.toBeInstanceOf(FixtureLockTimeoutError);
   });
 
   it("não toma o lock de processo vivo antes de maxHoldMs", async () => {
@@ -243,7 +266,172 @@ for (let i = 0; i < Number(rounds); i++) {
   }, 30_000);
 });
 
+describe("stealIfStillOwnedBy", () => {
+  it("apaga o lock quando o token ainda é o do dono julgado morto", () => {
+    const path = writeForeignLock({ token: "morto" });
+    stealIfStillOwnedBy(path, "morto", Date.now);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it("não apaga o lock que outro processo recriou depois do julgamento", () => {
+    // A julgou morto o lock de token "morto"; antes de A apagar, B o roubou e
+    // recriou com outro token. Apagar agora tiraria o lock vivo de B.
+    const path = writeForeignLock({ token: "novo" });
+    stealIfStillOwnedBy(path, "morto", Date.now);
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it("não rouba enquanto outro processo está no meio de um roubo", () => {
+    const path = writeForeignLock({ token: "morto" });
+    writeFileSync(`${path}.steal`, "outro-ladrao");
+    stealIfStillOwnedBy(path, "morto", Date.now);
+    expect(existsSync(path)).toBe(true);
+    // O lock de roubo recente é de outro processo e fica.
+    expect(existsSync(`${path}.steal`)).toBe(true);
+  });
+
+  it("com outro roubo em curso, espera com teto em vez de girar", async () => {
+    // Dono morto, mas o lock de roubo é recente (outro processo está roubando).
+    // Sem vaga, quem chega tem que cair na espera normal: com teto de 50ms,
+    // falha em 50ms. Um laço que volta ao topo ignoraria o teto até o lock de
+    // roubo envelhecer.
+    const path = writeForeignLock({ pid: 4242 });
+    writeFileSync(`${path}.steal`, "outro-ladrao");
+    const start = Date.now();
+    await expect(
+      acquireFixtureLock("projeto", {
+        dir,
+        label: "nova",
+        waitMs: 50,
+        pollMs: 10,
+        isProcessAlive: (pid) => pid !== 4242,
+      }),
+    ).rejects.toBeInstanceOf(FixtureLockTimeoutError);
+    expect(Date.now() - start).toBeLessThan(2_000);
+  });
+
+  it("limpa lock de roubo abandonado e então rouba o lock morto", async () => {
+    const path = writeForeignLock({ pid: 4242 });
+    writeFileSync(`${path}.steal`, "ladrao-morto");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(`${path}.steal`, old, old);
+
+    const lock = await acquireFixtureLock("projeto", {
+      dir,
+      label: "nova",
+      waitMs: 0,
+      isProcessAlive: (pid) => pid !== 4242,
+    });
+    expect(existsSync(`${path}.steal`)).toBe(false);
+    lock.release();
+  });
+});
+
+describe("createFixtureLockHolder", () => {
+  function fakeTestInfo(timeout: number) {
+    const info = {
+      timeout,
+      titlePath: ["spec.ts", "teste"],
+      setTimeout: vi.fn((value: number) => {
+        info.timeout = value;
+      }),
+    };
+    return info;
+  }
+
+  function fakeLock(waitedMs: number): HeldFixtureLock {
+    return { path: "/x", waitedMs, release: vi.fn() };
+  }
+
+  it("abre o orçamento do teste antes de esperar e o fecha na espera real", async () => {
+    const info = fakeTestInfo(180_000);
+    let timeoutDuringWait = 0;
+    const holder = createFixtureLockHolder(info, {
+      dir,
+      waitMs: 300_000,
+      acquire: async () => {
+        timeoutDuringWait = info.timeout;
+        return fakeLock(42_000);
+      },
+    });
+
+    await holder.hold("projeto");
+    // Durante a espera o teste aguenta o teto inteiro do lock: é o lock que
+    // falha primeiro, com o nome do dono, e não o timeout genérico.
+    expect(timeoutDuringWait).toBe(180_000 + 300_000);
+    expect(info.timeout).toBe(180_000 + 42_000);
+  });
+
+  it("não impõe limite a teste sem timeout (depuração)", async () => {
+    const info = fakeTestInfo(0);
+    const holder = createFixtureLockHolder(info, {
+      dir,
+      waitMs: 300_000,
+      acquire: async () => fakeLock(5_000),
+    });
+    await holder.hold("projeto");
+    expect(info.setTimeout).not.toHaveBeenCalled();
+  });
+
+  it("repassa o teto, o rótulo e a chave ao lock", async () => {
+    const acquire = vi.fn(async () => fakeLock(0));
+    const onWait = vi.fn();
+    const holder = createFixtureLockHolder(fakeTestInfo(1_000), {
+      dir,
+      waitMs: 1234,
+      onWait,
+      acquire,
+    });
+    await holder.hold("projeto");
+    expect(acquire).toHaveBeenCalledWith(
+      "projeto",
+      expect.objectContaining({ dir, waitMs: 1234, label: "spec.ts › teste" }),
+    );
+  });
+
+  it("recusa tomar o mesmo lock duas vezes no teste", async () => {
+    const holder = createFixtureLockHolder(fakeTestInfo(1_000), {
+      dir,
+      waitMs: 0,
+      acquire: async () => fakeLock(0),
+    });
+    await holder.hold("projeto");
+    await expect(holder.hold("projeto")).rejects.toThrow(/duas vezes/);
+  });
+
+  it("solta todos os locks no teardown", async () => {
+    const holder = createFixtureLockHolder(fakeTestInfo(1_000), {
+      dir,
+      waitMs: 0,
+    });
+    await holder.hold("a");
+    await holder.hold("b");
+    holder.releaseAll();
+    expect(existsSync(fixtureLockPath(dir, "a"))).toBe(false);
+    expect(existsSync(fixtureLockPath(dir, "b"))).toBe(false);
+  });
+});
+
+describe("fixtureLockWaitMs", () => {
+  it("usa o default sem a variável e lê o valor quando há", () => {
+    expect(fixtureLockWaitMs({})).toBe(DEFAULT_FIXTURE_LOCK_WAIT_MS);
+    expect(fixtureLockWaitMs({ E2E_FIXTURE_LOCK_WAIT_MS: "5000" })).toBe(5000);
+  });
+
+  it("recusa valor inválido", () => {
+    expect(() => fixtureLockWaitMs({ E2E_FIXTURE_LOCK_WAIT_MS: "5s" })).toThrow(
+      /inválido/,
+    );
+  });
+});
+
 describe("defaultFixtureLockDir", () => {
+  it("recusa E2E_FIXTURE_LOCK_DIR relativo", () => {
+    expect(() =>
+      defaultFixtureLockDir({ E2E_FIXTURE_LOCK_DIR: "e2e-locks" }),
+    ).toThrow(/absoluto/);
+  });
+
   it("respeita E2E_FIXTURE_LOCK_DIR", () => {
     expect(defaultFixtureLockDir({ E2E_FIXTURE_LOCK_DIR: "/x/y" })).toBe("/x/y");
   });
