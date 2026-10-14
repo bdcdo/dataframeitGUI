@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 
 import {
   makeSupabaseMock,
@@ -199,6 +199,18 @@ beforeEach(() => {
     user: { id: "userCoord" },
   });
 });
+
+// O primeiro `import("@/actions/members")` carrega o grafo inteiro da server
+// action; os seguintes saem do cache de módulos. Isolada, a carga leva perto de
+// 400 ms contra poucos ms de um teste quente, mas com os workers da suíte
+// disputando a CPU passa de 5 s e estourava o timeout do primeiro teste. O
+// estouro ainda contaminava o teste seguinte: o Vitest não cancela o corpo que
+// estourou, e as actions disparadas depois do import rodavam já com os mocks
+// resetados pelo beforeEach seguinte. No hook, com prazo próprio, a carga deixa
+// de contar contra os testes, sem mexer no timeout global.
+beforeAll(async () => {
+  await import("@/actions/members");
+}, 30_000);
 
 function rpcArgs(fn: string): Record<string, unknown> {
   const call = rpcCalls.find((entry) => entry.fn === fn);

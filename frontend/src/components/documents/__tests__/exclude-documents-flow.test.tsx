@@ -62,17 +62,26 @@ function Harness() {
 }
 
 // O gatilho e o botão de confirmação não compartilham rótulo, mas escopar ao
-// diálogo deixa explícito qual dos dois está sendo acionado.
-function confirmButton() {
-  return within(screen.getByRole("alertdialog")).getByRole("button", {
-    name: "Excluir",
-  });
+// diálogo deixa explícito qual dos dois está sendo acionado. A busca espera, em
+// vez de consultar uma vez: enquanto a exclusão pende, o mesmo botão se chama
+// "Excluindo…", e o toast de erro é disparado de dentro da transição, antes do
+// render que devolve `isPending` a false. Logo depois do `waitFor` do toast o
+// botão ainda pode estar como "Excluindo…"; sem carga o React comita antes da
+// consulta, mas com a CPU disputada o render atrasa e um `getByRole` síncrono
+// falha.
+async function findConfirmButton() {
+  const dialog = await screen.findByRole("alertdialog");
+  return within(dialog).findByRole("button", { name: "Excluir" });
 }
 
 afterEach(cleanup);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` zera as chamadas, mas não a fila de `mockResolvedValueOnce`.
+  // Sem o reset, um teste que falha antes de consumir a fila deixa a resposta
+  // seguinte para o próximo teste, e uma falha vira duas.
+  mocks.excludeDocuments.mockReset();
   mocks.excludeDocuments.mockResolvedValue(undefined);
 });
 
@@ -89,7 +98,7 @@ describe("ExcludeDocumentsDialog — fechamento sob controle do pai", () => {
       await screen.findByLabelText(/Motivo da exclusão/),
       "fora do escopo",
     );
-    await user.click(confirmButton());
+    await user.click(await findConfirmButton());
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith("Falha ao excluir"),
@@ -102,7 +111,9 @@ describe("ExcludeDocumentsDialog — fechamento sob controle do pai", () => {
     ).toBe("fora do escopo");
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
 
-    await user.click(confirmButton());
+    const retryButton = await findConfirmButton();
+    expect(retryButton.hasAttribute("disabled")).toBe(false);
+    await user.click(retryButton);
 
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
     expect(mocks.excludeDocuments).toHaveBeenCalledTimes(2);
@@ -123,9 +134,7 @@ describe("ExcludeDocumentsDialog — fechamento sob controle do pai", () => {
     // O gate do motivo vive no `disabled` do botão, não no corpo do onConfirm:
     // a validação de confirmExclude é defesa em profundidade e não é alcançada
     // por esta via enquanto o botão estiver desabilitado.
-    await waitFor(() =>
-      expect(confirmButton().hasAttribute("disabled")).toBe(true),
-    );
+    expect((await findConfirmButton()).hasAttribute("disabled")).toBe(true);
     expect(mocks.excludeDocuments).not.toHaveBeenCalled();
 
     await user.type(
@@ -133,6 +142,6 @@ describe("ExcludeDocumentsDialog — fechamento sob controle do pai", () => {
       "duplicado",
     );
 
-    expect(confirmButton().hasAttribute("disabled")).toBe(false);
+    expect((await findConfirmButton()).hasAttribute("disabled")).toBe(false);
   });
 });
