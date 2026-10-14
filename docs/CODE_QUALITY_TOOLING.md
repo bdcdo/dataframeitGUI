@@ -75,6 +75,12 @@ Quando o orçamento estoura, a saída é tirar trabalho do teste, nunca subir a 
 
 Para medir: a mensagem do `afterEach` traz a CPU gasta. Para ver todos os testes, `process.threadCpuUsage()` num `setupFiles` extra, gravando por teste, em `vitest run` da suíte completa.
 
+### Locators visíveis nos specs E2E — contrato do projeto
+
+Quando o HTML de uma página com `<Suspense>` termina antes do script `$RC`, o React renderiza a boundary no cliente e o segmento do servidor fica órfão e oculto no fim do body. `getByRole` ignora essa cópia; `getByText`, `getByPlaceholder`, `getByTestId`, `locator(css)` e os demais não, e ela vira strict mode violation ou dobra contagens. Por isso todo locator que parte de um `Page` e não é `getByRole` passa por `visivel()` (`frontend/e2e/visivel.ts`, onde o mecanismo está descrito), e um bloco `no-restricted-syntax` restrito a `e2e/**` em `eslint.config.mjs` barra quem não passar, assim como `getByRole` com `includeHidden: true`.
+
+A regra é sintática: reconhece a página pelo nome (`page` ou `*Page`) e, para que renomear não sirva de saída, exige esse nome em `newPage()`, em parâmetro tipado `Page` e na desestruturação da fixture. Locator criado sobre um container achado por `getByRole` (dialog, article) fica livre, porque o container visível não contém a cópia órfã. A aplicação segue o mesmo caminho da regra de Server Actions: hook `lint-types`, via `...base`. O teste `src/tooling/__tests__/e2e-visible-locators.test.ts` roda o ESLint pela config typed e relinta a pasta `e2e/` inteira, de modo que mudar a regra sem mexer nos specs, ou desacoplar as duas configs, reprova no Vitest.
+
 ### ruff — lint, format e complexidade do backend
 
 `ruff` (dependency-group dev em `backend/pyproject.toml`), via o hook oficial `astral-sh/ruff-pre-commit` — a versão do hook é o `rev` em `.pre-commit-config.yaml`, que é a fonte única (não repetir o número aqui: o comentário desatualiza sozinho, foi o que aconteceu entre o #513 e o #530). Cobre o backend Python, que não tinha nenhum gate. Resolve o eixo de complexidade que a #260 levantou (a pergunta original era sobre o `lizard`): no frontend a complexidade já está coberta por react-doctor + fallow, então a lacuna real era o Python, e o `ruff` entrega `C901` (mccabe) junto com lint (E/F/I/B) e format num binário só — mais que o `lizard`, que só mede CCN.

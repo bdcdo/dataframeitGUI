@@ -6,6 +6,7 @@ import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { withClerkCleanup } from "./clerk-cleanup";
 import { test } from "./fixture-lock-test";
+import { visivel } from "./visivel";
 
 test.describe.configure({ mode: "serial" });
 const projectIds = (process.env.E2E_LLM_DECISIONS_PROJECT_IDS ?? "").split(",").filter(Boolean);
@@ -55,7 +56,7 @@ for (const [index, mode] of ["compare_llm", "auto_review_llm"].entries()) {
       const exportPage = await context.newPage();
       await exportPage.goto(`/projects/${projectId}/config/documents`);
       await exportPage.getByRole("button", { name: "Gerar prévia" }).click();
-      await expect(exportPage.getByText(/Prévia \(/)).toBeVisible();
+      await expect(visivel(exportPage.getByText(/Prévia \(/))).toBeVisible();
 
       await card.getByRole("button", { name: "Erro humano", exact: true }).click();
       const confirm = page.getByRole("button", { name: "Confirmar decisão" });
@@ -105,12 +106,12 @@ for (const [index, mode] of ["compare_llm", "auto_review_llm"].entries()) {
       const headers = sheet.getRow(1).values as ExcelJS.CellValue[];
       expect(sheet.getRow(2).getCell(headers.indexOf("x")).text).toBe("Resposta LLM");
       await exportPage.goto(`/projects/${projectId}/reviews/gabarito`);
-      await expect(exportPage.getByText("Erro humano", { exact: true })).toBeVisible();
+      await expect(visivel(exportPage.getByText("Erro humano", { exact: true }))).toBeVisible();
 
       await card.getByRole("button", { name: "Erro do LLM", exact: true }).click();
       // A janela nova mostra o veredito anterior e o seletor nas opções atuais (#733);
       // o campo da fixture é pré-preenchido com o veredito, então confirmar basta.
-      await expect(page.getByText("Veredito anterior", { exact: true })).toBeVisible();
+      await expect(visivel(page.getByText("Veredito anterior", { exact: true }))).toBeVisible();
       await page.getByRole("button", { name: "Confirmar decisão" }).click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await expect.poll(async () => (await admin.from("error_resolutions").select("decision").eq("project_id", projectId).eq("field_name", "x").single()).data?.decision).toBe("researchers_correct");
