@@ -62,11 +62,11 @@ export function ArbitrationPageContent({
         onToggle={onToggleList}
       />
       <ResizablePanelGroup className="flex-1">
-        <ResizablePanel defaultSize={50} minSize={25}>
+        <ResizablePanel defaultSize="50%" minSize="25%">
           <DocumentReader text={doc.text} />
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={50} minSize={25}>
+        <ResizablePanel defaultSize="50%" minSize="25%">
           <div className="flex h-full flex-col">
             <div className="shrink-0 border-b px-4 py-2 text-xs text-muted-foreground">
               {phase === "blind"
