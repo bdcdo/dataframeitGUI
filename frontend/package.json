@@ -18,6 +18,7 @@
     "fallow:audit": "fallow audit",
     "scan": "react-scan http://localhost:3000",
     "test": "vitest run",
+    "test:stress": "bash scripts/vitest-stress.sh",
     "test:db": "bash scripts/run-db-tests.sh",
     "test:db:responses-actor": "supabase test db supabase/tests/responses_llm_actor_integrity.test.sql --local",
     "test:db:identity": "npm run test:db:psql -- supabase/tests/canonical_project_identity_rls.test.sql",

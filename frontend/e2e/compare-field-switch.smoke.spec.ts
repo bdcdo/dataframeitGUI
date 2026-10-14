@@ -118,11 +118,15 @@ async function fixtureDocIds(
  *
  * Não é preciosismo. A tecla apertada antes da hidratação é engolida em
  * silêncio — o listener de `keydown` ainda não existe —, e não há sinal de DOM
- * confiável para "já hidratou" (`toHaveCount` é satisfeito pelo HTML do
- * servidor). Um `press` único falha de forma intermitente, e um `toPass`
- * envolvendo o press passaria do alvo quando a asserção fosse só lenta. Reler o
- * cabeçalho a cada tentativa resolve os dois: nunca ultrapassa, nunca depende
- * de timing.
+ * confiável para "já hidratou": cabeçalho, `agreement-group` e cards vêm todos
+ * no HTML do servidor, antes de o `useEffect` de `useCompareKeyboard` registrar
+ * o listener. Com a CPU disputada (outros processos, ou o throttling de CPU do
+ * DevTools a 4x) a hidratação atrasa e um `press` único falha com frequência.
+ * Um `toPass` envolvendo o press passaria do alvo quando a asserção fosse só
+ * lenta. Reler o cabeçalho a cada tentativa resolve os dois: nunca ultrapassa,
+ * nunca depende de timing. O preço é aceitar tecla engolida: que `n` avance
+ * exatamente um campo fica a cargo de `ComparePage.test.tsx` ("teclas 'n'/'p'
+ * navegam entre campos").
  */
 async function goToField(page: Page, target: number): Promise<void> {
   const header = page.getByText(new RegExp(`Campo \\d+/${TOTAL_FIELDS}`)).first();
@@ -191,9 +195,26 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
       ).toBeVisible({
         timeout: 60_000,
       });
-      // Espera a hidratação antes da primeira tecla: sem isso o `n` é engolido e
-      // toda a contagem sai deslocada em um campo (medido ao investigar a #613).
-      await expect(page.getByTestId("agreement-group")).toHaveCount(1);
+
+      // Espera o layout do cliente ANTES de medir o campo 1. Antes da
+      // hidratação o `ResizablePanelGroup` ainda não aplicou a divisão, e o
+      // painel de revisão nasce estreito: o cabeçalho tem ~50px de largura,
+      // contra ~512px depois, e o primeiro card fica dezenas de pixels abaixo
+      // da posição que terá. O limiar de 200px separa os dois estados com
+      // folga, porque o `minSize` do painel é 25% do grupo.
+      //
+      // O sinal é o layout, e não uma ida e volta pelo teclado, porque navegar
+      // antes de medir esconderia um salto que só acontece na primeira troca
+      // de campo, exatamente o defeito que a asserção de âncora da #610 cobre.
+      await expect
+        .poll(
+          () =>
+            page
+              .getByTestId("compare-header")
+              .evaluate((el) => el.getBoundingClientRect().width),
+          { timeout: 30_000 },
+        )
+        .toBeGreaterThan(200);
 
       // Posição do topo do primeiro card em cada campo. O critério 1 da #610 é
       // que ela NÃO se mova ao navegar: o cabeçalho fica acima da área rolável,
@@ -204,9 +225,7 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
       const firstCardTops: number[] = [];
 
       for (let i = 0; i < TOTAL_FIELDS; i++) {
-        await expect(
-          page.getByText(new RegExp(`Campo ${i + 1}/${TOTAL_FIELDS}`)),
-        ).toBeVisible();
+        await goToField(page, i + 1);
 
         // Critério de aceitação 1 da #613: uma raiz, sempre. Antes do fix isto
         // ia 1, 2, 3, 4, 5, 6.
@@ -232,8 +251,6 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
         firstCardTops.push(
           await cards.first().evaluate((el) => el.getBoundingClientRect().top),
         );
-
-        if (i < TOTAL_FIELDS - 1) await page.keyboard.press("n");
       }
 
       // Tolerância de 1px absorve arredondamento subpixel do layout; qualquer
@@ -274,10 +291,9 @@ test("comparação: veredito confirmado após navegar grava no campo exibido", a
     run: async () => {
       await page.goto(`/projects/${projectId}/analyze/compare?queue=all`);
 
-      // Espera o cabeçalho E os cards antes da primeira tecla: `toHaveCount`
-      // sozinho é satisfeito pelo HTML do servidor, e a tecla apertada antes da
-      // hidratação é engolida em silêncio — a navegação não acontece e a
-      // asserção seguinte falha por um motivo que não é o do teste.
+      // Cabeçalho e cards também vêm no HTML do servidor, então esperar por
+      // eles não garante o listener de teclado: quem absorve a tecla engolida
+      // na hidratação é o `goToField`, que relê o cabeçalho a cada tentativa.
       await expect(
         page.getByText(new RegExp(`Campo 1/${TOTAL_FIELDS}`)),
       ).toBeVisible({ timeout: 60_000 });
