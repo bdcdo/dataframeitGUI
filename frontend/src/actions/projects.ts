@@ -24,11 +24,15 @@ export async function createProject(_prev: unknown, formData: FormData) {
   const name = formData.get("name") as string;
   const description = formData.get("description") as string;
   const rawMode = formData.get("automation_mode") as string | null;
+  // Sem escolha explícita (campo ausente ou valor desconhecido), o projeto
+  // nasce sem automação: ligar revisão automática é decisão do coordenador.
+  // Os DEFAULTs da coluna e da RPC continuam 'auto_review_llm' por causa do
+  // backfill histórico; por isso o valor vai sempre explícito na chamada.
   const automation_mode: AutomationMode = AUTOMATION_MODE_VALUES.includes(
     rawMode as AutomationMode,
   )
     ? (rawMode as AutomationMode)
-    : "auto_review_llm";
+    : "none";
 
   const { data: projectId, error } = await supabase.rpc(
     "create_project_with_initial_round",

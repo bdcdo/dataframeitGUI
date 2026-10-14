@@ -17,7 +17,7 @@ import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
 
 export default function NewProjectPage() {
   const [state, formAction, pending] = useActionState(createProject, null);
-  const [mode, setMode] = useState<AutomationMode>("auto_review_llm");
+  const [mode, setMode] = useState<AutomationMode>("none");
   const modeMeta = AUTOMATION_MODES.find((m) => m.value === mode);
 
   return (
