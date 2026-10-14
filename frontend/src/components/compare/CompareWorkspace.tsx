@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
-import { useGroupRef, type Layout } from "react-resizable-panels";
+import {
+  useGroupRef,
+  type Layout,
+  type LayoutChangedMeta,
+} from "react-resizable-panels";
 import { DocumentReader } from "../coding/DocumentReader";
 import {
   ResizablePanelGroup,
@@ -10,9 +14,13 @@ import {
 } from "@/components/ui/resizable";
 import {
   LEGACY_SPLIT_STORAGE_KEY,
+  MIN_PANEL_SIZE,
   READER_PANEL_ID,
   REVIEW_PANEL_ID,
+  parseLegacySplitLayout,
   parseSplitLayout,
+  readSplitCookie,
+  sameSplit,
   splitLayoutCookie,
   type SplitLayout,
 } from "@/lib/compare-split-layout";
@@ -31,38 +39,55 @@ interface CompareWorkspaceProps {
   savedSplit: SplitLayout | null;
 }
 
-// Grava toda divisão aplicada, inclusive a da montagem: se a salva cair fora
-// das restrições (abaixo do `minSize`), a lib a ajusta ao montar, e gravar o
-// ajuste faz o salto acontecer uma vez em vez de a cada carga.
-function persistSplit(layout: Layout) {
+// Grava só a divisão que a pessoa escolheu. A lib também chama
+// `onLayoutChanged` na montagem, e lá o layout é o `defaultLayout` recebido,
+// que pode estar velho: na volta pelo histórico o Next reaproveita o payload
+// RSC em cache, com o cookie lido ANTES do último arraste. Gravar a montagem
+// sobrescrevia a preferência com esse valor velho.
+function persistUserSplit(layout: Layout, meta: LayoutChangedMeta) {
+  if (!meta.isUserInteraction) return;
   const valid = parseSplitLayout(JSON.stringify(layout));
   if (valid) document.cookie = splitLayoutCookie(valid);
 }
 
 /**
- * Até a divisão ir para cookie, o `useDefaultLayout` a gravava em
- * localStorage. Quem salvou uma naquela época a recupera aqui, uma vez, depois
- * da hidratação: aplicar antes divergiria do HTML do servidor, que não lê
- * localStorage. O `setLayout` dispara `onLayoutChanged`, que grava o cookie.
+ * Acerta a divisão depois da hidratação, sem tocar no render: aplicar antes
+ * divergiria do HTML do servidor.
+ *
+ * - O cookie é a fonte. Se diverge do `savedSplit` recebido (payload RSC em
+ *   cache, na volta pelo histórico), vale o cookie.
+ * - Sem cookie, recupera uma vez a divisão que o `useDefaultLayout` gravava em
+ *   localStorage antes da troca para cookie, e grava o que a lib aplicou (já
+ *   dentro do mínimo). A chave antiga é apagada em qualquer caso: com cookie
+ *   presente, ela é mais velha que ele.
  */
-function useMigrateLegacySplit(
+function useReconcileSplit(
   groupRef: ReturnType<typeof useGroupRef>,
-  hasSavedSplit: boolean,
+  savedSplit: SplitLayout | null,
 ) {
   useEffect(() => {
-    let legacy: string | null;
+    const group = groupRef.current;
+    if (!group) return;
+
+    let legacy: string | null = null;
     try {
       legacy = window.localStorage.getItem(LEGACY_SPLIT_STORAGE_KEY);
       if (legacy !== null) window.localStorage.removeItem(LEGACY_SPLIT_STORAGE_KEY);
     } catch {
-      return; // storage bloqueado: não há o que migrar
+      // storage bloqueado: não há chave antiga a migrar
     }
-    // Com cookie presente, ele é mais novo que a chave antiga.
-    if (hasSavedSplit) return;
-    const layout = parseSplitLayout(legacy);
-    if (layout) groupRef.current?.setLayout(layout);
-    // Rodar de novo é inócuo: a chave antiga já foi apagada na primeira vez.
-  }, [groupRef, hasSavedSplit]);
+
+    const current = parseSplitLayout(readSplitCookie(document.cookie));
+    if (current) {
+      if (!sameSplit(current, savedSplit)) group.setLayout(current);
+      return;
+    }
+
+    const migrated = parseLegacySplitLayout(legacy);
+    if (!migrated) return;
+    const applied = parseSplitLayout(JSON.stringify(group.setLayout(migrated)));
+    if (applied) document.cookie = splitLayoutCookie(applied);
+  }, [groupRef, savedSplit]);
 }
 
 /**
@@ -85,7 +110,7 @@ export function CompareWorkspace({
   // leitura de storage no render, para que servidor e hidratação usem o MESMO
   // valor por construção (ver `compare-split-layout.ts`).
   const groupRef = useGroupRef();
-  useMigrateLegacySplit(groupRef, savedSplit !== null);
+  useReconcileSplit(groupRef, savedSplit);
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -101,14 +126,14 @@ export function CompareWorkspace({
         className="flex-1"
         groupRef={groupRef}
         defaultLayout={savedSplit ?? undefined}
-        onLayoutChanged={persistSplit}
+        onLayoutChanged={persistUserSplit}
       >
         {/* `id` explícito: é a chave do painel no layout salvo. */}
-        <ResizablePanel id={READER_PANEL_ID} defaultSize="50%" minSize="25%">
+        <ResizablePanel id={READER_PANEL_ID} defaultSize="50%" minSize={MIN_PANEL_SIZE}>
           <DocumentReader text={documentText} />
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel id={REVIEW_PANEL_ID} defaultSize="50%" minSize="25%">
+        <ResizablePanel id={REVIEW_PANEL_ID} defaultSize="50%" minSize={MIN_PANEL_SIZE}>
           <ComparisonPanel {...comparisonPanel} />
         </ResizablePanel>
       </ResizablePanelGroup>

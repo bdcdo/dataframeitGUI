@@ -130,6 +130,29 @@ async function signedIn(page: Page, email: string): Promise<void> {
   await page.goto("/dashboard");
 }
 
+/** Arrasta o divisor `dx` pixels na horizontal (negativo = para a esquerda). */
+async function dragHandle(page: Page, dx: number): Promise<void> {
+  const handle = (await page.getByRole("separator").boundingBox())!;
+  const y = handle.y + handle.height / 2;
+  await page.mouse.move(handle.x + handle.width / 2, y);
+  await page.mouse.down();
+  await page.mouse.move(handle.x + dx, y, { steps: 10 });
+  await page.mouse.up();
+}
+
+/** Participação da revisão na largura dos dois painéis, em pontos percentuais. */
+async function reviewShare(page: Page): Promise<number> {
+  const m = await measure(page);
+  return Math.round((100 * m.reviewWidth) / (m.readerWidth + m.reviewWidth));
+}
+
+/** Divisão gravada no cookie, como o servidor a leria. */
+async function savedCookieSplit(page: Page): Promise<string | null> {
+  const cookies = await page.context().cookies();
+  const found = cookies.find((c) => c.name === COMPARE_SPLIT_COOKIE);
+  return found ? decodeURIComponent(found.value) : null;
+}
+
 // Tolerância de 1px: arredondamento subpixel, e o separador de 1px dividido
 // entre os dois painéis. O defeito medido era de centenas de pixels.
 function expectSameSplit(server: SplitBoxes, client: SplitBoxes) {
@@ -190,12 +213,7 @@ test("comparação: divisão arrastada volta igual ao recarregar, já no HTML do
       const initial = await measureHydrated(page, url);
 
       // Arrasta o divisor 200px para a esquerda: a revisão fica mais larga.
-      const handle = (await page.getByRole("separator").boundingBox())!;
-      const y = handle.y + handle.height / 2;
-      await page.mouse.move(handle.x + handle.width / 2, y);
-      await page.mouse.down();
-      await page.mouse.move(handle.x - 200, y, { steps: 10 });
-      await page.mouse.up();
+      await dragHandle(page, -200);
       await expect
         .poll(async () => (await measure(page)).reviewWidth)
         .toBeGreaterThan(initial.reviewWidth + 150);
@@ -234,12 +252,7 @@ test("comparação: divisão salva no localStorage antigo migra para o cookie", 
 
       await page.goto(url);
       await waitForMountedSplit(page);
-      await expect
-        .poll(async () => {
-          const m = await measure(page);
-          return Math.round((100 * m.reviewWidth) / (m.readerWidth + m.reviewWidth));
-        })
-        .toBe(70);
+      await expect.poll(() => reviewShare(page)).toBe(70);
       expect(
         await page.evaluate((key) => localStorage.getItem(key), LEGACY_SPLIT_STORAGE_KEY),
         "a chave antiga deveria ser apagada depois de migrada",
@@ -249,6 +262,115 @@ test("comparação: divisão salva no localStorage antigo migra para o cookie", 
       // A carga seguinte já vem do cookie, sem passar pelo cliente.
       const server = await measureServerHtml(page, url);
       expectSameSplit(migrated, server);
+    },
+  });
+});
+
+test("comparação: voltar pelo histórico não apaga a divisão salva", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const { email, projectId } = skipUnlessConfigured();
+  const url = `/projects/${projectId}/analyze/compare?queue=all`;
+  await signedIn(page, email);
+
+  await withClerkCleanup({
+    page,
+    context: "compare-split-layout/historico",
+    prepareSignOut: async () => {
+      await page.goto("/dashboard");
+    },
+    run: async () => {
+      await forgetSavedSplit(page);
+      await page.goto(url);
+      await waitForMountedSplit(page);
+      await dragHandle(page, -200);
+      await expect.poll(() => reviewShare(page)).toBeGreaterThan(60);
+      const share = await reviewShare(page);
+      const saved = await savedCookieSplit(page);
+      expect(saved).not.toBeNull();
+
+      // Sai por navegação de cliente e volta pelo histórico. O Next reaproveita
+      // o payload RSC em cache, que traz a divisão lida na carga ANTERIOR ao
+      // arraste; o grupo remonta com ela. Antes da correção, a gravação da
+      // montagem sobrescrevia o cookie com esse valor velho e a preferência
+      // se perdia de vez.
+      await page.getByRole("link", { name: "AC" }).first().click();
+      await page.waitForURL("**/dashboard");
+      await page.goBack();
+      await waitForMountedSplit(page);
+
+      await expect.poll(() => reviewShare(page)).toBe(share);
+      expect(await savedCookieSplit(page)).toBe(saved);
+    },
+  });
+});
+
+test("comparação: o divisor para no mínimo de 25% do painel", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const { email, projectId } = skipUnlessConfigured();
+  const url = `/projects/${projectId}/analyze/compare?queue=all`;
+  await signedIn(page, email);
+
+  await withClerkCleanup({
+    page,
+    context: "compare-split-layout/minimo",
+    prepareSignOut: async () => {
+      await page.goto("/dashboard");
+    },
+    run: async () => {
+      await forgetSavedSplit(page);
+      await page.goto(url);
+      await waitForMountedSplit(page);
+      // Muito além da borda: só o `minSize` segura o leitor. Com o número
+      // tratado como pixel o leitor descia a ~2% da largura.
+      await dragHandle(page, -2000);
+      await expect.poll(() => reviewShare(page)).toBe(75);
+    },
+  });
+});
+
+test("comparação: com cookie presente, a chave antiga do localStorage é descartada sem aplicar", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const { email, projectId } = skipUnlessConfigured();
+  const url = `/projects/${projectId}/analyze/compare?queue=all`;
+  await signedIn(page, email);
+
+  await withClerkCleanup({
+    page,
+    context: "compare-split-layout/precedencia",
+    prepareSignOut: async () => {
+      await page.goto("/dashboard");
+    },
+    run: async () => {
+      await forgetSavedSplit(page);
+      const cookieValue = JSON.stringify({ [READER_PANEL_ID]: 40, [REVIEW_PANEL_ID]: 60 });
+      await page.context().addCookies([
+        {
+          name: COMPARE_SPLIT_COOKIE,
+          value: encodeURIComponent(cookieValue),
+          url: new URL(page.url()).origin,
+        },
+      ]);
+      await page.evaluate(
+        ([key, readerId, reviewId]) =>
+          localStorage.setItem(key, JSON.stringify({ [readerId]: 30, [reviewId]: 70 })),
+        [LEGACY_SPLIT_STORAGE_KEY, READER_PANEL_ID, REVIEW_PANEL_ID] as const,
+      );
+
+      await page.goto(url);
+      await waitForMountedSplit(page);
+      // Folga para um `setLayout` tardio da migração aparecer, se existir.
+      await page.waitForTimeout(500);
+      expect(await reviewShare(page)).toBe(60);
+      expect(await savedCookieSplit(page)).toBe(cookieValue);
+      expect(
+        await page.evaluate((key) => localStorage.getItem(key), LEGACY_SPLIT_STORAGE_KEY),
+      ).toBeNull();
     },
   });
 });
