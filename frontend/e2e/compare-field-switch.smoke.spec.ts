@@ -113,23 +113,22 @@ async function fixtureDocIds(
 }
 
 /**
- * Vai até o campo `target` pela tecla `key` (`n` avança, `p` volta), de forma
- * IDEMPOTENTE: só pressiona enquanto o cabeçalho ainda não chegou lá.
+ * Avança até o campo `target` pela tecla `n`, de forma IDEMPOTENTE: só pressiona
+ * enquanto o cabeçalho ainda não chegou lá.
  *
  * Não é preciosismo. A tecla apertada antes da hidratação é engolida em
  * silêncio — o listener de `keydown` ainda não existe —, e não há sinal de DOM
  * confiável para "já hidratou": cabeçalho, `agreement-group` e cards vêm todos
- * no HTML do servidor. Com o dev server já compilado esse HTML chega antes do
- * `useEffect` de `useCompareKeyboard`, e um `press` único falha de forma
- * reproduzível, não só intermitente. Um `toPass` envolvendo o press passaria do
- * alvo quando a asserção fosse só lenta. Reler o cabeçalho a cada tentativa
- * resolve os dois: nunca ultrapassa, nunca depende de timing.
+ * no HTML do servidor, antes de o `useEffect` de `useCompareKeyboard` registrar
+ * o listener. Com a CPU disputada (outros processos, ou o throttling de CPU do
+ * DevTools a 4x) a hidratação atrasa e um `press` único falha com frequência.
+ * Um `toPass` envolvendo o press passaria do alvo quando a asserção fosse só
+ * lenta. Reler o cabeçalho a cada tentativa resolve os dois: nunca ultrapassa,
+ * nunca depende de timing. O preço é aceitar tecla engolida: que `n` avance
+ * exatamente um campo fica a cargo de `ComparePage.test.tsx` ("teclas 'n'/'p'
+ * navegam entre campos").
  */
-async function goToField(
-  page: Page,
-  target: number,
-  key: "n" | "p" = "n",
-): Promise<void> {
+async function goToField(page: Page, target: number): Promise<void> {
   const header = page.getByText(new RegExp(`Campo \\d+/${TOTAL_FIELDS}`)).first();
   for (let attempt = 0; attempt < TOTAL_FIELDS * 2; attempt++) {
     // A leitura do cabeçalho vai por `expect.poll` — e não por um `innerText`
@@ -140,7 +139,7 @@ async function goToField(
       .poll(async () => (text = await header.innerText()), { timeout: 10_000 })
       .toContain("Campo");
     if (text.includes(`Campo ${target}/${TOTAL_FIELDS}`)) return;
-    await page.keyboard.press(key);
+    await page.keyboard.press("n");
     await expect
       .poll(async () => (await header.innerText()).trim(), { timeout: 3_000 })
       .not.toBe(text.trim())
@@ -197,15 +196,25 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
         timeout: 60_000,
       });
 
-      // Ida e volta pelo teclado ANTES de medir: é o sinal de que a página está
-      // interativa. Antes da hidratação o `ResizablePanelGroup` ainda não
-      // aplicou o layout, que só existe no cliente, e o painel de revisão nasce
-      // estreito (cabeçalho com 50px de largura, contra 512px depois). O
-      // primeiro card do campo 1 era medido ali, 90px abaixo dos demais, e a
-      // asserção de âncora da #610 falhava por um estado em que ninguém navega:
-      // o critério é sobre navegar, e navegar exige o teclado vivo.
-      await goToField(page, 2);
-      await goToField(page, 1, "p");
+      // Espera o layout do cliente ANTES de medir o campo 1. Antes da
+      // hidratação o `ResizablePanelGroup` ainda não aplicou a divisão, e o
+      // painel de revisão nasce estreito: o cabeçalho tem ~50px de largura,
+      // contra ~512px depois, e o primeiro card fica dezenas de pixels abaixo
+      // da posição que terá. O limiar de 200px separa os dois estados com
+      // folga, porque o `minSize` do painel é 25% do grupo.
+      //
+      // O sinal é o layout, e não uma ida e volta pelo teclado, porque navegar
+      // antes de medir esconderia um salto que só acontece na primeira troca
+      // de campo, exatamente o defeito que a asserção de âncora da #610 cobre.
+      await expect
+        .poll(
+          () =>
+            page
+              .getByTestId("compare-header")
+              .evaluate((el) => el.getBoundingClientRect().width),
+          { timeout: 30_000 },
+        )
+        .toBeGreaterThan(200);
 
       // Posição do topo do primeiro card em cada campo. O critério 1 da #610 é
       // que ela NÃO se mova ao navegar: o cabeçalho fica acima da área rolável,
