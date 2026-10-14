@@ -1,7 +1,8 @@
-import { test, expect } from "@playwright/test";
+import { expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { test } from "./fixture-lock-test";
 
 // Smoke do fluxo de SALVAMENTO de codificação — proteção de regressão da
 // família de bugs "codificação não salva" (#425, dedup de responses). O
@@ -23,6 +24,9 @@ import { withClerkCleanup } from "./clerk-cleanup";
 //
 // Autentica como PESQUISADOR (E2E_MEMBER_EMAIL) via login-por-ticket, como os
 // demais smokes. Roda serial dentro do arquivo (mode default) — issue #198.
+// Entre execuções simultâneas, quem serializa é o `holdFixtureLock`: os dois
+// testes resetam a mesma response, e o segundo afirma que NENHUMA existe, o
+// que a response recém-enviada pelo primeiro teste da outra execução desmente.
 test.describe.configure({ mode: "default" });
 
 const hasClerkTestingEnv =
@@ -48,6 +52,7 @@ function createAdminClient() {
 
 test("codificação: enviar respostas persiste response e conclui assignment", async ({
   page,
+  holdFixtureLock,
 }) => {
   // Primeira visita compila /analyze/code no dev server; o fluxo tem login +
   // submit + renavegação — folga bem acima dos 30s default.
@@ -61,6 +66,7 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
       "NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, " +
       "E2E_MEMBER_EMAIL e E2E_CODING_PROJECT_ID",
   );
+  await holdFixtureLock(projectId!);
 
   const admin = createAdminClient();
 
@@ -224,6 +230,7 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
 // tocado.
 test("codificação: editar e sair sem enviar não grava, e o rascunho local retém", async ({
   page,
+  holdFixtureLock,
 }) => {
   test.setTimeout(120_000);
 
@@ -233,6 +240,7 @@ test("codificação: editar e sair sem enviar não grava, e o rascunho local ret
     !hasClerkTestingEnv || !hasSupabaseAdminEnv || !email || !projectId,
     "mesmas variáveis do teste acima",
   );
+  await holdFixtureLock(projectId!);
 
   const admin = createAdminClient();
   const [{ data: member }, { data: doc }] = await Promise.all([
