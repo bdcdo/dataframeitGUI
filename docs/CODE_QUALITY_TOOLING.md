@@ -55,6 +55,10 @@ O Next.js exige que cada export de valor de um arquivo cuja diretiva é `"use se
 
 Quem aplica a regra é o hook **`lint-types`** (pre-push, arquivos alterados), e não o `npm run lint`, que nenhum hook executa: a regra mora em `eslint.config.mjs` e chega ao hook porque `eslint.config.typed.mjs` faz `...base`. Essa dependência é o único caminho de enforcement — desacoplar as duas configs removeria o gate da #413 em silêncio, sem nenhum teste falhando.
 
+### Carga a frio fora do primeiro teste — contrato da suíte
+
+Com a suíte do Vitest disputando a CPU, o primeiro teste de um arquivo pagava sozinho custos que são do processo, não do teste, e estourava o timeout de 5 s. Duas peças tiram esse custo de dentro dos testes sem mexer no timeout global. A regra local `test-cold-imports/warm-dynamic-imports` (`frontend/eslint-rules/test-cold-imports.mjs`, onde estão o porquê e as exceções) reprova `import()` em tempo de teste cujo módulo não foi carregado antes dos testes, e chega ao pre-push pelo mesmo caminho da regra de Server Actions: `lint-types`, só nos arquivos alterados. O `setupFiles` do Vitest (`frontend/src/test-utils/jsdom-warm-up.tsx`) aquece React DOM, Testing Library, user-event e Radix em todo arquivo jsdom.
+
 ### ruff — lint, format e complexidade do backend
 
 `ruff` (dependency-group dev em `backend/pyproject.toml`), via o hook oficial `astral-sh/ruff-pre-commit` — a versão do hook é o `rev` em `.pre-commit-config.yaml`, que é a fonte única (não repetir o número aqui: o comentário desatualiza sozinho, foi o que aconteceu entre o #513 e o #530). Cobre o backend Python, que não tinha nenhum gate. Resolve o eixo de complexidade que a #260 levantou (a pergunta original era sobre o `lizard`): no frontend a complexidade já está coberta por react-doctor + fallow, então a lacuna real era o Python, e o `ruff` entrega `C901` (mccabe) junto com lint (E/F/I/B) e format num binário só — mais que o `lizard`, que só mede CCN.
