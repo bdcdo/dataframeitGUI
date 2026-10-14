@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import { ESLint } from "eslint";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { RULE_NAME } from "../../../eslint-rules/server-action-exports.mjs";
 
@@ -21,6 +21,16 @@ async function messagesFor(
 }
 
 describe('regra de exports em módulos "use server"', () => {
+  // O primeiro lintText carrega eslint.config.mjs e todo o grafo de plugins do
+  // eslint-config-next; os seguintes reaproveitam o cache da instância. Sozinha,
+  // a carga leva perto de 1 s contra 5 ms de uma chamada quente, mas com os
+  // workers da suíte disputando a CPU passa de 5 s e estourava o timeout de
+  // qualquer teste que fosse o primeiro. No hook, com prazo próprio, ela deixa
+  // de contar contra os testes, sem mexer no timeout global.
+  beforeAll(async () => {
+    await messagesFor('"use server";');
+  }, 30_000);
+
   it("permite funções async diretas e exports de tipo", async () => {
     await expect(
       messagesFor(`
