@@ -32,7 +32,9 @@ applyEnvironment(
 // manual): forca servidor novo, porta dedicada e execucao serial, porque o
 // modo "dev" abaixo (paralelo + reaproveita servidor na porta padrao) e
 // otimizado para iteracao local, nao para um gate deterministico que roda a
-// cada `git push` em worktrees paralelas.
+// cada `git push` em worktrees paralelas. Entre worktrees, quem serializa as
+// execucoes (porta e projeto fixture compartilhados) e a trava de maquina de
+// scripts/e2e-lock.sh, que o hook e o `npm run test:e2e` usam.
 const isPrePush = !!process.env.PLAYWRIGHT_PRE_PUSH;
 
 if (isPrePush) assertRequiredPrePushEnv(process.env);
