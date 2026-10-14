@@ -112,7 +112,7 @@ O primeiro scan completo encontrou **113 erros em 5 arquivos**, com **103 (91%) 
 
 ### React Scan — o runtime
 
-`react-scan` 0.5.7 (devDependency pinada), via `npm run scan` contra a aplicação em dev. É o eixo que o react-doctor estático não alcança: detecta re-renders desnecessários ao vivo. Casa com a dívida de performance registrada na constituição ("diagnosticar e corrigir a lentidão atual da plataforma"). É ferramenta de diagnóstico pontual, não gate — roda quando se investiga performance, não em CI.
+`react-scan` 0.5.7 (devDependency pinada), via `npm run scan` contra a aplicação em dev. É o eixo que o react-doctor estático não alcança: detecta re-renders desnecessários ao vivo. Casa com a dívida de performance da plataforma (diagnosticar e corrigir a lentidão atual). É ferramenta de diagnóstico pontual, não gate — roda quando se investiga performance, não em CI.
 
 ### Dependabot e semgrep — a segurança
 
@@ -154,4 +154,4 @@ uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy ac
 - **Biome** (lint+format all-in-one) — sobreporia o investimento já feito em ESLint + react-doctor.
 - **type-coverage** — o projeto já é `strict`; ganho marginal fora de migração/caça a `any`.
 - **Analisadores de bundle** (vite-bundle-visualizer, source-map-explorer) — só se performance de bundle pesar; a dívida de performance atual não é de bundle.
-- **CI bloqueante no GitHub Actions** (Vitest + pytest + lint + typecheck) — é o TODO da constituição (Princípio V), de escopo maior, fora desta rodada. Quando existir, os hooks mais pesados (semgrep, fallow full) podem migrar do pre-push para o CI.
+- **CI bloqueante no GitHub Actions** (Vitest + pytest + lint + typecheck) — de escopo maior, fora desta rodada. Quando existir, os hooks mais pesados (semgrep, fallow full) podem migrar do pre-push para o CI.

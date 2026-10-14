@@ -4,7 +4,7 @@ Este arquivo registra **decisões de interface e os motivos delas** — o que fo
 
 O que este arquivo **não** é: não descreve telas, não cataloga componentes, não fixa medidas em pixels e não enumera atalhos. Regra de manutenção, em uma frase: **se uma afirmação pode ser conferida abrindo um componente, ela não pertence aqui**. Descrição de tela envelhece a cada PR e não há gate automático que detecte prosa divergindo de implementação — foi assim que os antigos `UI_SPEC.md`, `COMPONENTS.md` e `ARCHITECTURE.md` chegaram a descrever uma interface que não existia mais, e por isso foram aposentados (ver [#611](https://github.com/bdcdo/dataframeitGUI/issues/611)).
 
-Princípios gerais de interface — alvo desktop/mouse sem mínimo de toque de 44px, densidade de informação sobre espaçamento, brand color teal, acessibilidade WCAG 2.1 AA, shadcn/ui como única biblioteca de componentes — vivem em `.specify/memory/constitution.md` (Princípio VI e a seção de Restrições) e no `CLAUDE.md`. Não são repetidos aqui.
+Princípios gerais de interface (alvo desktop/mouse sem mínimo de toque de 44px, densidade de informação sobre espaçamento, brand color teal, shadcn/ui como única biblioteca de componentes) vivem no `CLAUDE.md` e não são repetidos aqui.
 
 ## Codificação é uma lista vertical de todos os campos
 
@@ -18,7 +18,7 @@ Não reabrir sem novo levantamento com os pesquisadores que usam a plataforma.
 
 O schema é editado pelo editor visual; o código Pydantic correspondente é gerado a partir dele e exibido sem permitir edição manual, decisão tomada no PR [#197](https://github.com/bdcdo/dataframeitGUI/pull/197).
 
-É uma decisão de segurança, não de conveniência: o Princípio III da constituição trata a compilação de código Python editável por usuário no backend como superfície de ataque a eliminar, e registra a direção de migrar a representação canônica do schema para JSON declarativo. Enquanto essa migração não ocorre, permitir edição manual do código ampliaria justamente a superfície que se pretende reduzir.
+É uma decisão de segurança, não de conveniência: a compilação de código Python editável por usuário no backend é superfície de ataque a eliminar, e a direção registrada no `CLAUDE.md` é migrar a representação canônica do schema para JSON declarativo. Enquanto essa migração não ocorre, permitir edição manual do código ampliaria justamente a superfície que se pretende reduzir.
 
 A completude do código gerado continua sendo exigida por outro motivo — o round-trip `UI → pydantic_code → compile_pydantic → UI` e a reconstrução do modelo pelo `llm_runner`. As regras estão no `CLAUDE.md`, na seção de convenções.
 
