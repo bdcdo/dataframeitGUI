@@ -2,8 +2,6 @@
 
 Plataforma web para analise de conteudo de documentos. Coordenadores definem perguntas (Pydantic), atribuem documentos a pesquisadores, rodam LLM. Pesquisadores codificam e revisam. Comparacoes automaticas quando ha N+ respostas para o mesmo documento.
 
-Documento normativo do projeto: `.specify/memory/constitution.md` (constituicao v1.0.0 — principios de usabilidade, velocidade, seguranca, RLS, testes, a11y, schema e simplicidade de stack). Em conflito, a constituicao prevalece sobre este guia.
-
 ## Arquitetura
 
 ```
@@ -40,7 +38,7 @@ Browser  →  Next.js 16 (Vercel)  ←→  Supabase (Postgres + RLS)
 
   **Cuidado com o `pydantic_hash`**: `projects.pydantic_hash` e sha256 do **texto** do codigo gerado, entao emitir uma chave nova em `json_schema_extra` muda o hash de todo projeto afetado no proximo save — e respostas LLM legadas (sem `answer_field_hashes` e sem semver gravado) tem esse hash como unico vinculo com o schema, logo saem da fila de Comparacao (ver `20260505000001_revive_orphan_llm_responses.sql`). Por isso o padrao e **emitir apenas o caso nao-default**: assim o texto fica byte-identico para quem nao usa a propriedade. `computeFieldHash` (`name|type|options|description`, mais `|r<n>` so quando o campo tem `question_revision`) nao e afetado.
 
-  **Direcao registrada (constituicao, Principios III e VII)**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(e) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
+  **Direcao registrada**: por seguranca, a representacao canonica do schema deve migrar de codigo Pydantic (Python compilado no backend a partir de texto editavel por usuario) para JSON declarativo. Ate essa migracao acontecer, todas as regras (a)–(e) acima valem integralmente; qualquer migracao deve preservar o round-trip completo e o versionamento em `schema_change_log`.
 - Testes: **Vitest** (frontend), **pytest** (backend)
 
 ## Supabase CLI
@@ -138,7 +136,3 @@ Seguir estas regras para evitar regressoes de performance:
 ## Fase atual: 10 - Todas as fases implementadas (scaffold completo)
 
 Ver `docs/PHASES.md` para roadmap completo.
-
-<!-- SPECKIT START -->
-For additional context about technologies to be used, project structure, shell commands, and other important information, read the current plan: `specs/004-export-original-metadata/plan.md` (feature ativa; artefatos em `specs/004-export-original-metadata/`).
-<!-- SPECKIT END -->
