@@ -996,7 +996,9 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
   }
 
   // Toda a aleatoriedade deriva do PRNG seedado: com a semente da prévia, o
-  // sorteio recomputa sobre os dados atuais e repete o resultado previsto
+  // sorteio recomputa sobre os dados atuais e repete o resultado previsto se
+  // os dados e a configuração não mudaram desde a prévia. Se mudaram, o
+  // resultado diverge de propósito: nunca se aplica uma prévia desatualizada.
   const seed = params.seed ?? Math.floor(Math.random() * 2 ** 31);
   const rng = createRng(seed);
 

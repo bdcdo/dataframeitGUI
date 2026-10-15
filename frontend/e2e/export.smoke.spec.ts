@@ -44,7 +44,8 @@ test("exportação: card em Documentos, prévia, aba removida e rota 404", async
       });
 
       // (b)+(d) Prévia sob demanda: cronometra do clique até a prévia (ou estado
-      // vazio) aparecer; o alvo da prévia é ≤ 10s.
+      // vazio) aparecer; alvo de até 10s, o mesmo da exportação de um projeto
+      // pequeno (até 50 documentos), que é o caso do projeto de teste.
       const start = Date.now();
       await page.getByRole("button", { name: "Gerar prévia" }).click();
       await expect(
