@@ -1,4 +1,4 @@
-import { test as base } from "@playwright/test";
+import { test as base } from "./base-test";
 import {
   createFixtureLockHolder,
   defaultFixtureLockDir,
@@ -10,7 +10,9 @@ import {
 // teardown, que o Playwright roda mesmo quando o teste falha ou estoura o
 // timeout. Chamar ANTES do primeiro reset: o lock existe para que o DELETE de
 // uma execução não caia no meio do teste de outra. A política de espera e de
-// timeout mora em `createFixtureLockHolder`, testável sem o runner.
+// timeout mora em `createFixtureLockHolder`, testável sem o runner. Estende o
+// `test` de base-test.ts, então estes specs também ganham o diagnóstico de
+// navegação.
 
 export const test = base.extend<{
   holdFixtureLock: (projectId: string) => Promise<void>;
