@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import {
   render,
   screen,
@@ -365,6 +366,9 @@ const verdict = (verdictName: string, comment: string | null = null) => ({
   chosenResponseId: null,
   comment,
 });
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   submitVerdict.mockClear();

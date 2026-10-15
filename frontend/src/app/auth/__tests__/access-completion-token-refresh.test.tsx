@@ -14,7 +14,8 @@
  * FastAPI. Barrar a navegação por um blip anunciaria falha sobre um acesso
  * concluído.
  */
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -46,6 +47,9 @@ vi.mock("@/actions/complete-access", () => ({
 }));
 
 import { AccessCompletionCard } from "@/components/auth/AccessCompletionCard";
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 beforeEach(() => {

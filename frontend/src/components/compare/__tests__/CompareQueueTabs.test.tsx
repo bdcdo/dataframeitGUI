@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { CompareQueueTabs } from "@/components/compare/CompareQueueTabs";
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

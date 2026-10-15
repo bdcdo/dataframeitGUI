@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -160,6 +161,9 @@ function assignedDoc(id: string): AssignedDoc {
     exclusion_pending_at: null,
   };
 }
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   urlParams.current = {};

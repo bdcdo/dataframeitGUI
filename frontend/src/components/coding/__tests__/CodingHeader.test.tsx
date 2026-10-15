@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup, within } from "@testing-library/react";
 import { CodingHeader, type DocSection } from "@/components/coding/CodingHeader";
 import type { DocRoundStatus } from "@/lib/rounds";
@@ -8,6 +9,9 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock("@/components/shared/RunLlmButton", () => ({
   RunLlmButton: () => <div />,
 }));
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
@@ -40,6 +41,9 @@ async function findConfirmButton() {
 // contra 0,9 a 3 s dos seguintes). O hook percorre uma vez o caminho de abrir e
 // cancelar uma decisão, sem gravar nada, o que também carrega as bibliotecas
 // que src/test-utils/jsdom-warm-up.tsx aqueceria; o beforeEach limpa os mocks.
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
+
 beforeAll(async () => {
   mocks.prepare.mockResolvedValue({ context: row.context });
   show();

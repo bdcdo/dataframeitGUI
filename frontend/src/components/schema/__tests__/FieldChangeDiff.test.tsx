@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { FieldChangeDiff } from "../FieldChangeDiff";
 import { ORDER_LOG_FIELD_NAME, PROJECT_LOG_FIELD_NAME } from "@/lib/schema-utils";
 import type { SchemaChangeEntry } from "@/lib/types";
@@ -20,6 +21,9 @@ function entry(over: Partial<SchemaChangeEntry>): SchemaChangeEntry {
     ...over,
   };
 }
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

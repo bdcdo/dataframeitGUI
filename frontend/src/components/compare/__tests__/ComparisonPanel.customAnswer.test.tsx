@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from "react";
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -16,6 +17,9 @@ vi.mock("@/components/stats/SuggestFieldDialog", () => ({
 import { ComparisonPanel } from "@/components/compare/ComparisonPanel";
 import type { PydanticField } from "@/lib/types";
 import { panelProps, panelResponse } from "./compare-test-helpers";
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

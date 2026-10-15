@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, render, screen } from "@testing-library/react";
 
 import { MemberEmailLinks } from "@/components/members/MemberEmailLinks";
@@ -17,6 +18,9 @@ function link(accessReady: boolean): MemberEmailLinkView {
     accessReady,
   };
 }
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

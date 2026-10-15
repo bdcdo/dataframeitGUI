@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, render, screen } from "@testing-library/react";
 import { LlmErrorCard } from "@/components/stats/LlmErrorCard";
 import type { LlmError, LlmErrorSource } from "@/lib/llm-error-metrics";
@@ -35,6 +36,9 @@ function renderCard(source: LlmErrorSource) {
     />,
   );
 }
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

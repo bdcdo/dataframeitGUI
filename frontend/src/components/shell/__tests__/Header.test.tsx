@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Header } from "@/components/shell/Header";
@@ -33,6 +34,9 @@ vi.mock("@/components/shell/UserMenu", () => ({
 }));
 
 let unregister: (() => void) | null = null;
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
