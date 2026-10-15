@@ -4,12 +4,14 @@ import {
   classifyNotFound,
   describeNavigation,
   readRscPayload,
+  redactUrl,
   type NavigationRecord,
 } from "./navigation-diagnostics";
 
 // `test` de todo spec E2E (os que mutam fixture o recebem por
 // fixture-lock-test.ts, que estende este). O fixture automático registra as
-// navegações do frame principal e as requests RSC do cliente; quando o teste
+// navegações do frame principal e as requests RSC do cliente de toda página do
+// contexto (o spec pode abrir outra com `context.newPage()`); quando o teste
 // falha, anexa a lista e imprime as que deram erro, já classificadas por
 // navigation-diagnostics.ts. Sem isso o spec só mostra a própria mensagem
 // ("confira o fixture e o reset"), que acusa o fixture mesmo quando o servidor
@@ -17,11 +19,14 @@ import {
 
 function isTracked(response: Response): boolean {
   const request = response.request();
-  if (request.isNavigationRequest()) {
-    return response.frame() === response.frame().page().mainFrame();
-  }
   // Navegação do cliente no App Router: fetch com header `rsc: 1`.
-  return request.headers()["rsc"] === "1";
+  if (!request.isNavigationRequest()) return request.headers()["rsc"] === "1";
+  try {
+    return response.frame().parentFrame() === null;
+  } catch {
+    // Resposta de service worker não tem frame.
+    return false;
+  }
 }
 
 export const test = base.extend<{ navigationDiagnostics: void }>({
@@ -29,7 +34,7 @@ export const test = base.extend<{ navigationDiagnostics: void }>({
   // argumento é o `use` da API de fixtures, com outro nome pela mesma razão de
   // fixture-lock-test.ts (a regra de hooks do React o confundiria com `use`).
   navigationDiagnostics: [
-    async ({ page }, provide, testInfo) => {
+    async ({ context }, provide, testInfo) => {
       const pending: Promise<NavigationRecord>[] = [];
       const onResponse = (response: Response) => {
         if (!isTracked(response)) return;
@@ -44,7 +49,7 @@ export const test = base.extend<{ navigationDiagnostics: void }>({
             const body = status >= 400 ? await response.text().catch(() => "") : "";
             return {
               method: response.request().method(),
-              url: response.url(),
+              url: redactUrl(response.url()),
               status,
               middlewareRewrite: headers["x-middleware-rewrite"] ?? null,
               clerkAuthReason: headers["x-clerk-auth-reason"] ?? null,
@@ -53,9 +58,9 @@ export const test = base.extend<{ navigationDiagnostics: void }>({
           })(),
         );
       };
-      page.on("response", onResponse);
+      context.on("response", onResponse);
       await provide();
-      page.off("response", onResponse);
+      context.off("response", onResponse);
       if (testInfo.status === testInfo.expectedStatus) return;
 
       const records = await Promise.all(pending);

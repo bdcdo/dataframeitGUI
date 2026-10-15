@@ -17,7 +17,10 @@
 // payload RSC (`["",{"children":["<segmento>"`): `/_not-found` quando a rota não
 // casou, o primeiro segmento do app (`(app)`) quando o layout chamou
 // `notFound()`. Ele existe em `next dev` e em `next start`. Os `pagePath` vão
-// junto como evidência, mas só o `next dev` os emite.
+// junto como evidência, mas só o `next dev` os emite. Uma navegação do cliente
+// entre duas páginas que compartilham layouts pode trazer só a subárvore a partir
+// do segmento que mudou, sem a raiz: aí `rootSegment` fica null e o 404 sai sem
+// veredito, em vez de classificado errado.
 //
 // As funções puras abaixo classificam um registro de navegação; o fixture que
 // coleta os registros e os anexa em falha mora em base-test.ts.
@@ -48,6 +51,9 @@ const NOT_FOUND_SEGMENT = "/_not-found";
 // Ver `handleControlFlowErrors` em @clerk/nextjs/dist/esm/server/clerkMiddleware.js.
 const CLERK_REWRITE = /\/clerk_\d+(?:$|[?#])/;
 const CLERK_PROTECT_REASON = "protect-rewrite";
+// Parâmetros do handshake e do dev browser do Clerk carregam tokens de sessão;
+// o registro vai para test-results/ e para o log do pre-push.
+const CLERK_QUERY_PARAM = /^__clerk/;
 
 function flightPayload(body: string): string {
   const chunks = [...body.matchAll(FLIGHT_CHUNK)];
@@ -63,6 +69,23 @@ function flightPayload(body: string): string {
     .join("");
 }
 
+export function redactUrl(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  let changed = false;
+  for (const name of [...u.searchParams.keys()]) {
+    if (CLERK_QUERY_PARAM.test(name)) {
+      u.searchParams.set(name, "<omitido>");
+      changed = true;
+    }
+  }
+  return changed ? u.toString() : url;
+}
+
 export function readRscPayload(body: string): Pick<NavigationRecord, "rootSegment" | "pagePaths"> {
   const payload = flightPayload(body);
   const pagePaths = new Set<string>();
@@ -76,7 +99,10 @@ export function readRscPayload(body: string): Pick<NavigationRecord, "rootSegmen
 export function classifyNotFound(record: NavigationRecord): NotFoundOrigin | null {
   if (record.status !== 404) return null;
   // O Clerk vem primeiro: a página para onde ele reescreve também é um
-  // `/_not-found`, indistinguível de rota não casada pela árvore.
+  // `/_not-found`, indistinguível de rota não casada pela árvore. Só o motivo
+  // `protect-rewrite` conta: o middleware manda `x-clerk-auth-reason` em quase
+  // toda resposta (`dev-browser-missing`, `session-token-and-uat-missing`),
+  // inclusive no 404 de rota não casada.
   if (
     record.clerkAuthReason === CLERK_PROTECT_REASON ||
     (record.middlewareRewrite !== null && CLERK_REWRITE.test(record.middlewareRewrite))
