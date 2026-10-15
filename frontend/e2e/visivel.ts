@@ -14,8 +14,7 @@ import type { Locator } from "@playwright/test";
 // servidor fica órfão, escondido. O usuário não o vê e ele sai da árvore de
 // acessibilidade, então `getByRole` já o ignora. `getByText`,
 // `getByPlaceholder`, `getByTestId`, `locator(css)` e os demais não ignoram: a
-// cópia órfã vira strict mode violation, dobra o `toHaveCount(n)` e faz o
-// `toHaveCount(0)` acusar um elemento que ninguém vê.
+// cópia órfã vira strict mode violation e dobra o `toHaveCount(n)`.
 //
 // A exceção é `expect(...).toHaveCount(0)`, que fica sem o filtro: a cópia
 // órfã só duplica o que o servidor renderizou, então não cria o elemento que a
