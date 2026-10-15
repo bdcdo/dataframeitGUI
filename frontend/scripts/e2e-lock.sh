@@ -1,27 +1,31 @@
 #!/usr/bin/env bash
-# Roda o comando dado segurando a trava de maquina do E2E: uma execucao do
-# Playwright por vez, em todas as worktrees e clones desta maquina.
+# Roda o comando dado segurando a trava de maquina do pre-push: uma execucao
+# do hook e2e-smoke por vez, em todas as worktrees e clones desta maquina.
 #
 # Uso: bash scripts/e2e-lock.sh <comando> [args...]
 #   E2E_LOCK_FILE          arquivo da trava (default
-#                          ${XDG_CACHE_HOME:-~/.cache}/dataframeitGUI/e2e.lock)
+#                          ${XDG_CACHE_HOME:-~/.cache}/dataframeitGUI/pre-push-e2e.lock)
 #   E2E_LOCK_WAIT_SECONDS  teto da espera pela trava, inteiro >= 0 (default 1800)
 # Sai com o status do comando; com 1 se o flock faltar ou a espera estourar;
 # com 2 em erro de uso.
 #
-# Por que serializar a execucao inteira, e nao isolar: os specs que mutam o
-# banco resetam o MESMO projeto fixture do Supabase remoto com o MESMO usuario,
-# entao duas execucoes simultaneas (dois `git push` em worktrees diferentes)
-# apagam a response ou reabrem o assignment uma da outra no meio do teste. E o
-# pre-push sobe o `next dev` na mesma porta (3100) em toda worktree, entao a
-# segunda execucao morria em "http://localhost:3100 is already used". Uma trava
-# de maquina resolve os dois: fixture e porta passam a ter um dono por vez.
-# Nao cobre outra maquina (ou agente na nuvem) com o mesmo .env.e2e.
+# O que a trava resolve: o pre-push sobe o `next dev` na mesma porta (3100) em
+# toda worktree, entao dois `git push` simultaneos em worktrees diferentes
+# terminavam com a segunda execucao em "http://localhost:3100 is already used".
+# Com a trava, a segunda espera a primeira. Serializar, em vez de dar uma porta
+# a cada worktree, tambem evita somar a carga de duas suites e os logins de
+# duas execucoes contra o tenant dev do Clerk ao mesmo tempo.
+#
+# O que ela NAO e: a protecao do projeto fixture do Supabase remoto. Essa e o
+# lock por projeto que os specs que mutam o banco tomam dentro de cada teste
+# (holdFixtureLock), que vale tambem para `npx playwright test` direto e para o
+# --ui, que nao passam por aqui. Os dois nao formam ciclo: esta trava e pedida
+# antes de qualquer teste comecar, e ninguem a pede segurando o lock por projeto.
 #
 # O arquivo fica fora do repositorio para ser o mesmo em toda worktree e em
-# todo clone, que compartilham o fixture. Ele mora em ~/.cache, e nao em
-# $TMPDIR, porque sandboxes de agente trocam o $TMPDIR por sessao, e ai cada
-# execucao teria a propria trava e nada seria excluido.
+# todo clone. Ele mora em ~/.cache, e nao em $TMPDIR, porque sandboxes de agente
+# trocam o $TMPDIR por sessao, e ai cada execucao teria a propria trava e nada
+# seria excluido.
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
@@ -29,7 +33,7 @@ if [ $# -eq 0 ]; then
   exit 2
 fi
 
-lock="${E2E_LOCK_FILE:-${XDG_CACHE_HOME:-$HOME/.cache}/dataframeitGUI/e2e.lock}"
+lock="${E2E_LOCK_FILE:-${XDG_CACHE_HOME:-$HOME/.cache}/dataframeitGUI/pre-push-e2e.lock}"
 wait_seconds="${E2E_LOCK_WAIT_SECONDS:-1800}"
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || {
   echo "E2E_LOCK_WAIT_SECONDS precisa ser inteiro >= 0: $wait_seconds" >&2
@@ -39,7 +43,7 @@ wait_seconds="${E2E_LOCK_WAIT_SECONDS:-1800}"
 # Fail-closed: sem flock nao ha como garantir execucao exclusiva, e rodar sem a
 # trava devolveria o gate ao estado em que um push derruba o do outro.
 command -v flock >/dev/null 2>&1 || {
-  echo "flock ausente (pacote util-linux; no macOS, brew install flock): sem ele o E2E nao consegue esperar a execucao de outra worktree" >&2
+  echo "flock ausente (pacote util-linux; no macOS, brew install flock): sem ele o pre-push nao consegue esperar o de outra worktree" >&2
   exit 1
 }
 
@@ -76,7 +80,7 @@ mkdir -p "$(dirname "$lock")"
 # identificacao dele, que quem espera le para dizer por quem esta esperando.
 exec 9<>"$lock"
 if ! flock -n 9; then
-  avisar "outra execucao do E2E segura a trava: $(dono)"
+  avisar "outro pre-push segura a trava do E2E: $(dono)"
   avisar "aguardando ate ${wait_seconds}s ($lock)"
   start=$SECONDS
   if ! flock -w "$wait_seconds" 9; then

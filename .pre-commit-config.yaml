@@ -188,11 +188,12 @@ repos:
       # E2E_BASE_URL explícito sobrescreve esse default e o PORT repassado ao
       # `next dev` acompanha a porta dessa URL.
       #
-      # O Playwright roda sob a trava de máquina de scripts/e2e-lock.sh: dois
-      # pushes em worktrees diferentes disputavam a porta 3100 e resetavam o
-      # mesmo projeto fixture com o mesmo usuário, e um apagava a response do
-      # outro no meio do teste. Quem chega depois espera (teto em
-      # E2E_LOCK_WAIT_SECONDS) e o aviso nomeia a worktree dona da trava.
+      # O Playwright roda sob a trava de máquina de scripts/e2e-lock.sh, que
+      # serializa os pushes: dois pushes em worktrees diferentes disputavam a
+      # porta 3100, e o segundo morria em "already used". Quem chega depois
+      # espera (teto em E2E_LOCK_WAIT_SECONDS) e o aviso nomeia a worktree dona.
+      # A trava não protege o projeto fixture; quem protege é o lock por projeto
+      # que os specs tomam por teste (ver o cabeçalho do script).
       - id: e2e-smoke
         name: playwright e2e smoke (pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/playwright && PLAYWRIGHT_PRE_PUSH=1 exec bash scripts/e2e-lock.sh ./node_modules/.bin/playwright test || { echo "playwright ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'

@@ -51,7 +51,7 @@
     "test:db:visible-if": "npm run test:db:psql -- supabase/tests/visible_if_no_codigo_pydantic.test.sql",
     "test:db:psql": "bash scripts/run-sql-test.sh",
     "test:watch": "vitest",
-    "test:e2e": "bash scripts/e2e-lock.sh playwright test",
+    "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "invariants": "tsx scripts/invariants/check-invariants.ts",
     "resync:compare": "tsx scripts/compare-assignments/resync.ts",

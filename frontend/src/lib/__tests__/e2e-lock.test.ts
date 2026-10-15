@@ -10,8 +10,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// Contrato da trava de maquina do E2E (scripts/e2e-lock.sh), que serializa as
-// execucoes do Playwright entre worktrees. Os testes nao dependem de tempo: o
+// Contrato da trava de maquina do pre-push (scripts/e2e-lock.sh), que
+// serializa o hook e2e-smoke entre worktrees. Os testes nao dependem de tempo: o
 // dono da trava so solta quando o teste cria um arquivo de liberacao, entao a
 // ordem observada e a da trava mesmo com a maquina carregada.
 
@@ -103,7 +103,7 @@ describe("trava de maquina do E2E", () => {
     // Enquanto a segura, b nao comecou.
     expect(ordem()).toEqual(["inicio-a"]);
     // A mensagem identifica o dono pelo comando que ele roda.
-    expect(b.stderr()).toMatch(/segura a trava: .*inicio-a/);
+    expect(b.stderr()).toMatch(/segura a trava do E2E: .*inicio-a/);
 
     writeFileSync(liberar, "");
     expect(await a.fim).toBe(0);
