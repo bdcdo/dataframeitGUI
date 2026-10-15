@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef } from "react";
+import { useId, useMemo, useRef } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SortableQuestion } from "./SortableQuestion";
@@ -36,6 +36,11 @@ export interface QuestionsPanelProps {
 
 export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting = false, notes = "", onNotesChange, readOnly = false, onReorder, outOfScope }: QuestionsPanelProps) {
   const questionRefs = useRef<(HTMLDivElement | null)[]>([]);
+  // O `DndContext` sem `id` numera o `aria-describedby` dos itens arrastáveis
+  // com um contador de módulo do @dnd-kit, que o servidor e o navegador avançam
+  // separados, e a hidratação divergia (`DndDescribedBy-0` contra `-1`).
+  // `useId` deriva o id da posição na árvore, igual nos dois lados.
+  const dndContextId = useId();
 
   const { outOfScopeState, setOutOfScopeState, outOfScopeBlocked } = useOutOfScopeState(outOfScope);
 
@@ -147,6 +152,7 @@ export function QuestionsPanel({ fields, answers, onAnswer, onSubmit, submitting
         >
           {dragEnabled ? (
             <DndContext
+              id={dndContextId}
               sensors={sensors}
               collisionDetection={closestCenter}
               onDragEnd={handleDragEnd}

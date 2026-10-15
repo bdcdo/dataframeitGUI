@@ -16,6 +16,20 @@ const eslintConfig = defineConfig([
     },
     rules: {
       [`server-actions/${RULE_NAME}`]: "error",
+      // Sem `id`, o @dnd-kit numera o `aria-describedby` dos itens arrastáveis
+      // com um contador de módulo, que o servidor e o navegador avançam
+      // separados: a hidratação diverge e o atributo que o React mantém do
+      // servidor aponta para um id que não existe no cliente. O `id` vindo de
+      // `useId()` é igual nos dois lados.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "JSXOpeningElement[name.name='DndContext']:not(:has(> JSXAttribute[name.name='id']))",
+          message:
+            "Passe `id={useId()}` ao DndContext: o id gerado pelo @dnd-kit diverge entre servidor e cliente na hidratação.",
+        },
+      ],
     },
   },
   // Override default ignores of eslint-config-next.
