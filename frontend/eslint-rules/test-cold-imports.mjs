@@ -96,23 +96,38 @@ function isTopLevelStatement(node) {
 // beforeAll do topo do módulo), "hook" (em qualquer outro ponto dentro de um
 // beforeAll: tem prazo próprio, mas não roda antes de todos os testes ou nem
 // roda), "mock-factory" (dentro da fábrica de vi.mock) ou "test".
-function importTiming(node) {
-  let nearestFunction = null;
+function enclosingFunctions(node) {
+  const functions = [];
   for (let current = node.parent; current; current = current.parent) {
-    if (!FUNCTION_TYPES.has(current.type)) continue;
-    nearestFunction ??= current;
-    const call = current.parent;
-    if (call?.type !== "CallExpression" || !call.arguments.includes(current)) {
-      continue;
-    }
-    if (isMockFactoryCall(call)) return "mock-factory";
-    if (isCallTo(call, "beforeAll")) {
-      return current === nearestFunction && isTopLevelStatement(call.parent)
-        ? "warm-up"
-        : "hook";
-    }
+    if (FUNCTION_TYPES.has(current.type)) functions.push(current);
   }
-  return nearestFunction ? "test" : "collection";
+  return functions;
+}
+
+// A chamada de que a função é argumento, como o `beforeAll(fn)` ou o
+// `vi.mock("x", fn)`, ou null quando ela não é argumento de chamada.
+function callTaking(fn) {
+  const call = fn.parent;
+  return call?.type === "CallExpression" && call.arguments.includes(fn)
+    ? call
+    : null;
+}
+
+function hookTiming(call, fn, nearestFunction) {
+  if (isMockFactoryCall(call)) return "mock-factory";
+  if (!isCallTo(call, "beforeAll")) return null;
+  const warmUp = fn === nearestFunction && isTopLevelStatement(call.parent);
+  return warmUp ? "warm-up" : "hook";
+}
+
+function importTiming(node) {
+  const functions = enclosingFunctions(node);
+  for (const fn of functions) {
+    const call = callTaking(fn);
+    const timing = call && hookTiming(call, fn, functions[0]);
+    if (timing) return timing;
+  }
+  return functions.length > 0 ? "test" : "collection";
 }
 
 function isPromiseAll(node) {
@@ -126,23 +141,24 @@ function isPromiseAll(node) {
   );
 }
 
+// O nó que recebe o valor do `import()`: o próprio import, ou o Promise.all de
+// cujo array ele é elemento.
+function promiseHolder(node) {
+  const array = node.parent;
+  if (array?.type !== "ArrayExpression") return node;
+  const call = array.parent;
+  return isPromiseAll(call) && call.arguments[0] === array ? call : node;
+}
+
+const AWAITING_PARENTS = new Set(["AwaitExpression", "ReturnStatement"]);
+
 // O valor do `import()` é esperado por quem o contém: aguardado, devolvido (o
-// hook espera a promise devolvida) ou elemento de um Promise.all que o seja.
+// hook espera a promise devolvida) ou corpo de uma arrow function.
 function isAwaited(node) {
-  let current = node;
-  if (
-    current.parent?.type === "ArrayExpression" &&
-    isPromiseAll(current.parent.parent) &&
-    current.parent.parent.arguments[0] === current.parent
-  ) {
-    current = current.parent.parent;
-  }
-  const parent = current.parent;
-  return (
-    parent?.type === "AwaitExpression" ||
-    parent?.type === "ReturnStatement" ||
-    (parent?.type === "ArrowFunctionExpression" && parent.body === current)
-  );
+  const holder = promiseHolder(node);
+  const parent = holder.parent;
+  if (AWAITING_PARENTS.has(parent?.type)) return true;
+  return parent?.type === "ArrowFunctionExpression" && parent.body === holder;
 }
 
 // `typeof x` em posição de tipo nomeia um valor, e o scope manager a marca como
