@@ -3,11 +3,11 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-// T013: classificação de motivo na tela de conclusão. Cobre os motivos que a
+// Classificação de motivo na tela de conclusão. Cobre os motivos que a
 // tela apresenta (link-pending, link-divergent, sync-temporary-failure,
 // unknown-recoverable) e a transição de motivo quando o retry não resolve — sem
-// mandar o usuário de volta ao login (contracts/access-completion "Rejected
-// behavior"). O motivo `no-project-access` é distinto por design: é decidido no
+// mandar o usuário de volta ao login como se não tivesse sessão. O motivo
+// `no-project-access` é distinto por design: é decidido no
 // dashboard (estado "Nenhum projeto ainda"), não nesta tela — ver
 // dashboard/page.tsx e o teste de fail-closed do resolver.
 

@@ -2,10 +2,11 @@ import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 
-// T028 — RC-003/RC-004 (FR-004, FR-010, FR-014, SC-005/SC-006): gate estrutural
-// que falha se o caminho crítico de autenticação regredir. É a "regressão
-// detectável" exigida pela decisão D6: um teste barato que lê o código-fonte e
-// trava três invariantes que uma edição futura poderia desfazer em silêncio.
+// Gate estrutural que falha se o caminho crítico de autenticação regredir:
+// volta do token customizado legado, da rota de debug de token, de leitura
+// de identidade fora do page-auth ou de reparo de vínculo no render. Teste
+// barato que lê o código-fonte e trava invariantes que uma edição futura
+// poderia desfazer em silêncio.
 
 const SRC = join(__dirname, "..", "..");
 
@@ -31,13 +32,13 @@ function sourceFiles(dir: string = SRC): string[] {
 }
 
 describe("gate de regressão do render path autenticado", () => {
-  it("RC-004: a rota de debug de token não volta (superfície de token-debug)", () => {
-    // A rota diagnóstica que despejava claims/JWT/supabase_uid foi removida
-    // (FR-010). Sua reintrodução reabriria a exposição de token ao usuário.
+  it("a rota de debug de token não volta (superfície de token-debug)", () => {
+    // A rota diagnóstica que despejava claims/JWT/supabase_uid foi removida.
+    // Sua reintrodução reabriria a exposição de token ao usuário.
     expect(existsSync(join(SRC, "app/api/debug-token/route.ts"))).toBe(false);
   });
 
-  it("RC-002: layouts protegidos delegam identidade ao page-auth", () => {
+  it("layouts protegidos delegam identidade ao page-auth", () => {
     // A decisão de navegação fica em uma única fronteira: page-auth consome a
     // resolução discriminada, enquanto layouts não projetam estados em null nem
     // voltam a chamar currentUser()/auth() por conta própria.
@@ -57,7 +58,7 @@ describe("gate de regressão do render path autenticado", () => {
     }
   });
 
-  it("RC-003/FR-008: getAuthUser não repara vínculo no render (sem sync no auth.ts)", () => {
+  it("getAuthUser não repara vínculo no render (sem sync no auth.ts)", () => {
     // A resolução read-only não pode voltar a chamar syncClerkUserToSupabase —
     // o reparo mora só na Server Action de conclusão de acesso.
     const auth = read("lib/auth.ts");
@@ -91,7 +92,7 @@ describe("gate de regressão do render path autenticado", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("FR-010: dashboard e conclusão de acesso não instruem debug de token", () => {
+  it("dashboard e conclusão de acesso não instruem debug de token", () => {
     for (const page of [
       "app/(app)/dashboard/page.tsx",
       "app/auth/post-login/page.tsx",

@@ -19,8 +19,8 @@ interface UnifyMembersDialogProps {
   onClose: () => void;
 }
 
-// Confirmação explícita da unificação (FR-009), com o impacto calculado pela
-// action e o aviso de permanência (clarificação Q1 da spec).
+// Confirmação explícita da unificação, com o impacto calculado pela action e
+// o aviso de permanência: desvincular o e-mail depois não separa os membros.
 export function UnifyMembersDialog({
   projectId,
   preview,

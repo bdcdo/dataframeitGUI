@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-// T014 (SC-007): concluir acesso é idempotente — repetir a ação para a mesma
+// Concluir acesso é idempotente — repetir a ação para a mesma
 // conta não cria vínculo/profile/membership duplicado. A idempotência mora na
 // rotina única de reconciliação; este teste trava que a ação (a) a chama uma
 // vez por tentativa e não faz nada não-idempotente por conta própria, (b)

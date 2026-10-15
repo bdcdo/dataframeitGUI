@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { makeFakeSession, type FakeSession } from "./auth-test-helpers";
 
-// RC-002 (FR-002): para um usuário com vínculo preparado, o caminho crítico não
-// depende de um lookup remoto completo por leitura protegida. Definição medida
-// (M1): "full remote lookup" = chamadas a currentUser() + leituras das tabelas
+// Para um usuário com vínculo preparado, o caminho crítico não
+// depende de um lookup remoto completo por leitura protegida. Definição medida:
+// "full remote lookup" = chamadas a currentUser() + leituras das tabelas
 // de identidade (clerk_user_mapping/master_users) por request. O caminho
 // preparado resolve com uma passada e não cresce a cada consumidor da request.
 
@@ -32,7 +32,7 @@ async function loadAuth() {
   return await import("@/lib/auth");
 }
 
-describe("RC-002 — sem lookup remoto por leitura no caminho preparado", () => {
+describe("sem lookup remoto por leitura no caminho preparado", () => {
   it("caminho preparado resolve com um número pequeno e fixo de lookups", async () => {
     session = makeFakeSession({ scenario: "prepared" });
     const { getAuthUser } = await loadAuth();

@@ -1,4 +1,4 @@
-// Primitivas puras do sorteio de atribuições (spec 001), compartilhadas
+// Primitivas puras do sorteio de atribuições, compartilhadas
 // entre o client (contagem ao vivo no LotteryDialog) e o server
 // (computeLottery) — fonte única de verdade da elegibilidade, no padrão
 // anti-drift de schema-utils.ts (cf. #63).
@@ -157,10 +157,10 @@ export function resolveResearchersPerDoc(
 }
 
 /**
- * Pipeline de elegibilidade — interseção em ordem fixa (data-model.md):
+ * Pipeline de elegibilidade — interseção em ordem fixa:
  * ativos (garantido no fetch) → manual → codificações → status de
  * atribuição → lote. A exigência mínima de respostas para comparação é
- * aplicada antes, no server, e compõe com estes filtros (FR-011).
+ * aplicada antes, no server, e compõe com estes filtros.
  */
 export function filterEligibleDocs(
   docs: LotteryDocStats[],
@@ -199,7 +199,7 @@ export function filterEligibleDocs(
 /**
  * PRNG seedado (mulberry32) — toda a aleatoriedade do sorteio deriva dele,
  * permitindo que a prévia e a execução compartilhem a semente e produzam
- * o mesmo resultado (research D13, FR-013/SC-005).
+ * o mesmo resultado.
  */
 export function createRng(seed: number): () => number {
   let a = seed >>> 0;
@@ -223,13 +223,13 @@ export function shuffleWithRng<T>(arr: T[], rng: () => number): T[] {
 }
 
 /**
- * Núcleo da distribuição do sorteio (research D12). Para cada documento
+ * Núcleo da distribuição do sorteio. Para cada documento
  * (em ordem embaralhada), cada vaga é dada ao candidato de menor chave
  * composta: carga corrente do modo de equilíbrio dividida pelo peso do
  * participante (`round`: só as novas deste sorteio; `history`: acumulada +
- * novas) → co-ocorrência com quem já está no documento (variação de duplas,
- * FR-014) → aleatório (candidatos embaralhados antes do sort estável — a
- * ordem do array de participantes nunca decide, FR-019). O peso (default 1)
+ * novas) → co-ocorrência com quem já está no documento (variação de
+ * duplas) → aleatório (candidatos embaralhados antes do sort estável — a
+ * ordem do array de participantes nunca decide). O peso (default 1)
  * escala a carga: quem tem peso 0.5 atinge a mesma chave com metade dos docs,
  * recebendo ~metade; o teto duro continua sendo `capacity`. Carga e
  * co-ocorrência são atualizadas a cada atribuição. Pura: não muta os inputs.

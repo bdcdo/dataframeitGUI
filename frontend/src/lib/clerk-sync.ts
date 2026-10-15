@@ -132,7 +132,7 @@ async function findOrCreatePreregisteredSupabaseUser(
 }
 
 /**
- * Cria um placeholder Supabase-only para pré-registro de membro (spec 002):
+ * Cria um placeholder Supabase-only para pré-registro de membro sem conta:
  * auth.users com email confirmado + profiles via trigger handle_new_user,
  * com activated_at = NULL (pendente). Não cria usuário Clerk — o auto-join
  * acontece no signup real, quando reconcileClerkUserAccess mapeia o novo

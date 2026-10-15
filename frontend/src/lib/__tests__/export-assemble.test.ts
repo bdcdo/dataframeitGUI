@@ -300,9 +300,9 @@ describe("assembleExport — colunas originais no CSV", () => {
   });
 });
 
-// --- US3: documentos antigos (metadata IS NULL) ---
+// --- Documentos antigos (metadata IS NULL) ---
 
-describe("assembleExport — documentos antigos sem linha original (US3)", () => {
+describe("assembleExport — documentos antigos sem linha original", () => {
   it("base 100% antiga: nenhuma coluna original no header (só controle + schema)", () => {
     const d = run({
       fields: [field("campo")],
@@ -355,9 +355,9 @@ describe("assembleExport — documentos antigos sem linha original (US3)", () =>
   });
 });
 
-// --- Achado C1: descarta respostas/reviews de docs fora da base ---
+// --- Descarta respostas/reviews de docs fora da base ---
 
-describe("assembleExport — filtra à base exportada (achado C1)", () => {
+describe("assembleExport — filtra à base exportada", () => {
   it("nenhuma linha referencia documento ausente da base", () => {
     const d = run({
       fields: [field("campo")],

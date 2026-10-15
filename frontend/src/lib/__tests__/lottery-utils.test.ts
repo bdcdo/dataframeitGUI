@@ -347,7 +347,7 @@ describe("distributeDocs", () => {
     return counts;
   }
 
-  it("modo round distribui uniformemente: novas em ⌊D·R/P⌋..⌈D·R/P⌉ (SC-006)", () => {
+  it("modo round distribui uniformemente: novas em ⌊D·R/P⌋..⌈D·R/P⌉", () => {
     // 12 docs × 1 vaga ÷ 3 participantes = exatamente 4 cada
     const participants = makeParticipants([0, 30, 7]);
     const exact = countByUser(run(docIds(12), participants));
@@ -365,7 +365,7 @@ describe("distributeDocs", () => {
     }
   });
 
-  it("modo history nivela pela carga acumulada (SC-007)", () => {
+  it("modo history nivela pela carga acumulada", () => {
     // p0 carrega 10; com 10 docs novos, p1 e p2 niveladores recebem tudo
     const participants = makeParticipants([10, 0, 0]);
     const counts = countByUser(
@@ -389,7 +389,7 @@ describe("distributeDocs", () => {
     }
   });
 
-  it("desempate é aleatório, não a ordem do array de participantes (FR-019)", () => {
+  it("desempate é aleatório, não a ordem do array de participantes", () => {
     // 1 doc, 4 participantes empatados: em N seeds, cada um é contemplado
     // numa fração aproximadamente uniforme, inclusive os últimos do array
     const participants = makeParticipants([0, 0, 0, 0]);
@@ -405,7 +405,7 @@ describe("distributeDocs", () => {
     }
   });
 
-  it("mesma entrada + mesma seed ⇒ mesmo resultado (base do SC-005)", () => {
+  it("mesma entrada + mesma seed ⇒ mesmo resultado (base de sorteio igual à prévia)", () => {
     const participants = makeParticipants([2, 0, 5, 1]);
     const a = run(docIds(30), participants, { researchersPerDoc: 2, seed: 7 });
     const b = run(docIds(30), participants, { researchersPerDoc: 2, seed: 7 });
@@ -494,7 +494,7 @@ describe("distributeDocs", () => {
     }
   });
 
-  it("variação de duplas desempata entre cargas iguais (FR-014)", () => {
+  it("variação de duplas desempata entre cargas iguais", () => {
     // doc0 já tem X; p0 co-ocorre muito com X, p1 e p2 nunca — entre
     // empatados de carga, p0 nunca deve ser escolhido
     const participants = makeParticipants([0, 0, 0]);
