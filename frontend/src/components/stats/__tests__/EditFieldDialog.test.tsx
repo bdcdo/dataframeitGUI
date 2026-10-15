@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { EditFieldDialog } from "../EditFieldDialog";
 import type { PydanticField } from "@/lib/types";
 
@@ -79,6 +80,11 @@ function savedFieldsArg(call = 0): PydanticField[] {
 // O formulário congela na abertura (por design: um refresh RSC não pode apagar
 // a digitação), mas o save e a exibição precisam reconciliar com o remoto que
 // avançou sob o diálogo aberto — issue #501.
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
+
 describe("EditFieldDialog — remoto avança com o diálogo aberto", () => {
   it("salvar não reverte edição concorrente de outra propriedade", async () => {
     hoisted.saveSchemaFromGUI.mockResolvedValue({

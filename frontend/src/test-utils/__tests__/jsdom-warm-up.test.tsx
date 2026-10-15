@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 
-// O aquecimento de src/test-utils/jsdom-warm-up.tsx já rodou quando este teste
-// começa. Ele instala stubs de Radix só enquanto roda; se algum sobrevivesse, um
-// arquivo que renderiza Radix sem declarar os stubs passaria por acaso.
-describe("aquecimento dos arquivos jsdom", () => {
+beforeAll(() => warmUpJsdom({ select: true }), 30_000);
+
+// warmUpJsdom instala stubs de Radix só enquanto roda; se algum sobrevivesse,
+// um arquivo que renderiza Radix sem declarar os stubs passaria por acaso.
+describe("aquecimento de arquivo jsdom", () => {
   it("não deixa stubs de jsdom instalados", () => {
     const proto = Element.prototype as unknown as Record<string, unknown>;
     expect(proto.scrollIntoView).toBeUndefined();

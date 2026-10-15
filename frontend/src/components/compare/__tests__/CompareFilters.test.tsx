@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -45,6 +46,11 @@ async function openVersionSelect(user: ReturnType<typeof userEvent.setup>) {
   const comboboxes = await screen.findAllByRole("combobox");
   await user.click(comboboxes[0]);
 }
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom({ select: true }), 30_000);
 
 describe("CompareFilters — alcançabilidade de 'Todas as versões' (#247/#286)", () => {
   // REGRESSÃO #247: com o default VIVO latest_major, "Todas as versões" só é

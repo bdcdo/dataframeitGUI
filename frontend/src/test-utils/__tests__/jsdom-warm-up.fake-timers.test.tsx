@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 
-// Timers falsos ligados na coleta, antes do aquecimento de
-// src/test-utils/jsdom-warm-up.tsx. Se o hook não pulasse esse caso, ele
-// esperaria por setTimeout congelados até estourar o prazo, e o teste abaixo
-// seria pulado com o erro do hook.
+// Com timers falsos ligados, warmUpJsdom precisa voltar sem exercitar nada. Se
+// não pulasse esse caso, esperaria por setTimeout congelados e o teste
+// estouraria o timeout.
 vi.useFakeTimers();
 
-it("um arquivo com timers falsos desde a coleta roda os testes", () => {
-  expect(vi.isFakeTimers()).toBe(true);
+it("com timers falsos, o aquecimento volta sem montar nada", async () => {
+  await warmUpJsdom({ select: true });
+  expect(document.body.innerHTML).toBe("");
 });

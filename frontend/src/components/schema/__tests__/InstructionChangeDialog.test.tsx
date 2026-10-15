@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { InstructionChangeDialog } from "../InstructionChangeDialog";
 import { useInstructionChangeGuard } from "../useInstructionChangeGuard";
 import { applyInstructionChoices } from "@/lib/question-revision";
@@ -63,6 +64,11 @@ const pressed = (field: string, choice: string) =>
   within(fieldGroup(field)).getByRole("button", { name: choice }).getAttribute("aria-pressed");
 
 afterEach(cleanup);
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 describe("InstructionChangeDialog", () => {
   it("nasce sem escolha e só confirma com todos os campos escolhidos", async () => {

@@ -1,29 +1,32 @@
-import { beforeAll, vi } from "vitest";
+import { vi } from "vitest";
 
 // Cada arquivo de teste roda num processo novo, e o primeiro teste de um
-// arquivo jsdom pagava sozinho o carregamento de React DOM, Testing Library,
+// arquivo jsdom paga sozinho o carregamento de React DOM, Testing Library,
 // user-event e Radix (transformação pelo Vite e avaliação dos módulos) e a
 // primeira execução dos caminhos de render, evento e consulta por papel, ainda
 // sem otimização do JIT: de 1 a 6 s com a suíte disputando a CPU, contra algumas
 // centenas de milissegundos dos testes seguintes, e o bastante para estourar o
-// timeout de 5 s de qualquer teste que fosse o primeiro. Este hook exercita
-// esses caminhos uma vez, antes dos testes e com prazo próprio, e não deixa
-// nada montado: um Dialog com digitação e clique, e um Popover com um Select
-// aberto e escolhido, que é o caminho de Popper e Select dos filtros.
+// timeout de 5 s do primeiro teste. Um arquivo que sofre disso chama esta
+// função num beforeAll com prazo próprio, e o custo sai do primeiro teste:
+//
+//   beforeAll(() => warmUpJsdom(), 30_000);
+//
+// A função não é um setupFiles de todos os arquivos jsdom de propósito. Num
+// arquivo que usa Dialog e user-event ela só antecipa o que o primeiro teste
+// pagaria; nos demais é custo novo, e aplicada a todos somava cerca de 20% da
+// CPU da suíte para proteger cargas acima da faixa que a suíte precisa
+// aguentar. Ela exercita um Dialog com digitação e clique e, com
+// `select: true`, um Popover com um Select aberto e escolhido, que é o caminho
+// de Popper e Select dos filtros. Nada fica montado.
+//
+// Só entram bibliotecas que nenhum teste mocka: um módulo do projeto como
+// @/components/ui/button chegaria aqui mockado nos arquivos que o mockam, e o
+// aquecimento exercitaria código diferente em cada arquivo.
 //
 // Um estado sobra, por desenho do user-event: o setup() prepara o document uma
 // vez por processo, com ouvintes de focus e blur em captura que acompanham o
 // valor dos campos e disparam change no blur quando ele mudou. Num arquivo que
-// já usa user-event isso aconteceria de qualquer forma; num arquivo que só usa
-// fireEvent, um campo que recebe foco, muda de valor e perde o foco passa a
-// receber esse change a mais.
-//
-// Só entram bibliotecas que nenhum teste mocka. O hook roda depois da coleta do
-// arquivo, quando os vi.mock dele já valem, e um módulo do projeto como
-// @/components/ui/button chegaria aqui mockado nos arquivos que o mockam: o
-// aquecimento exercitaria código diferente em cada arquivo. Os imports são
-// dinâmicos e ficam atrás da guarda de ambiente para que os arquivos de
-// ambiente node não carreguem nada disto.
+// já usa user-event isso aconteceria de qualquer forma.
 
 const ELEMENT_STUBS = [
   "scrollIntoView",
@@ -57,12 +60,10 @@ function installTemporaryRadixStubs(): () => void {
   };
 }
 
-beforeAll(async () => {
-  if (typeof document === "undefined") return;
-  // Um arquivo que liga timers falsos na coleta congelaria os setTimeout de
-  // user-event e do findByRole, e o hook esperaria até estourar o prazo. Trocar
-  // para timers reais e voltar descartaria o relógio que o arquivo configurou;
-  // esse arquivo fica sem aquecimento.
+export async function warmUpJsdom({ select = false }: { select?: boolean } = {}): Promise<void> {
+  // Com timers falsos ligados, os setTimeout de user-event e do findByRole
+  // ficam congelados e a função esperaria até estourar o prazo do hook. Trocar
+  // para timers reais e voltar descartaria o relógio que o arquivo configurou.
   if (vi.isFakeTimers()) return;
   const [{ cleanup, render, screen, within }, { default: userEvent }, { Dialog, Popover, Select }] =
     await Promise.all([
@@ -87,6 +88,7 @@ beforeAll(async () => {
     await user.type(screen.getByRole("textbox", { name: "Campo" }), "abc");
     await user.click(await screen.findByRole("button", { name: "Confirmar" }));
     cleanup();
+    if (!select) return;
 
     render(
       <Popover.Root>
@@ -122,4 +124,4 @@ beforeAll(async () => {
     cleanup();
     restoreStubs();
   }
-}, 30_000);
+}

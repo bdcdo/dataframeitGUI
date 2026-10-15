@@ -35,11 +35,11 @@ async function findConfirmButton() {
   return within(dialog).findByRole("button", { name: "Confirmar decisão" });
 }
 
-// O aquecimento de src/test-utils/jsdom-warm-up.tsx cobre as bibliotecas, mas o
-// primeiro render desta tela e do diálogo de decisão segue frio, e com a suíte
-// disputando a CPU o primeiro teste ainda passava dos 5 s (5,2 s com load 52 a
-// 59, contra 0,9 a 3 s dos seguintes). O hook percorre uma vez o caminho de
-// abrir e cancelar uma decisão, sem gravar nada; o beforeEach limpa os mocks.
+// O primeiro render desta tela e do diálogo de decisão é frio, e com a suíte
+// disputando a CPU o primeiro teste passava dos 5 s (5,2 s com load 52 a 59,
+// contra 0,9 a 3 s dos seguintes). O hook percorre uma vez o caminho de abrir e
+// cancelar uma decisão, sem gravar nada, o que também carrega as bibliotecas
+// que src/test-utils/jsdom-warm-up.tsx aqueceria; o beforeEach limpa os mocks.
 beforeAll(async () => {
   mocks.prepare.mockResolvedValue({ context: row.context });
   show();
