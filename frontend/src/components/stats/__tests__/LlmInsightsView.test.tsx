@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import type { LlmError } from "@/lib/llm-error-metrics";
@@ -26,11 +26,10 @@ function show(error = errorCase(), canResolve = true) {
     canResolve={canResolve} isCoordinator={false} summary={{ totalLlmDocs: 1 }} />);
 }
 
-// O diálogo abre de dentro da transição que prepara a decisão, e até ela
-// terminar o botão se chama "Salvando…". A espera pelo rótulo final consulta
-// só o diálogo: cada tentativa do findByRole calcula o nome acessível de todo
-// botão no escopo, e na tela inteira isso custava dezenas de vezes mais e
-// disputava a CPU com o render que encerra a transição.
+// O diálogo só abre quando a preparação da decisão resolve. A busca do botão
+// fica restrita ao diálogo porque cada tentativa do findByRole calcula o nome
+// acessível de todo botão no escopo, e a tela inteira tem um botão por erro e
+// por ação, o que encarece cada tentativa com a máquina carregada.
 async function findConfirmButton() {
   const dialog = await screen.findByRole("dialog");
   return within(dialog).findByRole("button", { name: "Confirmar decisão" });
@@ -58,6 +57,48 @@ beforeEach(() => {
 });
 
 describe("decisão individual em Insights", () => {
+  // O diálogo abre quando a preparação já terminou, e nada está sendo salvo.
+  // Quando confirmar e preparar dividiam a mesma transição, o diálogo nascia
+  // com "Salvando…" desabilitado e só liberava a confirmação no render que
+  // encerrava a preparação. O observer registra os botões no primeiro commit
+  // em que o diálogo existe, antes de qualquer render seguinte.
+  it("o diálogo nasce com a confirmação disponível", async () => {
+    let firstLabels: string[] | null = null;
+    const observer = new MutationObserver(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (!dialog || firstLabels) return;
+      firstLabels = Array.from(dialog.querySelectorAll("button"))
+        .filter((button) => button.textContent !== "Close")
+        .map((button) => `${button.textContent}${button.disabled ? " (desabilitado)" : ""}`);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      show();
+      await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+      await screen.findByRole("dialog");
+    } finally {
+      observer.disconnect();
+    }
+    expect(firstLabels).toEqual(["Cancelar", "Confirmar decisão"]);
+  });
+
+  // A outra metade da divisão das transições: enquanto a decisão grava, o
+  // diálogo mostra "Salvando…" e os cards atrás dele não aceitam outra ação.
+  it("durante o salvamento o diálogo e os cards ficam bloqueados", async () => {
+    let finish: (value: { success: true }) => void = () => {};
+    mocks.resolve.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+    await userEvent.click(await findConfirmButton());
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Salvando…" })).toHaveProperty("disabled", true));
+    // O diálogo é modal e esconde o resto da tela da árvore de acessibilidade.
+    expect(screen.getByRole("button", { name: "Erro humano", hidden: true })).toHaveProperty("disabled", true);
+    await act(async () => finish({ success: true }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Erro humano" })).toHaveProperty("disabled", false));
+  });
+
   it("selecionar não grava; confirmar envia o contexto que foi mostrado", async () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
