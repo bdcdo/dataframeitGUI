@@ -85,14 +85,27 @@ function sourceFiles(dir: string): string[] {
   return files;
 }
 
+// Cada arquivo é lido e parseado uma vez por execução do arquivo de teste. Sem
+// o cache, o BFS de `pathToTarget` reparseava do disco cada nó visitado, para
+// cada um dos módulos "use client" de partida, e `countAdminFactoryCalls`
+// reparseava a árvore inteira: o caso de vazamento custava segundos mesmo com o
+// arquivo rodando sozinho e passava dos 5 s do timeout com a suíte disputando a
+// CPU. O parse inicial acontece na montagem do grafo, no corpo do `describe`,
+// que roda na coleta e não conta contra o timeout de nenhum caso.
+const parsedSources = new Map<string, ts.SourceFile>();
+
 function parse(file: string): ts.SourceFile {
-  return ts.createSourceFile(
+  const cached = parsedSources.get(file);
+  if (cached) return cached;
+  const source = ts.createSourceFile(
     file,
     fs.readFileSync(file, "utf8"),
     ts.ScriptTarget.Latest,
     true,
     file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
+  parsedSources.set(file, source);
+  return source;
 }
 
 function parseText(source: string): ts.SourceFile {
