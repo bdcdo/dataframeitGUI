@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { makeFakeSession, type FakeSession } from "./auth-test-helpers";
 
-// RC-005 (fail-closed) + classificação de estado da resolução de identidade
-// (contracts/auth-resolution). `resolveAuth` é read-only e nunca repara vínculo
-// no render (decisão D3): sessão sem vínculo confirmado NÃO vira `authenticated`
+// Fail-closed de vínculo ausente + classificação de estado da resolução de
+// identidade. `resolveAuth` é read-only e nunca repara vínculo no render:
+// sessão sem vínculo confirmado NÃO vira `authenticated`
 // nem `null` ambíguo — vira um estado recuperável explícito, para o layout
 // redirecionar à conclusão de acesso em vez de mostrar dados protegidos.
 
@@ -34,7 +34,7 @@ async function loadResolveAuth() {
   return (await import("@/lib/auth")).resolveAuth;
 }
 
-describe("resolveAuth — fail-closed (RC-005) e classificação de estado", () => {
+describe("resolveAuth — fail-closed de vínculo ausente e classificação de estado", () => {
   it("sem sessão Clerk → signed-out", async () => {
     session = makeFakeSession();
     // Sobrescreve currentUser para simular ausência de sessão.

@@ -2,10 +2,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 
-// T015 (C3, Constituição §VI / FR-009 / FR-010): a tela de conclusão de acesso
-// é navegável por teclado, define foco inicial, expõe botão de retry com nome
-// acessível e não vaza token/claim/debug. shadcn/ui traz a base a11y; o teste
-// trava que a customização a preserva e que o texto é não técnico.
+// Acessibilidade (WCAG 2.1 AA) e linguagem não técnica: a tela de conclusão
+// de acesso é navegável por teclado, define foco inicial, expõe botão de retry
+// com nome acessível e não vaza token/claim/debug. shadcn/ui traz a base a11y;
+// o teste trava que a customização a preserva e que o texto é não técnico.
 
 const replace = vi.fn();
 const refresh = vi.fn();
@@ -62,7 +62,7 @@ describe("AccessCompletionCard — acessibilidade e ausência de detalhe técnic
     expect(document.activeElement).toBe(title);
   });
 
-  it("não renderiza token, claim, debug nem nome de tabela (FR-010)", () => {
+  it("não renderiza token, claim, debug nem nome de tabela", () => {
     const { container } = render(
       <AccessCompletionCard
         reason="link-divergent"

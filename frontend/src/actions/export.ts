@@ -1,6 +1,7 @@
 "use server";
 
-// Server action do export completo (feature 004). Só exports async vivem aqui —
+// Server action do export completo (documentos, respostas e gabarito, com as
+// colunas originais do CSV). Só exports async vivem aqui —
 // export síncrono em módulo "use server" quebra o deploy silenciosamente e nenhum
 // gate local pega (lição do PR #412); a montagem pura mora em lib/export/assemble.
 import { createSupabaseServer } from "@/lib/supabase/server";
@@ -31,8 +32,9 @@ export interface ExportOptions {
 // Retorna o conjunto completo do projeto (documentos + respostas + gabarito)
 // já montado como planilhas de strings. Gate coordinator-only (fail-closed);
 // lê documents.metadata APENAS aqui, nunca na listagem da página. As queries
-// são paralelas e usam colunas explícitas (Princípio II de velocidade), exceto
-// `final_answers`, que depende do modo de automação lido no projeto.
+// são paralelas e usam colunas explícitas (regras de performance do
+// CLAUDE.md), exceto `final_answers`, que depende do modo de automação lido
+// no projeto.
 export async function getExportDataset(
   projectId: string,
   options: ExportOptions = {},

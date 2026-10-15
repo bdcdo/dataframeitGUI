@@ -14,9 +14,10 @@ interface DocumentPickerListProps {
 }
 
 /**
- * Lista pesquisável para seleção manual de documentos do sorteio (US5).
+ * Lista pesquisável para seleção manual de documentos do sorteio.
  * Busca client-side sobre as stats já carregadas; sem virtualização —
- * max-h + scroll basta para a escala-alvo (research D6).
+ * max-h + scroll basta para a escala-alvo (centenas a poucos milhares de
+ * docs); virtualizar só se a prática mostrar jank.
  */
 export function DocumentPickerList({
   docs,

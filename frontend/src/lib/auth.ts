@@ -17,7 +17,7 @@ export interface AuthUser {
   isMaster: boolean;
 }
 
-// Resultado observável da resolução de identidade (contracts/auth-resolution).
+// Resultado observável da resolução de identidade.
 // É a fonte única que distingue os estados que a feature precisa separar —
 // substitui o antigo `AuthUser | null`, que colapsava "sem sessão", "vínculo
 // pendente" e "falha técnica" num único `null` e escondia a diferença dos
@@ -44,7 +44,7 @@ function technicalSyncFailure(actorEmail?: string): AuthResolution {
   };
 }
 
-// Resolve o UUID Supabase da sessão SEM escrever nada (decisão D3): exige que
+// Resolve o UUID Supabase da sessão SEM escrever nada: exige que
 // metadata do Clerk e `clerk_user_mapping` existam simultaneamente. Nunca chama
 // `reconcileClerkUserAccess` — a criação/reparo do vínculo é responsabilidade
 // explícita da ação de conclusão de acesso, fora do render protegido.
@@ -92,10 +92,10 @@ async function readSupabaseUid(
  *
  * `cache()` deduplica a resolução Clerk + lookups em `clerk_user_mapping` e
  * `master_users` quando vários layouts, pages e helpers da mesma request pedem
- * a identidade (RC-001 / SC-002). Não faz nenhuma escrita: quando
+ * a identidade. Não faz nenhuma escrita: quando
  * o vínculo interno está ausente, pendente ou divergente, retorna
  * `access-completion-required` para que a página protegida falhe fechada e
- * redirecione à conclusão de acesso (FR-008), em vez de reparar no render.
+ * redirecione à conclusão de acesso, em vez de reparar no render.
  */
 async function resolveAuthUncached(): Promise<AuthResolution> {
   const user = await currentUser();
@@ -129,7 +129,8 @@ async function resolveAuthUncached(): Promise<AuthResolution> {
   const { uid, mappingUid } = identity;
 
   // Metadata e mapping apontam para identidades incompatíveis: não adivinhar
-  // qual vale — encaminhar para reparo (data-model: active → divergent).
+  // qual vale — encaminhar para reparo. "Divergente" é derivado desta
+  // leitura, não fica gravado em coluna.
   if (uid !== mappingUid) {
     return {
       status: "access-completion-required",
@@ -154,7 +155,7 @@ async function resolveAuthUncached(): Promise<AuthResolution> {
     return technicalSyncFailure(email);
   }
 
-  // Nota (decisão D3): a ativação de perfil (`activated_at`) NÃO acontece aqui.
+  // Nota: a ativação de perfil (`activated_at`) NÃO acontece aqui.
   // Este caminho é read-only por design — a ativação é reparo de vínculo e vive
   // fora do render: no webhook `user.created` (com retry do Svix) e na ação
   // `completeAccess` da tela de conclusão. Não recolocar a escrita neste ponto:
@@ -174,9 +175,9 @@ async function resolveAuthUncached(): Promise<AuthResolution> {
 }
 
 export const resolveAuth = cache(async (): Promise<AuthResolution> => {
-  // Observabilidade de SC-002 (T010): como o corpo do `cache()` roda uma vez por
-  // request, cada execução aqui é uma resolução real. Com o flag ligado, o log
-  // por request confirma que a identidade é resolvida uma vez, não por leitura.
+  // Observabilidade: como o corpo do `cache()` roda uma vez por request, cada
+  // execução aqui é uma resolução real. Com o flag ligado, o log por request
+  // confirma que a identidade é resolvida uma vez, não por leitura.
   // Server-only e opt-in — nunca vaza para o cliente nem polui logs por padrão.
   if (process.env.AUTH_RESOLVE_DEBUG === "1") {
     console.info("[auth] resolveAuth: nova resolução de identidade na request");

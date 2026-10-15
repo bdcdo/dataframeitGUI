@@ -280,7 +280,7 @@ export function useLotteryRun({
     manualDocIds,
   ]);
 
-  // Prévia + semente (research D13): a seed da última prévia é reaproveitada
+  // Prévia + semente: a seed da última prévia é reaproveitada
   // ao sortear; a prévia é guardada junto da configuração que a gerou, então
   // qualquer mudança de configuração a invalida (e à seed) por derivação.
   // O rótulo do lote fica de fora: não afeta o resultado e é lido em

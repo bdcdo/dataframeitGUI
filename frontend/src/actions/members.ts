@@ -16,7 +16,7 @@ import { MEMBERS_TAG_PROFILE as TAG_PROFILE } from "@/lib/cache";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// FR-006: normaliza antes de validar; retorna null para formato inválido.
+// Normaliza antes de validar; retorna null para formato inválido.
 function normalizeEmail(raw: string): string | null {
   const email = raw.trim().toLowerCase();
   return EMAIL_RE.test(email) ? email : null;
@@ -339,7 +339,7 @@ export async function addMember(
 }
 
 // Corrige o e-mail de um membro ainda pendente (activated_at IS NULL).
-// Efeito é global (FR-005): o placeholder é um só, então a correção vale para
+// Efeito é global: o placeholder é um só, então a correção vale para
 // todos os projetos em que ele está pré-registrado — `otherProjectsCount`
 // permite à UI avisar o coordenador quando há outros projetos afetados.
 export async function updatePendingMemberEmail(
@@ -606,7 +606,7 @@ export async function setCanCompare(
   return { retried };
 }
 
-// Preview da unificação (FR-009): o coordenador confirma sabendo o impacto —
+// Preview da unificação: o coordenador confirma sabendo o impacto —
 // quantas atribuições migram, em quantos documentos os dois membros têm
 // resposta vigente (afeta comparações) e qual papel prevalece.
 export interface UnificationPreview {
@@ -1165,11 +1165,12 @@ async function finalizeMemberEmailLink(
   return result;
 }
 
-// Vincula um e-mail adicional a um membro (US2). Casos do contrato, na ordem:
+// Vincula um e-mail adicional a um membro. Casos tratados, na ordem:
 // 1. e-mail já vinculado no projeto → erro; 2. e-mail pertence a outro
 // membro → retorna status requires-unification (não executa nada); 3. conta existente
 // não-membro → link com linked_user_id; 4. sem conta → link pendente
-// (linked_user_id NULL, vale como pré-registro do e-mail — clarificação Q2).
+// (linked_user_id NULL, vale como pré-registro do e-mail: quem criar conta
+// com ele entra no projeto como este membro).
 export async function linkMemberEmail(
   projectId: string,
   memberUserId: string,
@@ -1344,9 +1345,10 @@ async function resolveUnificationLinkedUserId(
     : { status: "resolved", userId, expectedSnapshotVersion };
 }
 
-// Executa a unificação após confirmação explícita no dialog (FR-009).
-// Permanente (clarificação Q1) — a RPC migra identidade de trabalho do source
-// para o target no escopo do projeto e registra o alias.
+// Executa a unificação após confirmação explícita no dialog.
+// Permanente: desvincular o e-mail depois não separa os membros de volta. A
+// RPC migra identidade de trabalho do source para o target no escopo do
+// projeto e registra o alias.
 export async function unifyMembers(
   projectId: string,
   sourceUserId: string,
@@ -1396,7 +1398,7 @@ export async function unifyMembers(
   return {};
 }
 
-// Desvincula um e-mail (FR-012): acessos futuros pelo e-mail cessam; o
+// Desvincula um e-mail: acessos futuros pelo e-mail cessam; o
 // histórico permanece (nada referencia a linha). Não desfaz unificação.
 export async function unlinkMemberEmail(
   projectId: string,

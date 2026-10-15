@@ -8,7 +8,7 @@ export interface LotteryMember {
   userId: string;
   name: string;
   role: "pesquisador" | "coordenador";
-  // Pré-registrado (spec 002): ainda não criou conta.
+  // Pré-registrado: ainda não criou conta.
   pending?: boolean;
   // Defaults de carga persistidos (último sorteio): peso relativo e limite
   // individual de docs. Pré-preenchem os campos por participante.
