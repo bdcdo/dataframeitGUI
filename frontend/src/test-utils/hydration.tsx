@@ -30,12 +30,20 @@ export interface HydrationResult {
  * O container é desmontado e removido ao fim do teste, mesmo quando o teste
  * falha antes, para que um alvo de `aria-describedby` de um teste não satisfaça
  * a busca no `document` do teste seguinte.
+ *
+ * `beforeHydrate` roda entre o HTML do servidor e a hidratação. Serve para o
+ * caso em que algo externo muda nesse intervalo no navegador real, como uma
+ * biblioteca que termina de carregar antes de a hidratação chegar ao componente.
  */
-export async function hydrateFromServerHtml(element: ReactElement): Promise<HydrationResult> {
+export async function hydrateFromServerHtml(
+  element: ReactElement,
+  options: { beforeHydrate?: () => void } = {},
+): Promise<HydrationResult> {
   const html = renderToString(element);
   const container = document.createElement("div");
   container.innerHTML = html;
   document.body.appendChild(container);
+  options.beforeHydrate?.();
 
   const hydrationErrors: string[] = [];
   // Troca direta, sem `vi.spyOn`: quando o teste já espiona `console.error`, o

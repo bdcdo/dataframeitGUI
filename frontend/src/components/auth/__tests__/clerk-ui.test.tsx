@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { renderToString } from "react-dom/server";
+import { hydrateFromServerHtml } from "@/test-utils/hydration";
 
 // O Clerk é fronteira externa: o mock reproduz só o traço que causa o bug, o
 // `clerk.loaded` lido ao vivo no render (no `@clerk/react` real, o getter
@@ -22,7 +23,6 @@ import { SignIn as ClerkSignIn } from "@clerk/nextjs";
 import { SignIn } from "../clerk-ui";
 
 afterEach(() => {
-  cleanup();
   clerkState.loaded = false;
   clerkState.lastProps = undefined;
 });
@@ -33,47 +33,43 @@ const LOGIN_PROPS = {
   forceRedirectUrl: "/auth/post-login",
 };
 
-// No servidor o Clerk nunca está carregado, então o HTML desta subárvore é
-// vazio — com ou sem o portão. A hidratação parte desse container vazio, depois
-// de o clerk-js já ter terminado de carregar: a ordem que produz o "Hydration
-// failed" intermitente em /auth/login.
-function hydrateAfterClerkLoaded(ui: React.ReactElement): {
-  container: HTMLElement;
-  recoverable: unknown[];
-} {
-  const container = document.body.appendChild(document.createElement("div"));
-  clerkState.loaded = true;
-  const recoverable: unknown[] = [];
-  render(ui, {
-    container,
-    hydrate: true,
-    onRecoverableError: (error) => recoverable.push(error),
+// O HTML do servidor sai com o Clerk descarregado (sempre o caso lá); o
+// clerk-js termina de carregar ANTES de a hidratação chegar ao componente — a
+// ordem que produz o "Hydration failed" intermitente em /auth/login.
+function hydrateAfterClerkLoaded(element: React.ReactElement) {
+  return hydrateFromServerHtml(element, {
+    beforeHydrate: () => {
+      clerkState.loaded = true;
+    },
   });
-  return { container, recoverable };
 }
 
 describe("clerk-ui SignIn — portão de hidratação", () => {
-  it("controle: sem o portão, o Clerk carregado antes da hidratação quebra a hidratação", () => {
+  it("controle: sem o portão, o Clerk carregado antes da hidratação quebra a hidratação", async () => {
     // Prova de que o mock reproduz o mecanismo. Se este teste deixar de falhar
     // a hidratação, o teste de baixo vira vácuo e precisa ser revisto.
-    const silence = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { recoverable } = hydrateAfterClerkLoaded(
+    const { hydrationErrors } = await hydrateAfterClerkLoaded(
       <ClerkSignIn {...LOGIN_PROPS} />,
     );
-    silence.mockRestore();
 
-    expect(recoverable.map(String).join("\n")).toMatch(/Hydration failed/);
+    expect(hydrationErrors.join("\n")).toMatch(/Hydration failed/);
   });
 
-  it("com o portão, hidrata sem divergência e monta o SignIn logo depois", () => {
-    const { container, recoverable } = hydrateAfterClerkLoaded(
+  it("com o portão, hidrata sem divergência e monta o SignIn logo depois", async () => {
+    const { container, hydrationErrors } = await hydrateAfterClerkLoaded(
       <SignIn {...LOGIN_PROPS} />,
     );
 
-    expect(recoverable).toEqual([]);
+    expect(hydrationErrors).toEqual([]);
     const node = container.querySelector('[data-clerk-component="SignIn"]');
     expect(node, "o SignIn não montou depois da hidratação").not.toBeNull();
     // As props chegam ao componente do Clerk sem perda.
     expect(clerkState.lastProps).toEqual(LOGIN_PROPS);
+  });
+
+  it("o HTML do servidor não traz o SignIn, mesmo com o Clerk carregado", () => {
+    // Fixa o lado servidor do portão: a saída não depende do estado do Clerk.
+    clerkState.loaded = true;
+    expect(renderToString(<SignIn />)).toBe("");
   });
 });
