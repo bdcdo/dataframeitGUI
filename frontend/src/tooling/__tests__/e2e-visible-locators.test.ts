@@ -39,6 +39,27 @@ describe("regra de locators visíveis nos specs E2E", () => {
     },
   );
 
+  // O hook roda o ESLint sem --max-warnings 0: rebaixada a "warn", a regra
+  // continuaria aparecendo aqui e deixaria de barrar o push.
+  it("é erro, não aviso", async () => {
+    const [message] = await messagesFor(
+      `${prelude}\ntest("x", async ({ page }) => { page.getByText("a"); });`,
+    );
+
+    expect(message?.severity).toBe(2);
+  });
+
+  // Helper fora de *.spec.ts também monta locator; estreitar o glob do bloco
+  // tiraria esses arquivos do gate.
+  it("vale para módulo de apoio, não só para spec", async () => {
+    await expect(
+      messagesFor(
+        `${prelude}\nexport function x(page: Page) { return page.getByText("a"); }`,
+        "e2e/helpers/navegacao.ts",
+      ),
+    ).resolves.toHaveLength(1);
+  });
+
   it.each([
     [
       "página secundária",
@@ -55,6 +76,24 @@ describe("regra de locators visíveis nos specs E2E", () => {
       `expect(page.getByTestId("a")).toBeVisible();`,
     ],
     ["container achado por css", `page.locator("main").getByText("a");`],
+    [
+      "page object com this.page",
+      `class Tela { constructor(private readonly page: Page) {} t() { return this.page.getByText("a"); } }`,
+    ],
+    [
+      "body filtrado por visivel()",
+      `visivel(page.locator("body")).getByText("a");`,
+    ],
+    [
+      "html filtrado por visivel()",
+      `visivel(page.locator(" html ")).locator("p");`,
+    ],
+    ["API legada $$", `await page.$$("text=a");`],
+    [
+      "API legada $$eval",
+      `await page.$$eval("[data-testid=a]", (els) => els.length);`,
+    ],
+    ["API legada textContent", `await page.textContent("p");`],
   ])("bloqueia %s", async (_caseName, body) => {
     const messages = await messagesFor(
       `${prelude}\ntest("x", async ({ page, context }) => { ${body} });`,
@@ -75,6 +114,8 @@ describe("regra de locators visíveis nos specs E2E", () => {
           const dialog = page.getByRole("dialog", { includeHidden: false });
           await expect(dialog.getByText("a")).toBeVisible();
           await page.getByRole("button", { name: "a" }).getByText("b").click();
+          await expect(page.locator('a[href$="/x"]')).toHaveCount(0);
+          await expect(page.getByText("a")).toHaveCount(0, { timeout: 1 });
         });
       `),
     ).resolves.toEqual([]);
@@ -98,6 +139,14 @@ describe("regra de locators visíveis nos specs E2E", () => {
     ],
     ["parâmetro Page com outro nome", `async function go(p: Page) {}`],
     ["fixture renomeada", `test("x", async ({ page: p }) => {});`],
+    [
+      "popup com outro nome",
+      `test("x", async ({ page }) => { const popup = await page.waitForEvent("popup"); });`,
+    ],
+    [
+      "fixture tipada de test.extend com outro nome",
+      `const t = test.extend<{ coordinator: Page }>({});`,
+    ],
   ])("bloqueia %s", async (_caseName, code) => {
     const messages = await messagesFor(`${prelude}\n${code}`);
 
