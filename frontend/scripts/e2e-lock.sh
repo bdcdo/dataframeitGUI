@@ -9,7 +9,7 @@
 # Sai com o status do comando; com 1 se o flock faltar ou a espera estourar;
 # com 2 em erro de uso.
 #
-# O que a trava resolve: o pre-push sobe o `next dev` na mesma porta (3100) em
+# O que a trava resolve: o pre-push sobe o servidor do app na mesma porta (3100) em
 # toda worktree, entao dois `git push` simultaneos em worktrees diferentes
 # terminavam com a segunda execucao em "http://localhost:3100 is already used".
 # Com a trava, a segunda espera a primeira. Serializar, em vez de dar uma porta

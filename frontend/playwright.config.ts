@@ -75,15 +75,35 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
+    // Execução gated roda contra o build de produção, não contra o `next dev`.
+    // O `next dev` só conhece uma rota depois que a varredura do app dir (o
+    // Watchpack de setup-dev-bundler) a registra, mas já atende requests no
+    // meio dela: o middleware responde `/` com 307, e é isso que o Playwright
+    // aceita como "pronto". Com a máquina carregada a varredura leva segundos
+    // (13 s medidos com load ~60), e cada evento dela reescreve a tabela de
+    // rotas num handler assíncrono sem trava, que pode terminar fora de ordem.
+    // Request que chega antes recebe o 404 embutido do Next, sem erro no log,
+    // e o spec acusa o fixture. O `next start` lê as rotas do manifesto do
+    // build e compila tudo antes, o que também tira dos testes a compilação
+    // sob demanda que estourava o timeout de `page.goto` sob carga.
+    //
+    // O `next start` avisa que não é o comando de `output: standalone`; o
+    // aviso trata do deploy (ver Dockerfile), e aqui ele serve o `.next` do
+    // build normalmente, lendo `.env.local` como o `next dev`. O build roda em
+    // `.next/` e o `next dev` interativo em `.next/dev/`, então os dois
+    // convivem no mesmo checkout.
+    command: isGatedRun ? "npm run build && npm run start" : "npm run dev",
     url: baseURL,
-    // Repassa ao `next dev` a porta escolhida em baseURL; no pre-push, o
+    // Repassa ao servidor a porta escolhida em baseURL; no pre-push, o
     // default é 3100, mas E2E_BASE_URL explícito pode escolher outra porta.
     env: isPrePush ? { PORT: new URL(baseURL).port } : undefined,
     // No pre-push, nunca reaproveitar: o default 3100 evita colidir com o dev
     // server interativo em 3000; com E2E_BASE_URL explícito, o caller assume a
     // porta escolhida para este gate.
     reuseExistingServer: !isGatedRun,
-    timeout: 120_000,
+    // Prazo de subida do servidor, não de teste: no modo gated ele inclui o
+    // `next build` inteiro (49 s com load ~60), trabalho que o `next dev`
+    // fazia aos poucos dentro do timeout de cada teste.
+    timeout: isGatedRun ? 600_000 : 120_000,
   },
 });
