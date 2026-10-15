@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { SchemaEditorSession } from "../SchemaEditor";
 import { schemaDraftStorageKey } from "@/hooks/useSchemaDraft";
 import type { PydanticField } from "@/lib/types";
@@ -96,6 +97,11 @@ const BASE_FIELDS: PydanticField[] = [
   },
 ];
 const SAVED_FIELDS = [{ ...BASE_FIELDS[0], description: "Editada", hash: "abc" }];
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   window.localStorage.clear();

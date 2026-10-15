@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const { fetchFastAPI, getToken } = vi.hoisted(() => ({
@@ -100,6 +101,11 @@ function expectRejectedNumericValues({
   expect(runButton.disabled).toBe(true);
   expect(fetchFastAPI).not.toHaveBeenCalled();
 }
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   fetchFastAPI.mockClear();
