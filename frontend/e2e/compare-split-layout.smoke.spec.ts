@@ -175,9 +175,6 @@ test("comparação: sem divisão salva, o HTML do servidor já sai 50/50", async
   await withClerkCleanup({
     page,
     context: "compare-split-layout/padrao",
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await forgetSavedSplit(page);
       const server = await measureServerHtml(page, url);
@@ -205,9 +202,6 @@ test("comparação: divisão arrastada volta igual ao recarregar, já no HTML do
   await withClerkCleanup({
     page,
     context: "compare-split-layout/arrastada",
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await forgetSavedSplit(page);
       const initial = await measureHydrated(page, url);
@@ -238,9 +232,6 @@ test("comparação: divisão salva no localStorage antigo migra para o cookie", 
   await withClerkCleanup({
     page,
     context: "compare-split-layout/migracao",
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await forgetSavedSplit(page);
       // Exatamente o que o `useDefaultLayout` gravava até a troca para cookie.
@@ -277,9 +268,6 @@ test("comparação: voltar pelo histórico não apaga a divisão salva", async (
   await withClerkCleanup({
     page,
     context: "compare-split-layout/historico",
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await forgetSavedSplit(page);
       await page.goto(url);
@@ -317,9 +305,6 @@ test("comparação: o divisor para no mínimo de 25% do painel", async ({
   await withClerkCleanup({
     page,
     context: "compare-split-layout/minimo",
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await forgetSavedSplit(page);
       await page.goto(url);
@@ -343,9 +328,6 @@ test("comparação: com cookie presente, a chave antiga do localStorage é desca
   await withClerkCleanup({
     page,
     context: "compare-split-layout/precedencia",
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await forgetSavedSplit(page);
       const cookieValue = JSON.stringify({ [READER_PANEL_ID]: 40, [REVIEW_PANEL_ID]: 60 });

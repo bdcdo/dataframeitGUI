@@ -99,11 +99,5 @@ test("dialog de sorteio abre com filtros, modos e prévia funcionais", async ({
         dialog.getByRole("columnheader", { name: "Prazo" }),
       ).toHaveCount(0);
     },
-    // signOut na própria página de atribuições trava no waitForFunction de
-    // window.Clerk.loaded — fechar o dialog e voltar ao dashboard antes.
-    prepareSignOut: async () => {
-      await page.keyboard.press("Escape");
-      await page.goto("/dashboard");
-    },
   });
 });
