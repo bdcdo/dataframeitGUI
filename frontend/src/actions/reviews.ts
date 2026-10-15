@@ -36,7 +36,7 @@ export async function submitVerdict({
   comment,
   responseSnapshot,
 }: SubmitVerdictInput): Promise<{ error?: string }> {
-  // Identidade de trabalho no projeto (spec 002): conta vinculada revisa
+  // Identidade de trabalho no projeto: conta vinculada por e-mail revisa
   // como o membro canônico em reviewer_id e no sync do assignment. Autoria de
   // comentários permanece ligada à conta autenticada.
   const [actor, supabase] = await Promise.all([
@@ -153,7 +153,7 @@ async function ensureAmbiguityComment(
 
   // author_id é a conta autenticada, não o id efetivo: a policy de INSERT
   // de project_comments exige author_id = clerk_uid() — com effectiveId,
-  // uma conta-alias (spec 002) tomaria 42501 aqui.
+  // uma conta-alias (e-mail vinculado a outro membro) tomaria 42501 aqui.
   const { error: commentError } = await supabase
     .from("project_comments")
     .insert({
@@ -208,7 +208,7 @@ export async function markCompareDocReviewed(
   projectId: string,
   documentId: string,
 ): Promise<{ error?: string }> {
-  // Conta vinculada fecha o doc como o membro canônico (spec 002).
+  // Conta vinculada por e-mail fecha o doc como o membro canônico.
   // Awaits independentes em paralelo.
   const [actor, supabase] = await Promise.all([
     resolveProjectMemberActor(projectId),

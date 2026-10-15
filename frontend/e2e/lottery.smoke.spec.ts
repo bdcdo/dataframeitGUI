@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { withClerkCleanup } from "./clerk-cleanup";
 
-// Smoke do dialog de sorteio v2 (spec 001, PR #179): seções de filtros,
+// Smoke do dialog de sorteio v2 (PR #179): seções de filtros,
 // modos e participantes presentes, contagem de elegíveis ao vivo e prévia
 // funcionando — tudo somente leitura (previewLottery não grava nada; o
 // sorteio de fato não é executado para não mutar o projeto de teste).
@@ -73,7 +73,7 @@ test("dialog de sorteio abre com filtros, modos e prévia funcionais", async ({
         dialog.getByRole("radio", { name: "Equilibrar só esta rodada" }),
       ).toBeChecked();
 
-      // Seção Prazo não existe mais (US6 — guarda de regressão)
+      // A seção Prazo saiu do dialog; guarda contra ela voltar
       await expect(dialog.getByText("Prazo", { exact: true })).toHaveCount(0);
 
       // Stats carregam e a contagem de elegíveis aparece — requer pesquisador
