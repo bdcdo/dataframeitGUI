@@ -135,11 +135,11 @@ export function BrowseDocCoder({
         />
       )}
       <ResizablePanelGroup className="flex-1">
-        <ResizablePanel defaultSize={55} minSize={25}>
+        <ResizablePanel defaultSize="55%" minSize="25%">
           <DocumentReader text={doc.document.text} />
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={45} minSize={25}>
+        <ResizablePanel defaultSize="45%" minSize="25%">
           <QuestionsPanel
             fields={fields}
             answers={answers}

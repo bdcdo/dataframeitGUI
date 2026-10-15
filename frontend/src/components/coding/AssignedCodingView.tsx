@@ -113,7 +113,7 @@ export function AssignedCodingView({
         />
       )}
       <ResizablePanelGroup className="flex-1">
-        <ResizablePanel defaultSize={55} minSize={25}>
+        <ResizablePanel defaultSize="55%" minSize="25%">
           {/* Só este painel alterna entre carregando/erro/texto. O
               QuestionsPanel ao lado fica montado de propósito: ele guarda o
               rascunho em andamento, e um early-return da tela inteira o
@@ -136,7 +136,7 @@ export function AssignedCodingView({
           )}
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={45} minSize={25}>
+        <ResizablePanel defaultSize="45%" minSize="25%">
           <QuestionsPanel
             key={doc.id}
             fields={fields}
