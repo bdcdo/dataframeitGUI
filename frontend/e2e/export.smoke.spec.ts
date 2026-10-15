@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { withClerkCleanup } from "./clerk-cleanup";
 
-// Smoke da feature 004 (exportação no topo de Documentos). Autentica como
+// Smoke da exportação no topo de Documentos. Autentica como
 // coordenador via login-por-ticket do Clerk (mesmo mecanismo do dashboard.smoke:
 // sem senha, sem UI hospedada). Pulado quando faltam as envs de teste, como os
 // demais smokes autenticados. Roda serial dentro do arquivo (mode default) para
@@ -44,7 +44,7 @@ test("exportação: card em Documentos, prévia, aba removida e rota 404", async
       });
 
       // (b)+(d) Prévia sob demanda: cronometra do clique até a prévia (ou estado
-      // vazio) aparecer; alvo SC-007 ≤ 10s.
+      // vazio) aparecer; o alvo da prévia é ≤ 10s.
       const start = Date.now();
       await page.getByRole("button", { name: "Gerar prévia" }).click();
       await expect(
