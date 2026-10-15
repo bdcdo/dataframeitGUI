@@ -37,7 +37,7 @@ export default async function ArbitrationRoute({
   ]);
 
   // Fila 100% pessoal: pertence à identidade EFETIVA (impersonação master via
-  // ?viewAsUser= ou conta-alias da spec 002), como no Codificar/Comparação.
+  // ?viewAsUser= ou conta-alias por e-mail vinculado), como no Codificar/Comparação.
   // Com user.id cru, o master "visualizando como" via a própria fila (vazia).
   const access = requireResolvedProjectAccess(
     await getProjectAccessContext(id, user),

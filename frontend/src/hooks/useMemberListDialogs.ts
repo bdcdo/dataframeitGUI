@@ -8,7 +8,7 @@ import type { MemberRow } from "@/components/members/member-list-utils";
 // por toggle), não aqui.
 export function useMemberListDialogs() {
   const [editingEmailMemberId, setEditingEmailMemberId] = useState<string | null>(null);
-  // Vínculo de e-mails (US2): um único par de dialogs no root, dirigido pelo
+  // Vínculo de e-mails: um único par de dialogs no root, dirigido pelo
   // membro selecionado / preview de unificação retornado pela action.
   const [linkingMember, setLinkingMember] = useState<MemberRow | null>(null);
   const [unify, setUnify] = useState<{

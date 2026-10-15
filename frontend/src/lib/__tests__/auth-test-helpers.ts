@@ -1,4 +1,4 @@
-// Helper compartilhado (T002) para os testes de resolução de auth (US1–US3):
+// Helper compartilhado pelos testes de resolução de auth:
 // monta um estado de sessão Clerk + vínculo Supabase em um dos cenários que a
 // feature precisa distinguir, sem cada teste reescrever o mesmo mock de
 // `currentUser` + `createSupabaseAdmin`. O shape espelha o mínimo que
@@ -33,8 +33,9 @@ export interface FakeSession {
   admin: () => {
     from: (table: string) => Record<string, unknown>;
   };
-  // contador de round-trips remotos observados na request (RC-001/RC-002/SC-002):
-  // soma chamadas a currentUser() + leituras de tabela do admin.
+  // contador de round-trips remotos observados na request, base das provas de
+  // resolução única e de teto de lookups: soma chamadas a currentUser() +
+  // leituras de tabela do admin.
   lookupCount: () => number;
 }
 

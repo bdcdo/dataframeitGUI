@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SchemaBuilderGUI } from "../SchemaBuilderGUI";
 import type { PydanticField } from "@/lib/types";
+import { hydrateFromServerHtml } from "@/test-utils/hydration";
 
 // Id determinístico POR NOME: o mesmo nome devolve sempre o mesmo campo, para
 // `field("q1")` construído na asserção ser igual ao passado no render.
@@ -121,5 +122,24 @@ describe("SchemaBuilderGUI — identidade do card", () => {
     expect(nomeDoCampo()).toBe(input);
     expect(document.activeElement).toBe(input);
     expect(screen.getByTestId("field-names").textContent).toBe("q1_a");
+  });
+});
+
+describe("SchemaBuilderGUI — hidratação", () => {
+  // Mesmo mecanismo do `QuestionsPanel`: sem `id` no `DndContext`, o
+  // `aria-describedby` das alças de arraste sai de um contador de módulo que o
+  // servidor e o navegador não compartilham.
+  it("hidrata sem divergência e o aria-describedby aponta para as instruções", async () => {
+    const { container, hydrationErrors } = await hydrateFromServerHtml(
+      <SchemaBuilderGUI fields={[field("q1"), field("q2")]} onChange={() => {}} />,
+    );
+
+    expect(hydrationErrors).toEqual([]);
+    const described = [...container.querySelectorAll("[aria-describedby]")];
+    expect(described.length).toBeGreaterThan(0);
+    for (const element of described) {
+      const target = element.getAttribute("aria-describedby")!;
+      expect(container.contains(document.getElementById(target))).toBe(true);
+    }
   });
 });

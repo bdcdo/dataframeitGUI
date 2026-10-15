@@ -61,7 +61,8 @@ const previewResult: LotteryPreview = {
 };
 
 // Integra useLotteryParams + useLotteryRun como no LotteryDialog real —
-// o contrato sob teste é o casamento prévia↔configuração (research D13).
+// o contrato sob teste é o casamento prévia↔configuração: a semente da
+// prévia só vale para a configuração que a gerou.
 function setup(statsOverride: LotteryStats | null = stats) {
   return renderHook(() => {
     const params = useLotteryParams();

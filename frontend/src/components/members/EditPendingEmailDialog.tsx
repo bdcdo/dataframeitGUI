@@ -20,8 +20,8 @@ interface EditPendingEmailDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-// Correção de e-mail digitado errado num pré-registro (FR-005). Só aparece
-// para membros pendentes; depois da ativação a correção é via vínculo (US2).
+// Correção de e-mail digitado errado num pré-registro. Só aparece para
+// membros pendentes; depois da ativação a correção é via vínculo de e-mail.
 export function EditPendingEmailDialog({
   projectId,
   member,
