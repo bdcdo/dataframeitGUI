@@ -8,8 +8,8 @@
 #   --rounds  rodadas da suite, inteiro >= 1 (default 5)
 #   --cpu     lacos de CPU ocupada durante as rodadas, inteiro >= 0 (default 8;
 #             0 = so a carga que a maquina ja tem)
-#   --quota   orcamento fixo de CPU da suite, em % de um nucleo (400 = 4
-#             nucleos), via cgroup do systemd; dispensa os lacos (desligada por padrao)
+#   --quota   teto de CPU da suite, em % de um nucleo (400 = 4 nucleos), via
+#             cgroup do systemd; dispensa os lacos (desligada por padrao)
 #   --out     diretorio dos logs, relativo a quem chamou (default
 #             harness/<data>-vitest-stress-<hora>/ na raiz do repositorio,
 #             ignorado pelo .gitignore)
@@ -17,11 +17,13 @@
 #
 # Com --cpu, a carga real e a soma dos lacos com o que mais roda na maquina, e
 # duas rodadas com a mesma K podem ficar com load 45 e 100. Com --quota, a suite
-# roda num escopo systemd com CPUQuota=P% e peso alto, e recebe P% de CPU nem
-# mais nem menos enquanto a maquina tiver esse tanto livre para ela; a linha de
-# cada rodada traz a CPU efetiva lida do cgroup, que e a prova de que o
-# orcamento foi o declarado. W workers em P% equivalem, por processo, a um load
-# de 100*N*W/P numa maquina de N threads.
+# roda num escopo systemd com CPUQuota=P%, que e teto e nao piso: a suite nunca
+# passa de P%, e sob disputa recebe menos, na proporcao do peso de CPU que a
+# maquina da ao escopo. A linha de cada rodada traz a CPU efetiva lida do
+# cgroup, que mostra o orcamento que a suite teve de fato; duas rodadas so se
+# comparam quando ela bate com a cota. W workers em P% equivalem, por processo,
+# a um load de 100*N*W/P numa maquina de N threads, e a um load maior quando a
+# CPU efetiva fica abaixo da cota.
 set -euo pipefail
 
 usage() { sed -n '7,16p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
@@ -87,7 +89,10 @@ if [ -n "$quota" ]; then
     echo "--quota precisa de systemd-run --user com cgroup v2 (indisponivel aqui)" >&2
     exit 2
   fi
-  runner=(systemd-run --user --scope -q -p "CPUQuota=${quota}%" -p CPUWeight=10000)
+  # Sem -p CPUWeight: o peso do escopo fica com a configuracao da maquina. Um
+  # peso alto aqui garantia a cota sob disputa, mas punha a suite acima da
+  # interface grafica e deixava o desktop lento durante a rodada.
+  runner=(systemd-run --user --scope -q -p "CPUQuota=${quota}%")
   case " ${vitest_args[*]-} " in
     *" --maxWorkers"* | *" --max-workers"*) ;;
     *) vitest_args+=("--maxWorkers=$(node -p 'Math.max(require("os").availableParallelism() - 1, 1)')") ;;
