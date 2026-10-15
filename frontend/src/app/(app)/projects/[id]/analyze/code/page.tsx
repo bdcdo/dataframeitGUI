@@ -39,7 +39,7 @@ export default async function CodePage({
   ]);
 
   // Impersonação master (viewAsUser) tem precedência; sem ela, contas
-  // vinculadas trabalham como o membro canônico do projeto (spec 002).
+  // vinculadas por e-mail trabalham como o membro canônico do projeto.
   // resolveProjectQueueIdentity é a fonte única dessa precedência, compartilhada
   // com Comparação e Arbitragem.
   const access = requireResolvedProjectAccess(

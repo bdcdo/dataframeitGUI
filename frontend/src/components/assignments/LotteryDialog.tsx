@@ -222,7 +222,7 @@ export function LotteryDialog({ projectId, members }: LotteryDialogProps) {
 
           <Separator />
 
-          {/* Section: Pending assignments mode (US2) */}
+          {/* Section: Pending assignments mode */}
           <div className="space-y-2">
             <h4 className="text-sm font-semibold">Atribuições pendentes</h4>
             <RadioGroup

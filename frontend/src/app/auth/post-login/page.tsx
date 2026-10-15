@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 // Rota canônica de conclusão/reparo de acesso (afterSignInUrl do Clerk e destino
 // do fail-closed dos layouts protegidos). Read-only: apenas resolve o estado e
 // delega o reparo idempotente ao botão de retry — nenhuma mutação de vínculo
-// acontece aqui no render (decisão D3).
+// acontece aqui no render.
 export default async function PostLoginPage({
   searchParams,
 }: {

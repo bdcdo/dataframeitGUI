@@ -426,13 +426,13 @@ export async function clearPendingAssignments(
   return { deleted: count ?? 0 };
 }
 
-// --- Smart Lottery (spec 001) ---
+// --- Smart Lottery ---
 
 interface LotteryParamsBase {
   projectId: string;
   mode: LotteryMode;
   balancing: LotteryBalancing;
-  /** semente da prévia (research D13); ausente = gerar nova */
+  /** semente da prévia, para o sorteio repetir o resultado previsto; ausente = gerar nova */
   seed?: number;
   docsPerResearcher?: number;
   docSubsetSize?: number;
@@ -600,7 +600,7 @@ export interface LotteryPreview {
   unfilledSlots: number;
   /** presente somente quando nenhuma atribuição nova é possível */
   emptyReason?: LotteryEmptyReason;
-  /** semente usada; o dialog a reenvia em smartRandomize (research D13) */
+  /** semente usada; o dialog a reenvia em smartRandomize para repetir a prévia */
   seed: number;
   targetRoundLabel?: string;
 }
@@ -876,7 +876,8 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
   }
 
   // Pool de participantes: deduplicado e validado contra project_members
-  // (qualquer role) — defesa em profundidade além do RLS (research D5)
+  // (qualquer role), porque o server não confia em ids arbitrários vindos do
+  // client; é defesa em profundidade além do RLS.
   const memberIds = new Set(members.map((m) => m.user_id));
   const uniqueIds = [...new Set(params.participantIds)];
   const participantIds = uniqueIds.filter((id) => memberIds.has(id));
@@ -920,7 +921,7 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
     throw new Error("Nenhum documento passa nos filtros atuais.");
   }
 
-  // Conjunto preservado conforme o modo (research D4): append preserva
+  // Conjunto preservado conforme o modo: append preserva
   // todas as atribuições do tipo (inclusive pendentes); replace só as que
   // o sorteio nunca toca (em_andamento/concluido)
   const preservedStatuses = new Set(
@@ -994,7 +995,10 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
     preservedByUser[a.user_id] = (preservedByUser[a.user_id] || 0) + 1;
   }
 
-  // Toda a aleatoriedade deriva do PRNG seedado (research D13)
+  // Toda a aleatoriedade deriva do PRNG seedado: com a semente da prévia, o
+  // sorteio recomputa sobre os dados atuais e repete o resultado previsto se
+  // os dados e a configuração não mudaram desde a prévia. Se mudaram, o
+  // resultado diverge de propósito: nunca se aplica uma prévia desatualizada.
   const seed = params.seed ?? Math.floor(Math.random() * 2 ** 31);
   const rng = createRng(seed);
 
