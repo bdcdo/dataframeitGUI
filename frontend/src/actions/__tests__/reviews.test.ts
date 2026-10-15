@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock minimo do supabase: captura insert/delete em project_comments para
 // validar o comportamento do submitVerdict com veredito "ambiguo" sem subir
@@ -74,6 +74,11 @@ beforeEach(() => {
 async function loadSubmit() {
   return (await import("@/actions/reviews")).submitVerdict;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/reviews");
+}, 30_000);
 
 describe("submitVerdict — veredito ambiguo vira comentario automatico", () => {
   const PROJECT = {

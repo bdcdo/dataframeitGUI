@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 
 // Testa a server action getExportDataset: gate coordinator-only fail-closed,
 // queries paralelas com colunas explícitas, e delegação da montagem a
@@ -82,6 +82,11 @@ beforeEach(() => {
 async function loadAction() {
   return (await import("@/actions/export")).getExportDataset;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/export");
+}, 30_000);
 
 describe("getExportDataset — gate coordinator-only", () => {
   it("retorna {error} fail-closed para não-coordenador (não consulta dados)", async () => {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -15,6 +15,11 @@ afterEach(() => {
     process.env.AUTO_REVIEW_RECONCILIATION_SECRET = originalSecret;
   }
 });
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/internal-auth");
+}, 30_000);
 
 describe("isAutoReviewReconciliationBearer", () => {
   it("aceita somente o segredo interno dedicado", async () => {

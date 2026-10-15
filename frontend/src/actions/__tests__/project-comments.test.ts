@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
 import {
   makeSupabaseMock,
   type TableResults,
@@ -64,6 +64,11 @@ beforeEach(() => {
 async function loadActions() {
   return import("@/actions/project-comments");
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/project-comments");
+}, 30_000);
 
 describe("requestDocumentExclusion — guardas", () => {
   it("sem justificativa → erro, sem escrita", async () => {

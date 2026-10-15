@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 
 // Testa o filtro de conflito com o indice unico parcial
 // documents_project_external_id_active_uniq (migration 20260623130000):
@@ -140,6 +140,11 @@ function insertedExternalIds(): (string | null)[] {
     (r) => r.external_id,
   );
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/documents");
+}, 30_000);
 
 describe("getDocumentsForBrowse — identidade canônica", () => {
   it("reconhece como própria a resposta do membro canônico da conta-alias", async () => {

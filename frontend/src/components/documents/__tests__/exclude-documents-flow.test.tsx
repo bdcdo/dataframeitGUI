@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { DocumentSummary } from "@/components/documents/DocumentList";
@@ -84,6 +85,11 @@ beforeEach(() => {
   mocks.excludeDocuments.mockReset();
   mocks.excludeDocuments.mockResolvedValue(undefined);
 });
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 describe("ExcludeDocumentsDialog — fechamento sob controle do pai", () => {
   it("preserva o motivo digitado quando a exclusão falha e conclui no retry", async () => {
