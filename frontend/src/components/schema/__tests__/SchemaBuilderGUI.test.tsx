@@ -130,7 +130,7 @@ describe("SchemaBuilderGUI — hidratação", () => {
   // `aria-describedby` das alças de arraste sai de um contador de módulo que o
   // servidor e o navegador não compartilham.
   it("hidrata sem divergência e o aria-describedby aponta para as instruções", async () => {
-    const { container, hydrationErrors, unmount } = await hydrateFromServerHtml(
+    const { container, hydrationErrors } = await hydrateFromServerHtml(
       <SchemaBuilderGUI fields={[field("q1"), field("q2")]} onChange={() => {}} />,
     );
 
@@ -139,8 +139,7 @@ describe("SchemaBuilderGUI — hidratação", () => {
     expect(described.length).toBeGreaterThan(0);
     for (const element of described) {
       const target = element.getAttribute("aria-describedby")!;
-      expect(document.getElementById(target)).not.toBeNull();
+      expect(container.contains(document.getElementById(target))).toBe(true);
     }
-    unmount();
   });
 });

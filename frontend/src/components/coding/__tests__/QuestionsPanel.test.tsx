@@ -290,7 +290,7 @@ describe("QuestionsPanel — hidratação com reordenação ligada", () => {
   // servidor e o do navegador avançam separados, e a hidratação acusava
   // `DndDescribedBy-0` contra `DndDescribedBy-1`.
   it("hidrata sem divergência e o aria-describedby aponta para as instruções", async () => {
-    const { container, hydrationErrors, unmount } = await hydrateFromServerHtml(
+    const { container, hydrationErrors } = await hydrateFromServerHtml(
       <QuestionsPanel
         fields={baseFields}
         answers={{}}
@@ -305,8 +305,7 @@ describe("QuestionsPanel — hidratação com reordenação ligada", () => {
     expect(described.length).toBeGreaterThan(0);
     for (const element of described) {
       const target = element.getAttribute("aria-describedby")!;
-      expect(document.getElementById(target)).not.toBeNull();
+      expect(container.contains(document.getElementById(target))).toBe(true);
     }
-    unmount();
   });
 });
