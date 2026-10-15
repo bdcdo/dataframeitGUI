@@ -26,10 +26,11 @@ describe('regra de exports em módulos "use server"', () => {
   // a carga leva perto de 1 s contra 5 ms de uma chamada quente, mas com os
   // workers da suíte disputando a CPU passa de 5 s e estourava o timeout de
   // qualquer teste que fosse o primeiro. No hook, com prazo próprio, ela deixa
-  // de contar contra os testes, sem mexer no timeout global.
+  // de contar contra os testes, sem mexer no timeout global. O prazo tem folga
+  // larga porque a carga fria chegou a 20 s com o arquivo isolado e load 65.
   beforeAll(async () => {
     await messagesFor('"use server";');
-  }, 30_000);
+  }, 60_000);
 
   it("permite funções async diretas e exports de tipo", async () => {
     await expect(

@@ -347,8 +347,11 @@ function publicSecretNames(source: string): string[] {
 }
 
 describe("fronteira do Supabase admin client", () => {
+  // Grafo e contagem saem da coleta, que não tem timeout: o percurso da AST de
+  // todo `src/` dentro de um caso chegou a 1,7 s com a suíte sob carga.
   const files = sourceFiles(SRC_ROOT);
   const graph = importGraph(files);
+  const adminFactoryCalls = countAdminFactoryCalls(files);
 
   it("mantém um import compilável de server-only", () => {
     expect(hasSideEffectImport(parse(ADMIN_FILE), "server-only")).toBe(true);
@@ -434,7 +437,7 @@ describe("fronteira do Supabase admin client", () => {
     // reconciliador interno acrescenta o uso necessário para drenar a outbox.
     // A #545 acrescenta 1: o sync documento-wide pós-unmark precisa alcançar
     // assignments de peers, fora da RLS do chamador.
-    expect(countAdminFactoryCalls(files)).toBe(20);
+    expect(adminFactoryCalls).toBe(20);
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {
