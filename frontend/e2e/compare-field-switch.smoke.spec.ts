@@ -1,7 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { test } from "./fixture-lock-test";
 
 // Regressão da #613: navegar entre campos na Comparação deixava os cards do
 // campo ANTERIOR na tela, e clicar num deles gravava aquele valor no campo
@@ -26,7 +27,10 @@ import { withClerkCleanup } from "./clerk-cleanup";
 // indício. Preservar.
 //
 // Como o coding-save.smoke, este spec MUTA o projeto de teste dedicado
-// (E2E_COMPARE_PROJECT_ID) com a service key. Serial dentro do arquivo (#198).
+// (E2E_COMPARE_PROJECT_ID) com a service key. Serial dentro do arquivo (#198);
+// entre execuções simultâneas, quem serializa é o `holdFixtureLock`: sem ele, o
+// DELETE de reviews de uma execução apaga o veredito que a outra acabou de
+// gravar, e o `toHaveLength(1)` acusa o produto.
 test.describe.configure({ mode: "default" });
 
 const hasClerkTestingEnv =
@@ -167,9 +171,11 @@ function skipUnlessConfigured() {
 
 test("comparação: navegar entre campos mostra só os cards do campo atual", async ({
   page,
+  holdFixtureLock,
 }) => {
   test.setTimeout(180_000);
   const { email, projectId } = skipUnlessConfigured();
+  await holdFixtureLock(projectId);
 
   const admin = createAdminClient();
   const fields = await assertFixtureProject(admin, projectId);
@@ -254,9 +260,11 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
 
 test("comparação: veredito confirmado após navegar grava no campo exibido", async ({
   page,
+  holdFixtureLock,
 }) => {
   test.setTimeout(180_000);
   const { email, projectId } = skipUnlessConfigured();
+  await holdFixtureLock(projectId);
 
   const admin = createAdminClient();
   const fields = await assertFixtureProject(admin, projectId);
