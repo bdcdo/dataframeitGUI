@@ -21,7 +21,19 @@ function ResizablePanelGroup({
   )
 }
 
-function ResizablePanel({ ...props }: ResizablePrimitive.PanelProps) {
+// Na react-resizable-panels v4, número em tamanho de painel é PIXEL, e string
+// sem unidade é percentual. `defaultSize={50}` escrito como percentual sai no
+// HTML do servidor como `flex-basis: 50px`, e no cliente a lib converte pela
+// largura já pintada, o que dá 50% por coincidência: a tela salta na
+// hidratação e o `minSize` vira pixels de verdade. Exigir a unidade na string
+// tira a ambiguidade no typecheck.
+type PanelSize = `${number}%` | `${number}px`
+type PanelSizeProp = "defaultSize" | "minSize" | "maxSize" | "collapsedSize"
+
+type ResizablePanelProps = Omit<ResizablePrimitive.PanelProps, PanelSizeProp> &
+  Partial<Record<PanelSizeProp, PanelSize>>
+
+function ResizablePanel({ ...props }: ResizablePanelProps) {
   return <ResizablePrimitive.Panel data-slot="resizable-panel" {...props} />
 }
 

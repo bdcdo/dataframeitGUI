@@ -51,7 +51,7 @@ export function CommentsSplitView({
       />
 
       <ResizablePanelGroup className="flex-1">
-        <ResizablePanel defaultSize={55} minSize={25}>
+        <ResizablePanel defaultSize="55%" minSize="25%">
           {loadingText || !currentText ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -61,7 +61,7 @@ export function CommentsSplitView({
           )}
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize={45} minSize={25}>
+        <ResizablePanel defaultSize="45%" minSize="25%">
           <CommentListPanel
             comments={currentGroup.comments}
             showResolved={showResolved}
