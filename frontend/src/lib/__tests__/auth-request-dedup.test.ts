@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import { makeFakeSession, type FakeSession } from "./auth-test-helpers";
 
 // A identidade é resolvida uma vez por request e reutilizada.
@@ -36,6 +36,11 @@ beforeEach(() => {
 async function loadAuth() {
   return await import("@/lib/auth");
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/auth");
+}, 30_000);
 
 describe("resolução única sem redundância interna", () => {
   it("uma resolução do caminho preparado faz currentUser + mapping + master uma vez cada", async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
 
 // Mock minimo do supabase: captura os payloads de .update()/.upsert()/.insert()
 // para validar o que submitAutoReview enviaria ao DB sem subir Postgres.
@@ -141,6 +141,11 @@ async function loadSubmit() {
 async function loadSubmitFinal() {
   return (await import("@/actions/field-reviews")).submitFinalVerdicts;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/field-reviews");
+}, 30_000);
 
 describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", () => {
   it("sem acesso atual ao projeto → falha antes de usar o admin client", async () => {

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import { makeFakeSession, type FakeSession } from "./auth-test-helpers";
 
 // Fail-closed de vínculo ausente + classificação de estado da resolução de
@@ -33,6 +33,11 @@ beforeEach(() => {
 async function loadResolveAuth() {
   return (await import("@/lib/auth")).resolveAuth;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/auth");
+}, 30_000);
 
 describe("resolveAuth — fail-closed de vínculo ausente e classificação de estado", () => {
   it("sem sessão Clerk → signed-out", async () => {

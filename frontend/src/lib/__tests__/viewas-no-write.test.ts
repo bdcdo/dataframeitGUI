@@ -6,7 +6,7 @@
 // exercita uma action de escrita real (saveResponse) e prova que o valor
 // persistido é o membro canônico mesmo quando o chamador tenta injetar um
 // viewAsUser como argumento extra.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedProjectAccessContext } from "@/lib/auth";
 import { createProjectIdentityActionHarness } from "@/actions/__tests__/project-identity-harness";
 
@@ -44,6 +44,12 @@ const access: ResolvedProjectAccessContext = {
   isCoordinator: true,
   canResolve: true,
 };
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/auth");
+  await import("@/actions/responses");
+}, 30_000);
 
 describe("resolveProjectQueueIdentity — viewAs é somente leitura", () => {
   it("troca a fila sem substituir a conta autenticada ou seu membro próprio", async () => {

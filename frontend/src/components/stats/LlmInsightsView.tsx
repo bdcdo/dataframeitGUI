@@ -83,7 +83,12 @@ export function LlmInsightsView({
   summary,
 }: LlmInsightsViewProps) {
   const { refresh } = useRouter();
+  // Duas transições: o diálogo de decisão só enxerga a de salvar. Se dividisse
+  // a de preparar, abriria de dentro dela com "Salvando…" desabilitado até o
+  // render que encerra a preparação, sem nada sendo salvo. Os cards bloqueiam
+  // durante qualquer uma das duas.
   const [isPending, startTransition] = useTransition();
+  const [isSaving, startSaving] = useTransition();
   const [editingField, setEditingField] = useState<string | null>(null);
   const [pendingDecision, setPendingDecision] = useState<PendingErrorDecision | null>(null);
 
@@ -112,7 +117,7 @@ export function LlmInsightsView({
 
   const confirmDecision = (note: string, value?: unknown) => {
     if (!canResolve || !pendingDecision) return;
-    startTransition(async () => {
+    startSaving(async () => {
       try {
         const result = await persistDecision(projectId, pendingDecision, note, value);
         if (!result.success) { toast.error(result.error ?? "Falha ao salvar."); return; }
@@ -178,7 +183,7 @@ export function LlmInsightsView({
               key={`${e.documentId}-${e.fieldName}`}
               error={e}
               projectId={projectId}
-              isPending={isPending}
+              isPending={isPending || isSaving}
               isCoordinator={isCoordinator}
               canResolve={canResolve}
               onDecide={(decision) => prepareDecision(e, decision)}
@@ -192,7 +197,7 @@ export function LlmInsightsView({
     </div>
 
     <ErrorDecisionDialog
-      pending={pendingDecision} isPending={isPending}
+      pending={pendingDecision} isPending={isSaving}
       onClose={() => setPendingDecision(null)}
       onConfirm={confirmDecision}
     />

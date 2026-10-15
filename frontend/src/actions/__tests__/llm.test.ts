@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mock do Supabase: builder encadeavel cujo resultado por tabela e
 // configurado por teste via `results`. Padrao alinhado a responses.test.ts.
@@ -42,6 +42,11 @@ vi.mock("@/lib/api-server", () => ({
 async function loadLlm() {
   return import("@/actions/llm");
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/llm");
+}, 30_000);
 
 describe("getEligibleDocCount", () => {
   it("propaga erro da query de documents", async () => {

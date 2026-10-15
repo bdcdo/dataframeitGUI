@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import {
   makeFilterAwareSupabaseMock,
   makeSupabaseAdminModuleMock,
@@ -102,6 +102,11 @@ async function runRetryWithEligibleReviewer(first: string, second: string) {
   tableData.project_members = [makeProjectMember("userC")];
   return runRetry();
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/comparisons");
+}, 30_000);
 
 describe("retryPendingComparisons — guards", () => {
   it("não-coordenador → erro, sem efeito", async () => {

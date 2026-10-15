@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const drain = vi.hoisted(() => vi.fn());
 const authorize = vi.hoisted(() => vi.fn());
@@ -16,6 +16,11 @@ beforeEach(() => {
   authorize.mockReturnValue(true);
   drain.mockResolvedValue({ processed: 1, stale: 0, failed: 0, remaining: 0 });
 });
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/app/api/internal/auto-review/reconcile/route");
+}, 30_000);
 
 describe("POST /api/internal/auto-review/reconcile", () => {
   it("rejeita chamadas sem credencial de serviço", async () => {
