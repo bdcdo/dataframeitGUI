@@ -7,9 +7,12 @@ import {
   type ArbitrationDocListEntry,
 } from "../ArbitrationDocList";
 
-// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
-// Testing Library, user-event e Radix e estourava os 5 s com a suíte
-// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+// Aqui o primeiro teste não chegou perto dos 5 s nas rodadas de estresse
+// (abaixo de 1,5 s com a suíte numa cota de 2 núcleos), embora o arquivo já
+// tenha caído por timeout no pre-push com a máquina mais carregada. O
+// aquecimento corta pela metade o primeiro render a frio de React DOM e
+// Testing Library, ao custo de carregar user-event e Radix, que este arquivo
+// não usa (src/test-utils/jsdom-warm-up.tsx).
 beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);

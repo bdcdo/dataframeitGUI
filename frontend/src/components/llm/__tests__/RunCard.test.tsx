@@ -102,9 +102,12 @@ function expectRejectedNumericValues({
   expect(fetchFastAPI).not.toHaveBeenCalled();
 }
 
-// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
-// Testing Library, user-event e Radix e estourava os 5 s com a suíte
-// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+// Este arquivo só usa fireEvent, mas o primeiro teste pagava sozinho o
+// primeiro render e a primeira consulta de React DOM e Testing Library, a frio,
+// e com a suíte disputando a CPU custava várias vezes o que custam os testes
+// seguintes. O aquecimento carrega também user-event e Radix, que o arquivo
+// não usa; mesmo com esse custo a mais, o primeiro teste cai para menos da
+// metade (src/test-utils/jsdom-warm-up.tsx).
 beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
