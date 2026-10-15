@@ -1,10 +1,11 @@
-import { test, expect, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { readFile } from "node:fs/promises";
 import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { test } from "./fixture-lock-test";
 
 test.describe.configure({ mode: "serial" });
 const projectIds = (process.env.E2E_LLM_DECISIONS_PROJECT_IDS ?? "").split(",").filter(Boolean);
@@ -23,7 +24,7 @@ async function downloadCsv(page: Page) {
 }
 
 for (const [index, mode] of ["compare_llm", "auto_review_llm"].entries()) {
-  test(`decisões individuais: ${mode}, gabarito e arquivos persistidos`, async ({ page, context }, testInfo) => {
+  test(`decisões individuais: ${mode}, gabarito e arquivos persistidos`, async ({ page, context, holdFixtureLock }, testInfo) => {
     test.setTimeout(180_000);
     const projectId = projectIds[index];
     const email = process.env.E2E_COORDINATOR_EMAIL;
@@ -31,6 +32,8 @@ for (const [index, mode] of ["compare_llm", "auto_review_llm"].entries()) {
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     test.skip(!projectId || !email || !url || !key, "Requer fixtures locais em E2E_LLM_DECISIONS_PROJECT_IDS.");
     expect(new URL(url!).hostname, "Este teste escreve somente no banco local de fixtures").toMatch(/^(localhost|127\.0\.0\.1)$/);
+    // O banco local também é compartilhado entre worktrees desta máquina.
+    await holdFixtureLock(projectId);
     const admin = createClient(url!, key!);
     const { data: project } = await admin.from("projects").select("name, automation_mode").eq("id", projectId).single();
     expect(project?.name).toBe(`LLM decision browser fixture ${mode}`);
