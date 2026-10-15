@@ -238,18 +238,89 @@ function describeOwner(owner: FixtureLockOwner | null): string {
   return `"${owner.label}" (pid ${owner.pid} em ${owner.host}, ${owner.cwd}), desde ${owner.acquiredAt}`;
 }
 
+interface AbandonmentPolicy {
+  now: () => number;
+  isProcessAlive: (pid: number) => boolean;
+  maxHoldMs: number;
+}
+
+function isAbandoned(
+  current: FixtureLockOwner,
+  self: FixtureLockOwner,
+  policy: AbandonmentPolicy,
+): boolean {
+  // O pid só diz algo quando os dois enxergam os mesmos processos.
+  const samePidView =
+    current.host === self.host && current.pidNamespace === self.pidNamespace;
+  if (samePidView && !policy.isProcessAlive(current.pid)) return true;
+  const acquiredAt = Date.parse(current.acquiredAt);
+  return Number.isFinite(acquiredAt) && policy.now() - acquiredAt > policy.maxHoldMs;
+}
+
+/**
+ * Uma tentativa: cria o lock ou, se o dono atual foi abandonado, rouba e tenta
+ * de novo. Roubo que não abre vaga (outro processo está no meio de um roubo,
+ * ou ganhou a corrida pela vaga) devolve o dono e cai na espera normal do
+ * chamador, com teto e sono; repetir aqui giraria em CPU, sem teto.
+ */
+function attemptAcquire(
+  path: string,
+  self: FixtureLockOwner,
+  policy: AbandonmentPolicy,
+): { taken: true } | { taken: false; current: FixtureLockOwner | null } {
+  self.acquiredAt = new Date(policy.now()).toISOString();
+  if (tryCreate(path, self)) return { taken: true };
+  const current = readOwner(path);
+  if (current && isAbandoned(current, self, policy)) {
+    stealIfStillOwnedBy(path, current.token, policy.now);
+    if (tryCreate(path, self)) return { taken: true };
+  }
+  return { taken: false, current };
+}
+
+function heldLock(path: string, token: string, waitedMs: number): HeldFixtureLock {
+  const release = () => {
+    process.removeListener("exit", release);
+    // Só apaga o próprio lock: se ele foi julgado abandonado e roubado, o
+    // arquivo agora é de outra execução.
+    if (readOwner(path)?.token === token) unlinkIfExists(path);
+  };
+  // Worker encerrado sem passar pelo teardown do fixture (Ctrl-C, erro fatal):
+  // libera na saída. SIGKILL não passa por aqui, e é o pid morto que cobre.
+  process.once("exit", release);
+  return { path, waitedMs, release };
+}
+
+function lockTimeoutError(
+  key: string,
+  waitedMs: number,
+  current: FixtureLockOwner | null,
+  path: string,
+): FixtureLockTimeoutError {
+  return new FixtureLockTimeoutError(
+    `Fixture E2E "${key}" ocupado por outra execução há ${Math.round(waitedMs / 1000)}s: ` +
+      `${describeOwner(current)}. Este teste apaga e regrava dados desse ` +
+      "projeto no Supabase, e rodar junto apagaria os dados da outra " +
+      "execução. Espere ela terminar; se ela não existe mais, apague " +
+      `${path}.`,
+    current,
+  );
+}
+
 export async function acquireFixtureLock(
   key: string,
   options: FixtureLockOptions,
 ): Promise<HeldFixtureLock> {
-  const now = options.now ?? Date.now;
-  const isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+  const policy: AbandonmentPolicy = {
+    now: options.now ?? Date.now,
+    isProcessAlive: options.isProcessAlive ?? defaultIsProcessAlive,
+    maxHoldMs: options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS,
+  };
   const pollMs = options.pollMs ?? DEFAULT_POLL_MS;
-  const maxHoldMs = options.maxHoldMs ?? DEFAULT_MAX_HOLD_MS;
   const path = fixtureLockPath(options.dir, key);
   mkdirSync(options.dir, { recursive: true });
 
-  const owner: FixtureLockOwner = {
+  const self: FixtureLockOwner = {
     token: randomUUID(),
     pid: process.pid,
     host: hostname(),
@@ -259,59 +330,21 @@ export async function acquireFixtureLock(
     acquiredAt: "",
   };
 
-  const isAbandoned = (current: FixtureLockOwner): boolean => {
-    // O pid só diz algo quando os dois enxergam os mesmos processos.
-    const samePidView =
-      current.host === owner.host &&
-      current.pidNamespace === owner.pidNamespace;
-    if (samePidView && !isProcessAlive(current.pid)) return true;
-    const acquiredAt = Date.parse(current.acquiredAt);
-    return Number.isFinite(acquiredAt) && now() - acquiredAt > maxHoldMs;
-  };
-
-  const start = now();
+  const start = policy.now();
   let warned = false;
   for (;;) {
-    owner.acquiredAt = new Date(now()).toISOString();
-    if (tryCreate(path, owner)) break;
-
-    const current = readOwner(path);
-    if (current && isAbandoned(current)) {
-      stealIfStillOwnedBy(path, current.token, now);
-      if (tryCreate(path, owner)) break;
-      // Roubo que não abriu vaga (outro processo está no meio de um roubo, ou
-      // ganhou a corrida pela vaga) cai na espera normal, com teto e sono.
-      // Voltar direto ao topo giraria em CPU, sem teto, enquanto durasse.
-    }
+    const attempt = attemptAcquire(path, self, policy);
+    if (attempt.taken) return heldLock(path, self.token, policy.now() - start);
     if (!warned) {
       warned = true;
-      options.onWait?.(current);
+      options.onWait?.(attempt.current);
     }
-    const waited = now() - start;
+    const waited = policy.now() - start;
     if (waited >= options.waitMs) {
-      throw new FixtureLockTimeoutError(
-        `Fixture E2E "${key}" ocupado por outra execução há ${Math.round(waited / 1000)}s: ` +
-          `${describeOwner(current)}. Este teste apaga e regrava dados desse ` +
-          "projeto no Supabase, e rodar junto apagaria os dados da outra " +
-          "execução. Espere ela terminar; se ela não existe mais, apague " +
-          `${path}.`,
-        current,
-      );
+      throw lockTimeoutError(key, waited, attempt.current, path);
     }
     await new Promise((done) => setTimeout(done, pollMs));
   }
-
-  const waitedMs = now() - start;
-  const release = () => {
-    process.removeListener("exit", release);
-    // Só apaga o próprio lock: se ele foi julgado abandonado e roubado, o
-    // arquivo agora é de outra execução.
-    if (readOwner(path)?.token === owner.token) unlinkIfExists(path);
-  };
-  // Worker encerrado sem passar pelo teardown do fixture (Ctrl-C, erro fatal):
-  // libera na saída. SIGKILL não passa por aqui, e é o pid morto que cobre.
-  process.once("exit", release);
-  return { path, waitedMs, release };
 }
 
 // --- Uso por teste -------------------------------------------------------
