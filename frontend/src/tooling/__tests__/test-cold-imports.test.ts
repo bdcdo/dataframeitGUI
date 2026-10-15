@@ -72,8 +72,11 @@ describe("regra de import() a frio em arquivos de teste", () => {
     await expect(
       messageIdsFor(`
         import { helper } from "@/lib/estatico";
+        import "@/lib/efeito";
         const { other } = await import("@/lib/na-coleta");
+        helper(other);
         async function load() {
+          await import("@/lib/efeito");
           await import("@/lib/estatico");
           await import("@/lib/na-coleta");
         }
@@ -96,6 +99,64 @@ describe("regra de import() a frio em arquivos de teste", () => {
         it("caso", async () => {
           await import("@/lib/aninhado");
           await import("@/lib/tipo");
+        });
+      `),
+    ).resolves.toEqual(["coldImport", "coldImport"]);
+  });
+
+  // O transformador de TypeScript do Vitest descarta o import cujos bindings
+  // não aparecem em posição de valor, e o módulo não chega a carregar.
+  it("não conta import estático sem binding usado como valor", async () => {
+    await expect(
+      messageIdsFor(`
+        import { naoUsado } from "@/lib/nao-usado";
+        import { type Shape, outro } from "@/lib/so-tipo";
+        import { valor } from "@/lib/usado";
+        let forma: Shape | typeof outro;
+        valor();
+        async function load() {
+          await import("@/lib/nao-usado");
+          await import("@/lib/so-tipo");
+          await import("@/lib/usado");
+        }
+      `),
+    ).resolves.toEqual(["coldImport", "coldImport"]);
+  });
+
+  it("aceita carga aguardada por return, corpo de arrow e Promise.all", async () => {
+    await expect(
+      messageIdsFor(`
+        import { beforeAll, it } from "vitest";
+        beforeAll(() => import("@/lib/arrow"), 30_000);
+        beforeAll(function () {
+          return import("@/lib/retorno");
+        }, 30_000);
+        beforeAll(async () => {
+          await Promise.all([import("@/lib/a"), import("@/lib/b")]);
+        }, 30_000);
+        it("caso", async () => {
+          await import("@/lib/arrow");
+          await import("@/lib/retorno");
+          await import("@/lib/a");
+          await import("@/lib/b");
+        });
+      `),
+    ).resolves.toEqual([]);
+  });
+
+  // Sem await o hook termina antes do módulo; numa função declarada dentro do
+  // hook, o import só roda se alguém chamar a função.
+  it("não conta carga sem await nem import em função dentro do beforeAll", async () => {
+    await expect(
+      messageIdsFor(`
+        import { beforeAll, it } from "vitest";
+        beforeAll(() => {
+          void import("@/lib/sem-await");
+          const load = async () => import("@/lib/so-declarado");
+        }, 30_000);
+        it("caso", async () => {
+          await import("@/lib/sem-await");
+          await import("@/lib/so-declarado");
         });
       `),
     ).resolves.toEqual(["coldImport", "coldImport"]);

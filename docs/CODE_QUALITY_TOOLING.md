@@ -57,7 +57,7 @@ Quem aplica a regra é o hook **`lint-types`** (pre-push, arquivos alterados), e
 
 ### Carga a frio fora do primeiro teste — contrato da suíte
 
-Com a suíte do Vitest disputando a CPU, o primeiro teste de um arquivo pagava sozinho custos que são do processo, não do teste, e estourava o timeout de 5 s. Duas peças tiram esse custo de dentro dos testes sem mexer no timeout global. A regra local `test-cold-imports/warm-dynamic-imports` (`frontend/eslint-rules/test-cold-imports.mjs`, onde estão o porquê e as exceções) reprova `import()` em tempo de teste cujo módulo não foi carregado antes dos testes, e chega ao pre-push pelo mesmo caminho da regra de Server Actions: `lint-types`, só nos arquivos alterados. O `setupFiles` do Vitest (`frontend/src/test-utils/jsdom-warm-up.tsx`) aquece React DOM, Testing Library, user-event e Radix em todo arquivo jsdom.
+Com a suíte do Vitest disputando a CPU, o primeiro teste de um arquivo pagava sozinho custos que são do processo, não do teste, e estourava o timeout de 5 s. Duas peças tiram esse custo de dentro dos testes sem mexer no timeout global. A regra local `test-cold-imports/warm-dynamic-imports` (`frontend/eslint-rules/test-cold-imports.mjs`, onde estão o porquê e as exceções) reprova `import()` em tempo de teste cujo módulo não foi carregado antes dos testes, e chega ao pre-push pelo mesmo caminho da regra de Server Actions: `lint-types`, só nos arquivos alterados. O `setupFiles` do Vitest (`frontend/src/test-utils/jsdom-warm-up.tsx`) aquece React DOM, Testing Library, user-event e Radix em todo arquivo jsdom, salvo os que ligam timers falsos na coleta (o porquê está no próprio arquivo).
 
 ### ruff — lint, format e complexidade do backend
 
