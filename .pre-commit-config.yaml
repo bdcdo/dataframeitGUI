@@ -184,9 +184,11 @@ repos:
       # Para pular pontualmente de forma explícita: `SKIP=e2e-smoke git push`.
       #
       # Por default, PLAYWRIGHT_PRE_PUSH=1 também usa uma porta dedicada (3100,
-      # não a 3000 padrão) e nunca reaproveita um dev server já rodando. Um
-      # E2E_BASE_URL explícito sobrescreve esse default e o PORT repassado ao
-      # `next dev` acompanha a porta dessa URL.
+      # não a 3000 padrão), nunca reaproveita um servidor já rodando e sobe o
+      # build de produção (`npm run build && npm run start`) em vez do
+      # `next dev` (o porquê está no webServer de playwright.config.ts). Um
+      # E2E_BASE_URL explícito sobrescreve a porta e o PORT repassado ao
+      # servidor acompanha a porta dessa URL.
       #
       # O Playwright roda sob a trava de máquina de scripts/e2e-lock.sh, que
       # serializa os pushes: dois pushes em worktrees diferentes disputavam a
