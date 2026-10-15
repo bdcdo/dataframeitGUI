@@ -4,7 +4,7 @@
 #
 # Uso: bash scripts/e2e-lock.sh <comando> [args...]
 #   E2E_LOCK_FILE          arquivo da trava (default
-#                          ${XDG_CACHE_HOME:-~/.cache}/dataframeitGUI/pre-push-e2e.lock)
+#                          ~/.cache/dataframeitGUI/pre-push-e2e.lock)
 #   E2E_LOCK_WAIT_SECONDS  teto da espera pela trava, inteiro >= 0 (default 1800)
 # Sai com o status do comando; com 1 se o flock faltar ou a espera estourar;
 # com 2 em erro de uso.
@@ -23,9 +23,10 @@
 # antes de qualquer teste comecar, e ninguem a pede segurando o lock por projeto.
 #
 # O arquivo fica fora do repositorio para ser o mesmo em toda worktree e em
-# todo clone. Ele mora em ~/.cache, e nao em $TMPDIR, porque sandboxes de agente
-# trocam o $TMPDIR por sessao, e ai cada execucao teria a propria trava e nada
-# seria excluido.
+# todo clone do mesmo usuario. O caminho depende so do $HOME: nao de $TMPDIR,
+# que sandboxes de agente trocam por sessao, nem de $XDG_CACHE_HOME, que um
+# ambiente pode definir e outro nao. Em qualquer dos dois casos cada execucao
+# teria a propria trava e nada seria excluido.
 set -euo pipefail
 
 if [ $# -eq 0 ]; then
@@ -33,7 +34,7 @@ if [ $# -eq 0 ]; then
   exit 2
 fi
 
-lock="${E2E_LOCK_FILE:-${XDG_CACHE_HOME:-$HOME/.cache}/dataframeitGUI/pre-push-e2e.lock}"
+lock="${E2E_LOCK_FILE:-$HOME/.cache/dataframeitGUI/pre-push-e2e.lock}"
 wait_seconds="${E2E_LOCK_WAIT_SECONDS:-1800}"
 [[ "$wait_seconds" =~ ^[0-9]+$ ]] || {
   echo "E2E_LOCK_WAIT_SECONDS precisa ser inteiro >= 0: $wait_seconds" >&2
@@ -100,12 +101,28 @@ printf '%s (pid %s, desde %s): %s\n' "$worktree" "$$" "$(date '+%Y-%m-%d %H:%M:%
 # Playwright sobe tambem o herdaria, e um servidor orfao seguraria a trava para
 # sempre: a proxima execucao esperaria o teto inteiro para falhar com uma
 # mensagem que acusa a trava. Sem o descritor, quem segura e so este shell, e a
-# trava cai quando ele sai, inclusive por SIGKILL. O orfao, se houver, aparece
-# como "porta ja usada", que e o diagnostico certo.
+# trava cai quando ele sai. O orfao, se houver, aparece como "porta ja usada",
+# que e o diagnostico certo.
+#
+# Por isso este shell nao pode morrer antes do comando. Sem trap, SIGTERM e
+# SIGHUP (terminal fechado, `timeout`, o timeout da ferramenta de um agente)
+# matam o shell na hora e soltam a trava com o Playwright ainda rodando ou
+# derrubando o `next dev`, e o proximo pre-push sobe na 3100 ocupada. Com um
+# handler instalado, o bash adia o sinal ate o comando em primeiro plano sair:
+# a trava dura o mesmo que o comando. O handler tem corpo de proposito: `trap ''`
+# seria herdado pelo comando como sinal ignorado, e o Playwright deixaria de
+# receber o Ctrl-C que vai ao grupo inteiro. Limite que nada aqui cobre: SIGKILL
+# so neste shell solta a trava com o comando vivo.
+sinal=""
+trap 'sinal=TERM' TERM
+trap 'sinal=HUP' HUP
+trap 'sinal=INT' INT
 status=0
 "$@" 9>&- || status=$?
-# Esvaziar ainda segurando a trava. Um dono morto por sinal deixa a identificacao
-# para tras; o proximo dono a sobrescreve, e so um aviso emitido na janela entre
-# as duas coisas sairia com o nome velho.
-: >"$lock"
+# Esvaziar ainda segurando a trava. Um dono morto por SIGKILL deixa a
+# identificacao para tras; o proximo dono a sobrescreve, e so um aviso emitido na
+# janela entre as duas coisas sairia com o nome velho. Falhar aqui nao pode
+# trocar o status do comando.
+: >"$lock" 2>/dev/null || true
+[ -z "$sinal" ] || avisar "recebeu SIG$sinal; a trava foi mantida ate o comando sair"
 exit "$status"

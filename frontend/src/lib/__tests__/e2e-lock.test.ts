@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -17,7 +17,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const script = resolve(process.cwd(), "scripts/e2e-lock.sh");
 
+// Todo processo que um teste sobe, para o afterEach derrubar o que sobrou. Sem
+// isso, um teste que falha antes de criar o arquivo de liberacao deixava o laco
+// de espera do dono rodando para sempre, depois de o diretorio ja ter sumido.
+const subidos: ChildProcess[] = [];
+
 interface Execucao {
+  pid: number;
   stderr: () => string;
   fim: Promise<number>;
 }
@@ -37,6 +43,7 @@ function executar(
     stdio: ["ignore", "ignore", "pipe"],
     detached: true,
   });
+  subidos.push(filho);
   filho.stderr.on("data", (parte: Buffer) => {
     stderr += parte.toString();
   });
@@ -44,7 +51,7 @@ function executar(
     filho.on("error", rejeitar);
     filho.on("close", (codigo) => resolver(codigo ?? -1));
   });
-  return { stderr: () => stderr, fim };
+  return { pid: filho.pid!, stderr: () => stderr, fim };
 }
 
 async function esperarAte(condicao: () => boolean, rotulo: string) {
@@ -72,6 +79,17 @@ describe("trava de maquina do E2E", () => {
   });
 
   afterEach(() => {
+    if (existsSync(dir)) writeFileSync(liberar, "");
+    for (const filho of subidos.splice(0)) {
+      try {
+        // `detached` pos cada um no proprio grupo, e o sinal vai ao grupo, nao
+        // ao lider: quando o script morre antes do comando, o comando continua
+        // no grupo, e checar so o lider o deixaria vivo.
+        process.kill(-filho.pid!, "SIGKILL");
+      } catch {
+        // Grupo ja vazio.
+      }
+    }
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -138,6 +156,31 @@ describe("trava de maquina do E2E", () => {
     expect(readFileSync(env.E2E_LOCK_FILE, "utf8")).toBe("");
   });
 
+  it("aviso espera o dono novo se identificar em vez de sair vazio", async () => {
+    // O dono toma a trava e so grava quem e meio segundo depois, como o script
+    // faz entre o flock e o printf.
+    const segurando = join(dir, "segurando");
+    const dono = spawn(
+      "flock",
+      [
+        env.E2E_LOCK_FILE,
+        "bash",
+        "-c",
+        `touch "$1"; sleep 0.5; echo dono-tardio > "$3"; while [ ! -e "$2" ]; do sleep 0.05; done`,
+        "--",
+        segurando,
+        liberar,
+        env.E2E_LOCK_FILE,
+      ],
+      { stdio: "ignore", detached: true },
+    );
+    subidos.push(dono);
+    await esperarAte(() => existsSync(segurando), "dono segurar");
+    const b = executar(["true"], { ...env, E2E_LOCK_WAIT_SECONDS: "0" }, dir);
+    expect(await b.fim).toBe(1);
+    expect(b.stderr()).toMatch(/segura a trava do E2E: dono-tardio/);
+  }, 20_000);
+
   it("dono que ainda nao se identificou nao vira nome inventado", async () => {
     // Segura a trava direto pelo flock, sem gravar nada: e o instante entre o
     // dono tomar a trava e escrever quem e.
@@ -155,6 +198,7 @@ describe("trava de maquina do E2E", () => {
       ],
       { stdio: "ignore", detached: true },
     );
+    subidos.push(dono);
     const fimDono = new Promise<number>((r) =>
       dono.on("close", (codigo) => r(codigo ?? -1)),
     );
@@ -207,12 +251,68 @@ describe("trava de maquina do E2E", () => {
     expect(execucao.stderr()).toContain("flock ausente");
   });
 
-  it("recusa teto de espera que nao e inteiro", async () => {
+  it.each(["dez", "10x"])(
+    "recusa teto de espera que nao e inteiro (%s)",
+    async (teto) => {
+      const execucao = executar(
+        ["true"],
+        { ...env, E2E_LOCK_WAIT_SECONDS: teto },
+        dir,
+      );
+      expect(await execucao.fim).toBe(2);
+    },
+  );
+
+  it("sem comando e erro de uso, e nao toma a trava", async () => {
+    const execucao = executar([], env, dir);
+    expect(await execucao.fim).toBe(2);
+    expect(existsSync(env.E2E_LOCK_FILE)).toBe(false);
+  });
+
+  it("cria o diretorio da trava quando ele nao existe", async () => {
     const execucao = executar(
       ["true"],
-      { ...env, E2E_LOCK_WAIT_SECONDS: "dez" },
+      { ...env, E2E_LOCK_FILE: join(dir, "nao", "existe", "e2e.lock") },
       dir,
     );
-    expect(await execucao.fim).toBe(2);
+    expect(await execucao.fim).toBe(0);
   });
+
+  // Um sinal que chega ao script (terminal fechado, `timeout`, timeout da
+  // ferramenta de um agente) nao pode soltar a trava com o comando vivo: o
+  // proximo pre-push subiria o Playwright na porta que o anterior ainda ocupa.
+  it.each([
+    ["TERM so no script", "SIGTERM", false],
+    ["HUP no grupo inteiro", "SIGHUP", true],
+  ] as const)(
+    "%s: a trava dura ate o comando sair",
+    async (_rotulo, sinal, noGrupo) => {
+      // O comando trata o sinal como o Playwright: desmonta e so sai quando o
+      // arquivo de liberacao aparece.
+      const comando = [
+        "bash",
+        "-c",
+        `trap 'echo sinal-a >> "$1"' TERM HUP; echo "inicio-a" >> "$1"; while [ ! -e "$2" ]; do sleep 0.05; done; echo "fim-a" >> "$1"`,
+        "--",
+        log,
+        liberar,
+      ];
+      const a = executar(comando, env, dir);
+      await esperarAte(() => ordem().includes("inicio-a"), "a comecar");
+
+      process.kill(noGrupo ? -a.pid : a.pid, sinal);
+      if (noGrupo) {
+        await esperarAte(() => ordem().includes("sinal-a"), "a receber");
+      }
+
+      const b = executar(["true"], { ...env, E2E_LOCK_WAIT_SECONDS: "0" }, dir);
+      expect(await b.fim).toBe(1);
+
+      writeFileSync(liberar, "");
+      await a.fim;
+      expect(ordem()).toContain("fim-a");
+      expect(a.stderr()).toContain(`recebeu ${sinal}`);
+    },
+    20_000,
+  );
 });
