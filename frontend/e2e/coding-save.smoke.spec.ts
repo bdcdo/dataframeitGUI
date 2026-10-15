@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { visivel } from "./visivel";
 
 // Smoke do fluxo de SALVAMENTO de codificação — proteção de regressão da
 // família de bugs "codificação não salva" (#425, dedup de responses). O
@@ -130,22 +131,22 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
 
       // Doc do fixture na fila de Atribuídos, com as duas perguntas do schema.
       await expect(
-        page.getByText("Resumo do documento"),
+        visivel(page.getByText("Resumo do documento")),
         "pergunta 'Resumo do documento' não apareceu — confira o fixture e o reset",
       ).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText("Observação livre")).toBeVisible();
+      await expect(visivel(page.getByText("Observação livre"))).toBeVisible();
 
       // Campos text renderizam como Textarea com placeholder fixo
       // (FieldRenderer); a ordem na página segue a ordem dos campos no
       // schema do projeto: resumo (1ª) e observacao (2ª).
-      const textareas = page.getByPlaceholder("Digite sua resposta...");
+      const textareas = visivel(page.getByPlaceholder("Digite sua resposta..."));
       await expect(textareas).toHaveCount(2);
       await textareas.nth(0).fill(RESUMO_VALUE);
       await textareas.nth(1).fill(OBSERVACAO_VALUE);
 
       await page.getByRole("button", { name: "Enviar respostas" }).click();
       await expect(
-        page.getByText("Respostas salvas!"),
+        visivel(page.getByText("Respostas salvas!")),
         "toast de sucesso não apareceu após Enviar respostas",
       ).toBeVisible({ timeout: 15_000 });
 
@@ -197,7 +198,7 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
       // valores persistidos voltam pré-preenchidos no formulário.
       await page.goto(`/projects/${projectId}/analyze/code?round=all`);
       await page.getByRole("button", { name: new RegExp(DOC_TITLE) }).click();
-      const reloaded = page.getByPlaceholder("Digite sua resposta...");
+      const reloaded = visivel(page.getByPlaceholder("Digite sua resposta..."));
       await expect(reloaded.nth(0)).toHaveValue(RESUMO_VALUE, {
         timeout: 30_000,
       });
@@ -277,16 +278,16 @@ test("codificação: editar e sair sem enviar não grava, e o rascunho local ret
     context: "coding-save-unsent",
     run: async () => {
       await page.goto(`/projects/${projectId}/analyze/code`);
-      await expect(page.getByText("Resumo do documento")).toBeVisible({
+      await expect(visivel(page.getByText("Resumo do documento"))).toBeVisible({
         timeout: 30_000,
       });
 
-      const textareas = page.getByPlaceholder("Digite sua resposta...");
+      const textareas = visivel(page.getByPlaceholder("Digite sua resposta..."));
       await expect(textareas).toHaveCount(2);
       await textareas.nth(0).fill(UNSENT_VALUE);
 
       // A edição acende o indicador permanente.
-      await expect(page.getByText("Alterações não enviadas").first()).toBeVisible();
+      await expect(visivel(page.getByText("Alterações não enviadas")).first()).toBeVisible();
 
       // Esconder a aba é o gatilho que o autosave usava para gravar por
       // `sendBeacon` (`visibilitychange` → hidden). Simulá-lo aqui é o que
@@ -378,9 +379,9 @@ test("codificação: editar e sair sem enviar não grava, e o rascunho local ret
       ).toBeVisible({ timeout: 30_000 });
 
       await page.getByRole("button", { name: "Retomar rascunho" }).click();
-      await expect(page.getByPlaceholder("Digite sua resposta...").nth(0)).toHaveValue(
-        UNSENT_VALUE,
-      );
+      await expect(
+        visivel(page.getByPlaceholder("Digite sua resposta...")).nth(0),
+      ).toHaveValue(UNSENT_VALUE);
 
       // Segunda leitura, no fim de tudo: a primeira mede a janela imediata, esta
       // fecha a porta para uma escrita atrasada — inclusive a que só apareceria
