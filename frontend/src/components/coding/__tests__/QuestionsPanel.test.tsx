@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { QuestionsPanel } from "@/components/coding/QuestionsPanel";
 import type { PydanticField } from "@/lib/types";
+import { hydrateFromServerHtml } from "@/test-utils/hydration";
 
 // Dependências do OutOfScopeToggle (renderizado quando a prop `outOfScope`
 // está presente) — inertes nos demais testes.
@@ -280,5 +281,31 @@ describe("QuestionsPanel — contagem de obrigatórias no header", () => {
     );
     // 1 humana respondida de 1 obrigatória; o campo llm_only não infla o denominador.
     expect(screen.getByText(/1\/1 obrigatórias respondidas/)).toBeTruthy();
+  });
+});
+
+describe("QuestionsPanel — hidratação com reordenação ligada", () => {
+  // O `aria-describedby` que o @dnd-kit põe em cada pergunta arrastável sai de
+  // um contador de módulo quando o `DndContext` não recebe `id`. O contador do
+  // servidor e o do navegador avançam separados, e a hidratação acusava
+  // `DndDescribedBy-0` contra `DndDescribedBy-1`.
+  it("hidrata sem divergência e o aria-describedby aponta para as instruções", async () => {
+    const { container, hydrationErrors } = await hydrateFromServerHtml(
+      <QuestionsPanel
+        fields={baseFields}
+        answers={{}}
+        onAnswer={() => {}}
+        onSubmit={() => {}}
+        onReorder={() => {}}
+      />,
+    );
+
+    expect(hydrationErrors).toEqual([]);
+    const described = [...container.querySelectorAll("[aria-describedby]")];
+    expect(described.length).toBeGreaterThan(0);
+    for (const element of described) {
+      const target = element.getAttribute("aria-describedby")!;
+      expect(container.contains(document.getElementById(target))).toBe(true);
+    }
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Plus } from "lucide-react";
 import { FieldCard } from "./FieldCard";
@@ -35,6 +35,11 @@ function nextAvailableFieldName(fields: PydanticField[]): string {
 
 export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  // O `DndContext` sem `id` numera o `aria-describedby` dos itens arrastáveis
+  // com um contador de módulo do @dnd-kit, que o servidor e o navegador avançam
+  // separados, e a hidratação divergia (`DndDescribedBy-0` contra `-1`).
+  // `useId` deriva o id da posição na árvore, igual nos dois lados.
+  const dndContextId = useId();
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -105,6 +110,7 @@ export function SchemaBuilderGUI({ fields, onChange }: SchemaBuilderGUIProps) {
         )}
 
         <DndContext
+          id={dndContextId}
           sensors={sensors}
           collisionDetection={closestCenter}
           onDragEnd={handleDragEnd}
