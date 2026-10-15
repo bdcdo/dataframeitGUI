@@ -130,6 +130,46 @@ describe("trava de maquina do E2E", () => {
     expect(await execucao.fim).toBe(7);
   });
 
+  // Quem chegasse entre a saida de um dono e a identificacao do seguinte lia o
+  // nome do dono que ja tinha saido.
+  it("dono esvazia a identificacao ao sair", async () => {
+    const execucao = executar(["true"], env, dir);
+    expect(await execucao.fim).toBe(0);
+    expect(readFileSync(env.E2E_LOCK_FILE, "utf8")).toBe("");
+  });
+
+  it("dono que ainda nao se identificou nao vira nome inventado", async () => {
+    // Segura a trava direto pelo flock, sem gravar nada: e o instante entre o
+    // dono tomar a trava e escrever quem e.
+    const segurando = join(dir, "segurando");
+    const dono = spawn(
+      "flock",
+      [
+        env.E2E_LOCK_FILE,
+        "bash",
+        "-c",
+        `touch "$1"; while [ ! -e "$2" ]; do sleep 0.05; done`,
+        "--",
+        segurando,
+        liberar,
+      ],
+      { stdio: "ignore", detached: true },
+    );
+    const fimDono = new Promise<number>((r) =>
+      dono.on("close", (codigo) => r(codigo ?? -1)),
+    );
+    try {
+      await esperarAte(() => existsSync(segurando), "dono segurar");
+      const b = executar(["true"], { ...env, E2E_LOCK_WAIT_SECONDS: "0" }, dir);
+      expect(await b.fim).toBe(1);
+      expect(b.stderr()).toContain("o dono ainda nao gravou a identificacao");
+    } finally {
+      writeFileSync(liberar, "");
+      await fimDono;
+    }
+    // Quem espera relê a identificação por até 2s em cada um dos dois avisos.
+  }, 20_000);
+
   // O `next dev` que o Playwright sobe pode sobreviver a ele. Se o comando
   // herdasse o descritor da trava, esse orfao a seguraria para sempre.
   it("processo que sobrevive ao comando nao segura a trava", async () => {

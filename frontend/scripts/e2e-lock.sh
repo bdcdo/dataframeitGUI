@@ -54,16 +54,33 @@ avisar() {
   fi
 }
 
+# Identificacao do dono atual, para os avisos de quem espera. O dono novo so a
+# grava depois de tomar a trava, e o anterior esvazia o arquivo ao sair; quem
+# chega nessa janela le o arquivo vazio, e sem a releitura lia a identificacao
+# do dono ANTERIOR, que ja tinha saido (caso visto em 2026-10-14).
+dono() {
+  local conteudo _
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    conteudo="$(head -c 500 "$lock" 2>/dev/null || true)"
+    if [ -n "$conteudo" ]; then
+      printf '%s' "$conteudo"
+      return
+    fi
+    sleep 0.2
+  done
+  printf '(o dono ainda nao gravou a identificacao)'
+}
+
 mkdir -p "$(dirname "$lock")"
 # `<>` abre sem truncar: enquanto outro processo segura a trava, o conteudo e a
 # identificacao dele, que quem espera le para dizer por quem esta esperando.
 exec 9<>"$lock"
 if ! flock -n 9; then
-  avisar "outra execucao do E2E segura a trava: $(head -c 500 "$lock" || true)"
+  avisar "outra execucao do E2E segura a trava: $(dono)"
   avisar "aguardando ate ${wait_seconds}s ($lock)"
   start=$SECONDS
   if ! flock -w "$wait_seconds" 9; then
-    avisar "a trava continuou ocupada por ${wait_seconds}s; dono: $(head -c 500 "$lock" || true)"
+    avisar "a trava continuou ocupada por ${wait_seconds}s; dono: $(dono)"
     avisar "confira se a execucao dona ainda roda; para pular o gate de forma explicita: SKIP=e2e-smoke git push"
     exit 1
   fi
@@ -83,4 +100,8 @@ printf '%s (pid %s, desde %s): %s\n' "$worktree" "$$" "$(date '+%Y-%m-%d %H:%M:%
 # como "porta ja usada", que e o diagnostico certo.
 status=0
 "$@" 9>&- || status=$?
+# Esvaziar ainda segurando a trava. Um dono morto por sinal deixa a identificacao
+# para tras; o proximo dono a sobrescreve, e so um aviso emitido na janela entre
+# as duas coisas sairia com o nome velho.
+: >"$lock"
 exit "$status"
