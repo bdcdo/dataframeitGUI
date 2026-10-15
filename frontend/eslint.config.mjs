@@ -6,6 +6,31 @@ import {
   serverActionExportsPlugin,
 } from "./eslint-rules/server-action-exports.mjs";
 
+const CLERK_COMPONENTS_READING_LOAD_STATE = [
+  "APIKeys",
+  "ClerkDegraded",
+  "ClerkFailed",
+  "ClerkLoaded",
+  "ClerkLoading",
+  "CreateOrganization",
+  "GoogleOneTap",
+  "OAuthConsent",
+  "OAuthDeviceVerification",
+  "OrganizationList",
+  "OrganizationProfile",
+  "OrganizationSwitcher",
+  "PricingTable",
+  "SignIn",
+  "SignUp",
+  "TaskChooseOrganization",
+  "TaskResetPassword",
+  "TaskSetupMFA",
+  "UserAvatar",
+  "UserButton",
+  "UserProfile",
+  "Waitlist",
+];
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -18,15 +43,18 @@ const eslintConfig = defineConfig([
       [`server-actions/${RULE_NAME}`]: "error",
     },
   },
-  // Componentes de UI do Clerk leem `clerk.loaded` ao vivo durante o render e
-  // por isso divergem do HTML do servidor quando o clerk-js carrega antes de a
-  // hidratação chegar neles ("Hydration failed" intermitente em /auth/login).
+  // Componentes do Clerk que leem `clerk.loaded` ou `clerk.status` ao vivo
+  // durante o render divergem do HTML do servidor quando o clerk-js carrega antes
+  // de a hidratação chegar neles ("Hydration failed" intermitente em /auth/login).
   // Eles entram pelo portão de `src/components/auth/clerk-ui.tsx`, que explica o
-  // mecanismo. A lista são os componentes que o `@clerk/react` 6 monta com
-  // `withClerk(..., { renderWhileLoading: true })`; um componente de UI novo do
-  // Clerk que não esteja aqui escapa do lint, então conferir ao atualizar o pacote.
+  // mecanismo. A lista vem da leitura do `@clerk/react` 6: os componentes de UI
+  // montados por `withClerk` que consultam o carregamento no render (para o nó
+  // ou para o `fallback`), mais os de controle (`ClerkLoaded` e afins). Os
+  // botões (`SignInButton` etc.) ficam fora: não dependem do carregamento. Um componente novo do Clerk escapa do lint
+  // até entrar aqui, então conferir ao atualizar o pacote. `import()` dinâmico
+  // também escapa: a regra só vê import estático.
   {
-    files: ["src/**/*.{mts,ts,tsx}"],
+    files: ["src/**/*.{js,jsx,mjs,mts,ts,tsx}"],
     // O teste do portão importa o componente cru (mockado) como controle.
     ignores: [
       "src/components/auth/clerk-ui.tsx",
@@ -36,33 +64,15 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          paths: [
-            {
-              name: "@clerk/nextjs",
-              importNames: [
-                "APIKeys",
-                "CreateOrganization",
-                "GoogleOneTap",
-                "OAuthConsent",
-                "OAuthDeviceVerification",
-                "OrganizationList",
-                "OrganizationProfile",
-                "OrganizationSwitcher",
-                "PricingTable",
-                "SignIn",
-                "SignUp",
-                "TaskChooseOrganization",
-                "TaskResetPassword",
-                "TaskSetupMFA",
-                "UserAvatar",
-                "UserButton",
-                "UserProfile",
-                "Waitlist",
-              ],
-              message:
-                "Importe de @/components/auth/clerk-ui, que só monta o componente depois da hidratação (ver o comentário lá).",
-            },
-          ],
+          // `@clerk/react` é a origem real dos componentes; o `@clerk/nextjs`
+          // só os reexporta.
+          paths: ["@clerk/nextjs", "@clerk/react"].map((name) => ({
+            name,
+            importNames: CLERK_COMPONENTS_READING_LOAD_STATE,
+            allowTypeImports: true,
+            message:
+              "Use o componente de @/components/auth/clerk-ui (ou acrescente lá um embrulho com o mesmo portão), que só o monta depois da hidratação.",
+          })),
         },
       ],
     },

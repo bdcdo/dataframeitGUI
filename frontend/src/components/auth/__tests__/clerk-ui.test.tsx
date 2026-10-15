@@ -6,16 +6,16 @@ import { cleanup, render } from "@testing-library/react";
 // `clerk.loaded` lido ao vivo no render (no `@clerk/react` real, o getter
 // `IsomorphicClerk.loaded`). Carregado, emite o mesmo nó que o `SignIn` real
 // emite (`data-clerk-component`); não carregado, nada, como no servidor.
-const clerkState = vi.hoisted(() => ({ loaded: false }));
+const clerkState = vi.hoisted(() => ({
+  loaded: false,
+  lastProps: undefined as Record<string, unknown> | undefined,
+}));
 
 vi.mock("@clerk/nextjs", () => ({
-  SignIn: (props: { forceRedirectUrl?: string }) =>
-    clerkState.loaded ? (
-      <div
-        data-clerk-component="SignIn"
-        data-force-redirect={props.forceRedirectUrl}
-      />
-    ) : null,
+  SignIn: (props: Record<string, unknown>) => {
+    clerkState.lastProps = props;
+    return clerkState.loaded ? <div data-clerk-component="SignIn" /> : null;
+  },
 }));
 
 import { SignIn as ClerkSignIn } from "@clerk/nextjs";
@@ -24,7 +24,14 @@ import { SignIn } from "../clerk-ui";
 afterEach(() => {
   cleanup();
   clerkState.loaded = false;
+  clerkState.lastProps = undefined;
 });
+
+// As mesmas props que a página de login passa.
+const LOGIN_PROPS = {
+  fallbackRedirectUrl: "/auth/post-login",
+  forceRedirectUrl: "/auth/post-login",
+};
 
 // No servidor o Clerk nunca está carregado, então o HTML desta subárvore é
 // vazio — com ou sem o portão. A hidratação parte desse container vazio, depois
@@ -51,7 +58,7 @@ describe("clerk-ui SignIn — portão de hidratação", () => {
     // a hidratação, o teste de baixo vira vácuo e precisa ser revisto.
     const silence = vi.spyOn(console, "error").mockImplementation(() => {});
     const { recoverable } = hydrateAfterClerkLoaded(
-      <ClerkSignIn forceRedirectUrl="/auth/post-login" />,
+      <ClerkSignIn {...LOGIN_PROPS} />,
     );
     silence.mockRestore();
 
@@ -60,13 +67,13 @@ describe("clerk-ui SignIn — portão de hidratação", () => {
 
   it("com o portão, hidrata sem divergência e monta o SignIn logo depois", () => {
     const { container, recoverable } = hydrateAfterClerkLoaded(
-      <SignIn forceRedirectUrl="/auth/post-login" />,
+      <SignIn {...LOGIN_PROPS} />,
     );
 
     expect(recoverable).toEqual([]);
     const node = container.querySelector('[data-clerk-component="SignIn"]');
     expect(node, "o SignIn não montou depois da hidratação").not.toBeNull();
     // As props chegam ao componente do Clerk sem perda.
-    expect(node!.getAttribute("data-force-redirect")).toBe("/auth/post-login");
+    expect(clerkState.lastProps).toEqual(LOGIN_PROPS);
   });
 });

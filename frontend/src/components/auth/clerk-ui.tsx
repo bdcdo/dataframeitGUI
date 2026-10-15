@@ -19,9 +19,11 @@ import { SignIn as ClerkSignIn } from "@clerk/nextjs";
 // parte das cargas de `/auth/login`; com a CPU livre, quase nunca.
 //
 // O portão abaixo faz o primeiro render do cliente repetir o do servidor (nada) e
-// só monta o componente do Clerk no render seguinte, já fora da hidratação. Não
-// há perda: o servidor nunca renderiza esses componentes, porque lá o Clerk nunca
-// está carregado.
+// só monta o componente do Clerk no render seguinte, já fora da hidratação. Para
+// o `SignIn` sem a prop `fallback`, que é o uso daqui, não há perda: o servidor o
+// renderiza vazio, porque lá o Clerk nunca está carregado. Ao embrulhar um
+// componente que tenha `fallback` ou que emita o nó mesmo descarregado (ex.:
+// `UserProfile`), o portão passa a suprimir no SSR algo que o servidor emitiria.
 //
 // `useSyncExternalStore` com snapshot de servidor `false` e de cliente `true` é a
 // forma de o React expressar "estou hidratando": durante a hidratação ele usa o
