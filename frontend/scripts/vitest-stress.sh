@@ -18,7 +18,7 @@
 # Com --cpu, a carga real e a soma dos lacos com o que mais roda na maquina, e
 # duas rodadas com a mesma K podem ficar com load 45 e 100. Com --quota, a suite
 # roda num escopo systemd com CPUQuota=P%, que e teto e nao piso: a suite nunca
-# passa de P%, e sob disputa recebe menos, na proporcao do peso de CPU que a
+# passa de P%, e sob disputa pode receber menos, conforme o peso de CPU que a
 # maquina da ao escopo. A linha de cada rodada traz a CPU efetiva lida do
 # cgroup, que mostra o orcamento que a suite teve de fato; duas rodadas so se
 # comparam quando ela bate com a cota. W workers em P% equivalem, por processo,
@@ -90,8 +90,8 @@ if [ -n "$quota" ]; then
     exit 2
   fi
   # Sem -p CPUWeight: o peso do escopo fica com a configuracao da maquina. Um
-  # peso alto aqui garantia a cota sob disputa, mas punha a suite acima da
-  # interface grafica e deixava o desktop lento durante a rodada.
+  # peso alto aqui favorecia a cota tirando CPU dos outros aplicativos da
+  # sessao (navegador, editor), e o desktop ficava lento durante a rodada.
   runner=(systemd-run --user --scope -q -p "CPUQuota=${quota}%")
   case " ${vitest_args[*]-} " in
     *" --maxWorkers"* | *" --max-workers"*) ;;
