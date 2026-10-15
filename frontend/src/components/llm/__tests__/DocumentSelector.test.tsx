@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { DocSelectionItem } from "@/actions/llm";
@@ -30,6 +31,11 @@ const sampleDocs: DocSelectionItem[] = [
 
 // O Radix (Dialog/Checkbox) usa APIs de Pointer/observer que o jsdom não
 // implementa; sem estes shims a abertura do dialog quebra.
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
+
 beforeAll(() => {
   const proto = Element.prototype as unknown as Record<string, unknown>;
   proto.scrollIntoView = () => {};

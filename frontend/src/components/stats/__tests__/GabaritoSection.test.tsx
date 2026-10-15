@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -7,6 +8,11 @@ vi.mock("@/actions/stats", () => ({ fetchGabaritoForComment: vi.fn() }));
 
 import { GabaritoSection } from "@/components/stats/GabaritoSection";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

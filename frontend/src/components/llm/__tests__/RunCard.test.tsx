@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const { fetchFastAPI, getToken } = vi.hoisted(() => ({
@@ -100,6 +101,14 @@ function expectRejectedNumericValues({
   expect(runButton.disabled).toBe(true);
   expect(fetchFastAPI).not.toHaveBeenCalled();
 }
+
+// Este arquivo só usa fireEvent, mas o primeiro teste pagava sozinho o
+// primeiro render e a primeira consulta de React DOM e Testing Library, a frio,
+// e com a suíte disputando a CPU custava várias vezes o que custam os testes
+// seguintes. O aquecimento carrega também user-event e Radix, que o arquivo
+// não usa; mesmo com esse custo a mais, o primeiro teste cai para menos da
+// metade (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   fetchFastAPI.mockClear();

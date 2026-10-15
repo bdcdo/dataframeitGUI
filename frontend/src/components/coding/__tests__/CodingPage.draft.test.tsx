@@ -10,7 +10,8 @@
 // Diferente das outras suítes de `CodingPage`, o `QuestionsPanel` NÃO é
 // mockado por um stub mínimo: o indicador de "não enviado" mora nele, e um stub
 // tornaria vácua justamente a asserção do critério 4.
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, waitFor, cleanup, act, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -174,6 +175,11 @@ const answerInput = () => screen.getAllByRole("textbox")[0];
 const typeAnswer = async (user: ReturnType<typeof userEvent.setup>, text: string) => {
   await user.type(answerInput(), text);
 };
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   urlParams.current = {};
