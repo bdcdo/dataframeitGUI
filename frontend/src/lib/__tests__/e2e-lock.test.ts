@@ -25,12 +25,16 @@ const subidos: ChildProcess[] = [];
 interface Execucao {
   pid: number;
   stderr: () => string;
+  // Fecha a ponta de leitura do stderr do script, como quando o pre-commit que
+  // le a saida do hook morre antes dele.
+  fecharStderr: () => void;
   fim: Promise<number>;
 }
 
+// Variavel com valor `undefined` sai do ambiente do filho: o spawn a omite.
 function executar(
   comando: string[],
-  env: Record<string, string>,
+  env: Record<string, string | undefined>,
   cwd: string,
 ): Execucao {
   let stderr = "";
@@ -51,7 +55,12 @@ function executar(
     filho.on("error", rejeitar);
     filho.on("close", (codigo) => resolver(codigo ?? -1));
   });
-  return { pid: filho.pid!, stderr: () => stderr, fim };
+  return {
+    pid: filho.pid!,
+    stderr: () => stderr,
+    fecharStderr: () => filho.stderr.destroy(),
+    fim,
+  };
 }
 
 async function esperarAte(condicao: () => boolean, rotulo: string) {
@@ -150,6 +159,37 @@ describe("trava de maquina do E2E", () => {
 
   // Quem chegasse entre a saida de um dono e a identificacao do seguinte lia o
   // nome do dono que ja tinha saido.
+  // Sem E2E_LOCK_FILE, a trava fica sob o $HOME e ignora $XDG_CACHE_HOME, que
+  // um ambiente define e outro nao: com caminhos diferentes, duas execucoes
+  // teriam cada uma a sua trava.
+  it("trava default fica sob o HOME, nao sob XDG_CACHE_HOME", async () => {
+    const home = join(dir, "home");
+    const xdg = join(dir, "xdg");
+    const execucao = executar(
+      ["true"],
+      { ...env, E2E_LOCK_FILE: undefined, HOME: home, XDG_CACHE_HOME: xdg },
+      dir,
+    );
+    expect(await execucao.fim).toBe(0);
+    expect(
+      existsSync(join(home, ".cache", "dataframeitGUI", "pre-push-e2e.lock")),
+    ).toBe(true);
+    expect(existsSync(xdg)).toBe(false);
+  });
+
+  // Esvaziar a identificacao e arrumacao: se o arquivo sumiu junto com o
+  // diretorio, o script ainda sai com o status do comando.
+  it("trava apagada durante o comando nao troca o status", async () => {
+    const lock = join(dir, "sub", "e2e.lock");
+    const execucao = executar(
+      ["bash", "-c", `rm -rf "$1"; exit 7`, "--", join(dir, "sub")],
+      { ...env, E2E_LOCK_FILE: lock },
+      dir,
+    );
+    expect(await execucao.fim).toBe(7);
+    expect(existsSync(join(dir, "sub"))).toBe(false);
+  });
+
   it("dono esvazia a identificacao ao sair", async () => {
     const execucao = executar(["true"], env, dir);
     expect(await execucao.fim).toBe(0);
@@ -284,15 +324,18 @@ describe("trava de maquina do E2E", () => {
   it.each([
     ["TERM so no script", "SIGTERM", false],
     ["HUP no grupo inteiro", "SIGHUP", true],
+    ["INT no grupo inteiro", "SIGINT", true],
   ] as const)(
     "%s: a trava dura ate o comando sair",
     async (_rotulo, sinal, noGrupo) => {
       // O comando trata o sinal como o Playwright: desmonta e so sai quando o
-      // arquivo de liberacao aparece.
+      // arquivo de liberacao aparece. Um filho bash so consegue tratar o sinal
+      // se o script nao o deixou ignorado: o bash nao instala trap para sinal
+      // que ja chega ignorado.
       const comando = [
         "bash",
         "-c",
-        `trap 'echo sinal-a >> "$1"' TERM HUP; echo "inicio-a" >> "$1"; while [ ! -e "$2" ]; do sleep 0.05; done; echo "fim-a" >> "$1"`,
+        `trap 'echo sinal-a >> "$1"' TERM HUP INT; echo "inicio-a" >> "$1"; while [ ! -e "$2" ]; do sleep 0.05; done; echo "fim-a" >> "$1"`,
         "--",
         log,
         liberar,
@@ -315,4 +358,26 @@ describe("trava de maquina do E2E", () => {
     },
     20_000,
   );
+
+  // O sinal que chega ao script costuma derrubar tambem quem le o stderr dele (o
+  // pre-commit, num terminal fechado). Escrever o aviso final num pipe sem
+  // leitor daria SIGPIPE, e o script morreria por ele em vez de sair com o
+  // status do comando.
+  it("aviso final sem leitor no stderr nao troca o status do comando", async () => {
+    const comando = [
+      "bash",
+      "-c",
+      `echo "inicio-a" >> "$1"; while [ ! -e "$2" ]; do sleep 0.05; done; exit 5`,
+      "--",
+      log,
+      liberar,
+    ];
+    const a = executar(comando, env, dir);
+    await esperarAte(() => ordem().includes("inicio-a"), "a comecar");
+
+    a.fecharStderr();
+    process.kill(a.pid, "SIGTERM");
+    writeFileSync(liberar, "");
+    expect(await a.fim).toBe(5);
+  });
 });

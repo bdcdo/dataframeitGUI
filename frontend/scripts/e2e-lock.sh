@@ -109,20 +109,34 @@ printf '%s (pid %s, desde %s): %s\n' "$worktree" "$$" "$(date '+%Y-%m-%d %H:%M:%
 # matam o shell na hora e soltam a trava com o Playwright ainda rodando ou
 # derrubando o `next dev`, e o proximo pre-push sobe na 3100 ocupada. Com um
 # handler instalado, o bash adia o sinal ate o comando em primeiro plano sair:
-# a trava dura o mesmo que o comando. O handler tem corpo de proposito: `trap ''`
-# seria herdado pelo comando como sinal ignorado, e o Playwright deixaria de
-# receber o Ctrl-C que vai ao grupo inteiro. Limite que nada aqui cobre: SIGKILL
-# so neste shell solta a trava com o comando vivo.
+# a trava dura o mesmo que o comando. O handler tem corpo de proposito, por dois
+# motivos. Sinal ignorado com `trap ''` e herdado como ignorado pelos filhos, e
+# um filho bash ou sh nao consegue mais trata-lo: o bash nao instala trap para
+# sinal que ja chega ignorado, entao um script de desmontagem no meio do comando
+# perderia o Ctrl-C ou o SIGTERM que vai ao grupo inteiro. E e o handler que
+# registra o sinal para o aviso final. Limite que nada aqui cobre: SIGKILL so
+# neste shell solta a trava com o comando vivo.
 sinal=""
 trap 'sinal=TERM' TERM
 trap 'sinal=HUP' HUP
 trap 'sinal=INT' INT
 status=0
 "$@" 9>&- || status=$?
-# Esvaziar ainda segurando a trava. Um dono morto por SIGKILL deixa a
-# identificacao para tras; o proximo dono a sobrescreve, e so um aviso emitido na
-# janela entre as duas coisas sairia com o nome velho. Falhar aqui nao pode
-# trocar o status do comando.
+# Esvaziar ainda segurando a trava. Um dono que nao chega aqui deixa a
+# identificacao para tras: morto por SIGKILL a qualquer momento, ou por TERM, HUP
+# ou INT entre gravar a identificacao e instalar os traps acima. O proximo dono a
+# sobrescreve, e so um aviso emitido na janela entre as duas coisas sairia com o
+# nome velho. Instalar os traps antes do printf trocaria esse resto por um
+# defeito pior: um sinal que chegasse antes de o comando comecar seria so
+# registrado, e o script rodaria a suite inteira depois do pedido de parar.
+#
+# Nenhum dos dois passos abaixo pode trocar o status do comando. Esvaziar falha
+# se o diretorio da trava sumiu. O aviso falha quando o leitor do stderr ja
+# morreu (o pre-commit derrubado pelo mesmo SIGHUP): escrever num pipe sem
+# leitor mata o processo por SIGPIPE, e sem o subshell quem morreria seria
+# este shell, antes do `exit`.
 : >"$lock" 2>/dev/null || true
-[ -z "$sinal" ] || avisar "recebeu SIG$sinal; a trava foi mantida ate o comando sair"
+if [ -n "$sinal" ]; then
+  (avisar "recebeu SIG$sinal; a trava foi mantida ate o comando sair") || true
+fi
 exit "$status"
