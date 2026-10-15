@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -59,6 +60,11 @@ function gabaritoLabel() {
  * do gabarito ao desmarcar o grupo escolhido passou a rodar no nível do
  * handler. O comportamento observável não pode mudar.
  */
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
+
 describe("AgreementGroup — desmarcar o grupo que é gabarito", () => {
   // Discriminador: desmarcar sozinho não prova o reset, porque
   // `effectiveGabarito` já ignora um override fora de `selectionOrder`. O que

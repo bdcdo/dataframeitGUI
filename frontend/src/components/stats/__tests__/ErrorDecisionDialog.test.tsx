@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ErrorDecisionDialog } from "@/components/stats/ErrorDecisionDialog";
@@ -30,6 +31,11 @@ const confirmButton = () => screen.getByRole("button", { name: "Confirmar decis�
 const checked = (role: "radio" | "checkbox", name: string) => (screen.getByRole(role, { name }) as HTMLInputElement).checked;
 
 afterEach(cleanup);
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 describe("ErrorDecisionDialog — Erro do LLM leva o veredito nas opções atuais (#733)", () => {
   it("multi: pré-marca as opções do veredito que ainda existem e envia array", async () => {

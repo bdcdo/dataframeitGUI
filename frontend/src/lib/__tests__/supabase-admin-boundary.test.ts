@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 
 const mockedCreateClient = vi.hoisted(() => vi.fn(() => ({ client: true })));
 
@@ -85,14 +85,26 @@ function sourceFiles(dir: string): string[] {
   return files;
 }
 
+// Cada arquivo passa pelo parser uma única vez por execução. O teste de
+// caminho runtime faz uma busca no grafo a partir de cada módulo "use client"
+// (mais de 200) e consulta a diretiva de cada nó visitado; sem o cache, cada
+// visita refazia o parse do arquivo, e o teste somava milhares de parses
+// síncronos, que passavam dos 5 s com a máquina carregada. O cache guarda a
+// árvore, então quem a consulta não pode mutá-la.
+const parsedSources = new Map<string, ts.SourceFile>();
+
 function parse(file: string): ts.SourceFile {
-  return ts.createSourceFile(
+  const cached = parsedSources.get(file);
+  if (cached) return cached;
+  const source = ts.createSourceFile(
     file,
     fs.readFileSync(file, "utf8"),
     ts.ScriptTarget.Latest,
     true,
     file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
+  parsedSources.set(file, source);
+  return source;
 }
 
 function parseText(source: string): ts.SourceFile {
@@ -332,6 +344,11 @@ function publicSecretNames(source: string): string[] {
   );
   return source.match(forbiddenPublicSecret) ?? [];
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/supabase/admin");
+}, 30_000);
 
 describe("fronteira do Supabase admin client", () => {
   const files = sourceFiles(SRC_ROOT);

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -86,6 +87,11 @@ beforeEach(() => {
   acknowledgeVerdict.mockReset();
   acknowledgeVerdict.mockResolvedValue({ error: null });
 });
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 describe("MyVerdictsView — navegação e filtro", () => {
   it("mostra estado vazio quando não há itens", () => {

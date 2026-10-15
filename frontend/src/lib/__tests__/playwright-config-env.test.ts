@@ -1,3 +1,9 @@
+// O que estes testes medem é a própria avaliação do playwright.config, que lê
+// o arquivo de ambiente e grava em process.env. Avaliá-lo antes dos testes, como
+// a regra test-cold-imports pede, deixaria E2E_PROJECT_ID preenchido antes do
+// primeiro caso, e a asserção sobre E2E_PROJECT_ID no caso do arquivo canônico
+// deixaria de provar que a avaliação o gravou. Por isso cada import() abaixo
+// desliga a regra na própria linha.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ reads: [] as string[] }));
@@ -33,12 +39,14 @@ afterEach(() => {
 
 describe("fonte de ambiente do Playwright", () => {
   it("mantém o arquivo canônico por padrão", async () => {
+    // eslint-disable-next-line test-cold-imports/warm-dynamic-imports -- a avaliação do config é o que se mede
     await import("../../../playwright.config");
     expect(process.env.E2E_PROJECT_ID).toBe("canonical");
     expect(state.reads.some((path) => path.endsWith("/.env.e2e"))).toBe(true);
   });
   it("um arquivo explícito permite fixtures locais sem alterar os symlinks", async () => {
     process.env.E2E_ENV_PATH = "/runtime/isolated.env";
+    // eslint-disable-next-line test-cold-imports/warm-dynamic-imports -- a avaliação do config é o que se mede
     await import("../../../playwright.config");
     expect(process.env.E2E_PROJECT_ID).toBe("isolated");
     expect(state.reads).toContain("/runtime/isolated.env");
@@ -46,6 +54,7 @@ describe("fonte de ambiente do Playwright", () => {
   });
   it("arquivo explícito ausente falha em vez de usar outra configuração", async () => {
     process.env.E2E_ENV_PATH = "/runtime/missing.env";
+    // eslint-disable-next-line test-cold-imports/warm-dynamic-imports -- a avaliação do config é o que se mede
     await expect(import("../../../playwright.config")).rejects.toThrow("fixture missing");
   });
 });

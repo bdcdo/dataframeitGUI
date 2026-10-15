@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import type { LlmError } from "@/lib/llm-error-metrics";
@@ -26,6 +26,28 @@ function show(error = errorCase(), canResolve = true) {
     canResolve={canResolve} isCoordinator={false} summary={{ totalLlmDocs: 1 }} />);
 }
 
+// O diálogo só abre quando a preparação da decisão resolve. A busca do botão
+// fica restrita ao diálogo porque cada tentativa do findByRole calcula o nome
+// acessível de todo botão no escopo, e a tela inteira tem um botão por erro e
+// por ação, o que encarece cada tentativa com a máquina carregada.
+async function findConfirmButton() {
+  const dialog = await screen.findByRole("dialog");
+  return within(dialog).findByRole("button", { name: "Confirmar decisão" });
+}
+
+// O primeiro render desta tela e do diálogo de decisão é frio, e com a suíte
+// disputando a CPU o primeiro teste passava dos 5 s (5,2 s com load 52 a 59,
+// contra 0,9 a 3 s dos seguintes). O hook percorre uma vez o caminho de abrir e
+// cancelar uma decisão, sem gravar nada, o que também carrega as bibliotecas
+// que src/test-utils/jsdom-warm-up.tsx aqueceria; o beforeEach limpa os mocks.
+beforeAll(async () => {
+  mocks.prepare.mockResolvedValue({ context: row.context });
+  show();
+  await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+  await findConfirmButton();
+  await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+  cleanup();
+}, 30_000);
 afterEach(cleanup);
 beforeEach(() => {
   vi.clearAllMocks();
@@ -35,13 +57,65 @@ beforeEach(() => {
 });
 
 describe("decisão individual em Insights", () => {
+  // O diálogo abre quando a preparação já terminou, e nada está sendo salvo.
+  // Quando confirmar e preparar dividiam a mesma transição, o diálogo nascia
+  // com "Salvando…" desabilitado e só liberava a confirmação no render que
+  // encerrava a preparação. O observer registra os botões no primeiro commit
+  // em que o diálogo existe, antes de qualquer render seguinte.
+  it("o diálogo nasce com a confirmação disponível", async () => {
+    let firstLabels: string[] | null = null;
+    const observer = new MutationObserver(() => {
+      const dialog = document.querySelector('[role="dialog"]');
+      if (!dialog || firstLabels) return;
+      firstLabels = Array.from(dialog.querySelectorAll("button"))
+        .filter((button) => button.textContent !== "Close")
+        .map((button) => `${button.textContent}${button.disabled ? " (desabilitado)" : ""}`);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    try {
+      show();
+      await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+      await screen.findByRole("dialog");
+    } finally {
+      observer.disconnect();
+    }
+    expect(firstLabels).toEqual(["Cancelar", "Confirmar decisão"]);
+  });
+
+  // A outra metade da divisão das transições: enquanto a decisão grava, o
+  // diálogo mostra "Salvando…" e os cards atrás dele não aceitam outra ação.
+  it("durante o salvamento o diálogo e os cards ficam bloqueados", async () => {
+    let finish: (value: { success: true }) => void = () => {};
+    mocks.resolve.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+    await userEvent.click(await findConfirmButton());
+    const dialog = screen.getByRole("dialog");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Salvando…" })).toHaveProperty("disabled", true));
+    // O diálogo é modal e esconde o resto da tela da árvore de acessibilidade.
+    expect(screen.getByRole("button", { name: "Erro humano", hidden: true })).toHaveProperty("disabled", true);
+    await act(async () => finish({ success: true }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Erro humano" })).toHaveProperty("disabled", false));
+  });
+
+  it("enquanto a decisão é preparada, os cards não aceitam outra ação", async () => {
+    let finish: (value: { context: typeof row.context }) => void = () => {};
+    mocks.prepare.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Erro do LLM" })).toHaveProperty("disabled", true));
+    await act(async () => finish({ context: row.context }));
+    expect(await findConfirmButton()).toHaveProperty("disabled", false);
+  });
+
   it("selecionar não grava; confirmar envia o contexto que foi mostrado", async () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
     await screen.findByRole("dialog");
     expect(mocks.resolve).not.toHaveBeenCalled();
     expect(screen.getByText("Valor que irá para o gabarito")).toBeTruthy();
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "llm_correct", context: row.context, expected: null, note: "",
     }));
@@ -64,7 +138,7 @@ describe("decisão individual em Insights", () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));
     await screen.findByRole("dialog");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     expect(mocks.error).toHaveBeenCalledWith("A decisão mudou.");
     expect(mocks.success).not.toHaveBeenCalled();
     expect(mocks.refresh).not.toHaveBeenCalled();
@@ -76,7 +150,7 @@ describe("decisão individual em Insights", () => {
     await userEvent.click(screen.getByRole("button", { name: "Em discussão" }));
     await screen.findByRole("dialog");
     expect(screen.getByText(/sem valor final aprovado/)).toBeTruthy();
-    await screen.findByRole("button", { name: "Confirmar decisão" });
+    await findConfirmButton();
     await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(mocks.resolve).not.toHaveBeenCalled();
   });
@@ -105,7 +179,7 @@ describe("decisão individual em Insights", () => {
     expect(screen.getByText("Veredito anterior")).toBeTruthy();
     expect(screen.queryByText(/saiu do formulário/)).toBeNull();
     expect((screen.getByPlaceholderText("Digite sua resposta...") as HTMLTextAreaElement).value).toBe("Humano");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "researchers_correct", context: row.context, expected: null, note: "", value: "Humano",
     }));
@@ -116,7 +190,7 @@ describe("decisão individual em Insights", () => {
     await userEvent.click(screen.getByRole("button", { name: "Todos errados" }));
     await screen.findByRole("dialog");
     await userEvent.type(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "all_wrong", context: row.context, expected: null, note: "", value: "Terceira",
     }));
@@ -126,7 +200,7 @@ describe("decisão individual em Insights", () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     await screen.findByRole("dialog");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "both_correct", context: row.context, expected: null, note: "",
     }));
@@ -147,7 +221,7 @@ describe("decisão individual em Insights", () => {
     }));
     expect(dialog.textContent).toContain("Valor que irá para o gabarito");
     expect(dialog.textContent).toContain("Ana");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "both_correct", context: row.context, expected: null, note: "", value: "LLM",
     }));
@@ -158,7 +232,7 @@ describe("decisão individual em Insights", () => {
     show({ ...errorCase(), bothCorrectValue: { value: "" } });
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     await screen.findByRole("dialog");
-    await userEvent.click(await screen.findByRole("button", { name: "Confirmar decisão" }));
+    await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "both_correct", context: row.context, expected: null, note: "", value: "",
     }));
@@ -172,7 +246,7 @@ describe("decisão individual em Insights", () => {
     await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));
     await screen.findByRole("dialog");
     expect(screen.getByText(/saiu do formulário/)).toBeTruthy();
-    const confirm = await screen.findByRole("button", { name: "Confirmar decisão" });
+    const confirm = await findConfirmButton();
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
     await userEvent.click(screen.getByRole("radio", { name: "Não" }));
     await userEvent.click(confirm);

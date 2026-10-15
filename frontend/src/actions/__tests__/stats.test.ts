@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 
 // Caracterização das 10 funções resolve/reopen de stats.ts (5 pares, sobre 5
 // tabelas) — nenhuma tinha teste antes do #385. O objetivo aqui não é repetir
@@ -39,6 +39,11 @@ beforeEach(() => {
 async function loadStats() {
   return await import("@/actions/stats");
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/stats");
+}, 30_000);
 
 describe("withResolutionAction — guard (via resolveNote, idêntico nas 10 funções)", () => {
   it("não autenticado → error, sem insert", async () => {

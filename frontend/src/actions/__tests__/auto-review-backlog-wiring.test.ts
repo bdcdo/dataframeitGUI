@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import {
   makeSupabaseAdminModuleMock,
   makeSupabaseServerModuleMock,
@@ -96,6 +96,11 @@ beforeEach(() => {
 async function loadRegenerate() {
   return (await import("@/actions/field-reviews")).regenerateAutoReviewBacklog;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/field-reviews");
+}, 30_000);
 
 describe("regenerateAutoReviewBacklog — reconcile da fila", () => {
   it("reenfileira o projeto e usa somente o dreno canônico", async () => {

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 
 // Quando getRunningLlmJob / getEligibleDocCount lancam (RLS, rede), o
@@ -74,6 +75,11 @@ afterEach(() => {
   cleanup();
   consoleErrorSpy.mockRestore();
 });
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 describe("LlmConfigurePane — degradacao quando actions lancam", () => {
   it("renderiza sem quebrar quando getRunningLlmJob e getEligibleDocCount lancam", async () => {

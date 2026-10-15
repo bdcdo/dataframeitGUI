@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
 const state = vi.hoisted(() => ({
@@ -91,6 +91,11 @@ beforeEach(() => {
 });
 
 afterEach(cleanup);
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/app/(app)/dashboard/page");
+}, 30_000);
 
 describe("DashboardPage — memberships canônicas", () => {
   it("lista via RLS o projeto sem filtrar pelo id bruto e exibe o papel canônico", async () => {

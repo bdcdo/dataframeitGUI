@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectAccessAuthModuleMock } from "@/test-utils/auth-mock";
 import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 
@@ -75,6 +75,11 @@ beforeEach(() => {
     isCoordinator: false,
   });
 });
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/app/(app)/projects/[id]/analyze/layout");
+}, 30_000);
 
 describe("AnalyzeLayout — identidade efetiva da fila", () => {
   it("mantém a aba visível para ciclo ativo do membro canônico da conta-alias", async () => {
