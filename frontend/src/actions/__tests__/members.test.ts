@@ -529,7 +529,7 @@ async function loadAdd() {
   return (await import("@/actions/members")).addMember;
 }
 
-describe("addMember (pré-registro, spec 002)", () => {
+describe("addMember (pré-registro de membro sem conta)", () => {
   function setAddCurrentOwnerContext({
     linkedOwner,
     projectMembers,
@@ -1046,7 +1046,7 @@ async function loadLink() {
   return (await import("@/actions/members")).linkMemberEmail;
 }
 
-describe("linkMemberEmail (vínculo de e-mails, spec 002 US2)", () => {
+describe("linkMemberEmail (vínculo de e-mails adicionais a um membro)", () => {
   const LINK_ROW = {
     id: "link1",
     project_id: "p1",

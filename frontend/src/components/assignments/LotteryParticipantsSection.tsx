@@ -12,7 +12,7 @@ import {
   weightValue,
 } from "./lottery-participant-values";
 
-// Seção "Participantes" do LotteryDialog (US3): toggle de participação e
+// Seção "Participantes" do LotteryDialog: toggle de participação e
 // inputs de peso/limite por membro.
 export function LotteryParticipantsSection({
   members,

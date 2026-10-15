@@ -20,7 +20,7 @@ export interface DocumentRow {
 }
 
 // Single source of truth for the CSV-upload row shape (subset of DocumentRow).
-// Inclui `metadata` (linha original do CSV) desde a feature 004 — o client
+// Inclui `metadata` (linha original do CSV) — o client
 // monta a partir do buildDocs e flui até o INSERT/RPC sem transformação.
 export type UploadDoc = Pick<
   DocumentRow,

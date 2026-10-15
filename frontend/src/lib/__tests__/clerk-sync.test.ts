@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-// preregisterSupabaseUser (spec 002): placeholder Supabase-only. Os testes
+// preregisterSupabaseUser: placeholder Supabase-only. Os testes
 // cobrem a idempotência — profile existente, criação nova e recuperação de
 // race provada pela reconsulta do profile.
 let profileRowQueue: ({ id: string; activated_at: string | null } | null)[];

@@ -1,12 +1,13 @@
-// Montagem pura e testável dos datasets de export (feature 004), portada do RSC
+// Montagem pura e testável dos datasets de export, portada do RSC
 // reviews/export/page.tsx. Sem I/O: recebe as linhas cruas do Supabase e devolve
 // as visões Documentos/Respostas/Gabarito + o CSV unificado já como string[][].
 //
-// Decisões de design (ver data-model.md §3):
+// Decisões de design:
 // - A BASE é a tabela documents (não as respostas): identidade e título de cada
 //   documento vêm daí (document_id = external_id || id), de forma consistente em
 //   TODAS as visões — assim o XLSX cruza abas pelo mesmo id. Respostas e reviews
-//   de documentos fora da base (ex.: excluídos) são descartados (achado C1).
+//   de documentos fora da base (ex.: excluídos) são descartados: nenhuma linha
+//   do arquivo referencia documento ausente da visão Documentos.
 // - Colunas originais: união preservando a ordem do CSV, docs por created_at asc.
 // - Colisão de nome de coluna original com controle/campo do schema → original_<nome>.
 
@@ -130,7 +131,7 @@ export interface AssembleInput {
 
 // Colunas de controle do CSV unificado + reviewer_comments. Formam, junto dos
 // nomes dos campos do schema, o conjunto "reservado" contra o qual as colunas
-// originais podem colidir (data-model §3.5).
+// originais podem colidir.
 const CONTROL_COLUMNS = [
   "document_id",
   "document_title",
@@ -800,7 +801,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     return meta?.text_column ? (meta.original_row?.[meta.text_column] ?? "") : "";
   };
 
-  // Filtragem à base (achado C1): descarta respostas/reviews de docs fora dela.
+  // Filtragem à base: descarta respostas/reviews de docs fora dela.
   const baseResponses = responses.filter((r) => identity.has(r.document_id));
   const baseReviews = reviews.filter((r) => identity.has(r.document_id));
   // As abas de respostas seguem com `baseResponses`, rascunhos incluídos.

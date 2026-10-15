@@ -188,12 +188,6 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
   await withClerkCleanup({
     page,
     context: "compare-field-switch/exibicao",
-    // `signOut` direto numa página de análise trava no `waitForFunction` de
-    // `window.Clerk.loaded`; voltar ao dashboard antes é o padrão dos demais
-    // smokes.
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await page.goto(`/projects/${projectId}/analyze/compare?queue=all`);
 
@@ -286,9 +280,6 @@ test("comparação: veredito confirmado após navegar grava no campo exibido", a
   await withClerkCleanup({
     page,
     context: "compare-field-switch/escrita",
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
     run: async () => {
       await page.goto(`/projects/${projectId}/analyze/compare?queue=all`);
 

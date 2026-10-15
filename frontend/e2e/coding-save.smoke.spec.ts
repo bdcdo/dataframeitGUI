@@ -229,12 +229,6 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
       });
       await expect(reloaded.nth(1)).toHaveValue(OBSERVACAO_VALUE);
     },
-    // signOut direto na página de codificação pode travar no waitForFunction
-    // de window.Clerk.loaded (mesmo padrão do lottery.smoke) — voltar ao
-    // dashboard antes.
-    prepareSignOut: async () => {
-      await page.goto("/dashboard");
-    },
   });
 });
 
