@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
 import { beforeAll, describe, expect, it } from "vitest";
-import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { warmUpJsdom, type WarmUpPhase } from "@/test-utils/jsdom-warm-up";
 
-beforeAll(() => warmUpJsdom({ select: true }), 30_000);
+let ran: WarmUpPhase[] = [];
+beforeAll(async () => {
+  ran = await warmUpJsdom({ select: true });
+}, 30_000);
 
 // warmUpJsdom instala stubs de Radix só enquanto roda; se algum sobrevivesse,
 // um arquivo que renderiza Radix sem declarar os stubs passaria por acaso.
 describe("aquecimento de arquivo jsdom", () => {
+  it("percorre o Dialog e o Select", () => {
+    expect(ran).toEqual(["dialog", "select"]);
+  });
+
   it("não deixa stubs de jsdom instalados", () => {
     const proto = Element.prototype as unknown as Record<string, unknown>;
     expect(proto.scrollIntoView).toBeUndefined();

@@ -79,7 +79,8 @@ load() { if [ -r /proc/loadavg ]; then cut -d' ' -f1 /proc/loadavg; else echo "n
 # O libuv le o cpu.max do cgroup, e dentro do escopo os.availableParallelism()
 # cai para a cota: o Vitest abriria menos workers e a cota so encolheria a suite
 # em vez de sobrecarrega-la. O numero de workers e fixado no valor de fora do
-# escopo, salvo quando quem chamou ja passou --maxWorkers.
+# escopo, salvo quando quem chamou ja passou --maxWorkers ou --max-workers (o
+# Vitest aceita as duas grafias, e a ultima vence).
 runner=()
 if [ -n "$quota" ]; then
   if ! systemd-run --user --scope -q true 2>/dev/null; then
@@ -88,7 +89,7 @@ if [ -n "$quota" ]; then
   fi
   runner=(systemd-run --user --scope -q -p "CPUQuota=${quota}%" -p CPUWeight=10000)
   case " ${vitest_args[*]-} " in
-    *" --maxWorkers"*) ;;
+    *" --maxWorkers"* | *" --max-workers"*) ;;
     *) vitest_args+=("--maxWorkers=$(node -p 'Math.max(require("os").availableParallelism() - 1, 1)')") ;;
   esac
 fi

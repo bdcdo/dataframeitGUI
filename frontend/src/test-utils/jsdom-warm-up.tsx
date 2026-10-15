@@ -60,11 +60,16 @@ function installTemporaryRadixStubs(): () => void {
   };
 }
 
-export async function warmUpJsdom({ select = false }: { select?: boolean } = {}): Promise<void> {
+// Devolve as fases que percorreu, para que o teste da função prove que ela
+// exercitou cada caminho, e não só que não deixou rastro.
+export type WarmUpPhase = "dialog" | "select";
+
+export async function warmUpJsdom({ select = false }: { select?: boolean } = {}): Promise<WarmUpPhase[]> {
   // Com timers falsos ligados, os setTimeout de user-event e do findByRole
   // ficam congelados e a função esperaria até estourar o prazo do hook. Trocar
   // para timers reais e voltar descartaria o relógio que o arquivo configurou.
-  if (vi.isFakeTimers()) return;
+  const ran: WarmUpPhase[] = [];
+  if (vi.isFakeTimers()) return ran;
   const [{ cleanup, render, screen, within }, { default: userEvent }, { Dialog, Popover, Select }] =
     await Promise.all([
       import("@testing-library/react"),
@@ -88,7 +93,8 @@ export async function warmUpJsdom({ select = false }: { select?: boolean } = {})
     await user.type(screen.getByRole("textbox", { name: "Campo" }), "abc");
     await user.click(await screen.findByRole("button", { name: "Confirmar" }));
     cleanup();
-    if (!select) return;
+    ran.push("dialog");
+    if (!select) return ran;
 
     render(
       <Popover.Root>
@@ -120,6 +126,8 @@ export async function warmUpJsdom({ select = false }: { select?: boolean } = {})
     await user.click(await screen.findByRole("combobox", { name: "Opção" }));
     const listbox = await screen.findByRole("listbox");
     await user.click(within(listbox).getByText("B"));
+    ran.push("select");
+    return ran;
   } finally {
     cleanup();
     restoreStubs();

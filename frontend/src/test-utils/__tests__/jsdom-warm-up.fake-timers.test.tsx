@@ -8,6 +8,6 @@ import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 vi.useFakeTimers();
 
 it("com timers falsos, o aquecimento volta sem montar nada", async () => {
-  await warmUpJsdom({ select: true });
+  await expect(warmUpJsdom({ select: true })).resolves.toEqual([]);
   expect(document.body.innerHTML).toBe("");
 });

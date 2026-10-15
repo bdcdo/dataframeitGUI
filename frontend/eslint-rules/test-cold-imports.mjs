@@ -33,6 +33,15 @@
 // Fica de fora o `import()` dentro da fábrica de `vi.mock`/`vi.doMock`: a
 // fábrica roda quando o módulo mockado é importado, e esse import é o que a
 // regra confere.
+//
+// A análise é sintática e tem limites conhecidos, nenhum com instância na
+// suíte quando a regra entrou: aceita como carga um `import()` que nunca roda
+// (atrás de `if (false)` ou de um `return` anterior, ou num `beforeAll` local
+// que sombreia o do Vitest); não confere o prazo do hook (sem prazo, vale o
+// hookTimeout de 10 s); não vê `vi.importActual()` nem `require()` em teste; e,
+// num arquivo com `vi.resetModules()`, o aquecimento não evita que cada teste
+// reavalie o módulo (medido, o maior desses testes levou 0,3 s com 15% de um
+// núcleo).
 
 const RULE_NAME = "warm-dynamic-imports";
 

@@ -99,6 +99,16 @@ describe("decisão individual em Insights", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Erro humano" })).toHaveProperty("disabled", false));
   });
 
+  it("enquanto a decisão é preparada, os cards não aceitam outra ação", async () => {
+    let finish: (value: { context: typeof row.context }) => void = () => {};
+    mocks.prepare.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Erro do LLM" })).toHaveProperty("disabled", true));
+    await act(async () => finish({ context: row.context }));
+    expect(await findConfirmButton()).toHaveProperty("disabled", false);
+  });
+
   it("selecionar não grava; confirmar envia o contexto que foi mostrado", async () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
