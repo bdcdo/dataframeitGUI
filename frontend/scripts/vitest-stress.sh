@@ -95,7 +95,9 @@ fi
 
 # Roda o vitest no escopo e, antes de o escopo sumir, grava em $2 os
 # microssegundos de CPU que ele consumiu. O trap repassa o sinal ao vitest,
-# porque o processo que o script conhece e este bash, e nao o vitest.
+# porque o processo que o script conhece e este bash, e nao o vitest. As aspas
+# simples sao de proposito: o texto expande no bash do escopo, nao neste.
+# shellcheck disable=SC2016
 scoped_vitest='
   stat=/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/cpu.stat
   out=$1; shift
