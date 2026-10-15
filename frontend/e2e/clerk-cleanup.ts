@@ -39,18 +39,36 @@ async function pageSessionId(page: Page, context: string): Promise<string> {
   const cookie = (await page.context().cookies()).find(
     (c) => c.name === "__session",
   );
-  const payload = cookie?.value.split(".")[1];
-  if (payload) {
-    const { sid } = JSON.parse(
-      Buffer.from(payload, "base64url").toString("utf8"),
-    ) as { sid?: unknown };
-    if (typeof sid === "string" && sid.startsWith("sess_")) return sid;
+  let sid: unknown;
+  try {
+    const payload = cookie?.value.split(".")[1];
+    if (payload) {
+      ({ sid } = JSON.parse(
+        Buffer.from(payload, "base64url").toString("utf8"),
+      ) as { sid?: unknown });
+    }
+  } catch {
+    // JWT malformado cai na mesma mensagem do cookie ausente, com o contexto.
   }
+  if (typeof sid === "string" && sid.startsWith("sess_")) return sid;
   throw new Error(
     `cookie __session sem id de sessão durante cleanup (${context})`,
   );
 }
 
+// Status em que a sessão já não autentica ninguém. `pending` fica de fora de
+// propósito: é sessão viva com uma etapa por concluir, e contá-la como
+// encerrada deixaria o cleanup passar sem ter revogado nada.
+const ENDED_STATUSES: ReadonlySet<string> = new Set([
+  "abandoned",
+  "ended",
+  "expired",
+  "removed",
+  "replaced",
+  "revoked",
+]);
+
+/** Só o 404 do Clerk prova que a sessão não existe; 401, 429 e rede não. */
 function isNotFound(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -76,9 +94,34 @@ async function revokeSession(sessionId: string): Promise<void> {
       if (isNotFound(error) || isNotFound(lookupError)) return;
       throw error;
     }
-    if (status !== "active") return;
+    if (ENDED_STATUSES.has(status)) return;
     throw error;
   }
+}
+
+/**
+ * Texto legível de um erro do Clerk. O `ClerkAPIResponseError` de falha de
+ * rede chega com `message` vazia e a causa só em `errors[]`, e o de 429 diz
+ * apenas "Too Many Requests"; sem isto a falha de cleanup não diria nem o quê
+ * nem em qual spec.
+ */
+function describeError(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error);
+  const { message, status, errors } = error as {
+    message?: unknown;
+    status?: unknown;
+    errors?: Array<{ code?: unknown; message?: unknown; longMessage?: unknown }>;
+  };
+  const details = (errors ?? [])
+    .map((e) => [e.code, e.longMessage ?? e.message].filter(Boolean).join(": "))
+    .filter(Boolean);
+  return [
+    typeof status === "number" ? `HTTP ${status}` : "",
+    typeof message === "string" ? message : "",
+    ...details,
+  ]
+    .filter(Boolean)
+    .join(" | ") || String(error);
 }
 
 async function revokeWithTimeout(page: Page, context: string): Promise<void> {
@@ -86,7 +129,14 @@ async function revokeWithTimeout(page: Page, context: string): Promise<void> {
 
   try {
     await Promise.race([
-      pageSessionId(page, context).then(revokeSession),
+      pageSessionId(page, context).then((sessionId) =>
+        revokeSession(sessionId).catch((error: unknown) => {
+          throw new Error(
+            `revogação da sessão Clerk falhou durante cleanup (${context}): ${describeError(error)}`,
+            { cause: error },
+          );
+        }),
+      ),
       new Promise<never>((_, reject) => {
         timeout = setTimeout(
           () =>

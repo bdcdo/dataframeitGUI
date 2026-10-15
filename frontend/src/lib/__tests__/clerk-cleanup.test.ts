@@ -14,10 +14,12 @@ import { withClerkCleanup } from "../../../e2e/clerk-cleanup";
 
 const SESSION_ID = "sess_doTeste";
 
-function jwtWith(payload: object): string {
-  const part = (value: object) =>
-    Buffer.from(JSON.stringify(value)).toString("base64url");
-  return `${part({ alg: "RS256" })}.${part(payload)}.assinatura`;
+function base64url(value: unknown): string {
+  return Buffer.from(JSON.stringify(value)).toString("base64url");
+}
+
+function jwtWith(payload: unknown): string {
+  return `${base64url({ alg: "RS256" })}.${base64url(payload)}.assinatura`;
 }
 
 function pageWithCookies(cookies: Array<{ name: string; value: string }>) {
@@ -32,6 +34,21 @@ const page = pageWithCookies([
   { name: "__session_7n2HGTaO", value: jwtWith({ sid: "sess_outra" }) },
   { name: "__session", value: jwtWith({ sid: SESSION_ID }) },
 ]);
+
+/** Formato do `ClerkAPIResponseError`: `status` HTTP e a causa em `errors[]`. */
+function clerkError(status: number | undefined, code: string, message = "") {
+  return Object.assign(new Error(message), {
+    status,
+    errors: [{ code, message: code }],
+  });
+}
+
+const notFound = () => clerkError(404, "resource_not_found");
+const networkFailure = () => clerkError(undefined, "unexpected_error");
+
+function cleanup(context = "test", target: Page = page) {
+  return withClerkCleanup({ page: target, context, run: async () => undefined });
+}
 
 beforeEach(() => {
   vi.stubEnv("CLERK_SECRET_KEY", "sk_test_cleanup");
@@ -56,52 +73,82 @@ describe("withClerkCleanup", () => {
     expect(revokeSession).toHaveBeenCalledWith(SESSION_ID);
   });
 
-  it("considera concluído o cleanup de sessão que já não está ativa", async () => {
-    revokeSession.mockRejectedValue(new Error("session not active"));
-    getSession.mockResolvedValue({ status: "revoked" });
+  it.each(["abandoned", "ended", "expired", "removed", "replaced", "revoked"])(
+    "considera concluído o cleanup de sessão já %s",
+    async (status) => {
+      revokeSession.mockRejectedValue(new Error("session not active"));
+      getSession.mockResolvedValue({ status });
 
-    await expect(
-      withClerkCleanup({ page, context: "test", run: async () => undefined }),
-    ).resolves.toBeUndefined();
+      await expect(cleanup()).resolves.toBeUndefined();
+    },
+  );
+
+  it.each(["active", "pending"])(
+    "repassa o erro com contexto quando a sessão continua %s",
+    async (status) => {
+      const revokeError = new Error("falha ao revogar");
+      revokeSession.mockRejectedValue(revokeError);
+      getSession.mockResolvedValue({ status });
+
+      const error = await cleanup("lottery").catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe(
+        "revogação da sessão Clerk falhou durante cleanup (lottery): falha ao revogar",
+      );
+      expect((error as Error).cause).toBe(revokeError);
+    },
+  );
+
+  it("considera concluído quando a revogação dá 404, mesmo sem consulta", async () => {
+    revokeSession.mockRejectedValue(notFound());
+    getSession.mockRejectedValue(networkFailure());
+
+    await expect(cleanup()).resolves.toBeUndefined();
   });
 
-  it("considera concluído o cleanup de sessão que o Clerk não encontra", async () => {
-    revokeSession.mockRejectedValue({ status: 404 });
-    getSession.mockRejectedValue({ status: 404 });
+  it("considera concluído quando a consulta dá 404 depois de falha de rede", async () => {
+    revokeSession.mockRejectedValue(networkFailure());
+    getSession.mockRejectedValue(notFound());
 
-    await expect(
-      withClerkCleanup({ page, context: "test", run: async () => undefined }),
-    ).resolves.toBeUndefined();
+    await expect(cleanup()).resolves.toBeUndefined();
   });
 
-  it("repassa o erro quando a sessão continua ativa", async () => {
-    const revokeError = new Error("falha ao revogar");
-    revokeSession.mockRejectedValue(revokeError);
-    getSession.mockResolvedValue({ status: "active" });
+  it("não trata outro 4xx como sessão inexistente", async () => {
+    revokeSession.mockRejectedValue(clerkError(429, "too_many_requests", "Too Many Requests"));
+    getSession.mockRejectedValue(clerkError(429, "too_many_requests", "Too Many Requests"));
 
-    await expect(
-      withClerkCleanup({ page, context: "test", run: async () => undefined }),
-    ).rejects.toBe(revokeError);
+    await expect(cleanup("export")).rejects.toThrow(
+      "revogação da sessão Clerk falhou durante cleanup (export): HTTP 429 | Too Many Requests | too_many_requests: too_many_requests",
+    );
   });
 
-  it("repassa o erro quando nem a consulta de status responde", async () => {
-    const revokeError = new Error("fetch failed");
-    revokeSession.mockRejectedValue(revokeError);
-    getSession.mockRejectedValue(new Error("fetch failed"));
+  it("dá a causa da falha de rede, que o Clerk entrega com mensagem vazia", async () => {
+    revokeSession.mockRejectedValue(networkFailure());
+    getSession.mockRejectedValue(networkFailure());
 
-    await expect(
-      withClerkCleanup({ page, context: "test", run: async () => undefined }),
-    ).rejects.toBe(revokeError);
+    await expect(cleanup("coding-save")).rejects.toThrow(
+      "revogação da sessão Clerk falhou durante cleanup (coding-save): unexpected_error: unexpected_error",
+    );
   });
 
-  it("falha com contexto quando não há sessão no cookie", async () => {
-    await expect(
-      withClerkCleanup({
-        page: pageWithCookies([]),
-        context: "lottery",
-        run: async () => undefined,
-      }),
-    ).rejects.toThrow("cookie __session sem id de sessão durante cleanup (lottery)");
+  it.each([
+    ["sem cookie", []],
+    ["com JWT de payload ilegível", [{ name: "__session", value: "a.!!!.b" }]],
+    ["com payload nulo", [{ name: "__session", value: `a.${base64url(null)}.b` }]],
+    ["com sid fora do formato", [{ name: "__session", value: jwtWith({ sid: "user_x" }) }]],
+  ])("falha com contexto %s", async (_, cookies) => {
+    await expect(cleanup("lottery", pageWithCookies(cookies))).rejects.toThrow(
+      "cookie __session sem id de sessão durante cleanup (lottery)",
+    );
+    expect(revokeSession).not.toHaveBeenCalled();
+  });
+
+  it("falha com contexto sem CLERK_SECRET_KEY", async () => {
+    vi.stubEnv("CLERK_SECRET_KEY", "");
+
+    await expect(cleanup("dashboard")).rejects.toThrow(
+      "revogação da sessão Clerk falhou durante cleanup (dashboard): CLERK_SECRET_KEY ausente",
+    );
     expect(revokeSession).not.toHaveBeenCalled();
   });
 
@@ -109,12 +156,8 @@ describe("withClerkCleanup", () => {
     vi.useFakeTimers();
     revokeSession.mockImplementation(() => new Promise(() => undefined));
 
-    const cleanup = withClerkCleanup({
-      page,
-      context: "config-guard",
-      run: async () => undefined,
-    });
-    const assertion = expect(cleanup).rejects.toThrow(
+    const pending = cleanup("config-guard");
+    const assertion = expect(pending).rejects.toThrow(
       "revogação da sessão Clerk não concluiu em 5s durante cleanup (config-guard)",
     );
 
@@ -140,9 +183,9 @@ describe("withClerkCleanup", () => {
         },
       }),
     ).rejects.toBe(primaryError);
-    expect(warning).toHaveBeenCalledWith(
-      "Cleanup Clerk falhou após erro anterior do teste (test):",
-      cleanupError,
-    );
+    expect(warning).toHaveBeenCalledTimes(1);
+    const [label, reported] = warning.mock.calls[0] as [string, Error];
+    expect(label).toBe("Cleanup Clerk falhou após erro anterior do teste (test):");
+    expect(reported.cause).toBe(cleanupError);
   });
 });
