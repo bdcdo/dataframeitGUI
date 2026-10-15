@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 
 // preregisterSupabaseUser: placeholder Supabase-only. Os testes
 // cobrem a idempotência — profile existente, criação nova e recuperação de
@@ -242,6 +242,11 @@ function reconciliationInput(
   currentClerkUser = makeClerkUser(overrides);
   return currentClerkUser.id;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/clerk-sync");
+}, 30_000);
 
 describe("preregisterSupabaseUser", () => {
   it("e-mail sem conta → cria auth.users com email_confirm e retorna o id", async () => {

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mocks = vi.hoisted(() => ({
@@ -48,6 +48,14 @@ function renderDialog(
   return onClose;
 }
 
+// O toast de erro sai do catch, antes de o finally devolver `loading` a false,
+// e até o render seguinte o botão se chama "Unificando...". A busca espera o
+// rótulo final, e consulta só o diálogo para que cada tentativa seja barata.
+async function findUnifyButton() {
+  const dialog = await screen.findByRole("dialog");
+  return within(dialog).findByRole("button", { name: "Unificar membros" });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -89,9 +97,7 @@ describe("UnifyMembersDialog", () => {
         "Não foi possível unificar os membros. Tente novamente.",
       ),
     );
-    const button = screen.getByRole("button", {
-      name: "Unificar membros",
-    });
+    const button = await findUnifyButton();
     expect((button as HTMLButtonElement).disabled).toBe(false);
   });
 

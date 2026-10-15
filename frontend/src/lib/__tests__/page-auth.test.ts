@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   resolution: {} as Record<string, unknown>,
@@ -27,6 +27,11 @@ beforeEach(() => {
   state.pathname = null;
   state.redirects = [];
 });
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/page-auth");
+}, 30_000);
 
 describe("requirePageAuthUser", () => {
   it("devolve a identidade pronta sem redirecionar", async () => {

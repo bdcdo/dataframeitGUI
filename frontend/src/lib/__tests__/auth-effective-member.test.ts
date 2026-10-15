@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface AccessScenario {
   project: { id: string; name: string; created_by: string } | null;
@@ -170,6 +170,11 @@ beforeEach(() => {
   queryLimits = [];
   serverQueries = 0;
 });
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/lib/auth");
+}, 30_000);
 
 describe("resolveProjectMemberActor — membro canônico", () => {
   it("retorna o membro canônico sem consultar projeto ou membership", async () => {

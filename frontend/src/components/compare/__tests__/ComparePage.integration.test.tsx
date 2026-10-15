@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import {
   render,
   screen,
@@ -269,6 +270,11 @@ function expectNoCompareWrites(): void {
   expect(createSchemaSuggestion).not.toHaveBeenCalled();
   expect(fetchFastAPI).not.toHaveBeenCalled();
 }
+
+// O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
+// Testing Library, user-event e Radix e estourava os 5 s com a suíte
+// disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 describe("ComparePage — árvore real (smoke)", () => {
   it("monta os filhos reais e exibe o texto do documento e as respostas", () => {

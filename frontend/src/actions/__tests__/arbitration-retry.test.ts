@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import {
   makeSupabaseAdminModuleMock,
   makeSupabaseServerModuleMock,
@@ -61,6 +61,11 @@ beforeEach(() => {
 async function loadRetry() {
   return (await import("@/actions/field-reviews")).retryPendingArbitrations;
 }
+
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs).
+beforeAll(async () => {
+  await import("@/actions/field-reviews");
+}, 30_000);
 
 describe("retryPendingArbitrations — guards", () => {
   it("não-coordenador → erro, sem efeito colateral", async () => {
