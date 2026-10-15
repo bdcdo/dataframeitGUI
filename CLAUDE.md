@@ -72,10 +72,8 @@ Deploy e automatico a partir de merge no branch `main`. Frontend: Fly.io (app `g
 2. Criar branch descritiva (`feat/...`, `fix/...`, `perf/...`) na worktree
 3. Commitar nela
 4. Ao final, abrir PR contra `main` via `gh pr create`
-5. Deixar o usuario revisar o PR
+5. Com o plano aprovado, mesclar depois da revisao sem achado aberto e do CI verde
 6. Remover a worktree apos o merge
-
-Merge do PR pode ser feito pelo Claude quando o usuario pedir explicitamente.
 
 ## Workspace isolado (worktree)
 
