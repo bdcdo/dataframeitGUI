@@ -16,6 +16,7 @@ import { useCompareKeyboard } from "./useCompareKeyboard";
 import { useUrlState } from "@/hooks/useUrlState";
 import { staleVerdictOf, type ReviewsByDoc, type StaleReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
+import type { SplitLayout } from "@/lib/compare-split-layout";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
 import {
   COMPARE_ORIGIN_MISMATCH_MESSAGE,
@@ -74,6 +75,8 @@ interface ComparePageProps {
   // e são consumidas juntas na copy do estado vazio; soltas, contavam como
   // quatro props booleanas e disparavam `no-many-boolean-props`.
   queueContext: QueueContext;
+  /** Divisão leitor/revisão salva, lida do cookie no servidor (#610). */
+  savedSplit: SplitLayout | null;
 }
 
 interface QueueContext {
@@ -115,6 +118,7 @@ export function ComparePage({
   canManageAnyPair,
   isCoordinator,
   queueContext,
+  savedSplit,
 }: ComparePageProps) {
   const { showingAll: showingAllQueue, hasAssignedDocs, isImpersonating } =
     queueContext;
@@ -613,6 +617,7 @@ export function ComparePage({
         listCollapsed={listCollapsed}
         onToggleList={toggleList}
         documentText={currentDoc.text}
+        savedSplit={savedSplit}
         comparisonPanel={{
           readOnly,
           projectId,

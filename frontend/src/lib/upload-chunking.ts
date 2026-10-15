@@ -128,11 +128,12 @@ export function buildDocs(csv: Csv | null, mapping: ColumnMapping): UploadDoc[] 
       text: row[mapping.text],
       title: mapping.title ? row[mapping.title] : undefined,
       external_id: mapping.external_id ? row[mapping.external_id] : undefined,
-      // Linha original completa preservada (feature 004): TODA coluna do CSV,
-      // inclusive as mapeadas para text/title/external_id (FR-002). Célula
+      // Linha original completa preservada: TODA coluna do CSV,
+      // inclusive as mapeadas para text/title/external_id. Célula
       // ausente numa linha curta normaliza para "" — a coluna existe sem valor.
       // original_columns preserva a ordem do CSV (jsonb não preserva ordem de
-      // chaves); os cabeçalhos já chegam únicos do papaparse (ver data-model §1).
+      // chaves); os cabeçalhos já chegam únicos porque o papaparse (header:
+      // true) renomeia colunas homônimas, garantia travada em teste.
       metadata: {
         original_row: Object.fromEntries(
           csv.columns.map((col) => [col, row[col] ?? ""])

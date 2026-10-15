@@ -167,11 +167,11 @@ function AutoReviewPageInner({
           onToggle={toggleList}
         />
         <ResizablePanelGroup className="flex-1">
-          <ResizablePanel defaultSize={50} minSize={25}>
+          <ResizablePanel defaultSize="50%" minSize="25%">
             <DocumentReader text={doc.text} />
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={50} minSize={25}>
+          <ResizablePanel defaultSize="50%" minSize="25%">
             {/* key={doc.docId}: remonta ao trocar de doc, resetando fieldIndex
                 sem effect; o split (ResizablePanelGroup) fica fora e preserva
                 o tamanho manual entre navegacoes. */}

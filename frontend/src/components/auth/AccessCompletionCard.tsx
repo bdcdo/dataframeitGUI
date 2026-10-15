@@ -11,8 +11,8 @@ import type { AuthResolution } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-// Cópia por motivo (contracts/access-completion "User-visible states"), em
-// pt-BR e sem termo técnico, token, claim ou nome de tabela (FR-010). O motivo
+// Cópia por motivo, em pt-BR e sem termo técnico, token, claim ou nome de
+// tabela, para dispensar documentação externa. O motivo
 // vem da resolução read-only (link-pending/divergent, sync-temporary-failure) e
 // pode evoluir para unknown-recoverable após um retry que não resolveu.
 //
@@ -131,9 +131,9 @@ export function AccessCompletionCard({
       <Card className="w-full max-w-lg">
         <CardHeader>
           {/* Heading real (`<h1>`) para ser anunciado como cabeçalho por AT, com
-              foco inicial gerenciado por ref (ver useEffect acima) — WCAG 2.1 AA
-              / contracts/access-completion. `outline-none` evita anel de foco
-              visível num alvo que a pessoa não navegou por Tab. */}
+              foco inicial gerenciado por ref (ver useEffect acima) — WCAG 2.1 AA.
+              `outline-none` evita anel de foco visível num alvo que a pessoa não
+              navegou por Tab. */}
           <h1
             ref={titleRef}
             tabIndex={-1}

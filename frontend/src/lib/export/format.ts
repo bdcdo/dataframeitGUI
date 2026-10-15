@@ -1,5 +1,5 @@
 // Formatação de valores para o export (CSV/XLSX), extraída de
-// reviews/export/page.tsx como funções puras testáveis (feature 004).
+// reviews/export/page.tsx como funções puras testáveis.
 
 // Converte qualquer valor de `answers` do schema em uma célula de texto:
 // array → itens juntos por "; "; objeto (subfields) → "chave: valor" ignorando

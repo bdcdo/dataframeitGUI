@@ -1,15 +1,16 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import { makeFakeSession, type FakeSession } from "./auth-test-helpers";
 
-// RC-001 (SC-002): a identidade é resolvida uma vez por request e reutilizada.
+// A identidade é resolvida uma vez por request e reutilizada.
 // O mecanismo de dedup cross-call é o `cache()` do React, que só memoiza dentro
 // de um request scope RSC real — fora dele (unit test) `cache()` chama direto.
 // Portanto, o que se testa aqui é a propriedade unit-reproduzível e igualmente
 // importante: uma ÚNICA resolução não faz lookup remoto redundante interno
 // (sem N+1 dentro de resolveAuth), e getAuthUser é fina camada sobre ela. A
 // dedup entre múltiplos consumidores da mesma request é garantia de runtime do
-// `cache()`, coberta pela instrumentação de T010 e pelo gate estrutural de
-// T028 (layouts não podem chamar currentUser()/auth() por conta própria).
+// `cache()`, coberta pela instrumentação opt-in AUTH_RESOLVE_DEBUG em
+// resolveAuth e pelo gate estrutural de no-legacy-token-path.test.ts (layouts
+// não podem chamar currentUser()/auth() por conta própria).
 
 let session: FakeSession;
 
@@ -41,7 +42,7 @@ beforeAll(async () => {
   await import("@/lib/auth");
 }, 30_000);
 
-describe("RC-001 — resolução única sem redundância interna", () => {
+describe("resolução única sem redundância interna", () => {
   it("uma resolução do caminho preparado faz currentUser + mapping + master uma vez cada", async () => {
     session = makeFakeSession({ scenario: "prepared" });
     const { resolveAuth } = await loadAuth();

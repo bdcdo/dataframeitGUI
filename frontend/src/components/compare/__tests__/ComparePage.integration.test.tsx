@@ -175,6 +175,7 @@ const props = {
     hasAssignedDocs: false,
     isImpersonating: false,
   },
+  savedSplit: null,
 };
 
 const renderReal = (overrides: Partial<typeof props> = {}) =>

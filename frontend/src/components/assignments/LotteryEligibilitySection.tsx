@@ -21,7 +21,7 @@ import type {
 } from "./lottery-dialog-types";
 import type { LotteryParamsState } from "./useLotteryParams";
 
-// Seção "Documentos elegíveis" do LotteryDialog (US1): filtros de
+// Seção "Documentos elegíveis" do LotteryDialog: filtros de
 // codificações humanas, status de atribuição, lotes anteriores e seleção
 // manual de documentos.
 export function LotteryEligibilitySection({

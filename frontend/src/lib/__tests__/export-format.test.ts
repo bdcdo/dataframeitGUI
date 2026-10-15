@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { formatExportValue, formatVerdict } from "@/lib/export/format";
 
 // Comportamento idêntico ao que vivia inline em reviews/export/page.tsx antes da
-// feature 004 (formatExportValue + formatação de veredicto), agora extraído para
+// exportação completa em Documentos (formatExportValue + formatação de
+// veredicto), agora extraído para
 // funções puras testáveis.
 
 describe("formatExportValue", () => {

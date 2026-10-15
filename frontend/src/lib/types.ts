@@ -133,8 +133,8 @@ export interface ProjectMember {
   profiles?: Profile;
 }
 
-// E-mail adicional vinculado a um membro, com efeito restrito ao projeto
-// (spec 002). linked_user_id NULL = vínculo aguardando a conta existir.
+// E-mail adicional vinculado a um membro, com efeito restrito ao projeto.
+// linked_user_id NULL = vínculo aguardando a conta existir.
 export interface MemberEmailLink {
   id: string;
   project_id: string;
@@ -145,9 +145,9 @@ export interface MemberEmailLink {
   created_at: string;
 }
 
-// Linha original completa do CSV preservada em documents.metadata (feature 004).
+// Linha original completa do CSV preservada em documents.metadata.
 // original_columns existe porque jsonb não preserva a ordem das chaves — é a
-// fonte da ordenação das colunas originais no export (ver data-model.md §1).
+// fonte da ordenação das colunas originais no export.
 export interface DocumentMetadata {
   original_row: Record<string, string>;
   original_columns: string[];

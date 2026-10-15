@@ -347,6 +347,7 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
       hasAssignedDocs: false,
       isImpersonating: false,
     },
+    savedSplit: null,
   };
 }
 

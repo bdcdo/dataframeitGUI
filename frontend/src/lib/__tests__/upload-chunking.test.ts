@@ -108,7 +108,7 @@ describe("chunkByBytes", () => {
 
   it("mede o doc serializado completo: metadata empurra para além do orçamento", () => {
     // Cada doc: ~1 MB de texto + a MESMA ~1 MB repetida em metadata.original_row
-    // (a coluna de texto também é preservada — FR-002). Só pelo `text`, os dois
+    // (a coluna de texto também é preservada). Só pelo `text`, os dois
     // caberiam num chunk (2 MB < 3,5 MB); medindo o doc serializado, cada um pesa
     // ~2 MB e os dois estouram o orçamento → 2 chunks. Guarda contra medir só o texto.
     const oneMb = "a".repeat(1_000_000);
@@ -288,7 +288,7 @@ describe("buildDocs", () => {
     expect(d.metadata?.original_columns).toEqual(["texto", "tribunal", "classe"]);
   });
 
-  // Regressão da garantia de cabeçalhos únicos (achado C2): buildDocs confia que
+  // Regressão da garantia de cabeçalhos únicos: buildDocs confia que
   // o papaparse (header: true) renomeia colunas homônimas preservando os valores,
   // e NÃO re-normaliza. Este teste protege essa dependência contra bumps do pacote.
   it("papaparse renomeia colunas homônimas e buildDocs preserva todos os valores", () => {
