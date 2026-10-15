@@ -236,7 +236,7 @@ function MyVerdictsViewInner({
         </p>
       ) : (
         <ResizablePanelGroup className="flex-1">
-          <ResizablePanel defaultSize={55} minSize={25}>
+          <ResizablePanel defaultSize="55%" minSize="25%">
             {loadingText || !currentText ? (
               <div className="flex h-full items-center justify-center">
                 <Loader2 className="size-5 animate-spin text-muted-foreground" />
@@ -246,7 +246,7 @@ function MyVerdictsViewInner({
             )}
           </ResizablePanel>
           <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={45} minSize={25}>
+          <ResizablePanel defaultSize="45%" minSize="25%">
             <VerdictsList
               group={currentGroup}
               fields={fields}

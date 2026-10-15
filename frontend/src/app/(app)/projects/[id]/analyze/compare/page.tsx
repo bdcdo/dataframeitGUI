@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { cookies } from "next/headers";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import {
   getProjectAccessContext,
@@ -34,6 +35,10 @@ import {
 } from "@/lib/compare-queue";
 import { buildEquivalenceMap } from "@/lib/compare-divergence";
 import type { PydanticField } from "@/lib/types";
+import {
+  COMPARE_SPLIT_COOKIE,
+  parseSplitLayout,
+} from "@/lib/compare-split-layout";
 
 export type { DocCoverage } from "@/lib/compare-queue";
 
@@ -44,11 +49,12 @@ export default async function ComparePageRoute({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const [{ id }, sp, user, supabase] = await Promise.all([
+  const [{ id }, sp, user, supabase, cookieStore] = await Promise.all([
     params,
     searchParams,
     requirePageAuthUser(),
     createSupabaseServer(),
+    cookies(),
   ]);
 
   const [
@@ -302,6 +308,8 @@ export default async function ComparePageRoute({
           hasAssignedDocs,
           isImpersonating,
         }}
+        // Lida aqui, e não no cliente, para o HTML já sair na divisão salva.
+        savedSplit={parseSplitLayout(cookieStore.get(COMPARE_SPLIT_COOKIE)?.value)}
       />
     </Suspense>
   );

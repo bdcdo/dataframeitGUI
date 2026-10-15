@@ -121,11 +121,12 @@ async function fixtureDocIds(
  * enquanto o cabeçalho ainda não chegou lá.
  *
  * Não é preciosismo. A tecla apertada antes da hidratação é engolida em
- * silêncio — o listener de `keydown` ainda não existe —, e não há sinal de DOM
- * confiável para "já hidratou": cabeçalho, `agreement-group` e cards vêm todos
- * no HTML do servidor, antes de o `useEffect` de `useCompareKeyboard` registrar
- * o listener. Com a CPU disputada (outros processos, ou o throttling de CPU do
- * DevTools a 4x) a hidratação atrasa e um `press` único falha com frequência.
+ * silêncio — o listener de `keydown` ainda não existe —, e cabeçalho,
+ * `agreement-group` e cards vêm todos no HTML do servidor, antes de o
+ * `useEffect` de `useCompareKeyboard` registrar o listener; esperar por eles não
+ * prova que a página já responde ao teclado. Com a CPU disputada (outros
+ * processos, ou o throttling de CPU do DevTools a 4x) a hidratação atrasa e um
+ * `press` único falha com frequência.
  * Um `toPass` envolvendo o press passaria do alvo quando a asserção fosse só
  * lenta. Reler o cabeçalho a cada tentativa resolve os dois: nunca ultrapassa,
  * nunca depende de timing. O preço é aceitar tecla engolida: que `n` avance
@@ -202,25 +203,17 @@ test("comparação: navegar entre campos mostra só os cards do campo atual", as
         timeout: 60_000,
       });
 
-      // Espera o layout do cliente ANTES de medir o campo 1. Antes da
-      // hidratação o `ResizablePanelGroup` ainda não aplicou a divisão, e o
-      // painel de revisão nasce estreito: o cabeçalho tem ~50px de largura,
-      // contra ~512px depois, e o primeiro card fica dezenas de pixels abaixo
-      // da posição que terá. O limiar de 200px separa os dois estados com
-      // folga, porque o `minSize` do painel é 25% do grupo.
-      //
-      // O sinal é o layout, e não uma ida e volta pelo teclado, porque navegar
-      // antes de medir esconderia um salto que só acontece na primeira troca
-      // de campo, exatamente o defeito que a asserção de âncora da #610 cobre.
-      await expect
-        .poll(
-          () =>
-            page
-              .getByTestId("compare-header")
-              .evaluate((el) => el.getBoundingClientRect().width),
-          { timeout: 30_000 },
-        )
-        .toBeGreaterThan(200);
+      // O campo 1 é medido sem esperar a hidratação, e de propósito. O HTML do
+      // servidor já sai na divisão final dos painéis (`compare-split-layout.
+      // smoke` prova isso de forma determinística), então a medida vale com ou
+      // sem o React montado. Se essa garantia regredir, o painel de revisão
+      // volta a nascer estreito; quando a medida do campo 1 cair antes da
+      // hidratação, o primeiro card fica dezenas de pixels abaixo dos demais e
+      // a asserção de âncora abaixo também reprova (só nesse caso: depende de
+      // tempo, por isso a prova fica com o outro spec).
+      // Navegar antes de medir esconderia um salto que só acontece na primeira
+      // troca de campo, o defeito que essa asserção cobre. A tecla engolida na
+      // hidratação fica com o `goToField`.
 
       // Posição do topo do primeiro card em cada campo. O critério 1 da #610 é
       // que ela NÃO se mova ao navegar: o cabeçalho fica acima da área rolável,
