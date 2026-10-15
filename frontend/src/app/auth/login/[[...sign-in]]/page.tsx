@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { SignIn } from "@clerk/nextjs";
+import { SignIn } from "@/components/auth/clerk-ui";
 
 export const metadata: Metadata = {
   title: "Entrar · GUI Análise Sistemática",

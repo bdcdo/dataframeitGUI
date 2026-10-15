@@ -10,6 +10,31 @@ import {
   testColdImportsPlugin,
 } from "./eslint-rules/test-cold-imports.mjs";
 
+const CLERK_COMPONENTS_READING_LOAD_STATE = [
+  "APIKeys",
+  "ClerkDegraded",
+  "ClerkFailed",
+  "ClerkLoaded",
+  "ClerkLoading",
+  "CreateOrganization",
+  "GoogleOneTap",
+  "OAuthConsent",
+  "OAuthDeviceVerification",
+  "OrganizationList",
+  "OrganizationProfile",
+  "OrganizationSwitcher",
+  "PricingTable",
+  "SignIn",
+  "SignUp",
+  "TaskChooseOrganization",
+  "TaskResetPassword",
+  "TaskSetupMFA",
+  "UserAvatar",
+  "UserButton",
+  "UserProfile",
+  "Waitlist",
+];
+
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
@@ -57,6 +82,40 @@ const eslintConfig = defineConfig([
             "JSXOpeningElement[name.name='DndContext'] > JSXAttribute[name.name='id']:matches([value.type='Literal'], [value.expression.type='Literal'], [value.expression.type='TemplateLiteral'], [value.expression.name='undefined'])",
           message:
             "Passe `id={useId()}` ao DndContext: `undefined` volta ao contador do @dnd-kit, e um id fixo colide quando o componente aparece duas vezes.",
+        },
+      ],
+    },
+  },
+  // Componentes do Clerk que leem `clerk.loaded` ou `clerk.status` ao vivo
+  // durante o render divergem do HTML do servidor quando o clerk-js carrega antes
+  // de a hidratação chegar neles ("Hydration failed" intermitente em /auth/login).
+  // Eles entram pelo portão de `src/components/auth/clerk-ui.tsx`, que explica o
+  // mecanismo. A lista vem da leitura do `@clerk/react` 6: os componentes de UI
+  // montados por `withClerk` que consultam o carregamento no render (para o nó
+  // ou para o `fallback`), mais os de controle (`ClerkLoaded` e afins). Os
+  // botões (`SignInButton` etc.) ficam fora: não dependem do carregamento. Um componente novo do Clerk escapa do lint
+  // até entrar aqui, então conferir ao atualizar o pacote. `import()` dinâmico
+  // também escapa: a regra só vê import estático.
+  {
+    files: ["src/**/*.{js,jsx,mjs,mts,ts,tsx}"],
+    // O teste do portão importa o componente cru (mockado) como controle.
+    ignores: [
+      "src/components/auth/clerk-ui.tsx",
+      "src/components/auth/__tests__/clerk-ui.test.tsx",
+    ],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          // `@clerk/react` é a origem real dos componentes; o `@clerk/nextjs`
+          // só os reexporta.
+          paths: ["@clerk/nextjs", "@clerk/react"].map((name) => ({
+            name,
+            importNames: CLERK_COMPONENTS_READING_LOAD_STATE,
+            allowTypeImports: true,
+            message:
+              "Use o componente de @/components/auth/clerk-ui (ou acrescente lá um embrulho com o mesmo portão), que só o monta depois da hidratação.",
+          })),
         },
       ],
     },
