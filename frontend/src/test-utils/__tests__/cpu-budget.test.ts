@@ -2,6 +2,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import config from "../../../vitest.config";
 import { TEST_CPU_BUDGET_MS, cpuBudgetMessage, createCpuBudgetHooks } from "@/test-utils/cpu-budget";
+import { cpuBudgetHooks } from "@/test-utils/cpu-budget.setup";
 
 // Leitor de CPU falso: cada chamada sem argumento devolve o instante atual, e a
 // chamada com o instante anterior devolve a diferença, como o
@@ -41,8 +42,18 @@ describe("orçamento de CPU por teste", () => {
     expect(() => hooks.after()).not.toThrow();
   });
 
+  it("recusa a sobreposição de dois testes, que mediria um pelo outro", () => {
+    const hooks = createCpuBudgetHooks(fakeReader([1_000_000, 1_100_000]));
+    hooks.before();
+    expect(() => hooks.before()).toThrow(/não mede testes concorrentes/);
+    expect(hooks.isMeasuring()).toBe(false);
+  });
+
+  // O módulo importado aqui é o mesmo que o setupFiles carregou neste arquivo:
+  // a medição só está ligada dentro do teste se o beforeEach dele rodou.
   it("vale para toda a suíte, pelo setupFiles da config", () => {
     const setupFiles = [config.test?.setupFiles ?? []].flat();
     expect(setupFiles.map((file) => path.basename(String(file)))).toContain("cpu-budget.setup.ts");
+    expect(cpuBudgetHooks.isMeasuring()).toBe(true);
   });
 });

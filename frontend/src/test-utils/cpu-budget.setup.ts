@@ -5,6 +5,8 @@
 import { afterEach, beforeEach } from "vitest";
 import { createCpuBudgetHooks } from "@/test-utils/cpu-budget";
 
-const hooks = createCpuBudgetHooks();
-beforeEach(hooks.before);
-afterEach(hooks.after);
+// Exportado para que o teste do orçamento confira, de dentro de um teste, que
+// a medição está ligada.
+export const cpuBudgetHooks = createCpuBudgetHooks();
+beforeEach(cpuBudgetHooks.before);
+afterEach(cpuBudgetHooks.after);

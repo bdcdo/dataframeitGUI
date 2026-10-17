@@ -7,9 +7,16 @@
 // (p10 e p90). O orçamento transforma o estouro intermitente sob carga numa
 // falha determinística.
 //
-// A medida é a CPU da thread que roda o teste, e não a do processo, porque no
-// pool de threads do Vitest o processo soma todos os workers, e porque as
-// threads de GC do V8 variam de uma rodada para outra.
+// A medida é a CPU da thread que roda o teste, e não a do processo: as threads
+// de GC e de compilação do V8 entram na CPU do processo e variam de uma rodada
+// para outra, e no pool de threads do Vitest (a suíte usa o de forks) o
+// processo somaria todos os workers.
+//
+// O orçamento não é determinístico como uma asserção: a CPU do mesmo teste na
+// suíte completa sobe com a disputa da máquina. Ele reprova o teste que já
+// nasce pesado e deixa folga para a variação entre rodadas; o teste perto do
+// limite aparece na medição descrita na doc antes de reprovar aqui. O trabalho
+// feito em beforeAll fica fora da conta, de propósito, para o aquecimento.
 //
 // O número vale para a suíte inteira, que é como o pre-push roda: com todos os
 // workers ocupados, cada thread divide o núcleo físico com a vizinha de
@@ -46,8 +53,20 @@ export function createCpuBudgetHooks(
 ) {
   let start: NodeJS.CpuUsage | null = null;
   return {
+    // Com testes concorrentes no mesmo arquivo, a CPU da thread de um somaria a
+    // do outro e o orçamento cobraria o teste errado. A sobreposição aparece
+    // como um segundo beforeEach antes do afterEach do primeiro.
     before() {
+      if (start !== null) {
+        start = null;
+        throw new Error(
+          "o orçamento de CPU por teste não mede testes concorrentes: rode este arquivo sem .concurrent",
+        );
+      }
       start = read();
+    },
+    isMeasuring() {
+      return start !== null;
     },
     after() {
       if (start === null) return;
