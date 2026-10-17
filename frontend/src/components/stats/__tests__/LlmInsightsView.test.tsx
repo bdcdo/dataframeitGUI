@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
@@ -35,11 +36,15 @@ async function findConfirmButton() {
   return within(dialog).findByRole("button", { name: "Confirmar decisão" });
 }
 
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
+
 // O primeiro render desta tela e do diálogo de decisão é frio, e com a suíte
 // disputando a CPU o primeiro teste passava dos 5 s (5,2 s com load 52 a 59,
 // contra 0,9 a 3 s dos seguintes). O hook percorre uma vez o caminho de abrir e
-// cancelar uma decisão, sem gravar nada, o que também carrega as bibliotecas
-// que src/test-utils/jsdom-warm-up.tsx aqueceria; o beforeEach limpa os mocks.
+// cancelar uma decisão, sem gravar nada: aquece a própria tela e o diálogo, além
+// das bibliotecas que o warmUpJsdom acima já carregou; o beforeEach limpa os
+// mocks.
 beforeAll(async () => {
   mocks.prepare.mockResolvedValue({ context: row.context });
   show();

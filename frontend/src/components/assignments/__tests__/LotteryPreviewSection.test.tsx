@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import type { LotteryPreview } from "@/actions/assignments";
 import { LotteryPreviewSection } from "../LotteryPreviewSection";
 
@@ -13,6 +14,9 @@ const emptyPreview: LotteryPreview = {
   seed: 4242,
   emptyReason: "capacity_exhausted",
 };
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

@@ -3,9 +3,13 @@
 // sob o piso `latest_major`, ou "Outro: x" depois de desligar `allow_other`):
 // o voto copiaria um veredito que nasce sem validade, então o card aparece
 // marcado e sem o alvo de voto.
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 import { AgreementGroup } from "@/components/compare/AgreementGroup";
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

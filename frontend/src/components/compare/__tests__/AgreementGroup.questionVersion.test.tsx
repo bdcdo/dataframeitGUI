@@ -5,6 +5,7 @@
 // card que só tem respostas assim não oferece o "=", com a razão à vista, e a
 // fusão escolhe como representante do grupo uma resposta da versão atual.
 import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -19,6 +20,9 @@ vi.mock("@/components/shared/AddNoteButton", () => ({
 vi.mock("@/components/stats/SuggestFieldDialog", () => ({
   SuggestFieldDialog: () => null,
 }));
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeAll(stubRadixJsdomApis);
 afterEach(cleanup);

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeAll } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup } from "@testing-library/react";
 
 vi.mock("@/components/shared/AddNoteButton", () => ({
@@ -11,6 +12,9 @@ vi.mock("@/components/stats/SuggestFieldDialog", () => ({
 
 import { ComparisonPanel } from "@/components/compare/ComparisonPanel";
 import { panelProps } from "./compare-test-helpers";
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 afterEach(cleanup);
 

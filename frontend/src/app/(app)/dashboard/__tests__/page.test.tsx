@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import type { ReactNode } from "react";
 import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { cleanup, render, screen } from "@testing-library/react";
 
 const state = vi.hoisted(() => ({
@@ -83,6 +84,9 @@ vi.mock("lucide-react", () => ({ FolderOpen: () => null }));
 async function loadPage() {
   return (await import("@/app/(app)/dashboard/page")).default;
 }
+
+// Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
+beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   state.fromTables = [];

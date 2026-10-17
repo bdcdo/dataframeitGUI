@@ -6,16 +6,16 @@ import { vi } from "vitest";
 // primeira execução dos caminhos de render, evento e consulta por papel, ainda
 // sem otimização do JIT: de 1 a 6 s com a suíte disputando a CPU, contra algumas
 // centenas de milissegundos dos testes seguintes, e o bastante para estourar o
-// timeout de 5 s do primeiro teste. Um arquivo que sofre disso chama esta
-// função num beforeAll com prazo próprio, e o custo sai do primeiro teste:
+// timeout de 5 s do primeiro teste. O arquivo chama esta função num beforeAll
+// com prazo próprio, e o custo sai do primeiro teste:
 //
 //   beforeAll(() => warmUpJsdom(), 30_000);
 //
-// A função não é um setupFiles de todos os arquivos jsdom de propósito. Num
-// arquivo que usa Dialog e user-event ela só antecipa o que o primeiro teste
-// pagaria; nos demais é custo novo, e aplicada a todos somava cerca de 20% da
-// CPU da suíte para proteger cargas acima da faixa que a suíte precisa
-// aguentar. Ela exercita um Dialog com digitação e clique e, com
+// Quem precisa chamar é decidido pela regra eslint-rules/test-jsdom-warm-up.mjs
+// (todo arquivo jsdom que importa render da Testing Library), onde está a
+// medição. A função não é um setupFiles de todos os arquivos jsdom de
+// propósito: no arquivo que só usa renderHook ela é custo novo, sem ganho no
+// primeiro teste. Ela exercita um Dialog com digitação e clique e, com
 // `select: true`, um Popover com um Select aberto e escolhido, que é o caminho
 // de Popper e Select dos filtros. Nada fica montado.
 //

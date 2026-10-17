@@ -9,6 +9,10 @@ import {
   RULE_NAME as COLD_IMPORTS_RULE,
   testColdImportsPlugin,
 } from "./eslint-rules/test-cold-imports.mjs";
+import {
+  RULE_NAME as JSDOM_WARM_UP_RULE,
+  testJsdomWarmUpPlugin,
+} from "./eslint-rules/test-jsdom-warm-up.mjs";
 
 const CLERK_COMPONENTS_READING_LOAD_STATE = [
   "APIKeys",
@@ -124,9 +128,11 @@ const eslintConfig = defineConfig([
     files: ["src/**/*.test.{mts,ts,tsx}"],
     plugins: {
       "test-cold-imports": testColdImportsPlugin,
+      "test-jsdom-warm-up": testJsdomWarmUpPlugin,
     },
     rules: {
       [`test-cold-imports/${COLD_IMPORTS_RULE}`]: "error",
+      [`test-jsdom-warm-up/${JSDOM_WARM_UP_RULE}`]: "error",
     },
   },
   // Override default ignores of eslint-config-next.
