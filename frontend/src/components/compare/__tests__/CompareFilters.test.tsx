@@ -52,6 +52,29 @@ async function openVersionSelect(user: ReturnType<typeof userEvent.setup>) {
 // disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
 beforeAll(() => warmUpJsdom({ select: true }), 30_000);
 
+// Abrir o popover e o seletor desta tela pela primeira vez continua frio
+// depois do aquecimento genérico: na suíte completa o primeiro teste gastava
+// 404 ms de CPU, perto do orçamento por teste (src/test-utils/cpu-budget.ts),
+// contra 300 do seguinte, que faz o mesmo caminho. O hook abre e fecha o
+// seletor sem escolher opção, então nada chega ao `push`; o beforeEach o limpa.
+beforeAll(async () => {
+  searchParams = new URLSearchParams("");
+  const user = userEvent.setup();
+  render(
+    <CompareFilters
+      respondentNames={[]}
+      defaultMinHumans={2}
+      defaultVersion="latest_major"
+      availableVersions={[]}
+      latestMajorLabel="2.0.0"
+    />,
+  );
+  await openVersionSelect(user);
+  await screen.findByRole("listbox");
+  await user.keyboard("{Escape}");
+  cleanup();
+}, 30_000);
+
 describe("CompareFilters — alcançabilidade de 'Todas as versões' (#247/#286)", () => {
   // REGRESSÃO #247: com o default VIVO latest_major, "Todas as versões" só é
   // alcançável se o param `version=all` for ESCRITO na URL — porque `update`

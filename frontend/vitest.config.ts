@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // Reprova o teste que gasta mais CPU do que cabe nos 5 s de timeout com a
+    // suíte disputando a CPU (src/test-utils/cpu-budget.ts).
+    setupFiles: ["src/test-utils/cpu-budget.setup.ts"],
   },
   resolve: {
     alias: {

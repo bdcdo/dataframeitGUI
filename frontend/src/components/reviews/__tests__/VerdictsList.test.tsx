@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -76,9 +77,10 @@ describe("VerdictsList — input de dúvida", () => {
     renderList(onAcknowledge);
 
     await user.click(screen.getByRole("button", { name: /comentar dúvida/i }));
-    await user.type(
+    await pasteInto(
       screen.getByPlaceholderText(QUESTION_PLACEHOLDER),
       "minha dúvida",
+      user,
     );
     await user.click(screen.getByRole("button", { name: /^enviar$/i }));
 
@@ -110,7 +112,7 @@ describe("VerdictsList — input de dúvida", () => {
     renderList(onAcknowledge);
 
     await user.click(screen.getByRole("button", { name: /comentar dúvida/i }));
-    await user.type(screen.getByPlaceholderText(QUESTION_PLACEHOLDER), "texto");
+    await pasteInto(screen.getByPlaceholderText(QUESTION_PLACEHOLDER), "texto", user);
     await user.click(screen.getByRole("button", { name: /^enviar$/i }));
 
     await waitFor(() => expect(onAcknowledge).toHaveBeenCalled());

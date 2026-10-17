@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
@@ -194,7 +195,7 @@ describe("decisão individual em Insights", () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Todos errados" }));
     await screen.findByRole("dialog");
-    await userEvent.type(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
+    await pasteInto(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
     await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "all_wrong", context: row.context, expected: null, note: "", value: "Terceira",

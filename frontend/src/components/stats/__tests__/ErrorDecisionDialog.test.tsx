@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ErrorDecisionDialog } from "@/components/stats/ErrorDecisionDialog";
@@ -199,7 +200,7 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
     expect(screen.getByRole("heading", { name: "Ambos corretos" })).toBeTruthy();
     expect(screen.getByText(/continua sendo o veredito anterior/).nextElementSibling?.textContent).toBe("Sim");
     expect(screen.queryByRole("radio")).toBeNull();
-    await userEvent.type(screen.getByLabelText("Nota opcional"), "sinônimos");
+    await pasteInto(screen.getByLabelText("Nota opcional"), "sinônimos");
     await userEvent.click(confirmButton());
     expect(onConfirm).toHaveBeenCalledWith("sinônimos");
   });

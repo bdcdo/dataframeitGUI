@@ -67,10 +67,15 @@ function descriptionInput(): HTMLInputElement {
   ) as HTMLInputElement;
 }
 
+// Colar em vez de digitar: cada tecla re-renderiza o diálogo inteiro, e os 17
+// caracteres de "Descrição editada" custavam uns 180 ms de CPU por teste, o
+// que com a suíte disputando a CPU levava o teste para perto dos 5 s. Nenhum
+// teste daqui depende dos estados intermediários da digitação; o que eles
+// conferem é o merge do valor final com o remoto.
 async function typeDescription(text: string) {
   const input = descriptionInput();
   await userEvent.clear(input);
-  await userEvent.type(input, text);
+  await userEvent.paste(text);
 }
 
 function savedFieldsArg(call = 0): PydanticField[] {
@@ -275,7 +280,7 @@ describe("EditFieldDialog: instrução alterada", () => {
     render(dialogAt([fieldA], 1));
     const helpText = screen.getByPlaceholderText("Explicações adicionais");
     await userEvent.clear(helpText);
-    await userEvent.type(helpText, "Ajuda nova");
+    await userEvent.paste("Ajuda nova");
     await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 
     const question = await screen.findByRole("alertdialog");
