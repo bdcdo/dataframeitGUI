@@ -25,23 +25,24 @@ const eslint = new ESLint({
   ],
 });
 
-async function messageIdsFor(code: string) {
+async function messagesFor(code: string) {
   const [result] = await eslint.lintText(code, {
     filePath: "src/components/__tests__/Example.test.tsx",
   });
   const fatal = result?.messages.find((message) => message.fatal);
   if (fatal) throw new Error(`fixture não parseou: ${fatal.message}`);
-  return (
-    result?.messages
-      .filter((message) => message.ruleId === ruleId)
-      .map((message) => message.messageId) ?? []
-  );
+  return result?.messages.filter((message) => message.ruleId === ruleId) ?? [];
+}
+
+async function messageIdsFor(code: string) {
+  return (await messagesFor(code)).map((message) => message.messageId);
 }
 
 // Montado por partes: o Vitest escolhe o ambiente pela primeira ocorrência do
 // pragma em qualquer ponto do texto, e o literal inteiro aqui faria este
 // arquivo rodar em jsdom.
 const PRAGMA = "@vitest-" + "environment";
+const JEST_PRAGMA = "@jest-" + "environment";
 const JSDOM = `// ${PRAGMA} jsdom\n`;
 const RENDER = 'import { render } from "@testing-library/react";\n';
 const IMPORTS = `
@@ -76,12 +77,45 @@ describe("regra de aquecimento do jsdom em arquivo de teste", () => {
     }
   });
 
-  it("exige prazo próprio no beforeAll do aquecimento", async () => {
+  it("aponta o import de render quando falta o aquecimento", async () => {
+    const [message] = await messagesFor(`${JSDOM}${RENDER}render(null);`);
+    expect(message).toMatchObject({ line: 2, column: 10 });
+  });
+
+  // Prazo calculado não deixa conferir que ele existe nem que passa do
+  // hookTimeout padrão.
+  it("exige prazo próprio, literal, no beforeAll do aquecimento", async () => {
+    for (const form of [
+      "beforeAll(() => warmUpJsdom());",
+      "beforeAll(() => warmUpJsdom(), PRAZO);",
+    ]) {
+      await expect(
+        messageIdsFor(`${JSDOM}${RENDER}${IMPORTS}${form}`),
+      ).resolves.toEqual(["missingDeadline"]);
+    }
+  });
+
+  it("não conta outra função nem warmUpJsdom sem await como aquecimento", async () => {
+    const forms = [
+      "beforeAll(() => outra(), 30_000);",
+      "beforeAll(function () { return outra(); }, 30_000);",
+      "let ran; beforeAll(async () => { ran = warmUpJsdom(); }, 30_000);",
+      "beforeEach(() => warmUpJsdom(), 30_000);",
+    ];
+    for (const form of forms) {
+      await expect(
+        messageIdsFor(`${JSDOM}${RENDER}${IMPORTS}${form}`),
+      ).resolves.toEqual(["missingWarmUp"]);
+    }
+  });
+
+  it("vale para o render do /pure e só para o da Testing Library", async () => {
     await expect(
-      messageIdsFor(`${JSDOM}${RENDER}${IMPORTS}
-        beforeAll(() => warmUpJsdom());
-      `),
-    ).resolves.toEqual(["missingDeadline"]);
+      messageIdsFor(`${JSDOM}import { render } from "@testing-library/react/pure";\nrender(null);`),
+    ).resolves.toEqual(["missingWarmUp"]);
+    await expect(
+      messageIdsFor(`${JSDOM}import { render } from "./render-local";\nrender(null);`),
+    ).resolves.toEqual([]);
   });
 
   // Um beforeAll dentro de describe não roda antes dos testes de outro
@@ -108,6 +142,9 @@ describe("regra de aquecimento do jsdom em arquivo de teste", () => {
     await expect(
       messageIdsFor(`// ${PRAGMA} node\n${JSDOM}${RENDER}render(null);`),
     ).resolves.toEqual([]);
+    await expect(
+      messageIdsFor(`// ${JEST_PRAGMA} jsdom\n${RENDER}render(null);`),
+    ).resolves.toEqual(["missingWarmUp"]);
   });
 
   it("não se aplica a arquivo node nem a jsdom só com renderHook", async () => {

@@ -9,8 +9,10 @@
 // A regra exige esse beforeAll no arquivo jsdom que importa `render` de
 // @testing-library/react. O critério saiu de medição: o primeiro teste com a
 // suíte inteira sob cota de CPU, e a CPU de cada processo de arquivo com um
-// worker só, preso a uma thread, onde arquivos de código idêntico variaram
-// ±0,1 s de CPU entre árvores:
+// worker só, preso a uma thread, onde grupos de arquivos de código idêntico
+// variaram, em média por arquivo do grupo, ±0,1 s de CPU entre árvores (um
+// arquivo isolado varia mais, e o critério se apoia sobretudo no primeiro
+// teste):
 // - no arquivo que chama render(), com ou sem user-event, o custo de CPU do
 //   aquecimento ficou dentro desse ruído, porque ele antecipa o que o primeiro
 //   teste pagaria. Com a suíte em 200% de CPU, o primeiro teste dos que usam
@@ -36,13 +38,18 @@
 //
 // A análise é sintática: não vê o render() chamado por um helper de outro
 // arquivo nem o de `import * as` da Testing Library (nenhum dos dois tem
-// instância na suíte quando a regra entrou), e não confere que o `warmUpJsdom`
-// chamado é o de test-utils.
+// instância na suíte quando a regra entrou), não confere que o `warmUpJsdom`
+// chamado é o de test-utils, não impõe valor mínimo ao prazo e não percebe
+// timers falsos ligados antes do hook, que fazem o aquecimento não rodar.
 
 const RULE_NAME = "require-jsdom-warm-up";
 
 const ENVIRONMENT_PRAGMA = /@(?:vitest|jest)-environment\s+([\w-]+)\b/;
-const TESTING_LIBRARY_SOURCE = "@testing-library/react";
+// O /pure é a mesma API sem o cleanup automático.
+const TESTING_LIBRARY_SOURCES = new Set([
+  "@testing-library/react",
+  "@testing-library/react/pure",
+]);
 const WARM_UP_NAME = "warmUpJsdom";
 
 function isCallTo(node, name) {
@@ -113,7 +120,7 @@ const requireJsdomWarmUp = {
     return {
       ImportDeclaration(node) {
         if (node.importKind === "type") return;
-        if (node.source.value !== TESTING_LIBRARY_SOURCE) return;
+        if (!TESTING_LIBRARY_SOURCES.has(node.source.value)) return;
         renderImport ??= node.specifiers.find(
           (specifier) =>
             specifier.type === "ImportSpecifier" &&

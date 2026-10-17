@@ -33,8 +33,9 @@ const baseProps = {
 // O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
 // Testing Library, user-event e Radix e estourava os 5 s com a suíte
 // disputando a CPU (src/test-utils/jsdom-warm-up.tsx). O card monta o Popover
-// do ModelCombobox, e com `select: true`, que aquece o caminho de Popper, o
-// primeiro teste em 200% de CPU caiu de 1,9–2,3 s para 0,9–1,2 s.
+// do ModelCombobox, e por isso o aquecimento usa `select: true`, que percorre o
+// caminho de Popper: com a suíte em 200% de CPU, o primeiro teste ficou abaixo
+// do medido sem ele nas duas séries de rodadas do PR #819.
 beforeAll(() => warmUpJsdom({ select: true }), 30_000);
 
 afterEach(() => {

@@ -213,12 +213,14 @@ describe("regra de aquecimento do jsdom na config do ESLint", () => {
   // literal inteiro faria este arquivo rodar em jsdom.
   const jsdom = `// @vitest-${"environment"} jsdom\n`;
 
+  // A severidade entra no resultado porque o lint-types não passa
+  // --max-warnings: com a regra rebaixada para "warn", o hook sairia verde.
   async function warmUpMessageIds(code: string, filePath: string) {
     const [result] = await eslint.lintText(code, { filePath });
     return (
       result?.messages
         .filter((message) => message.ruleId === warmUpRuleId)
-        .map((message) => message.messageId) ?? []
+        .map((message) => `${message.messageId}:${message.severity}`) ?? []
     );
   }
 
@@ -226,7 +228,7 @@ describe("regra de aquecimento do jsdom na config do ESLint", () => {
     const code = `${jsdom}import { render } from "@testing-library/react";\nrender(null);`;
     await expect(
       warmUpMessageIds(code, "src/components/__tests__/Example.test.tsx"),
-    ).resolves.toEqual(["missingWarmUp"]);
+    ).resolves.toEqual(["missingWarmUp:2"]);
     await expect(warmUpMessageIds(code, "src/lib/helper.tsx")).resolves.toEqual([]);
   });
 
