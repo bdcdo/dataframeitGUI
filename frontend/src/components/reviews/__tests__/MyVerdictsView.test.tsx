@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -126,9 +127,10 @@ describe("MyVerdictsView — navegação e filtro", () => {
     await user.click(screen.getByRole("button", { name: /próximo documento/i })); // → Documento Dois
     expect(screen.getByText("Documento Dois")).toBeTruthy();
 
-    await user.type(
+    await pasteInto(
       screen.getByPlaceholderText(/buscar documento/i),
       "Documento",
+      user,
     );
 
     // "Documento" casa os três; Dois é mantido (não reseta para o 1º).
@@ -143,7 +145,7 @@ describe("MyVerdictsView — navegação e filtro", () => {
     await user.click(screen.getByRole("button", { name: /próximo documento/i })); // → Documento Dois
     expect(screen.getByText("Documento Dois")).toBeTruthy();
 
-    await user.type(screen.getByPlaceholderText(/buscar documento/i), "Tres");
+    await pasteInto(screen.getByPlaceholderText(/buscar documento/i), "Tres", user);
 
     expect(screen.getByText("1/1")).toBeTruthy();
     expect(screen.getByText("Documento Tres")).toBeTruthy();

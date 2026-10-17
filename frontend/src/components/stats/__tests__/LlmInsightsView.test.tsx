@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
@@ -42,15 +43,21 @@ beforeAll(() => warmUpJsdom(), 30_000);
 // O primeiro render desta tela e do diálogo de decisão é frio, e com a suíte
 // disputando a CPU o primeiro teste passava dos 5 s (5,2 s com load 52 a 59,
 // contra 0,9 a 3 s dos seguintes). O hook percorre uma vez o caminho de abrir e
-// cancelar uma decisão, sem gravar nada: aquece a própria tela e o diálogo, além
-// das bibliotecas que o warmUpJsdom acima já carregou; o beforeEach limpa os
-// mocks.
+// cancelar uma decisão e depois o de confirmar outra, que só chega aos mocks:
+// aquece a própria tela e o diálogo, além das bibliotecas que o warmUpJsdom
+// acima já carregou. Sem a confirmação, o primeiro teste que salvava ainda
+// gastava 350 ms de CPU na suíte completa (src/test-utils/cpu-budget.ts). O
+// beforeEach limpa os mocks.
 beforeAll(async () => {
   mocks.prepare.mockResolvedValue({ context: row.context });
+  mocks.resolve.mockResolvedValue({ success: true });
   show();
   await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
   await findConfirmButton();
   await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+  await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+  await userEvent.click(await findConfirmButton());
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   cleanup();
 }, 30_000);
 afterEach(cleanup);
@@ -194,7 +201,7 @@ describe("decisão individual em Insights", () => {
     show();
     await userEvent.click(screen.getByRole("button", { name: "Todos errados" }));
     await screen.findByRole("dialog");
-    await userEvent.type(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
+    await pasteInto(screen.getByPlaceholderText("Digite sua resposta..."), "Terceira");
     await userEvent.click(await findConfirmButton());
     await waitFor(() => expect(mocks.resolve).toHaveBeenCalledWith("p1", "doc1", "x", {
       decision: "all_wrong", context: row.context, expected: null, note: "", value: "Terceira",

@@ -1,7 +1,9 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { runGit } from "@/test-utils/isolated-git";
 
 const mockedCreateClient = vi.hoisted(() => vi.fn(() => ({ client: true })));
 
@@ -294,20 +296,35 @@ function shouldScanSecurityFile(name: string): boolean {
   );
 }
 
-function securityTextEntryFiles(dir: string, entry: fs.Dirent): string[] {
-  const absolute = path.join(dir, entry.name);
-  if (entry.isDirectory()) {
-    return GENERATED_DIRECTORIES.has(entry.name)
-      ? []
-      : securityTextFiles(absolute);
+// A varredura cobre o que o git enxerga: arquivos versionados e arquivos novos
+// que não estão no .gitignore, porque são esses que podem chegar a um commit.
+// Percorrer o diretório inteiro lia também o que é local e ignorado (outras
+// worktrees, saídas de investigação, backups de dados): no checkout principal
+// eram milhares de arquivos e centenas de MB, o custo do teste crescia com o
+// que havia na máquina e o teste estourava os 5 s com a suíte disputando a CPU.
+// Um secret gravado num arquivo ignorado não é versionado, e o .env.local, que
+// o .gitignore cobre, nunca foi lido. Um repositório aninhado aparece como
+// diretório ("x/") e fica de fora, como as worktrees.
+function securityTextFiles(root: string): string[] {
+  // Sem esta conferência, um checkout sem .git aninhado em outro repositório
+  // seria listado pelo repositório de fora, que pode ignorar a árvore toda, e
+  // a varredura passaria sem ler nada.
+  const toplevel = runGit(["rev-parse", "--show-toplevel"], root).trim();
+  if (fs.realpathSync(toplevel) !== fs.realpathSync(root)) {
+    throw new Error(`a varredura precisa da raiz do repositório git, e ${root} está dentro de ${toplevel}`);
   }
-  return shouldScanSecurityFile(entry.name) ? [absolute] : [];
-}
-
-function securityTextFiles(dir: string): string[] {
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .flatMap((entry) => securityTextEntryFiles(dir, entry));
+  const listed = runGit(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], root)
+    .split("\0")
+    .filter((entry) => entry !== "" && !entry.endsWith("/"));
+  return listed
+    .filter(
+      (entry) =>
+        !entry.split("/").some((part) => GENERATED_DIRECTORIES.has(part)) &&
+        shouldScanSecurityFile(path.posix.basename(entry)),
+    )
+    .map((entry) => path.join(root, entry))
+    // Versionado e apagado na árvore de trabalho continua no índice.
+    .filter((file) => fs.existsSync(file));
 }
 
 function repoRelative(file: string): string {
@@ -442,6 +459,36 @@ describe("fronteira do Supabase admin client", () => {
     // A #545 acrescenta 1: o sync documento-wide pós-unmark precisa alcançar
     // assignments de peers, fora da RLS do chamador.
     expect(adminFactoryCalls).toBe(20);
+  });
+
+  it("varre o que o git enxerga e deixa de fora o ignorado", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "varredura-"));
+    // Um GIT_DIR herdado, como o do pre-push, aponta para outro repositório:
+    // nenhuma chamada pode alcançá-lo.
+    const decoy = fs.mkdtempSync(path.join(os.tmpdir(), "isca-"));
+    runGit(["init", "-q"], decoy);
+    const decoyConfig = fs.readFileSync(path.join(decoy, ".git/config"), "utf8");
+    vi.stubEnv("GIT_DIR", path.join(decoy, ".git"));
+    try {
+      runGit(["init", "-q"], root);
+      fs.writeFileSync(path.join(root, ".gitignore"), "local/\n.env.local\n");
+      for (const name of ["versionado.ts", "novo.ts", "local/saida.json", ".env.local", ".env.example", "node_modules/pacote/index.js", "apagado.ts", "imagem.png"]) {
+        fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
+        fs.writeFileSync(path.join(root, name), "");
+      }
+      runGit(["add", "versionado.ts", "apagado.ts", ".env.example"], root);
+      fs.rmSync(path.join(root, "apagado.ts"));
+
+      const scanned = securityTextFiles(root).map((file) => path.relative(root, file)).sort();
+
+      expect(scanned).toEqual([".env.example", "novo.ts", "versionado.ts"]);
+      expect(fs.readFileSync(path.join(decoy, ".git/config"), "utf8")).toBe(decoyConfig);
+      expect(fs.existsSync(path.join(decoy, ".git/index"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(decoy, { recursive: true, force: true });
+    }
   });
 
   it("não aceita nenhum nome público com marcador de secret", () => {

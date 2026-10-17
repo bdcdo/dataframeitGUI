@@ -12,6 +12,7 @@
 // tornaria vácua justamente a asserção do critério 4.
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { render, screen, waitFor, cleanup, act, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
@@ -173,7 +174,7 @@ const storedDraft = () => parseCodingDraft(window.localStorage.getItem(KEY));
 const answerInput = () => screen.getAllByRole("textbox")[0];
 
 const typeAnswer = async (user: ReturnType<typeof userEvent.setup>, text: string) => {
-  await user.type(answerInput(), text);
+  await pasteInto(answerInput(), text, user);
 };
 
 // O primeiro teste deste arquivo pagava o carregamento a frio de React DOM,
@@ -407,8 +408,8 @@ describe("veredito do servidor chega ao painel (#608, critério 5)", () => {
     // Responde q2 ANTES de q1 de propósito: assim o foco não está em q2 quando o
     // envio começa, e o clique no botão o leva para o próprio botão. Sem isso a
     // asserção de foco passaria sozinha e não discriminaria nada.
-    await user.type(inputQ2, "sim");
-    await user.type(inputQ1, "Zolgensma");
+    await pasteInto(inputQ2, "sim", user);
+    await pasteInto(inputQ1, "Zolgensma", user);
 
     await user.click(screen.getByRole("button", { name: /enviar/i }));
     await waitFor(() => expect(saveResponse).toHaveBeenCalled());
@@ -440,8 +441,8 @@ describe("veredito do servidor chega ao painel (#608, critério 5)", () => {
     );
 
     const [inputQ1, inputQ2] = screen.getAllByRole("textbox");
-    await user.type(inputQ1, "Zolgensma");
-    await user.type(inputQ2, "sim");
+    await pasteInto(inputQ1, "Zolgensma", user);
+    await pasteInto(inputQ2, "sim", user);
 
     const enviar = screen.getByRole("button", { name: /enviar/i });
     await user.click(enviar);

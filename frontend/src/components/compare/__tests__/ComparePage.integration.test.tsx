@@ -276,6 +276,21 @@ function expectNoCompareWrites(): void {
 // disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
 beforeAll(() => warmUpJsdom(), 30_000);
 
+// O primeiro clique na árvore real da tela também é frio: na suíte completa o
+// teste do "Ambíguo", o primeiro a clicar, gastava 465 ms de CPU, acima do
+// orçamento por teste (src/test-utils/cpu-budget.ts), e os testes de
+// confirmação logo depois dele seguiam mais caros que os do fim do arquivo. O
+// hook percorre uma vez os caminhos de descartar e de confirmar um veredito; a
+// confirmação só chega ao submitVerdict mockado, e o beforeEach limpa os mocks.
+beforeAll(async () => {
+  renderReal();
+  await userEvent.click(screen.getByRole("button", { name: /Ambíguo/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Descartar" }));
+  await userEvent.click(screen.getByRole("button", { name: /Ambíguo/i }));
+  await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+  cleanup();
+}, 30_000);
+
 describe("ComparePage — árvore real (smoke)", () => {
   it("monta os filhos reais e exibe o texto do documento e as respostas", () => {
     renderReal();

@@ -65,6 +65,22 @@ function gabaritoLabel() {
 // disputando a CPU (src/test-utils/jsdom-warm-up.tsx).
 beforeAll(() => warmUpJsdom(), 30_000);
 
+// Marcar os cards desta tela pela primeira vez continua frio depois do
+// aquecimento genérico: na suíte completa o primeiro teste gastava 330 ms de
+// CPU contra 210 do segundo, que faz quase o mesmo caminho, e estourou os 5 s
+// com a suíte em 200% de CPU (src/test-utils/cpu-budget.ts). O hook marca e
+// desmarca um card e desmonta; os callbacks são de cada render.
+beforeAll(async () => {
+  const user = userEvent.setup();
+  renderGroup();
+  const checkbox = screen.getAllByRole("checkbox", {
+    name: /selecionar para marcar como equivalente/i,
+  })[0];
+  await user.click(checkbox);
+  await user.click(checkbox);
+  cleanup();
+}, 30_000);
+
 describe("AgreementGroup — desmarcar o grupo que é gabarito", () => {
   // Discriminador: desmarcar sozinho não prova o reset, porque
   // `effectiveGabarito` já ignora um override fora de `selectionOrder`. O que

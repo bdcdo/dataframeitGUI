@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi, beforeAll } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { DocumentSummary } from "@/components/documents/DocumentList";
@@ -100,9 +101,10 @@ describe("ExcludeDocumentsDialog — fechamento sob controle do pai", () => {
     render(<Harness />);
 
     await user.click(screen.getByRole("button", { name: "Excluir documento" }));
-    await user.type(
+    await pasteInto(
       await screen.findByLabelText(/Motivo da exclusão/),
       "fora do escopo",
+      user,
     );
     await user.click(await findConfirmButton());
 
@@ -143,9 +145,10 @@ describe("ExcludeDocumentsDialog — fechamento sob controle do pai", () => {
     expect((await findConfirmButton()).hasAttribute("disabled")).toBe(true);
     expect(mocks.excludeDocuments).not.toHaveBeenCalled();
 
-    await user.type(
+    await pasteInto(
       screen.getByLabelText(/Motivo da exclusão/),
       "duplicado",
+      user,
     );
 
     expect((await findConfirmButton()).hasAttribute("disabled")).toBe(false);

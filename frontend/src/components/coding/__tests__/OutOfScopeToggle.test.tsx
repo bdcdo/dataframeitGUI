@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { pasteInto } from "@/test-utils/paste-into";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -90,9 +91,10 @@ describe("OutOfScopeToggle — sinalizar", () => {
     });
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
 
-    await user.type(
+    await pasteInto(
       screen.getByLabelText(/Por que está fora do escopo/),
       "não trata do medicamento",
+      user,
     );
     await user.click(confirm);
 
@@ -114,9 +116,10 @@ describe("OutOfScopeToggle — sinalizar", () => {
     const onChange = renderToggle({ status: "normal" });
 
     await user.click(screen.getByRole("switch"));
-    await user.type(
+    await pasteInto(
       screen.getByLabelText(/Por que está fora do escopo/),
       "motivo",
+      user,
     );
     await user.click(
       screen.getByRole("button", { name: /Sinalizar fora de escopo/ }),
