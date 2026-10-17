@@ -35,10 +35,10 @@ export const TEST_CPU_BUDGET_MS = 450;
 
 type ThreadCpuUsage = (previous?: NodeJS.CpuUsage) => NodeJS.CpuUsage;
 
-export function cpuBudgetMessage(spentMs: number, budgetMs = TEST_CPU_BUDGET_MS): string | null {
-  if (spentMs <= budgetMs) return null;
+export function cpuBudgetMessage(spentMs: number): string | null {
+  if (spentMs <= TEST_CPU_BUDGET_MS) return null;
   return (
-    `o teste gastou ${Math.round(spentMs)} ms de CPU, acima do orçamento de ${budgetMs} ms. ` +
+    `o teste gastou ${Math.round(spentMs)} ms de CPU, acima do orçamento de ${TEST_CPU_BUDGET_MS} ms. ` +
     "Com a suíte disputando a CPU, o tempo de parede chega a 8 a 13 vezes a CPU e o teste " +
     "estoura o timeout de 5 s. Reduza o trabalho do teste em vez de subir o orçamento: veja " +
     'docs/CODE_QUALITY_TOOLING.md, seção "Orçamento de CPU por teste".'
@@ -51,10 +51,7 @@ type BudgetContext = { task: { result?: { state?: string } } };
 
 // `read` é injetável para que o teste do orçamento simule leituras sem
 // queimar CPU de verdade.
-export function createCpuBudgetHooks(
-  read: ThreadCpuUsage = process.threadCpuUsage.bind(process),
-  budgetMs = TEST_CPU_BUDGET_MS,
-) {
+export function createCpuBudgetHooks(read: ThreadCpuUsage = process.threadCpuUsage.bind(process)) {
   let start: NodeJS.CpuUsage | null = null;
   let measured: BudgetContext["task"] | null = null;
   return {
@@ -83,7 +80,7 @@ export function createCpuBudgetHooks(
       const spent = read(start);
       start = null;
       measured = null;
-      const message = cpuBudgetMessage((spent.user + spent.system) / 1000, budgetMs);
+      const message = cpuBudgetMessage((spent.user + spent.system) / 1000);
       if (message) throw new Error(message);
     },
   };
