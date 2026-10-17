@@ -5,9 +5,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
-    // Reprova o teste que gasta mais CPU do que cabe nos 5 s de timeout com a
-    // suíte disputando a CPU (src/test-utils/cpu-budget.ts).
-    setupFiles: ["src/test-utils/cpu-budget.setup.ts"],
+    // Tira do worker o GIT_DIR e afins que o hook de pre-push exporta
+    // (src/test-utils/git-env.setup.ts) e reprova o teste que gasta mais CPU do
+    // que cabe nos 5 s de timeout com a suíte disputando a CPU
+    // (src/test-utils/cpu-budget.ts).
+    setupFiles: ["src/test-utils/git-env.setup.ts", "src/test-utils/cpu-budget.setup.ts"],
   },
   resolve: {
     alias: {

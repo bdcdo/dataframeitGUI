@@ -2,7 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { isolatedGitEnvironment, runGit } from "@/test-utils/isolated-git";
+import config from "../../../vitest.config";
+import { isolatedGitEnvironment, runGit, stripGitEnvironment } from "@/test-utils/isolated-git";
 
 // Teste que chama git em subprocesso sem passar por src/test-utils/isolated-git.ts
 // herda, no pre-push, o GIT_DIR do hook e age sobre o repositório do push. A
@@ -30,6 +31,13 @@ describe("git em subprocesso nos testes", () => {
       .filter((file) => !ALLOWED.has(file) && DIRECT_GIT_CALL.test(fs.readFileSync(file, "utf8")))
       .map((file) => path.relative(SRC_ROOT, file));
     expect(offenders).toEqual([]);
+  });
+
+  it("o worker nasce sem as variáveis GIT_* do hook, pelo setupFiles", () => {
+    const setupFiles = [config.test?.setupFiles ?? []].flat().map((file) => path.basename(String(file)));
+    expect(setupFiles).toContain("git-env.setup.ts");
+    const env = { NODE_ENV: "test", GIT_DIR: "/x/.git", GIT_INDEX_FILE: "/x/.git/index", PATH: "/bin" } as const;
+    expect(stripGitEnvironment({ ...env })).toEqual({ NODE_ENV: "test", PATH: "/bin" });
   });
 
   it("a regra reconhece as formas de chamar git", () => {

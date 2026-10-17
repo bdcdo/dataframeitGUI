@@ -7,12 +7,15 @@ import { execFileSync } from "node:child_process";
 // compartilhada por todas as worktrees, que pararam de funcionar. Todo teste que
 // chama git em subprocesso passa por aqui, e a regra está em
 // src/tooling/__tests__/git-subprocess-isolation.test.ts.
-export function isolatedGitEnvironment(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+export function stripGitEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   for (const name of Object.keys(env)) {
     if (name.startsWith("GIT_")) delete env[name];
   }
   return env;
+}
+
+export function isolatedGitEnvironment(): NodeJS.ProcessEnv {
+  return stripGitEnvironment({ ...process.env });
 }
 
 // Roda git resolvido só pelo cwd e devolve a saída padrão.
