@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
@@ -17,18 +17,10 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requiredEnvironmentNamesForFile } from "../../../scripts/worktree-env/env-contract.mjs";
+import { runGit } from "@/test-utils/isolated-git";
 
 const trackedFrontend = process.cwd();
 const envFiles = [".env.local", ".env.e2e"] as const;
-const isolatedGitEnvironment = { ...process.env };
-for (const name of [
-  "GIT_COMMON_DIR",
-  "GIT_DIR",
-  "GIT_INDEX_FILE",
-  "GIT_WORK_TREE",
-]) {
-  delete isolatedGitEnvironment[name];
-}
 
 const requiredByFile = Object.fromEntries(
   envFiles.map((filename) => [
@@ -364,16 +356,9 @@ describe("bootstrap de ambiente para worktrees", () => {
 
   it("mantém o status do Git limpo após o provisionamento", () => {
     writeCompleteSource();
-    execFileSync("git", ["init", "--quiet"], {
-      cwd: repository,
-      env: isolatedGitEnvironment,
-    });
-    execFileSync("git", ["add", "."], {
-      cwd: repository,
-      env: isolatedGitEnvironment,
-    });
-    execFileSync(
-      "git",
+    runGit(["init", "--quiet"], repository);
+    runGit(["add", "."], repository);
+    runGit(
       [
         "-c",
         "user.name=Bootstrap Test",
@@ -384,16 +369,10 @@ describe("bootstrap de ambiente para worktrees", () => {
         "-m",
         "fixture",
       ],
-      { cwd: repository, env: isolatedGitEnvironment },
+      repository,
     );
 
     expect(runBootstrap().status).toBe(0);
-    expect(
-      execFileSync("git", ["status", "--short"], {
-        cwd: repository,
-        encoding: "utf8",
-        env: isolatedGitEnvironment,
-      }),
-    ).toBe("");
+    expect(runGit(["status", "--short"], repository)).toBe("");
   });
 });

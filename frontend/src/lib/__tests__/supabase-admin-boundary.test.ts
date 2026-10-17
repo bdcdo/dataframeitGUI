@@ -1,9 +1,9 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { runGit } from "@/test-utils/isolated-git";
 
 const mockedCreateClient = vi.hoisted(() => vi.fn(() => ({ client: true })));
 
@@ -296,20 +296,6 @@ function shouldScanSecurityFile(name: string): boolean {
   );
 }
 
-// Dentro de um hook do git (o pre-push roda esta suíte) o processo herda
-// GIT_DIR, GIT_INDEX_FILE e afins, que apontam para o repositório do push e
-// vencem o cwd. Sem limpá-los, o `git init` do teste abaixo reinicializava o
-// repositório real em vez do temporário, gravando core.bare=true na config
-// compartilhada por todas as worktrees. Toda chamada de git deste arquivo
-// passa por aqui e é resolvida só pelo cwd.
-function git(args: string[], cwd: string): string {
-  const env: NodeJS.ProcessEnv = { ...process.env };
-  for (const name of Object.keys(env)) {
-    if (name.startsWith("GIT_")) delete env[name];
-  }
-  return execFileSync("git", args, { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-}
-
 // A varredura cobre o que o git enxerga: arquivos versionados e arquivos novos
 // que não estão no .gitignore, porque são esses que podem chegar a um commit.
 // Percorrer o diretório inteiro lia também o que é local e ignorado (outras
@@ -323,11 +309,11 @@ function securityTextFiles(root: string): string[] {
   // Sem esta conferência, um checkout sem .git aninhado em outro repositório
   // seria listado pelo repositório de fora, que pode ignorar a árvore toda, e
   // a varredura passaria sem ler nada.
-  const toplevel = git(["rev-parse", "--show-toplevel"], root).trim();
+  const toplevel = runGit(["rev-parse", "--show-toplevel"], root).trim();
   if (fs.realpathSync(toplevel) !== fs.realpathSync(root)) {
     throw new Error(`a varredura precisa da raiz do repositório git, e ${root} está dentro de ${toplevel}`);
   }
-  const listed = git(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], root)
+  const listed = runGit(["ls-files", "-z", "--cached", "--others", "--exclude-standard"], root)
     .split("\0")
     .filter((entry) => entry !== "" && !entry.endsWith("/"));
   return listed
@@ -480,17 +466,17 @@ describe("fronteira do Supabase admin client", () => {
     // Um GIT_DIR herdado, como o do pre-push, aponta para outro repositório:
     // nenhuma chamada pode alcançá-lo.
     const decoy = fs.mkdtempSync(path.join(os.tmpdir(), "isca-"));
-    git(["init", "-q"], decoy);
+    runGit(["init", "-q"], decoy);
     const decoyConfig = fs.readFileSync(path.join(decoy, ".git/config"), "utf8");
     vi.stubEnv("GIT_DIR", path.join(decoy, ".git"));
     try {
-      git(["init", "-q"], root);
+      runGit(["init", "-q"], root);
       fs.writeFileSync(path.join(root, ".gitignore"), "local/\n.env.local\n");
       for (const name of ["versionado.ts", "novo.ts", "local/saida.json", ".env.local", ".env.example", "node_modules/pacote/index.js", "apagado.ts", "imagem.png"]) {
         fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
         fs.writeFileSync(path.join(root, name), "");
       }
-      git(["add", "versionado.ts", "apagado.ts", ".env.example"], root);
+      runGit(["add", "versionado.ts", "apagado.ts", ".env.example"], root);
       fs.rmSync(path.join(root, "apagado.ts"));
 
       const scanned = securityTextFiles(root).map((file) => path.relative(root, file)).sort();
