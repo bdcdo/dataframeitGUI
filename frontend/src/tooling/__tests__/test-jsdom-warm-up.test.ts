@@ -1,22 +1,36 @@
-import { fileURLToPath } from "node:url";
-
 import { ESLint } from "eslint";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { RULE_NAME } from "../../../eslint-rules/test-jsdom-warm-up.mjs";
+import {
+  RULE_NAME,
+  testJsdomWarmUpPlugin,
+} from "../../../eslint-rules/test-jsdom-warm-up.mjs";
 
-const frontendRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const ruleId = `test-jsdom-warm-up/${RULE_NAME}`;
+
+// Só a regra, com o parser padrão do ESLint: ela é sintática, e as fixtures são
+// JavaScript puro. Carregar eslint.config.mjs, com o grafo do eslint-config-next
+// e o parser de TypeScript, custava de 2 a 3 s de CPU, e com a suíte em 200% de
+// CPU o beforeAll que fazia essa carga estourou os 30 s. O que depende da config
+// (a regra ligada nos arquivos de teste, import só de tipo) fica em
+// test-cold-imports.test.ts, que já paga essa carga.
 const eslint = new ESLint({
-  cwd: frontendRoot,
-  overrideConfigFile: "eslint.config.mjs",
+  overrideConfigFile: true,
+  overrideConfig: [
+    {
+      files: ["**/*.tsx"],
+      plugins: { "test-jsdom-warm-up": testJsdomWarmUpPlugin },
+      rules: { [ruleId]: "error" },
+    },
+  ],
 });
 
-async function messageIdsFor(
-  code: string,
-  filePath = "src/components/__tests__/Example.test.tsx",
-) {
-  const [result] = await eslint.lintText(code, { filePath });
+async function messageIdsFor(code: string) {
+  const [result] = await eslint.lintText(code, {
+    filePath: "src/components/__tests__/Example.test.tsx",
+  });
+  const fatal = result?.messages.find((message) => message.fatal);
+  if (fatal) throw new Error(`fixture não parseou: ${fatal.message}`);
   return (
     result?.messages
       .filter((message) => message.ruleId === ruleId)
@@ -36,12 +50,6 @@ const IMPORTS = `
 `;
 
 describe("regra de aquecimento do jsdom em arquivo de teste", () => {
-  // Mesma carga a frio de test-cold-imports.test.ts: o primeiro lintText
-  // carrega eslint.config.mjs com o grafo do eslint-config-next.
-  beforeAll(async () => {
-    await messageIdsFor("export {};");
-  }, 30_000);
-
   it("reprova arquivo jsdom que chama render() sem aquecimento", async () => {
     await expect(
       messageIdsFor(`${JSDOM}${RENDER}
@@ -102,7 +110,7 @@ describe("regra de aquecimento do jsdom em arquivo de teste", () => {
     ).resolves.toEqual([]);
   });
 
-  it("não se aplica a arquivo node, a renderHook nem a import de tipo", async () => {
+  it("não se aplica a arquivo node nem a jsdom só com renderHook", async () => {
     await expect(
       messageIdsFor(`${RENDER}
         import { it } from "vitest";
@@ -116,18 +124,6 @@ describe("regra de aquecimento do jsdom em arquivo de teste", () => {
         import { it } from "vitest";
         it("caso", () => { renderHook(() => null); void screen; void userEvent; });
       `),
-    ).resolves.toEqual([]);
-    await expect(
-      messageIdsFor(`${JSDOM}
-        import { type render } from "@testing-library/react";
-        let renderizar: typeof render;
-      `),
-    ).resolves.toEqual([]);
-  });
-
-  it("só se aplica a arquivos de teste", async () => {
-    await expect(
-      messageIdsFor(`${JSDOM}${RENDER}render(null);`, "src/lib/helper.ts"),
     ).resolves.toEqual([]);
   });
 });
