@@ -125,6 +125,7 @@ describe("regra de aquecimento do jsdom em arquivo de teste", () => {
     const forms = [
       'describe("bloco", () => { beforeAll(() => warmUpJsdom(), 30_000); });',
       "beforeAll(() => { void warmUpJsdom(); }, 30_000);",
+      "beforeAll(() => { warmUpJsdom(); }, 30_000);",
       "beforeAll(() => { const aquecer = () => warmUpJsdom(); }, 30_000);",
     ];
     for (const form of forms) {
