@@ -44,9 +44,21 @@ describe("orçamento de CPU por teste", () => {
 
   it("recusa a sobreposição de dois testes, que mediria um pelo outro", () => {
     const hooks = createCpuBudgetHooks(fakeReader([1_000_000, 1_100_000]));
-    hooks.before();
-    expect(() => hooks.before()).toThrow(/não mede testes concorrentes/);
+    hooks.before({ task: { result: { state: "run" } } });
+    expect(() => hooks.before({ task: { result: { state: "run" } } })).toThrow(/não mede testes concorrentes/);
     expect(hooks.isMeasuring()).toBe(false);
+  });
+
+  // Quando um afterEach do arquivo lança, o Vitest pula o do orçamento e o
+  // teste anterior já terminou: o seguinte mede do zero, sem acusar
+  // concorrência que não existe.
+  it("descarta a leitura que sobrou de um teste já encerrado", () => {
+    const hooks = createCpuBudgetHooks(fakeReader([1_000_000, 9_000_000, 9_100_000]));
+    const previous = { result: { state: "run" } };
+    hooks.before({ task: previous });
+    previous.result.state = "fail";
+    expect(() => hooks.before({ task: { result: { state: "run" } } })).not.toThrow();
+    expect(() => hooks.after()).not.toThrow();
   });
 
   // O módulo importado aqui é o mesmo que o setupFiles carregou neste arquivo:

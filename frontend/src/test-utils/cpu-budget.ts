@@ -45,6 +45,10 @@ export function cpuBudgetMessage(spentMs: number, budgetMs = TEST_CPU_BUDGET_MS)
   );
 }
 
+// O que o hook precisa do contexto do Vitest: o estado do teste que mediu por
+// último, para distinguir sobreposição de um afterEach que não chegou a rodar.
+type BudgetContext = { task: { result?: { state?: string } } };
+
 // `read` é injetável para que o teste do orçamento simule leituras sem
 // queimar CPU de verdade.
 export function createCpuBudgetHooks(
@@ -52,17 +56,23 @@ export function createCpuBudgetHooks(
   budgetMs = TEST_CPU_BUDGET_MS,
 ) {
   let start: NodeJS.CpuUsage | null = null;
+  let measured: BudgetContext["task"] | null = null;
   return {
     // Com testes concorrentes no mesmo arquivo, a CPU da thread de um somaria a
-    // do outro e o orçamento cobraria o teste errado. A sobreposição aparece
-    // como um segundo beforeEach antes do afterEach do primeiro.
-    before() {
-      if (start !== null) {
+    // do outro e o orçamento cobraria o teste errado. A sobreposição é um
+    // segundo beforeEach enquanto o teste medido ainda roda. A leitura inicial
+    // que sobra sem o teste rodando é outra coisa: quando um afterEach do
+    // arquivo lança, o Vitest pula os seguintes, e este, registrado primeiro
+    // no setupFiles, é o último; aí a leitura velha só é descartada.
+    before(context?: BudgetContext) {
+      if (start !== null && measured?.result?.state === "run") {
         start = null;
+        measured = null;
         throw new Error(
           "o orçamento de CPU por teste não mede testes concorrentes: rode este arquivo sem .concurrent",
         );
       }
+      measured = context?.task ?? null;
       start = read();
     },
     isMeasuring() {
@@ -72,6 +82,7 @@ export function createCpuBudgetHooks(
       if (start === null) return;
       const spent = read(start);
       start = null;
+      measured = null;
       const message = cpuBudgetMessage((spent.user + spent.system) / 1000, budgetMs);
       if (message) throw new Error(message);
     },

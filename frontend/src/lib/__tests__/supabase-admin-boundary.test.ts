@@ -306,6 +306,16 @@ function shouldScanSecurityFile(name: string): boolean {
 // o .gitignore cobre, nunca foi lido. Um repositório aninhado aparece como
 // diretório ("x/") e fica de fora, como as worktrees.
 function securityTextFiles(root: string): string[] {
+  // Sem esta conferência, um checkout sem .git aninhado em outro repositório
+  // seria listado pelo repositório de fora, que pode ignorar a árvore toda, e
+  // a varredura passaria sem ler nada.
+  const toplevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd: root,
+    encoding: "utf8",
+  }).trim();
+  if (fs.realpathSync(toplevel) !== fs.realpathSync(root)) {
+    throw new Error(`a varredura precisa da raiz do repositório git, e ${root} está dentro de ${toplevel}`);
+  }
   const listed = execFileSync(
     "git",
     ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
