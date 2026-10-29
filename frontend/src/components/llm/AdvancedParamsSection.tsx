@@ -8,6 +8,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { ChevronRight } from "lucide-react";
+import { DEFAULT_PARALLEL_REQUESTS } from "@/lib/model-registry";
 
 interface AdvancedParamsSectionProps {
   kwargs: Record<string, unknown>;
@@ -32,7 +33,10 @@ export function AdvancedParamsSection({
               type="number"
               min={1}
               max={50}
-              value={(kwargs.parallel_requests as number | undefined) ?? 5}
+              value={
+                (kwargs.parallel_requests as number | undefined) ??
+                DEFAULT_PARALLEL_REQUESTS
+              }
               onChange={(e) => {
                 const v = parseInt(e.target.value);
                 if (!isNaN(v) && v >= 1) onChangeKwarg("parallel_requests", v);

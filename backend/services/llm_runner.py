@@ -9,23 +9,25 @@ import hashlib
 import logging
 import random
 import re
+import threading
 import time
 import traceback
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 
 # Importado no topo (e não junto do `from dataframeit import dataframeit` que
-# vive dentro de _run_dataframeit_batches) porque os testes substituem
+# vive dentro de _run_dataframeit_and_publish) porque os testes substituem
 # sys.modules["dataframeit"] por um SimpleNamespace sem submódulos: resolver a
 # tupla em import-time do módulo mantém esses testes válidos sem que eles
 # precisem conhecer este import.
 from dataframeit.errors import RECOVERABLE_ERRORS
 from supabase import PostgrestAPIError
 
-from services.auto_review_reconciliation import wake_auto_review_reconciliation
+from services.auto_review_reconciliation import wake_auto_review_reconciliation_sync
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
 from services.pydantic_compiler import build_model_from_code, extract_json_schema_extra
 from services.supabase_client import get_supabase
@@ -81,7 +83,12 @@ def _status_from_row(row: dict) -> dict:
 
 def get_job_status(job_id: str) -> dict:
     if job_id in _jobs:
-        return _jobs[job_id]
+        # Cópia, e não o dict vivo: a run roda numa thread do threadpool e
+        # acrescenta chaves ao estado (`warnings`, por setdefault) enquanto a
+        # rota de status serializa a resposta no event loop. Iterar um dict
+        # que outra thread aumenta levanta "dictionary changed size during
+        # iteration"; `dict()` copia sem executar código Python, sob o GIL.
+        return dict(_jobs[job_id])
     # Fallback: job vanished from memory (container restart) but may exist in DB.
     try:
         sb = get_supabase()
@@ -188,12 +195,16 @@ def mark_stale_runs_as_error(sb, project_id: str) -> int:
     Retorna o número de runs marcadas como erro. Idempotente.
     """
     now = datetime.now(timezone.utc)
-    # 10 minutos sem heartbeat = morta. O save loop renova a cada ~2s, mas
-    # o heartbeat na fase de processing só dispara após cada batch retornar
-    # — uma chamada single-batch a um provider lento (Claude com thinking,
-    # OpenAI sob throttling) pode passar de 5min sem update. 10min absorve
-    # esse caso sem deixar runs zumbis pendurarem por muito tempo. 30min
-    # para runs sem heartbeat (pré-migration) — conservador.
+    # 10 minutos sem heartbeat = morta. O heartbeat é renovado (throttle de
+    # ~2s) a cada documento que volta do provider: na chamada única, quando o
+    # documento é publicado; na via de lotes de campos, quando cada chamada
+    # por lote devolve uma linha, embora a publicação dessa via só aconteça no
+    # fim. Nas duas vias a renovação depende de algum documento voltar: o
+    # canário, que vai sozinho, ou uma fila em que todos os documentos em voo
+    # são lentos (Claude com thinking, OpenAI sob throttling) podem passar de
+    # 5min sem update. 10min absorve esse caso sem deixar runs zumbis
+    # pendurarem por muito tempo. 30min para runs sem heartbeat
+    # (pré-migration) — conservador.
     heartbeat_cutoff_iso = (now - timedelta(minutes=10)).isoformat()
     started_cutoff_iso = (now - timedelta(minutes=30)).isoformat()
 
@@ -788,8 +799,21 @@ def _pop_threshold(llm_kwargs: dict, key: str, default: float) -> float:
     return value
 
 
+# Documentos em voo ao mesmo tempo quando o projeto não escolheu outro valor.
+# Com a fila contínua do dataframeit (uma chamada só, que repõe o worker assim
+# que um documento volta), a vazão é parallel_requests ÷ latência média. Medido
+# no gemini-3.8-flash com raciocínio alto, a latência fica em ~90 s por
+# documento: 20 em voo dão ~13 documentos/min e ~US$ 7,6 a cada 10 min, abaixo
+# do teto de gasto de US$ 10 por 10 min do Tier 1 do Google. Acima de ~25 o
+# teto bate e o provider passa a recusar. Chave ausente em llm_kwargs significa
+# este default, e é por isso que mudá-lo não pede migration. O frontend espelha
+# o valor em DEFAULT_PARALLEL_REQUESTS (frontend/src/lib/model-registry.ts), e
+# um teste de lá lê esta linha para amarrar os dois.
+DEFAULT_PARALLEL_REQUESTS = 20
+
+
 def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
-    parallel_requests = llm_kwargs.pop("parallel_requests", 5)
+    parallel_requests = llm_kwargs.pop("parallel_requests", DEFAULT_PARALLEL_REQUESTS)
     rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
     partial_coverage_threshold = _pop_threshold(
         llm_kwargs, "partial_coverage_threshold", 0.5
@@ -1126,110 +1150,6 @@ def _chunks_after_canary_failure(
     return split
 
 
-def _run_dataframeit_batches(
-    *,
-    sb,
-    job_id: str,
-    jobs_state: dict,
-    docs: list[dict],
-    model_class,
-    prompt_template: str,
-    llm_provider: str,
-    llm_model: str,
-    config: _DataframeitRunConfig,
-) -> pd.DataFrame:
-    df = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
-    from dataframeit import dataframeit
-
-    batch_size = max(1, config.parallel_requests)
-    # A primeira batch leva um documento só, como canário. O dataframeit não
-    # propaga erro do provider: ele grava o erro na célula e devolve o frame
-    # normalmente, então um modelo inexistente ou uma chave inválida só
-    # apareceria em _raise_if_run_compromised — depois de gastar uma chamada por
-    # documento e de _process_and_save_rows ter publicado uma resposta vazia
-    # para cada um. Com o canário o pior caso é uma chamada e nenhuma escrita.
-    batches = [
-        batch
-        for batch in [
-            df.iloc[0:1],
-            *(df.iloc[i : i + batch_size] for i in range(1, len(df), batch_size)),
-        ]
-        # Partição vazia não é batch: sem o filtro, um df sem linhas produziria
-        # uma "primeira batch" vazia e o provider seria chamado à toa.
-        if not batch.empty
-    ]
-    jobs_state.update(phase="processing", total_batches=len(batches))
-
-    def _call(frame: pd.DataFrame, model):
-        return dataframeit(
-            # Cópia, e não o frame recebido: o dataframeit escreve as colunas
-            # do modelo e as de controle **no objeto do chamador** (`to_pandas`
-            # devolve o mesmo DataFrame e `_setup_columns` é in-place) e, num
-            # frame que já as tenha, desiste em silêncio — avisa "Colunas [...]
-            # já existem" e devolve sem chamar o provider. Chamar duas vezes
-            # sobre o mesmo frame é justamente o que o refazer do canário
-            # abaixo faz. Copiar aqui torna esse estado inconstruível, em vez
-            # de obrigar cada chamador a lembrar da regra.
-            frame.copy(),
-            model,
-            prompt_template,
-            text_column="texto",
-            provider=llm_provider,
-            model=llm_model,
-            parallel_requests=config.parallel_requests,
-            rate_limit_delay=config.rate_limit_delay,
-            model_kwargs=config.model_kwargs if config.model_kwargs else None,
-            resume=False,
-            **config.dfi_kwargs,
-        )
-
-    def _call_chunks(frame: pd.DataFrame, chunks: list[list[str]]) -> pd.DataFrame:
-        return _merge_chunk_frames(
-            [_call(frame, _submodel(model_class, names)) for names in chunks]
-        )
-
-    def _probe(names: list[str]) -> str | None:
-        return _probe_schema(_call, model_class, names)
-
-    chunks: list[list[str]] = [list(model_class.model_fields)]
-    result_frames = []
-    proc_start = time.time()
-    last_proc_heartbeat = 0.0
-    for idx, batch_df in enumerate(batches):
-        jobs_state["current_batch"] = idx + 1
-        batch_result = _call_chunks(batch_df, chunks)
-        if idx == 0 and _canary_provider_error(batch_result):
-            # A afirmação "nenhuma resposta foi gravada" nas mensagens de abort
-            # depende de esta função rodar inteira antes de
-            # _process_and_save_rows, que é quem publica (ver run_llm).
-            split = _chunks_after_canary_failure(
-                _probe, model_class, llm_provider, llm_model
-            )
-            if split is not None:
-                chunks = split
-                # Refaz o canário para que a run comece com o resultado bom.
-                # Depende de `_call` copiar o frame: sem isso a chamada aqui
-                # reencontraria as colunas que a primeira gravou em batch_df,
-                # devolveria o frame da falha sem chamar o provider, e este
-                # documento sairia vazio — abaixo do run_failure_threshold e,
-                # portanto, sem nem reprovar a run.
-                batch_result = _call_chunks(batch_df, chunks)
-        result_frames.append(batch_result)
-        processed = sum(len(f) for f in result_frames)
-        jobs_state["progress"] = processed
-        elapsed = time.time() - proc_start
-        if processed > 0:
-            jobs_state["eta_seconds"] = round(
-                (elapsed / processed) * (len(df) - processed), 1
-            )
-        now_ts = time.time()
-        if now_ts - last_proc_heartbeat >= 2.0:
-            _persist_run_progress(sb, job_id, jobs_state)
-            last_proc_heartbeat = now_ts
-
-    return pd.concat(result_frames, ignore_index=True)
-
-
 @dataclass(frozen=True)
 class _PublishFailure:
     """Uma linha que o banco recusou, com a mensagem que ele devolveu."""
@@ -1399,7 +1319,7 @@ def init_job(job_id: str, project_id: str, filter_mode: str) -> None:
         "error_line": None,
         "error_column": None,
         "pydantic_code": None,
-        # Counters atualizados durante a fase de saving para o frontend
+        # Counters atualizados a cada documento publicado para o frontend
         # mostrar feedback ao vivo de quantos documentos saíram completos /
         # parciais / vazios (ver LlmConfigurePane). Classificação espelha
         # LlmResponseRow.classifyResponse no frontend.
@@ -1623,62 +1543,150 @@ def _record_processed_row_outcome(
         partial_warnings.append(warning_msg)
         jobs_state.setdefault("warnings", []).append(warning_msg)
 
+    _persist_run_progress_throttled(sb, job_id, jobs_state)
+
+
+def _persist_run_progress_throttled(sb, job_id: str, jobs_state: dict) -> None:
+    """`_persist_run_progress`, no máximo uma vez a cada 2 s.
+
+    Um lugar só para o throttle porque dois caminhos renovam o heartbeat: a
+    publicação de cada linha e o callback da via de lotes de campos, que não
+    publica. Com o intervalo repetido nos dois, um ajuste num deixaria o outro
+    martelando `llm_runs` ou deixando o heartbeat envelhecer.
+    """
     now_ts = time.time()
     if now_ts - jobs_state["last_progress_persist"] >= 2.0:
         _persist_run_progress(sb, job_id, jobs_state)
         jobs_state["last_progress_persist"] = now_ts
 
 
-def _process_and_save_rows(
-    sb,
-    job_id: str,
-    jobs_state: dict,
-    result_df: pd.DataFrame,
-    prepared_model: _PreparedLlmModel,
-    partial_coverage_threshold: float,
-    run: _RunMetadata,
-) -> _SaveLoopOutcome:
-    """Transform and persist each dataframeit row in its canonical shape."""
-    partial_warnings: list[str] = []
-    dfi_error_samples: dict[str, str] = {}
-    publish_failures: list[_PublishFailure] = []
-    consecutive_failures = 0
-    field_conditions = extract_field_conditions(prepared_model.model_class)
-    expected_llm_fields = _expected_llm_fields(prepared_model.model_class)
+class _RowPublisher:
+    """Publica as respostas da run em `responses`, uma linha de cada vez.
 
-    for _, row in result_df.iterrows():
-        processed_row = _build_processed_llm_row(
-            row,
-            prepared_model.model_class,
-            prepared_model.nested_field_map,
-            field_conditions,
-            expected_llm_fields,
-            partial_coverage_threshold,
-        )
-        _record_processed_row_outcome(
-            sb,
-            job_id,
-            jobs_state,
-            partial_warnings,
-            dfi_error_samples,
-            processed_row,
-        )
-        response = _build_llm_response_row(
-            run=run,
-            doc_id=processed_row.doc_id,
-            answers=processed_row.answers,
-            justifications=processed_row.justifications,
-            is_partial=processed_row.is_partial,
-            job_id=job_id,
-            llm_error_msg=processed_row.llm_error_msg,
-        )
-        # O `try` cobre só a RPC. As três chamadas acima são puras sobre o
-        # DataFrame, e exceção nelas é bug nosso, que deve continuar abortando;
-        # envolver a iteração inteira transformaria defeito de código em "falha
-        # de linha" silenciosa.
+    Dono do estado que atravessa as linhas: avisos de cobertura, amostras de
+    erro do provider, falhas de publicação e o contador de falhas seguidas.
+    É objeto, e não laço, porque as linhas chegam por dois caminhos: o
+    callback `on_row_done` do dataframeit, que entrega cada documento assim
+    que ele volta do provider, e o frame inteiro, no canário e na via de lotes
+    de campos (ver `_run_dataframeit_and_publish`). Os dois passam por
+    `publish`, então a regra de publicação continua sendo uma só.
+
+    O callback roda na thread do worker da biblioteca, várias ao mesmo tempo,
+    e por isso o estado e a RPC ficam sob `lock`. Serializar não custa vazão:
+    publicar leva milissegundos, e cada documento leva dezenas de segundos no
+    provider. RLock, e não Lock, porque o handler do callback segura o lock em
+    volta do progresso e da publicação juntos, para que o heartbeat persistido
+    dentro de `publish` já inclua a linha que acabou de chegar. Nada aqui supõe
+    que o callback venha de outra thread. Com `parallel_requests` <= 1 a
+    biblioteca usa o caminho sequencial e todo callback sai da própria thread
+    que chamou o dataframeit; no paralelo isso também acontece quando o worker
+    morre antes de gravar a linha. Essa thread não segura o lock enquanto
+    espera o dataframeit, então o RLock não chega a ser disputado por ela.
+    """
+
+    def __init__(
+        self,
+        sb,
+        job_id: str,
+        jobs_state: dict,
+        prepared_model: _PreparedLlmModel,
+        partial_coverage_threshold: float,
+        run: _RunMetadata,
+    ):
+        self._sb = sb
+        self._job_id = job_id
+        self._jobs_state = jobs_state
+        self._prepared_model = prepared_model
+        self._partial_coverage_threshold = partial_coverage_threshold
+        self._run = run
+        self._field_conditions = extract_field_conditions(prepared_model.model_class)
+        self._expected_llm_fields = _expected_llm_fields(prepared_model.model_class)
+        self._partial_warnings: list[str] = []
+        self._dfi_error_samples: dict[str, str] = {}
+        self._publish_failures: list[_PublishFailure] = []
+        self._consecutive_failures = 0
+        self.lock = threading.RLock()
+        self.fatal: Exception | None = None
+
+    def publish(self, row) -> None:
+        """Transforma uma linha do dataframeit na resposta canônica e a publica.
+
+        `row` tem o formato de uma linha do frame que o dataframeit devolve
+        (Series do frame ou o dict de `_row_from_result`). Levanta no que
+        invalida a run inteira; falha de uma linha só fica em
+        `_publish_failures` e a run segue.
+        """
+        with self.lock:
+            processed_row = _build_processed_llm_row(
+                row,
+                self._prepared_model.model_class,
+                self._prepared_model.nested_field_map,
+                self._field_conditions,
+                self._expected_llm_fields,
+                self._partial_coverage_threshold,
+            )
+            _record_processed_row_outcome(
+                self._sb,
+                self._job_id,
+                self._jobs_state,
+                self._partial_warnings,
+                self._dfi_error_samples,
+                processed_row,
+            )
+            response = _build_llm_response_row(
+                run=self._run,
+                doc_id=processed_row.doc_id,
+                answers=processed_row.answers,
+                justifications=processed_row.justifications,
+                is_partial=processed_row.is_partial,
+                job_id=self._job_id,
+                llm_error_msg=processed_row.llm_error_msg,
+            )
+            self._send(processed_row.doc_id, response)
+
+    def publish_guarded(self, build_row: Callable[[], dict]) -> None:
+        """Forma de `publish` para o callback do dataframeit.
+
+        A biblioteca transforma exceção do callback em `warnings.warn` e segue
+        a rodada, então levantar daqui não abortaria nada: as linhas seguintes
+        continuariam publicando depois de a rodada deixar de ser a corrente, ou
+        martelando um banco que já recusou cinco seguidas. Em vez disso, a
+        primeira exceção fica em `fatal`, toda linha seguinte é descartada sem
+        tentativa, e quem chamou o dataframeit a relança assim que a chamada
+        retorna. O custo aceito é que a biblioteca termina os documentos que já
+        estavam na fila, e esse LLM é pago sem resposta gravada: o contrato de
+        `on_row_done` não oferece como pará-la.
+
+        `build_row` roda dentro da guarda, e não antes dela, para que defeito
+        nosso ao montar a linha também aborte a run, em vez de virar um aviso
+        da biblioteca que ninguém lê.
+        """
+        with self.lock:
+            if self.fatal is not None:
+                return
+            try:
+                self.publish(build_row())
+            except Exception as exc:
+                self.fatal = exc
+
+    def outcome(self) -> _SaveLoopOutcome:
+        with self.lock:
+            return _SaveLoopOutcome(
+                list(self._partial_warnings),
+                dict(self._dfi_error_samples),
+                list(self._publish_failures),
+            )
+
+    def _send(self, doc_id: str, response: dict) -> None:
+        # O `try` cobre só a RPC. A montagem da resposta em `publish` é pura
+        # sobre a linha, e exceção nela é bug nosso, que deve continuar
+        # abortando; envolver tudo transformaria defeito de código em "falha de
+        # linha" silenciosa.
         try:
-            sb.rpc("publish_latest_llm_response", {"p_response": response}).execute()
-            consecutive_failures = 0
+            self._sb.rpc(
+                "publish_latest_llm_response", {"p_response": response}
+            ).execute()
+            self._consecutive_failures = 0
         except PostgrestAPIError as exc:
             # Régua por exclusão, e não allowlist de SQLSTATE toleráveis:
             # quando o corpo da resposta não é JSON parseável, o postgrest
@@ -1720,25 +1728,301 @@ def _process_and_save_rows(
             message = _describe_postgrest_error(exc)
             logger.warning(
                 "publish falhou doc=%s: %s",
-                processed_row.doc_id,
+                doc_id,
                 message,
                 exc_info=True,
             )
-            publish_failures.append(_PublishFailure(processed_row.doc_id, message))
-            consecutive_failures += 1
-            if consecutive_failures >= _MAX_CONSECUTIVE_PUBLISH_FAILURES:
+            self._publish_failures.append(_PublishFailure(doc_id, message))
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= _MAX_CONSECUTIVE_PUBLISH_FAILURES:
                 raise RuntimeError(
                     _format_publish_failures(
-                        publish_failures,
-                        partial_warnings,
-                        consecutive=consecutive_failures,
+                        self._publish_failures,
+                        self._partial_warnings,
+                        consecutive=self._consecutive_failures,
                     )
                 ) from exc
 
-    return _SaveLoopOutcome(partial_warnings, dfi_error_samples, publish_failures)
+
+def _process_and_save_rows(publisher: _RowPublisher, result_df: pd.DataFrame) -> None:
+    """Publica cada linha de um frame já completo, em ordem.
+
+    É o caminho do canário e da via de lotes de campos; a chamada única usa o
+    callback (ver `_stream_remaining_rows`). Exceção sobe na hora, então a
+    primeira falha que invalida a run interrompe o laço sem tentar as linhas
+    seguintes.
+    """
+    for _, row in result_df.iterrows():
+        publisher.publish(row)
 
 
-async def run_llm(
+def _row_from_result(result, doc_id: str) -> dict:
+    """A linha que o callback descreve, no formato do frame do dataframeit.
+
+    `_build_processed_llm_row` lê o frame que o dataframeit devolve: `id`, as
+    colunas do modelo e as duas de controle. O `RowResult` do callback traz os
+    mesmos fatos com outros nomes, e é aqui, num lugar só, que eles voltam aos
+    nomes do frame. O status sai de `success`, e não da presença de `error`,
+    porque a coluna de erro também guarda o "Sucesso após N retry(s)" de uma
+    linha que deu certo (ver `_row_error`). Em erro `values` vem vazio, e o
+    campo ausente cai no mesmo `row.get(...) is None` que o None do frame.
+    """
+    return {
+        "id": doc_id,
+        **result.values,
+        "_dataframeit_status": "processed" if result.success else "error",
+        "_error_details": result.error,
+    }
+
+
+class _StreamingProgress:
+    """Progresso e ETA dos documentos depois do canário, avançados a cada linha
+    que o callback entrega.
+
+    `calls_per_doc` é o número de chamadas que cada documento atravessa: 1 na
+    chamada única, o número de lotes na via de lotes de campos. Ali o
+    documento só está completo quando o último lote dele volta, então o
+    progresso conta as linhas entregues somando todos os lotes e divide pelo
+    número de lotes. A divisão inteira mantém o progresso monótono, nunca
+    adianta documento que ainda tem lote por vir, e termina exatamente em
+    `docs` quando todas as linhas de todos os lotes chegaram.
+
+    ETA = latência média observada por linha ÷ parallel_requests × linhas
+    restantes: com a fila contínua há parallel_requests linhas em voo o tempo
+    todo, então a vazão é esse quociente. Na via de lotes as chamadas por lote
+    rodam uma depois da outra, e as linhas restantes incluem as dos lotes que
+    ainda não começaram, por isso a mesma conta vale. A latência vem do
+    `elapsed_seconds` de cada linha, e não do relógio da run, que inclui o
+    canário e a rampa inicial dos workers. Sem lock próprio: quem chama segura
+    o lock do publicador (`_RowPublisher.lock`).
+    """
+
+    def __init__(
+        self,
+        jobs_state: dict,
+        *,
+        docs: int,
+        parallel_requests: int,
+        calls_per_doc: int = 1,
+    ):
+        self._jobs_state = jobs_state
+        # O progresso de partida é o do canário, já publicado. Guardado aqui,
+        # e não relido a cada linha, porque com `calls_per_doc` > 1 o valor
+        # escrito é derivado do total de linhas, não um incremento.
+        self._base = jobs_state["progress"]
+        self._calls_per_doc = calls_per_doc
+        self._total_rows = docs * calls_per_doc
+        self._parallel_requests = max(1, parallel_requests)
+        self._rows = 0
+        self._latency_sum = 0.0
+
+    def advance(self, elapsed_seconds: float) -> None:
+        self._rows += 1
+        self._latency_sum += elapsed_seconds
+        self._jobs_state["progress"] = self._base + self._rows // self._calls_per_doc
+        mean_latency = self._latency_sum / self._rows
+        self._jobs_state["eta_seconds"] = round(
+            mean_latency / self._parallel_requests * (self._total_rows - self._rows),
+            1,
+        )
+
+
+def _stream_remaining_rows(
+    call,
+    frame: pd.DataFrame,
+    model,
+    publisher: _RowPublisher,
+    jobs_state: dict,
+    parallel_requests: int,
+) -> None:
+    """Uma chamada só para os documentos depois do canário, publicando cada um
+    assim que volta.
+
+    Antes eram lotes de `parallel_requests` em série: cada lote só fechava
+    quando o documento mais lento voltava, os workers ficavam parados nesse
+    intervalo e nada chegava a `responses` antes do último lote. Com a fila
+    contínua da biblioteca e o callback, o worker é reposto assim que um
+    documento termina, e o documento fica visível na hora.
+
+    As linhas que o frame devolvido trouxer sem ter passado pelo callback são
+    publicadas dele, com aviso no log. O contrato promete o callback em toda
+    linha; a rede existe porque o custo de errar aqui é resposta perdida com o
+    LLM já pago, e conferir custa uma comparação de conjuntos.
+    """
+    doc_ids = dict(zip(frame.index, frame["id"], strict=True))
+    progress = _StreamingProgress(
+        jobs_state, docs=len(frame), parallel_requests=parallel_requests
+    )
+    delivered: set[str] = set()
+
+    def build_row(result) -> dict:
+        doc_id = doc_ids[result.index]
+        delivered.add(doc_id)
+        progress.advance(result.elapsed_seconds)
+        return _row_from_result(result, doc_id)
+
+    def on_row_done(result) -> None:
+        publisher.publish_guarded(lambda: build_row(result))
+
+    try:
+        result_frame = call(frame, model, on_row_done=on_row_done)
+    except Exception as exc:
+        # O `fatal` é a causa: depois dele toda linha foi descartada, e o que a
+        # biblioteca levantar em seguida é efeito ou ruído. Deixar a exceção
+        # dela subir apagaria de `llm_runs.error_message` o motivo real (a
+        # rodada que mudou, as cinco falhas seguidas de publicação).
+        if publisher.fatal is not None:
+            raise publisher.fatal from exc
+        raise
+    if publisher.fatal is not None:
+        raise publisher.fatal
+    missing = result_frame[~result_frame["id"].isin(delivered)]
+    if not missing.empty:
+        logger.warning(
+            "dataframeit devolveu %d linha(s) sem chamar on_row_done; "
+            "publicadas a partir do frame.",
+            len(missing),
+        )
+        jobs_state["progress"] += len(missing)
+        _process_and_save_rows(publisher, missing)
+
+
+def _run_dataframeit_and_publish(
+    *,
+    sb,
+    job_id: str,
+    jobs_state: dict,
+    docs: list[dict],
+    model_class,
+    prompt_template: str,
+    llm_provider: str,
+    llm_model: str,
+    config: _DataframeitRunConfig,
+    publisher: _RowPublisher,
+) -> None:
+    df = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
+    from dataframeit import dataframeit
+
+    jobs_state["phase"] = "processing"
+
+    def _call(frame: pd.DataFrame, model, on_row_done=None):
+        return dataframeit(
+            # Cópia, e não o frame recebido: o dataframeit escreve as colunas
+            # do modelo e as de controle **no objeto do chamador** (`to_pandas`
+            # devolve o mesmo DataFrame e `_setup_columns` é in-place) e, num
+            # frame que já as tenha, desiste em silêncio — avisa "Colunas [...]
+            # já existem" e devolve sem chamar o provider. Chamar duas vezes
+            # sobre o mesmo frame é justamente o que o refazer do canário
+            # abaixo faz. Copiar aqui torna esse estado inconstruível, em vez
+            # de obrigar cada chamador a lembrar da regra. A cópia preserva os
+            # rótulos do índice, que é o que `RowResult.index` devolve.
+            frame.copy(),
+            model,
+            prompt_template,
+            text_column="texto",
+            provider=llm_provider,
+            model=llm_model,
+            parallel_requests=config.parallel_requests,
+            rate_limit_delay=config.rate_limit_delay,
+            model_kwargs=config.model_kwargs if config.model_kwargs else None,
+            resume=False,
+            on_row_done=on_row_done,
+            **config.dfi_kwargs,
+        )
+
+    def _call_chunks(
+        frame: pd.DataFrame, chunks: list[list[str]], on_row_done=None
+    ) -> pd.DataFrame:
+        return _merge_chunk_frames(
+            [
+                _call(frame, _submodel(model_class, names), on_row_done=on_row_done)
+                for names in chunks
+            ]
+        )
+
+    def _probe(names: list[str]) -> str | None:
+        return _probe_schema(_call, model_class, names)
+
+    # O primeiro documento vai sozinho, como canário. O dataframeit não propaga
+    # erro do provider: ele grava o erro na célula e devolve o frame
+    # normalmente, então um modelo inexistente ou uma chave inválida só
+    # apareceria em _raise_if_run_compromised — depois de gastar uma chamada por
+    # documento e de publicar uma resposta vazia para cada um. Com o canário o
+    # pior caso é uma chamada e nenhuma escrita.
+    canary = df.iloc[0:1]
+    rest = df.iloc[1:]
+    chunks: list[list[str]] = [list(model_class.model_fields)]
+    canary_result = _call_chunks(canary, chunks)
+    if _canary_provider_error(canary_result):
+        split = _chunks_after_canary_failure(
+            _probe, model_class, llm_provider, llm_model
+        )
+        if split is not None:
+            chunks = split
+            # Refaz o canário para que a run comece com o resultado bom.
+            # Depende de `_call` copiar o frame: sem isso a chamada aqui
+            # reencontraria as colunas que a primeira gravou em `canary`,
+            # devolveria o frame da falha sem chamar o provider, e este
+            # documento sairia vazio — abaixo do run_failure_threshold e,
+            # portanto, sem nem reprovar a run.
+            canary_result = _call_chunks(canary, chunks)
+
+    # A afirmação "nenhuma resposta foi gravada" nas mensagens de abort do
+    # canário depende de a decisão acima vir antes desta publicação: é ela a
+    # primeira escrita em `responses` da run.
+    jobs_state["progress"] = len(canary_result)
+    _process_and_save_rows(publisher, canary_result)
+    if rest.empty:
+        return
+    if len(chunks) == 1:
+        _stream_remaining_rows(
+            _call,
+            rest,
+            _submodel(model_class, chunks[0]),
+            publisher,
+            jobs_state,
+            config.parallel_requests,
+        )
+    else:
+        # Via rara, depois de o canário ter sido recusado por schema e o modelo
+        # partido em lotes de campos. Cada chamada por lote devolve, para cada
+        # documento, só as colunas daquele lote, e a linha só fica completa na
+        # fusão (`_merge_chunk_frames`). Publicar pelo callback gravaria
+        # resposta parcial a cada lote; a linha só estaria inteira no último, e
+        # esperar o último é esperar o fim. Por isso esta via mantém o
+        # comportamento anterior à fila contínua: chamadas por lote sobre o
+        # frame inteiro, fusão e publicação no fim, com a fase 'saving'
+        # anunciando na tela a espera pela gravação.
+        #
+        # O callback existe aqui só para o heartbeat e o progresso, e não
+        # publica nada. Sem ele, entre o canário e o fim da última chamada
+        # por lote nada renovava `heartbeat_at`: numa run de centenas de
+        # documentos cada chamada por lote leva dezenas de minutos, mais que
+        # o corte de `mark_stale_runs_as_error`, e a run viva seria marcada
+        # como abandonada, liberando uma segunda run concorrente.
+        progress = _StreamingProgress(
+            jobs_state,
+            docs=len(rest),
+            parallel_requests=config.parallel_requests,
+            calls_per_doc=len(chunks),
+        )
+
+        def on_chunk_row_done(result) -> None:
+            with publisher.lock:
+                progress.advance(result.elapsed_seconds)
+                _persist_run_progress_throttled(sb, job_id, jobs_state)
+
+        result = _call_chunks(rest, chunks, on_row_done=on_chunk_row_done)
+        # Atribuição, e não incremento: o callback já avançou o progresso, e
+        # isto só fecha a conta se a biblioteca tiver deixado de chamá-lo em
+        # alguma linha.
+        jobs_state["progress"] = len(canary_result) + len(result)
+        _persist_run_progress(sb, job_id, jobs_state)
+        jobs_state.update(phase="saving", eta_seconds=None)
+        _process_and_save_rows(publisher, result)
+
+
+def run_llm(
     job_id: str,
     project_id: str,
     document_ids: list[str] | None = None,
@@ -1751,6 +2035,14 @@ async def run_llm(
     Pré-condição: init_job(job_id, project_id, filter_mode) já foi chamado
     pelo handler do /run. Aqui já assumimos _jobs[job_id] populado e
     llm_runs row existente.
+
+    Síncrona de propósito. O corpo inteiro bloqueia (supabase-py, dataframeit,
+    a espera pelo provider), e com `async def` o Starlette a executava dentro
+    do event loop: durante a rodada o backend parava de responder a qualquer
+    request, o health check do Fly inclusive, que caía em `critical`. Como
+    função síncrona, `BackgroundTasks` a manda para o threadpool
+    (`starlette.background.BackgroundTask` chama `run_in_threadpool` quando a
+    função não é corrotina) e o loop fica livre para o resto.
     """
     sb = get_supabase()
 
@@ -1823,20 +2115,6 @@ async def run_llm(
             include_justifications,
         )
         run_config = _normalize_llm_kwargs(llm_kwargs)
-        result_df = _run_dataframeit_batches(
-            sb=sb,
-            job_id=job_id,
-            jobs_state=_jobs[job_id],
-            docs=docs,
-            model_class=prepared_model.model_class,
-            prompt_template=prompt_template,
-            llm_provider=llm_provider,
-            llm_model=llm_model,
-            config=run_config,
-        )
-
-        _jobs[job_id].update(phase="saving", eta_seconds=None)
-
         run_metadata = _RunMetadata(
             project_id=project_id,
             round_id=project["current_round_id"],
@@ -1848,16 +2126,28 @@ async def run_llm(
             schema_version_minor=schema_version_minor,
             schema_version_patch=schema_version_patch,
         )
-        outcome = _process_and_save_rows(
+        publisher = _RowPublisher(
             sb,
             job_id,
             _jobs[job_id],
-            result_df,
             prepared_model,
             run_config.partial_coverage_threshold,
             run_metadata,
         )
-        await wake_auto_review_reconciliation()
+        _run_dataframeit_and_publish(
+            sb=sb,
+            job_id=job_id,
+            jobs_state=_jobs[job_id],
+            docs=docs,
+            model_class=prepared_model.model_class,
+            prompt_template=prompt_template,
+            llm_provider=llm_provider,
+            llm_model=llm_model,
+            config=run_config,
+            publisher=publisher,
+        )
+        outcome = publisher.outcome()
+        wake_auto_review_reconciliation_sync()
 
         sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq(
             "id", project_id
@@ -1867,7 +2157,7 @@ async def run_llm(
         _raise_if_run_compromised(
             outcome.partial_warnings,
             outcome.dfi_error_samples,
-            len(result_df),
+            len(docs),
             run_config.run_failure_threshold,
         )
 
@@ -1898,11 +2188,15 @@ async def run_llm(
         logger.exception("LLM run %s failed", job_id)
 
 
-async def run_llm_fields(
+def run_llm_fields(
     job_id: str,
     project_id: str,
     field_names: list[str],
     document_ids: list[str] | None = None,
 ):
-    """Re-run LLM only for specific fields."""
-    await run_llm(job_id, project_id, document_ids)
+    """Re-run LLM only for specific fields.
+
+    Síncrona pelo mesmo motivo de `run_llm`: é ela que `BackgroundTasks`
+    recebe na rota /run-field.
+    """
+    run_llm(job_id, project_id, document_ids)

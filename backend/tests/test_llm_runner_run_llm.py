@@ -11,14 +11,32 @@ Cobre os 4 cenários pedidos pela issue: happy path, run parcial (não falha),
 run comprometida (RuntimeError) e exceção não tratada persistida.
 """
 
-import asyncio
+import inspect
 import sys
+import warnings
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Any
 
+import pandas as pd
 from supabase import PostgrestAPIError
 
-from services.llm_runner import _PROBE_DOC_ID, _jobs, init_job, run_llm
+from services.llm_runner import (
+    _PROBE_DOC_ID,
+    DEFAULT_PARALLEL_REQUESTS,
+    _jobs,
+    _prepare_llm_model,
+    _process_and_save_rows,
+    _row_from_result,
+    _RowPublisher,
+    _RunMetadata,
+    get_job_status,
+    init_job,
+    run_llm,
+    run_llm_fields,
+)
 
 JOB_ID = "job-1"
 PROJECT_ID = "proj-1"
@@ -247,6 +265,93 @@ def _docs(n: int) -> list[dict]:
     ]
 
 
+@dataclass(frozen=True)
+class RowResult:
+    """Cópia do contrato de `on_row_done` do dataframeit, campo a campo.
+
+    Mesmo nome e mesmos campos da dataclass da biblioteca, para que o fake
+    entregue ao runner exatamente o que a biblioteca entrega. O runner lê os
+    campos por atributo e não importa a classe, então esta cópia basta.
+    """
+
+    index: Any
+    position: int
+    success: bool
+    error: str | None
+    values: dict[str, Any]
+    elapsed_seconds: float
+
+
+def _row_result(
+    frame: pd.DataFrame, label, position: int, model_class, elapsed_seconds: float
+) -> RowResult:
+    """O RowResult que a biblioteca montaria para a linha `label` do frame.
+
+    `values` traz as colunas do modelo só em sucesso e vem vazio em erro, e
+    `error` é o texto da coluna de erro, o "Sucesso após N retry(s)" incluído:
+    são as duas regras do contrato que a conversão do runner precisa honrar.
+    """
+    success = frame.at[label, "_dataframeit_status"] == "processed"
+    return RowResult(
+        index=label,
+        position=position,
+        success=success,
+        error=frame.at[label, "_error_details"],
+        values=(
+            {field: frame.at[label, field] for field in model_class.model_fields}
+            if success
+            else {}
+        ),
+        elapsed_seconds=elapsed_seconds,
+    )
+
+
+def _deliver_rows(
+    frame: pd.DataFrame,
+    model_class,
+    on_row_done: Callable[[RowResult], None],
+    *,
+    row_hook: Callable[[int], None] | None,
+    callback_threads: int | None,
+    skip_callback_for: set[str],
+    elapsed_seconds: float,
+) -> None:
+    """Chama `on_row_done` uma vez por linha, como a biblioteca.
+
+    Fiel em dois pontos do contrato: exceção do callback vira
+    `warnings.warn` e não interrompe as linhas seguintes, e com
+    `callback_threads` as chamadas saem de várias threads ao mesmo tempo, como
+    saem dos workers da biblioteca. Sem `callback_threads` elas saem da thread
+    que chamou o dataframeit, que é também o caso raro da biblioteca paralela
+    em que o worker morre antes de gravar a linha. `row_hook(position)` roda antes de cada
+    callback, com a chamada do dataframeit ainda em curso, e é por ele que um
+    teste observa o estado no meio da rodada.
+    """
+
+    def deliver(position: int, label) -> None:
+        if row_hook is not None:
+            row_hook(position)
+        if frame.at[label, "id"] in skip_callback_for:
+            return
+        result = _row_result(frame, label, position, model_class, elapsed_seconds)
+        try:
+            on_row_done(result)
+        except Exception as exc:
+            warnings.warn(f"on_row_done levantou: {exc!r}", stacklevel=2)
+
+    labels = list(frame.index)
+    if callback_threads is None:
+        for position, label in enumerate(labels):
+            deliver(position, label)
+        return
+    with ThreadPoolExecutor(max_workers=callback_threads) as pool:
+        for future in [
+            pool.submit(deliver, position, label)
+            for position, label in enumerate(labels)
+        ]:
+            future.result()
+
+
 def _make_fake_dataframeit(
     row_specs: dict[str, dict],
     calls: list[dict] | None = None,
@@ -255,6 +360,11 @@ def _make_fake_dataframeit(
     max_schema_fields: int | None = None,
     retry_success: bool = False,
     probe_errors: list[str | None] | None = None,
+    *,
+    row_hook: Callable[[int], None] | None = None,
+    callback_threads: int | None = None,
+    skip_callback_for: set[str] | None = None,
+    elapsed_seconds: float = 1.0,
 ):
     """row_specs: {doc_id: {field: value}}.
 
@@ -297,6 +407,10 @@ def _make_fake_dataframeit(
       **sem chamar o provider**. Sem esse ramo aqui, um chamador que rode duas
       vezes sobre o mesmo frame parece funcionar no teste e perde o documento
       em produção.
+
+    Com `on_row_done`, o fake chama o callback por linha antes de devolver,
+    nos termos de `_deliver_rows`. `skip_callback_for` deixa de chamá-lo para
+    os documentos nomeados, para simular uma biblioteca que quebra o contrato.
     """
     errors = errors or {}
     sondas_restantes = list(probe_errors or [])
@@ -352,6 +466,17 @@ def _make_fake_dataframeit(
             else ("Sucesso após 1 retry(s)" if retry_success else None)
             for d in detalhes
         ]
+        on_row_done = kwargs.get("on_row_done")
+        if on_row_done is not None:
+            _deliver_rows(
+                batch_df,
+                model_class,
+                on_row_done,
+                row_hook=row_hook,
+                callback_threads=callback_threads,
+                skip_callback_for=skip_callback_for or set(),
+                elapsed_seconds=elapsed_seconds,
+            )
         return batch_df.copy()
 
     return _fake
@@ -387,6 +512,7 @@ def _run_llm_sync(
     max_schema_fields: int | None = None,
     retry_success: bool = False,
     probe_errors: list[str | None] | None = None,
+    **fake_options,
 ) -> None:
     monkeypatch.setattr("services.llm_runner.get_supabase", lambda: sb)
     monkeypatch.setitem(
@@ -401,20 +527,21 @@ def _run_llm_sync(
                 max_schema_fields,
                 retry_success,
                 probe_errors,
+                **fake_options,
             )
         ),
     )
 
-    async def _fake_wakeup() -> bool:
+    def _fake_wakeup() -> bool:
         if wakeup_calls is not None:
             wakeup_calls.append(True)
         return True
 
     monkeypatch.setattr(
-        "services.llm_runner.wake_auto_review_reconciliation", _fake_wakeup
+        "services.llm_runner.wake_auto_review_reconciliation_sync", _fake_wakeup
     )
     init_job(JOB_ID, PROJECT_ID, "all")
-    asyncio.run(run_llm(JOB_ID, PROJECT_ID))
+    run_llm(JOB_ID, PROJECT_ID)
 
 
 def _last_update_where(table: _FakeTable, **kv) -> dict | None:
@@ -599,8 +726,16 @@ def test_run_llm_routes_kwargs_without_leaking_internal_options(monkeypatch):
         assert internal_key not in kwargs["model_kwargs"]
 
 
-def test_run_llm_processes_multiple_batches_and_tracks_progress(monkeypatch):
-    docs = _docs(3)
+def test_run_llm_faz_uma_chamada_so_depois_do_canario(monkeypatch):
+    """Depois do canário, todos os documentos vão numa chamada só.
+
+    Cinco documentos com parallel_requests=2 é o caso que discrimina: em lotes
+    de parallel_requests a run sairia em [doc-0], [doc-1, doc-2], [doc-3,
+    doc-4], cada lote esperando o documento mais lento do anterior. A fila
+    contínua é da biblioteca, que recebe o parallel_requests e repõe o worker
+    assim que um documento volta.
+    """
+    docs = _docs(5)
     row_specs = {
         doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
     }
@@ -612,25 +747,458 @@ def test_run_llm_processes_multiple_batches_and_tracks_progress(monkeypatch):
 
     _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
 
-    # A primeira batch leva um documento só (canário do erro de provider); as
-    # demais seguem o parallel_requests configurado.
     assert [call["document_ids"] for call in dataframeit_calls] == [
         ["doc-0"],
-        ["doc-1", "doc-2"],
+        ["doc-1", "doc-2", "doc-3", "doc-4"],
     ]
-    assert _jobs[JOB_ID]["current_batch"] == 2
-    assert _jobs[JOB_ID]["total_batches"] == 2
-    assert _jobs[JOB_ID]["progress"] == 3
-    assert {row["document_id"] for row in _published_responses(sb)} == {
-        "doc-0",
-        "doc-1",
-        "doc-2",
-    }
-    # Heartbeat persistido no fim da primeira batch — que agora é o canário,
-    # de um documento.
+    assert all(call["kwargs"]["parallel_requests"] == 2 for call in dataframeit_calls)
+    # O canário é lido pelo frame; só a chamada grande publica pelo callback.
+    assert dataframeit_calls[0]["kwargs"]["on_row_done"] is None
+    assert callable(dataframeit_calls[1]["kwargs"]["on_row_done"])
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert _jobs[JOB_ID]["progress"] == 5
+    assert _published_doc_ids(sb) == [d["id"] for d in docs]
+    # Heartbeat persistido logo depois do canário, que é o primeiro publicado.
     assert any(
         update.get("progress") == 1 for update in sb.table("llm_runs").update_calls
     )
+
+
+def test_run_llm_usa_20_requisicoes_paralelas_quando_o_projeto_nao_escolhe(
+    monkeypatch,
+):
+    docs = _docs(2)
+    row_specs = {
+        doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
+    }
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(_project_row(llm_kwargs={}), docs)
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
+
+    assert DEFAULT_PARALLEL_REQUESTS == 20
+    assert all(call["kwargs"]["parallel_requests"] == 20 for call in dataframeit_calls)
+
+
+def test_run_llm_publica_e_avanca_o_progresso_antes_de_a_chamada_retornar(
+    monkeypatch,
+):
+    """Cada documento chega a `responses` assim que volta, não no fim da run.
+
+    O `row_hook` do fake roda antes do callback de cada linha, com a chamada
+    do dataframeit ainda em curso: o que ele enxerga é o estado que a tela e o
+    banco teriam no meio da rodada. Antes da fila contínua nada era publicado
+    até o último lote fechar.
+    """
+    docs = _docs(4)
+    row_specs = {
+        doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
+    }
+    sb = _build_supabase(_project_row(), docs)
+    # Relógio que anda 5 s a cada leitura: desliga o throttle de 2 s do
+    # heartbeat, para que toda linha publicada persista o progresso em
+    # llm_runs e o teste possa ler o valor de lá.
+    relogio = iter(range(0, 10_000, 5))
+    monkeypatch.setattr(
+        "services.llm_runner.time", SimpleNamespace(time=lambda: float(next(relogio)))
+    )
+    observado: dict[int, dict] = {}
+
+    def no_meio(position: int) -> None:
+        observado[position] = {
+            "publicados": list(_published_doc_ids(sb)),
+            "progresso": _jobs[JOB_ID]["progress"],
+            "eta": _jobs[JOB_ID]["eta_seconds"],
+            "progresso_persistido": [
+                u["progress"]
+                for u in sb.table("llm_runs").update_calls
+                if "progress" in u and "status" not in u
+            ],
+        }
+
+    _run_llm_sync(monkeypatch, sb, row_specs, row_hook=no_meio, elapsed_seconds=10.0)
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    # Antes do callback de doc-2 (posição 1 da chamada grande), doc-0 (canário)
+    # e doc-1 já estão publicados, a tela já conta 2 e o banco também.
+    meio = observado[1]
+    assert meio["publicados"] == ["doc-0", "doc-1"]
+    assert meio["progresso"] == 2
+    assert meio["progresso_persistido"][-1] == 2
+    # ETA = latência média (10 s) ÷ parallel_requests (20) × restantes (2).
+    assert meio["eta"] == 1.0
+    assert observado[2]["publicados"] == ["doc-0", "doc-1", "doc-2"]
+
+
+def test_run_llm_fase_fica_processing_ate_o_fim_na_chamada_unica(monkeypatch):
+    docs = _docs(3)
+    row_specs = {
+        doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
+    }
+    fases: list[str] = []
+
+    def registra_fase(_params: dict) -> None:
+        fases.append(_jobs[JOB_ID]["phase"])
+        return None
+
+    sb = _build_supabase(
+        _project_row(),
+        docs,
+        rpc_errors={"publish_latest_llm_response": registra_fase},
+    )
+
+    _run_llm_sync(monkeypatch, sb, row_specs)
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert fases == ["processing"] * 3
+
+
+def test_run_llm_linha_do_callback_publica_o_mesmo_que_o_laco_do_frame():
+    """A resposta publicada pelo callback é idêntica à do laço sobre o frame.
+
+    Mesma rodada do fake, lida pelos dois caminhos: o frame que o dataframeit
+    devolve, como o canário e a via de lotes publicam, e os RowResult do
+    callback, convertidos por `_row_from_result`. As linhas cobrem os casos
+    em que a conversão poderia divergir: sucesso após retry (texto na coluna
+    de erro com success=True), parcial, erro do provider e texto ausente (os
+    dois com success=False e values vazio).
+    """
+    docs = _docs(4)
+    row_specs = {
+        doc["id"]: {
+            "campo_a": "a",
+            "campo_b": "b",
+            "campo_c": "c",
+            "campo_a_justification": "porque sim",
+        }
+        for doc in docs
+    }
+    row_specs["doc-1"] = {"campo_a": "a"}
+    frame = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
+    prepared = _prepare_llm_model(PYDANTIC_CODE, [], True)
+    resultados: list[RowResult] = []
+    fake = _make_fake_dataframeit(
+        row_specs,
+        errors={"doc-2": "[Erro não-recuperável] boom", "doc-3": "Texto ausente"},
+        retry_success=True,
+    )
+    devolvido = fake(
+        frame.copy(), prepared.model_class, "prompt", on_row_done=resultados.append
+    )
+    run = _RunMetadata(
+        project_id=PROJECT_ID,
+        round_id="round-1",
+        llm_provider="google",
+        llm_model="gemini",
+        pydantic_hash="h",
+        answer_field_hashes={},
+        schema_version_major=1,
+        schema_version_minor=0,
+        schema_version_patch=0,
+    )
+
+    def publica(entrada) -> tuple[list[dict], dict, object]:
+        sb = _build_supabase(_project_row(), docs)
+        estado = {
+            "processed_complete": 0,
+            "processed_partial": 0,
+            "processed_empty": 0,
+            "last_progress_persist": 0.0,
+        }
+        publisher = _RowPublisher(sb, JOB_ID, estado, prepared, 0.5, run)
+        entrada(publisher)
+        # O instante do último heartbeat é do relógio, não da linha.
+        estado.pop("last_progress_persist")
+        return _published_responses(sb), estado, publisher.outcome()
+
+    def pelo_frame(publisher):
+        _process_and_save_rows(publisher, devolvido)
+
+    def pelo_callback(publisher):
+        for resultado in resultados:
+            doc_id = frame.at[resultado.index, "id"]
+            publisher.publish(_row_from_result(resultado, doc_id))
+
+    # A linha convertida é a própria linha do frame, coluna a coluna, e não só
+    # algo que publica igual: hoje a publicação não lê o status, mas o
+    # `_row_error` lê, e uma conversão que errasse o status passaria pela
+    # comparação de payloads sem ser vista.
+    for resultado in resultados:
+        linha = _row_from_result(resultado, frame.at[resultado.index, "id"])
+        do_frame = devolvido.loc[resultado.index]
+        assert linha == {coluna: do_frame[coluna] for coluna in linha}
+        # Campo ausente da linha convertida é vazio no frame. O pandas guarda
+        # esse vazio como NaN ou None, e o runner trata os dois igual
+        # (`_is_nan` em `_extract_answers_from_row`).
+        assert all(
+            pd.isna(do_frame[campo])
+            for campo in prepared.model_class.model_fields
+            if campo not in linha
+        )
+
+    esperado = publica(pelo_frame)
+    obtido = publica(pelo_callback)
+    assert len(esperado[0]) == 4
+    assert obtido == esperado
+    # E os casos estão de fato presentes, para a igualdade valer algo.
+    por_doc = {r["document_id"]: r for r in esperado[0]}
+    # Sucesso após retry: `error` preenchido com success=True. O status sai de
+    # `success`, então a resposta é completa, não uma falha.
+    sucesso_com_retry = next(r for r in resultados if r.index == 0)
+    assert sucesso_com_retry.success is True
+    assert sucesso_com_retry.error == "Sucesso após 1 retry(s)"
+    assert por_doc["doc-0"]["is_partial"] is False
+    assert set(por_doc["doc-0"]["answers"]) == {"campo_a", "campo_b", "campo_c"}
+    assert por_doc["doc-0"]["justifications"] == {"campo_a": "porque sim"}
+    assert por_doc["doc-1"]["is_partial"] is True
+    assert "boom" in por_doc["doc-2"]["llm_error"]
+    # Texto vazio: a biblioteca chama o callback com success=False.
+    assert "Texto ausente" in por_doc["doc-3"]["llm_error"]
+    assert por_doc["doc-3"]["answers"] == {}
+
+
+def test_run_llm_publica_pelo_frame_a_linha_que_o_callback_nao_entregou(
+    monkeypatch,
+):
+    """Biblioteca que pula o callback numa linha não perde a resposta.
+
+    O contrato promete o callback em toda linha; se ele falhar, a resposta
+    sai do frame devolvido, em vez de sumir com o LLM já pago.
+    """
+    docs = _docs(4)
+    row_specs = {
+        doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
+    }
+    sb = _build_supabase(_project_row(), docs)
+
+    _run_llm_sync(monkeypatch, sb, row_specs, skip_callback_for={"doc-2"})
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert _published_doc_ids(sb) == ["doc-0", "doc-1", "doc-3", "doc-2"]
+    assert _jobs[JOB_ID]["progress"] == 4
+
+
+def test_run_llm_callback_de_varias_threads_publica_cada_documento_uma_vez(
+    monkeypatch,
+):
+    # Os callbacks saem dos workers da biblioteca ao mesmo tempo. Sem o lock
+    # do publicador, contadores e progresso perderiam incrementos e a RPC
+    # poderia sair duplicada.
+    docs = _docs(41)
+    row_specs = {
+        doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
+    }
+    sb = _build_supabase(_project_row(), docs)
+
+    _run_llm_sync(monkeypatch, sb, row_specs, callback_threads=8)
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    publicados = _published_doc_ids(sb)
+    assert sorted(publicados) == sorted(d["id"] for d in docs)
+    assert len(publicados) == 41
+    assert _jobs[JOB_ID]["progress"] == 41
+    assert _jobs[JOB_ID]["processed_complete"] == 41
+
+
+def test_run_llm_falhas_seguidas_dentro_do_callback_abortam_com_threads(
+    monkeypatch,
+):
+    """O corte por falhas seguidas vale quando elas chegam pelo callback.
+
+    A biblioteca não aborta por exceção do callback, então é o publicador que
+    para de tentar e a run que relança depois da chamada. Com várias threads a
+    ordem das linhas muda, mas com todas recusadas a quinta recusa é sempre a
+    última tentativa: nenhuma linha passa pelo lock depois do corte.
+    """
+    docs = _docs(12)
+    row_specs = {
+        d["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for d in docs
+    }
+    falhas = {
+        f"doc-{i}": _api_error("42501", "new row violates row-level security policy")
+        for i in range(1, 12)
+    }
+    sb = _build_supabase(
+        _project_row(),
+        docs,
+        rpc_errors={"publish_latest_llm_response": _failing_publish(falhas)},
+    )
+
+    with warnings.catch_warnings(record=True) as avisos:
+        warnings.simplefilter("always")
+        _run_llm_sync(monkeypatch, sb, row_specs, callback_threads=4)
+
+    assert _published_doc_ids(sb) == ["doc-0"]
+    assert len(_attempted_doc_ids(sb)) == 6
+    assert _jobs[JOB_ID]["status"] == "error"
+    assert "5 falhas seguidas" in _jobs[JOB_ID]["errors"][0]
+    # O handler guarda a exceção em vez de deixá-la virar aviso da biblioteca.
+    assert not [a for a in avisos if "on_row_done" in str(a.message)]
+
+
+def test_run_llm_via_de_lotes_de_campos_publica_no_fim_com_fase_saving(
+    monkeypatch,
+):
+    """Canário recusado por schema: o resto da run publica só depois da fusão.
+
+    Cada chamada por lote de campos devolve só parte das colunas; publicar
+    pelo callback gravaria resposta parcial. O canário, que já saiu completo
+    do refazer, publica na hora; os demais esperam todas as chamadas, sob a
+    fase 'saving'.
+    """
+    docs = _docs(4)
+    campos = ["campo_a", "campo_b", "campo_c", "campo_d"]
+    todos = campos + [f"{c}_justification" for c in campos]
+    row_specs = {doc["id"]: {c: f"v-{c}" for c in todos} for doc in docs}
+    calls: list[dict] = []
+    publicacoes: list[tuple[str, str, int]] = []
+
+    def registra(params: dict) -> None:
+        publicacoes.append(
+            (params["p_response"]["document_id"], _jobs[JOB_ID]["phase"], len(calls))
+        )
+        return None
+
+    sb = _build_supabase(
+        _project_row(
+            pydantic_code=SPLIT_PYDANTIC_CODE,
+            llm_kwargs={"include_justifications": True},
+        ),
+        docs,
+        rpc_errors={"publish_latest_llm_response": registra},
+    )
+
+    _run_llm_sync(
+        monkeypatch, sb, row_specs, dataframeit_calls=calls, max_schema_fields=4
+    )
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    # Só as duas chamadas por lote sobre o resto recebem callback, e ele não
+    # publica: as asserções de fase abaixo provam isso.
+    assert all(call["kwargs"]["on_row_done"] is None for call in calls[:-2])
+    assert all(callable(call["kwargs"]["on_row_done"]) for call in calls[-2:])
+    doc0, *resto = publicacoes
+    assert doc0[0] == "doc-0"
+    assert doc0[1] == "processing"
+    assert doc0[2] < len(calls)
+    assert [p[0] for p in resto] == ["doc-1", "doc-2", "doc-3"]
+    assert all(fase == "saving" for _, fase, _ in resto)
+    assert all(n == len(calls) for _, _, n in resto)
+    for r in _published_responses(sb):
+        assert set(r["answers"]) == set(campos)
+
+
+def test_run_llm_via_de_lotes_de_campos_renova_o_heartbeat_entre_as_chamadas(
+    monkeypatch,
+):
+    """Na via de lotes, o heartbeat e o progresso andam durante as chamadas.
+
+    Caso medido em revisão: 9 documentos, parallel_requests=2 e schema
+    partido em 2 lotes. Sem callback nas chamadas por lote, o único
+    `_persist_run_progress` entre o canário e o fim saía depois da última
+    chamada, e numa run real cada chamada por lote leva dezenas de minutos,
+    mais que o corte de `mark_stale_runs_as_error`. Cada persistência é
+    registrada com o número de chamadas ao dataframeit já feitas, que diz em
+    qual chamada ela aconteceu.
+    """
+    docs = _docs(9)
+    campos = ["campo_a", "campo_b", "campo_c", "campo_d"]
+    todos = campos + [f"{c}_justification" for c in campos]
+    row_specs = {doc["id"]: {c: f"v-{c}" for c in todos} for doc in docs}
+    calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(
+            pydantic_code=SPLIT_PYDANTIC_CODE,
+            llm_kwargs={"include_justifications": True, "parallel_requests": 2},
+        ),
+        docs,
+    )
+    # Relógio que anda 5 s a cada leitura: desliga o throttle de 2 s, para que
+    # cada renovação que o código tenta chegue a `llm_runs`.
+    relogio = iter(range(0, 10_000, 5))
+    monkeypatch.setattr(
+        "services.llm_runner.time", SimpleNamespace(time=lambda: float(next(relogio)))
+    )
+    persistidos: list[tuple[int, int]] = []
+    from services import llm_runner
+
+    original = llm_runner._persist_run_progress
+
+    def registra(sb_, job_id, jobs_state):
+        persistidos.append((len(calls), jobs_state["progress"]))
+        original(sb_, job_id, jobs_state)
+
+    monkeypatch.setattr("services.llm_runner._persist_run_progress", registra)
+
+    _run_llm_sync(
+        monkeypatch, sb, row_specs, dataframeit_calls=calls, max_schema_fields=4
+    )
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert _jobs[JOB_ID]["progress"] == 9
+    primeiro_lote, ultimo_lote = len(calls) - 1, len(calls)
+    durante = [(n, p) for n, p in persistidos if n in (primeiro_lote, ultimo_lote)]
+    # Heartbeat dentro da primeira chamada por lote, antes de a segunda
+    # começar: é o intervalo que ficava sem nenhuma renovação.
+    assert any(n == primeiro_lote for n, _ in durante)
+    progressos = [p for _, p in durante]
+    assert progressos == sorted(progressos)
+    assert progressos[-1] == 9
+    # Um documento só conta quando o último lote dele volta: as 8 linhas do
+    # primeiro lote valem 4 documentos, somados ao canário.
+    assert max(p for n, p in durante if n == primeiro_lote) == 5
+    assert set(range(1, 10)) <= set(progressos)
+
+
+def test_run_llm_fatal_do_publicador_prevalece_sobre_excecao_da_biblioteca(
+    monkeypatch,
+):
+    """Se o dataframeit levanta depois de um `fatal`, a run registra o `fatal`.
+
+    A publicação de doc-1 recebe a recusa de rodada trocada, que vira `fatal`;
+    em seguida a chamada do dataframeit levanta por conta própria. A causa é a
+    rodada, e é ela que precisa chegar à mensagem de erro.
+    """
+    docs = _docs(4)
+    row_specs = {
+        doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
+    }
+    sb = _build_supabase(
+        _project_row(),
+        docs,
+        rpc_errors={
+            "publish_latest_llm_response": _failing_publish(
+                {"doc-1": _api_error("P0R01", "rodada trocada")}
+            )
+        },
+    )
+
+    def quebra_depois_do_primeiro(position: int) -> None:
+        if position == 1:
+            raise RuntimeError("biblioteca quebrou")
+
+    _run_llm_sync(monkeypatch, sb, row_specs, row_hook=quebra_depois_do_primeiro)
+
+    assert _jobs[JOB_ID]["status"] == "error"
+    erro = _jobs[JOB_ID]["errors"][0]
+    assert "deixou de ser a corrente" in erro
+    assert "biblioteca quebrou" not in erro
+
+
+def test_run_llm_e_run_llm_fields_sao_sincronas():
+    # `async def` com corpo bloqueante prendia o event loop durante a rodada e
+    # tirava o backend do ar. Síncronas, o Starlette as manda ao threadpool.
+    assert not inspect.iscoroutinefunction(run_llm)
+    assert not inspect.iscoroutinefunction(run_llm_fields)
+
+
+def test_get_job_status_devolve_copia_do_estado_vivo():
+    # A run escreve no dict numa thread enquanto a rota de status o serializa
+    # no event loop; a rota tem de receber uma cópia.
+    _jobs[JOB_ID] = {"status": "running", "progress": 1}
+    status = get_job_status(JOB_ID)
+    assert status == _jobs[JOB_ID]
+    assert status is not _jobs[JOB_ID]
 
 
 def test_run_llm_zero_failure_threshold_allows_complete_run(monkeypatch):

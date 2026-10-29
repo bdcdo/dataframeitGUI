@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -66,6 +67,31 @@ def test_wakeup_is_disabled_without_internal_url(monkeypatch) -> None:
     )
 
     assert asyncio.run(reconciliation.wake_auto_review_reconciliation()) is False
+
+
+def test_sync_wakeup_posts_from_a_worker_thread(monkeypatch) -> None:
+    # A run do LLM chama a forma síncrona de dentro do threadpool, sem event
+    # loop. Ela tem de fazer o mesmo POST que a assíncrona faz.
+    _configure_wakeup(monkeypatch)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(204)
+
+    real_client = httpx.AsyncClient
+
+    def client_with_mock_transport(**kwargs) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(reconciliation.httpx, "AsyncClient", client_with_mock_transport)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        woke = pool.submit(reconciliation.wake_auto_review_reconciliation_sync)
+
+    assert woke.result() is True
+    assert len(requests) == 1
+    assert requests[0].headers["Authorization"] == "Bearer reconciliation-secret"
 
 
 class _DueRequestQuery:

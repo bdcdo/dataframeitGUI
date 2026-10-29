@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   buildKwargsForCapabilities,
+  DEFAULT_PARALLEL_REQUESTS,
   defaultModelForProvider,
   getModelCapabilities,
   getModelsForProvider,
@@ -12,6 +13,9 @@ import {
 } from "../model-registry";
 
 const MIGRATIONS = join(__dirname, "..", "..", "..", "supabase", "migrations");
+const LLM_RUNNER = join(
+  __dirname, "..", "..", "..", "..", "backend", "services", "llm_runner.py",
+);
 const PROVIDER_IDS = PROVIDERS.map((p) => p.provider);
 
 /** O DEFAULT vigente de `projects.llm_model`, lido das migrations.
@@ -75,6 +79,16 @@ describe("registry de modelos", () => {
     expect(llmKwargsDefaultInSql()).toEqual(
       buildKwargsForCapabilities({}, getModelCapabilities("google_genai", model)),
     );
+  });
+
+  it("o default de requisições paralelas é o mesmo do backend", () => {
+    // Python e TypeScript não compartilham constante, então esta é a amarra:
+    // se divergirem, a tela mostra um número e a run usa outro sempre que o
+    // projeto não gravou parallel_requests.
+    const source = readFileSync(LLM_RUNNER, "utf8");
+    const match = source.match(/^DEFAULT_PARALLEL_REQUESTS = (\d+)$/m);
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBe(DEFAULT_PARALLEL_REQUESTS);
   });
 
   it("todo provider declara ao menos um modelo, e o default é um deles", () => {

@@ -106,6 +106,19 @@ async def wake_auto_review_reconciliation(
             await client.aclose()
 
 
+def wake_auto_review_reconciliation_sync() -> bool:
+    """Forma síncrona de `wake_auto_review_reconciliation`, para código em thread.
+
+    A run do LLM roda no threadpool do Starlette (ver `run_llm`), fora do event
+    loop, e não tem onde fazer `await`. `asyncio.run` cria um loop só para esta
+    chamada e o fecha no fim, com o mesmo cliente próprio e a mesma regra de
+    falha silenciosa da forma assíncrona. Só funciona em thread sem loop
+    rodando: chamada de dentro de uma corrotina, `asyncio.run` recusa, e ali o
+    certo é a forma assíncrona.
+    """
+    return asyncio.run(wake_auto_review_reconciliation())
+
+
 async def run_auto_review_reconciliation_wakeup_loop(
     *, interval_seconds: float = _WAKEUP_INTERVAL_SECONDS
 ) -> None:
