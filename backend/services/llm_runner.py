@@ -812,6 +812,32 @@ def _pop_threshold(llm_kwargs: dict, key: str, default: float) -> float:
 DEFAULT_PARALLEL_REQUESTS = 20
 
 
+# Prazo, em segundos, de cada chamada ao modelo quando o projeto não manda
+# `timeout` em llm_kwargs. Sem ele, o `ChatGoogleGenerativeAI` do langchain fica
+# com `timeout=None` e espera para sempre: numa rodada de 268 documentos, uma
+# conexão com o Google ficou aberta e muda (nenhum lado mandava byte) e a
+# leitura nunca voltou, o que deixou a rodada parada por 49 minutos até
+# intervenção manual. Com prazo, a leitura pendurada vira exceção e cai no
+# retry do dataframeit e do langchain, que refaz a chamada numa conexão nova.
+# Os clientes da OpenAI e da Anthropic já trazem 600 s de default no SDK; o
+# valor explícito vale para todos e tira o Google da exceção.
+#
+# 600 s porque a chamada mais longa medida em produção, no gemini-3.8-flash com
+# raciocínio alto, durou 175 s: o prazo fica com folga de mais de três vezes,
+# pega a conexão muda e não corta documento legítimo, que entraria em retry e
+# pagaria a chamada de novo. O nome `timeout` é aceito pelas classes de chat
+# dos três providers do registro (na OpenAI e na Anthropic como alias do campo
+# de prazo de cada uma); tests/test_llm_call_timeout.py constrói cada modelo do
+# registro com ele.
+#
+# O default mora aqui, e não no dataframeit, porque na biblioteca um modelo
+# lento (um modelo "Pro" de raciocínio longo, por exemplo) pode legitimamente
+# passar disso, e quem chama a biblioteca escolhe o prazo; o GUI conhece os
+# modelos que oferece e pode fixar o seu. A biblioteca já deixa `timeout` fora
+# da assinatura do checkpoint, então mudar este valor não invalida retomada.
+DEFAULT_LLM_CALL_TIMEOUT_SECONDS = 600
+
+
 def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
     parallel_requests = llm_kwargs.pop("parallel_requests", DEFAULT_PARALLEL_REQUESTS)
     rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
@@ -820,6 +846,9 @@ def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
     )
     run_failure_threshold = _pop_threshold(llm_kwargs, "run_failure_threshold", 0.3)
     model_kwargs = {k: v for k, v in llm_kwargs.items() if k not in DATAFRAMEIT_PARAMS}
+    # `setdefault`, e não atribuição: um `timeout` gravado no projeto vence o
+    # default, inclusive `None` explícito para desligar o prazo.
+    model_kwargs.setdefault("timeout", DEFAULT_LLM_CALL_TIMEOUT_SECONDS)
     dfi_kwargs = {k: v for k, v in llm_kwargs.items() if k in DATAFRAMEIT_PARAMS}
     dfi_kwargs.pop("resume", None)
     return _DataframeitRunConfig(
