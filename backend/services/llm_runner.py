@@ -1636,11 +1636,10 @@ class _RowPublisher:
         continuariam publicando depois de a rodada deixar de ser a corrente, ou
         martelando um banco que já recusou cinco seguidas. Em vez disso, a
         primeira exceção fica em `fatal`, toda linha seguinte é descartada sem
-        tentativa, e quem chamou o dataframeit a relança por
-        `raise_if_aborted` assim que a chamada retorna. O custo aceito é que a
-        biblioteca termina os documentos que já estavam na fila, e esse LLM é
-        pago sem resposta gravada: o contrato de `on_row_done` não oferece como
-        pará-la.
+        tentativa, e quem chamou o dataframeit a relança assim que a chamada
+        retorna. O custo aceito é que a biblioteca termina os documentos que já
+        estavam na fila, e esse LLM é pago sem resposta gravada: o contrato de
+        `on_row_done` não oferece como pará-la.
 
         `build_row` roda dentro da guarda, e não antes dela, para que defeito
         nosso ao montar a linha também aborte a run, em vez de virar um aviso
@@ -1653,10 +1652,6 @@ class _RowPublisher:
                 self.publish(build_row())
             except Exception as exc:
                 self.fatal = exc
-
-    def raise_if_aborted(self) -> None:
-        if self.fatal is not None:
-            raise self.fatal
 
     def outcome(self) -> _SaveLoopOutcome:
         with self.lock:
@@ -1831,7 +1826,8 @@ def _stream_remaining_rows(
         publisher.publish_guarded(lambda: build_row(result))
 
     result_frame = call(frame, model, on_row_done=on_row_done)
-    publisher.raise_if_aborted()
+    if publisher.fatal is not None:
+        raise publisher.fatal
     missing = result_frame[~result_frame["id"].isin(delivered)]
     if not missing.empty:
         logger.warning(
@@ -1841,33 +1837,6 @@ def _stream_remaining_rows(
         )
         jobs_state["progress"] += len(missing)
         _process_and_save_rows(publisher, missing)
-
-
-def _publish_chunked_rows(
-    call_chunks,
-    frame: pd.DataFrame,
-    chunks: list[list[str]],
-    publisher: _RowPublisher,
-    sb,
-    job_id: str,
-    jobs_state: dict,
-) -> None:
-    """Via rara, depois de o canário ter sido recusado por schema e o modelo
-    partido em lotes de campos.
-
-    Cada chamada por lote devolve, para cada documento, só as colunas daquele
-    lote, e a linha só fica completa na fusão (`_merge_chunk_frames`).
-    Publicar pelo callback gravaria resposta parcial a cada lote; a linha só
-    estaria inteira no último, e esperar o último é esperar o fim. Por isso
-    esta via mantém o comportamento anterior à fila contínua: chamadas por
-    lote sobre o frame inteiro, fusão e publicação no fim, com a fase
-    'saving' anunciando na tela a espera pela gravação.
-    """
-    result = call_chunks(frame, chunks)
-    jobs_state["progress"] += len(result)
-    _persist_run_progress(sb, job_id, jobs_state)
-    jobs_state.update(phase="saving", eta_seconds=None)
-    _process_and_save_rows(publisher, result)
 
 
 def _run_dataframeit_and_publish(
@@ -1962,9 +1931,20 @@ def _run_dataframeit_and_publish(
             config.parallel_requests,
         )
     else:
-        _publish_chunked_rows(
-            _call_chunks, rest, chunks, publisher, sb, job_id, jobs_state
-        )
+        # Via rara, depois de o canário ter sido recusado por schema e o modelo
+        # partido em lotes de campos. Cada chamada por lote devolve, para cada
+        # documento, só as colunas daquele lote, e a linha só fica completa na
+        # fusão (`_merge_chunk_frames`). Publicar pelo callback gravaria
+        # resposta parcial a cada lote; a linha só estaria inteira no último, e
+        # esperar o último é esperar o fim. Por isso esta via mantém o
+        # comportamento anterior à fila contínua: chamadas por lote sobre o
+        # frame inteiro, fusão e publicação no fim, com a fase 'saving'
+        # anunciando na tela a espera pela gravação.
+        result = _call_chunks(rest, chunks)
+        jobs_state["progress"] += len(result)
+        _persist_run_progress(sb, job_id, jobs_state)
+        jobs_state.update(phase="saving", eta_seconds=None)
+        _process_and_save_rows(publisher, result)
 
 
 def run_llm(
