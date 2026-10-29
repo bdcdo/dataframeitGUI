@@ -35,19 +35,28 @@ ALTER TABLE public.projects
 -- Quem escolheu outro modelo, outra temperatura ou outro nivel nao e tocado.
 -- `- 'temperature'` remove a chave; `||` sobrescreve so thinking_level e
 -- preserva o resto (parallel_requests, thresholds). include_justifications
--- so entra onde a chave falta: `false` explicito e escolha e fica.
+-- so entra onde nao ha boolean gravado: `false` explicito e escolha e fica.
+--
+-- "Ausente" segue a leitura do TypeScript (`== null` e `!valor`): chave que
+-- nao existe, `null` dentro do jsonb e string vazia no nivel contam como
+-- ausentes. `jsonb_typeof` antes do cast evita que uma temperatura gravada
+-- como texto aborte a migration inteira com "invalid input syntax".
 UPDATE public.projects
    SET llm_model = 'gemini-3.8-flash',
        llm_kwargs = (coalesce(llm_kwargs, '{}'::jsonb) - 'temperature')
                     || '{"thinking_level": "high"}'::jsonb
-                    || CASE WHEN coalesce(llm_kwargs, '{}'::jsonb) ? 'include_justifications'
+                    || CASE WHEN jsonb_typeof(llm_kwargs->'include_justifications') = 'boolean'
                             THEN '{}'::jsonb
                             ELSE '{"include_justifications": true}'::jsonb
                        END
  WHERE llm_provider = 'google_genai'
    AND llm_model = 'gemini-3.7-flash'
-   AND coalesce(llm_kwargs->>'thinking_level', 'medium') = 'medium'
+   AND coalesce(llm_kwargs->>'thinking_level', 'medium') IN ('medium', '')
    AND (
          llm_kwargs->'temperature' IS NULL
-         OR (llm_kwargs->>'temperature')::numeric = 1
+         OR jsonb_typeof(llm_kwargs->'temperature') = 'null'
+         OR (
+              jsonb_typeof(llm_kwargs->'temperature') = 'number'
+              AND (llm_kwargs->>'temperature')::numeric = 1
+            )
        );

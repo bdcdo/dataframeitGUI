@@ -101,3 +101,73 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
     expect(ambiguitiesSwitch().getAttribute("aria-checked")).toBe("true");
   });
 });
+
+// Modelo que aceita temperatura e nível de raciocínio, para os campos
+// renderizarem. Os kwargs vêm vazios de propósito: é o estado de um projeto
+// que ainda não passou pela higienização de saveLlmConfig.
+const geminiProps = {
+  ...baseProps,
+  config: {
+    llm_provider: "google_genai" as const,
+    llm_model: "gemini-3.8-flash",
+    llm_kwargs: {} as Record<string, unknown>,
+  },
+};
+
+/** Aplica o último updater passado a setConfig sobre `config`. */
+function ultimaConfig(config: typeof geminiProps.config) {
+  const updater = baseProps.setConfig.mock.calls.at(-1)?.[0] as
+    | ((c: typeof config) => typeof config)
+    | undefined;
+  if (!updater) throw new Error("setConfig não foi chamado");
+  return updater(config);
+}
+
+describe("ModelConfigCard — defaults quando o kwarg falta", () => {
+  it("mostra a temperatura vazia, com o placeholder do provedor, em vez de 1.0", () => {
+    // Exibir 1.0 com a chave ausente mentiria sobre o que a run manda: sem a
+    // chave, o provider aplica o default dele.
+    render(<ModelConfigCard {...geminiProps} />);
+    const input = screen.getByLabelText("Temperatura") as HTMLInputElement;
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("padrão do provedor");
+  });
+
+  it("apagar a temperatura remove a chave em vez de deixar o valor antigo", async () => {
+    // Sem a remoção, o coordenador não tem como voltar a "sem temperatura":
+    // o último número digitado ficaria gravado.
+    const user = userEvent.setup();
+    const config = {
+      ...geminiProps.config,
+      llm_kwargs: { temperature: 0.7, thinking_level: "high" },
+    };
+    render(<ModelConfigCard {...geminiProps} config={config} />);
+    await user.clear(screen.getByLabelText("Temperatura"));
+    const depois = ultimaConfig(config);
+    expect(depois.llm_kwargs).not.toHaveProperty("temperature");
+    expect(depois.llm_kwargs.thinking_level).toBe("high");
+  });
+
+  it("exibe o nível de raciocínio default e as justificativas ligadas", () => {
+    // Os dois precisam coincidir com o que buildKwargsForCapabilities grava ao
+    // salvar; quando o Switch mostrava desligado com a chave ausente, a run
+    // saía com justificativas que a tela dizia não pedir.
+    render(<ModelConfigCard {...geminiProps} />);
+    expect(screen.getByText("Alto")).toBeTruthy();
+    expect(screen.getAllByRole("switch")[0].getAttribute("aria-checked")).toBe(
+      "true",
+    );
+  });
+
+  it("mantém as justificativas desligadas quando o projeto escolheu false", () => {
+    render(
+      <ModelConfigCard
+        {...geminiProps}
+        config={{ ...geminiProps.config, llm_kwargs: { include_justifications: false } }}
+      />,
+    );
+    expect(screen.getAllByRole("switch")[0].getAttribute("aria-checked")).toBe(
+      "false",
+    );
+  });
+});

@@ -53,7 +53,12 @@ export function ModelConfigCard({
     config.llm_model,
   );
 
-  const includeJustifications = !!config.llm_kwargs.include_justifications;
+  // `?? true`, e não `!!`: chave ausente é o que buildKwargsForCapabilities
+  // grava como ligado em saveLlmConfig, então o Switch tem de mostrar ligado,
+  // senão a tela diz "sem justificativas" e a run sai com elas.
+  const includeJustifications = Boolean(
+    config.llm_kwargs.include_justifications ?? true,
+  );
 
   // useOptimistic: o Switch reflete imediatamente o valor escolhido enquanto o
   // toggleLlmField roda. A base é derivada da prop `pydanticFields` no render;
@@ -172,8 +177,11 @@ export function ModelConfigCard({
           </div>
           {capabilities.supportsTemperature && (
             <div className="space-y-1.5">
-              <Label className="text-sm">Temperatura</Label>
+              <Label htmlFor="llm-temperature" className="text-sm">
+                Temperatura
+              </Label>
               <Input
+                id="llm-temperature"
                 type="number"
                 step={0.1}
                 min={0}
