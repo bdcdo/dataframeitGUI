@@ -63,9 +63,22 @@ export interface ModelCapabilities {
  *
  * As entradas de `openai` e `anthropic` seguem não medidas — não há chave
  * desses providers no ambiente. Ver issue de follow-up.
+ *
+ * `gemini-3.8-flash` entrou em 2026-10-29 sem medição por chamada: a chave do
+ * Fly estava sem crédito. Existência e `thinking_level` seguem a linha 3.x, que
+ * já tinha quatro modelos medidos; a rodada externa de 2026-10-14 nas notas
+ * nacionais (223 documentos) confirma que o ID existe.
  */
 const MODEL_REGISTRY: ModelCapabilities[] = [
   // --- Google GenAI ---
+  {
+    provider: "google_genai",
+    model: "gemini-3.8-flash",
+    label: "Gemini 3.8 Flash",
+    supportsTemperature: true,
+    supportsThinkingLevel: true,
+    category: "reasoning",
+  },
   {
     provider: "google_genai",
     model: "gemini-3.7-flash",
@@ -239,10 +252,25 @@ export function getModelCapabilities(
 }
 
 /**
+ * Nível de raciocínio que um modelo recebe quando o projeto não escolheu
+ * nenhum. O DEFAULT da coluna `projects.llm_kwargs` precisa acompanhar
+ * `buildKwargsForCapabilities({}, <default do google_genai>)` — o SQL não
+ * deriva do TypeScript, e o teste do registry amarra os dois.
+ */
+export const DEFAULT_THINKING_LEVEL = "high";
+
+/**
  * Ajusta os kwargs ao que o modelo aceita: descarta o parâmetro que ele recusa
- * e preenche o default do que ele aceita e ainda não tem valor. As demais
- * chaves (`include_justifications`, `parallel_requests`, os thresholds de run)
- * passam intactas.
+ * e preenche o nível de raciocínio quando o modelo aceita e o valor falta.
+ * Preenche também `include_justifications: true` quando a chave falta, porque
+ * a tela e o backend tratam chave ausente como "desligado" e o default do
+ * produto é pedir justificativa. As demais chaves (`parallel_requests`, os
+ * thresholds de run) passam intactas.
+ *
+ * A temperatura NÃO é preenchida: ausente, o provider aplica o default dele,
+ * que é o comportamento pedido para as runs. Um valor explícito, inclusive 0,
+ * é escolha do coordenador e fica; o mesmo vale para
+ * `include_justifications: false`.
  *
  * Mora aqui, e não no componente, porque a mesma regra vale na escrita: a UI a
  * aplica ao trocar de modelo, e `saveLlmConfig` a reaplica antes de gravar. Uma
@@ -255,11 +283,14 @@ export function buildKwargsForCapabilities(
 ): Record<string, unknown> {
   const newKwargs = { ...currentKwargs };
   if (!caps.supportsTemperature) delete newKwargs.temperature;
-  // `== null` de propósito: `temperature: 0` é um valor escolhido, e um teste
-  // por truthiness o trocaria por 1.0 mudando o resultado da run em silêncio.
-  else if (newKwargs.temperature == null) newKwargs.temperature = 1.0;
   if (!caps.supportsThinkingLevel) delete newKwargs.thinking_level;
-  else if (!newKwargs.thinking_level) newKwargs.thinking_level = "medium";
+  else if (!newKwargs.thinking_level) {
+    newKwargs.thinking_level = DEFAULT_THINKING_LEVEL;
+  }
+  // `== null`, não `!`: `false` é escolha explícita de desligar e fica.
+  if (newKwargs.include_justifications == null) {
+    newKwargs.include_justifications = true;
+  }
   return newKwargs;
 }
 

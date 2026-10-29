@@ -23,6 +23,7 @@ import { toggleLlmField } from "@/actions/schema";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
 import {
   buildKwargsForCapabilities,
+  DEFAULT_THINKING_LEVEL,
   defaultModelForProvider,
   getModelCapabilities,
   PROVIDERS,
@@ -65,11 +66,15 @@ export function ModelConfigCard({
     useOptimistic(ambiguitiesEnabled);
   const [isPending, startTransition] = useTransition();
 
-  const setKwarg = (key: string, value: number) => {
-    setConfig((c) => ({
-      ...c,
-      llm_kwargs: { ...c.llm_kwargs, [key]: value },
-    }));
+  // `undefined` remove a chave em vez de gravar `undefined`: kwarg ausente é o
+  // que faz o provider aplicar o default dele (caso da temperatura).
+  const setKwarg = (key: string, value: number | undefined) => {
+    setConfig((c) => {
+      const llm_kwargs = { ...c.llm_kwargs };
+      if (value === undefined) delete llm_kwargs[key];
+      else llm_kwargs[key] = value;
+      return { ...c, llm_kwargs };
+    });
   };
 
   const handleSelectModel = (model: string) => {
@@ -173,10 +178,15 @@ export function ModelConfigCard({
                 step={0.1}
                 min={0}
                 max={2}
+                placeholder="padrão do provedor"
                 value={
-                  (config.llm_kwargs.temperature as number | undefined) ?? 1.0
+                  (config.llm_kwargs.temperature as number | undefined) ?? ""
                 }
                 onChange={(e) => {
+                  if (e.target.value === "") {
+                    setKwarg("temperature", undefined);
+                    return;
+                  }
                   const parsed = parseFloat(e.target.value);
                   if (!isNaN(parsed)) setKwarg("temperature", parsed);
                 }}
@@ -189,7 +199,7 @@ export function ModelConfigCard({
               <Select
                 value={
                   (config.llm_kwargs.thinking_level as string | undefined) ??
-                  "medium"
+                  DEFAULT_THINKING_LEVEL
                 }
                 onValueChange={(v) =>
                   setConfig((c) => ({

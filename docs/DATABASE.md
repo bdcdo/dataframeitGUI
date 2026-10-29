@@ -26,8 +26,8 @@ CREATE TABLE projects (
   pydantic_fields JSONB,
   prompt_template TEXT,
   llm_provider    TEXT DEFAULT 'google_genai',
-  llm_model       TEXT DEFAULT 'gemini-3.7-flash',
-  llm_kwargs      JSONB DEFAULT '{"temperature": 1.0, "thinking_level": "medium"}',
+  llm_model       TEXT DEFAULT 'gemini-3.8-flash',
+  llm_kwargs      JSONB DEFAULT '{"thinking_level": "high", "include_justifications": true}',
   resolution_rule              TEXT DEFAULT 'majority',
   min_responses_for_comparison INTEGER DEFAULT 2,
   allow_researcher_review      BOOLEAN DEFAULT false
