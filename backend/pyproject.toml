@@ -9,7 +9,7 @@ dependencies = [
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
     "supabase>=2.31.0",
-    "dataframeit>=0.10.0",
+    "dataframeit>=0.11.0",
     "pandas>=3.0.3",
     "langchain-google-genai>=4.2.7",
     "langchain-openai>=1.3.5",
@@ -28,6 +28,13 @@ package = false
 # publicadas, reduzindo a janela de pacotes maliciosos/instaveis (semgrep
 # uv-missing-dependency-cooldown). Requer uv >= 0.9.17.
 exclude-newer = "7 days"
+# Exceção ao cooldown só para o dataframeit: é pacote do próprio autor deste
+# app, publicado a partir do repositório irmão, e o backend costuma depender
+# da versão recém-publicada (ex.: 0.11.0 trouxe o `on_row_done` que o runner
+# usa). O cooldown continua valendo para todo o resto. A data distante
+# equivale a "sem cooldown" para esse pacote; o uv exige um instante, não um
+# booleano.
+exclude-newer-package = { dataframeit = "2100-01-01" }
 
 [build-system]
 requires = ["hatchling"]

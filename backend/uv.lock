@@ -20,6 +20,9 @@ resolution-markers = [
 exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P7D"
 
+[options.exclude-newer-package]
+dataframeit = "2100-01-02T03:00:00Z"
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.4"
@@ -357,7 +360,7 @@ wheels = [
 
 [[package]]
 name = "dataframeit"
-version = "0.10.0"
+version = "0.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain" },
@@ -366,9 +369,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/89/ee/d3a7a6047a3b5d8d981c101af0231523878f54cd06b41e6e1882787b1238/dataframeit-0.10.0.tar.gz", hash = "sha256:c04fee8e1d88bcb6cc71d45d960e686c72979859d2e03cd1b1a17b95050584db", size = 66075, upload-time = "2026-09-24T20:58:28.942Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a2/3a/150be9f8ba7b59622b1e4cd9de5c4790348feea2af38970e98a6595bee86/dataframeit-0.11.0.tar.gz", hash = "sha256:b3d71da6123b7a84fb95886afb460acafc6372eaeca2432932705fc0c0c0122e", size = 112975, upload-time = "2026-10-29T17:47:21.744Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d9/c3/c765ea753a0b86f91a53760f366390a45589ffedd24ba059e92d06e14750/dataframeit-0.10.0-py3-none-any.whl", hash = "sha256:51d7bd0aa95287d1f9b3c7f3848172726dbda5d2907cc2c4a1caa621a97fcaf6", size = 72690, upload-time = "2026-09-24T20:58:27.323Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/70/063949679eb2522f23728ba624f27c98fe8bb44bff55e85258817f4daf93/dataframeit-0.11.0-py3-none-any.whl", hash = "sha256:26d2b8e4a781a16bdf19157bf065f18938583d0441bfef7752bf198356e1e7ea", size = 119357, upload-time = "2026-10-29T17:47:19.893Z" },
 ]
 
 [[package]]
@@ -399,7 +402,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dataframeit", specifier = ">=0.10.0" },
+    { name = "dataframeit", specifier = ">=0.11.0" },
     { name = "fastapi", specifier = ">=0.139.2" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "langchain-anthropic", specifier = ">=1.4.8" },
