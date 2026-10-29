@@ -659,7 +659,9 @@ describe("savePrompt / saveLlmConfig", () => {
         payload: {
           llm_provider: "google_genai",
           llm_model: "gemini-2.5-flash-lite",
-          llm_kwargs: { include_justifications: true, temperature: 1.0 },
+          // Sem temperature: a higienização não injeta valor que o
+          // coordenador não escolheu.
+          llm_kwargs: { include_justifications: true },
         },
       },
     ]);

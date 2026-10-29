@@ -36,6 +36,27 @@ function llmModelDefaultInSql(): string {
   return latest;
 }
 
+/** O DEFAULT vigente de `projects.llm_kwargs`, lido das migrations, como objeto.
+ *
+ * Mesma regra de precedência de `llmModelDefaultInSql`: vale a última
+ * declaração em ordem de nome de arquivo.
+ */
+function llmKwargsDefaultInSql(): Record<string, unknown> {
+  const declaration =
+    /llm_kwargs\s+JSONB\s+DEFAULT\s+'([^']+)'|ALTER\s+COLUMN\s+llm_kwargs\s+SET\s+DEFAULT\s+'([^']+)'/gi;
+  let latest: string | null = null;
+  for (const file of readdirSync(MIGRATIONS).sort()) {
+    const sql = readFileSync(join(MIGRATIONS, file), "utf8");
+    for (const match of sql.matchAll(declaration)) {
+      latest = match[1] ?? match[2];
+    }
+  }
+  if (latest === null) {
+    throw new Error("nenhuma migration declara o DEFAULT de projects.llm_kwargs");
+  }
+  return JSON.parse(latest) as Record<string, unknown>;
+}
+
 describe("registry de modelos", () => {
   it("o default do google_genai é o mesmo DEFAULT da coluna projects.llm_model", () => {
     // O SQL não deriva do TypeScript, então esta é a única amarra entre os
@@ -43,6 +64,17 @@ describe("registry de modelos", () => {
     // próprio registry não conhecia: caía em DEFAULT_CAPABILITIES, escondia o
     // select de raciocínio e seguia mandando thinking_level nos kwargs.
     expect(llmModelDefaultInSql()).toBe(defaultModelForProvider("google_genai"));
+  });
+
+  it("os kwargs que o registry preenche para o default do google_genai são o DEFAULT de projects.llm_kwargs", () => {
+    // Projeto criado por INSERT sem kwargs e projeto cuja página de
+    // configuração preencheu a partir do registry têm de rodar igual. Quando
+    // o SQL fixava temperature 1.0 e o registry não, a run dependia de qual
+    // dos dois caminhos tinha gravado a linha.
+    const model = defaultModelForProvider("google_genai");
+    expect(llmKwargsDefaultInSql()).toEqual(
+      buildKwargsForCapabilities({}, getModelCapabilities("google_genai", model)),
+    );
   });
 
   it("todo provider declara ao menos um modelo, e o default é um deles", () => {
@@ -89,8 +121,13 @@ describe("registry de modelos", () => {
  * `thinking_level` não é "toda a linha Gemini": a 2.5 responde
  * `400 INVALID_ARGUMENT: 'Thinking level is not supported for this model.'`.
  * Só a linha 3.x aceita o parâmetro.
+ *
+ * `gemini-3.8-flash` (2026-10-29) não foi medido: a chave do Fly estava sem
+ * crédito. O valor segue a linha 3.x; se a primeira run de produção devolver
+ * `INVALID_ARGUMENT` para thinking_level, é esta linha que estava errada.
  */
 const THINKING_LEVEL_NA_API: Record<string, boolean> = {
+  "gemini-3.8-flash": true,
   "gemini-3.7-flash": true,
   "gemini-3.6-flash": true,
   "gemini-3.5-flash": true,
@@ -159,39 +196,52 @@ describe("buildKwargsForCapabilities", () => {
     // um 2.5 que recusa o parâmetro.
     expect(
       buildKwargsForCapabilities(
-        { thinking_level: "medium", temperature: 0.7 },
+        { thinking_level: "medium", temperature: 0.7, include_justifications: true },
         caps({ supportsThinkingLevel: false }),
       ),
-    ).toEqual({ temperature: 0.7 });
+    ).toEqual({ temperature: 0.7, include_justifications: true });
     expect(
       buildKwargsForCapabilities(
-        { thinking_level: "high", temperature: 0.7 },
+        { thinking_level: "high", temperature: 0.7, include_justifications: true },
         caps({ supportsTemperature: false }),
       ),
-    ).toEqual({ thinking_level: "high" });
+    ).toEqual({ thinking_level: "high", include_justifications: true });
   });
 
-  it("preenche o default só quando o modelo aceita e o valor falta", () => {
+  it("preenche nível de raciocínio e justificativas quando faltam, nunca a temperatura", () => {
+    // A temperatura fica ausente de propósito: sem a chave, o provider aplica
+    // o default dele. Injetar 1.0 aqui era o que fazia toda run sair com
+    // temperatura fixada sem ninguém ter escolhido. include_justifications
+    // entra como true porque chave ausente é lida como "desligado" pela tela
+    // (`!!`) e pelo backend (`pop(..., False)`).
     expect(buildKwargsForCapabilities({}, caps({}))).toEqual({
-      temperature: 1.0,
-      thinking_level: "medium",
+      thinking_level: "high",
+      include_justifications: true,
+    });
+    expect(
+      buildKwargsForCapabilities({}, caps({ supportsThinkingLevel: false })),
+    ).toEqual({ include_justifications: true });
+  });
+
+  it("não sobrescreve valor já escolhido, inclusive temperatura zero e justificativas desligadas", () => {
+    // `temperature: 0` e `include_justifications: false` são falsy: um teste
+    // de presença por truthiness os substituiria pelo default e mudaria o
+    // resultado da run em silêncio.
+    expect(
+      buildKwargsForCapabilities(
+        { temperature: 0, thinking_level: "high", include_justifications: false },
+        caps({}),
+      ),
+    ).toEqual({
+      temperature: 0,
+      thinking_level: "high",
+      include_justifications: false,
     });
   });
 
-  it("não sobrescreve valor já escolhido, inclusive temperatura zero", () => {
-    // `temperature: 0` é falsy: um teste de presença por truthiness o
-    // substituiria por 1.0 e mudaria o resultado da run em silêncio.
-    expect(
-      buildKwargsForCapabilities(
-        { temperature: 0, thinking_level: "high" },
-        caps({}),
-      ),
-    ).toEqual({ temperature: 0, thinking_level: "high" });
-  });
-
   it("preserva os kwargs que não são de capability", () => {
-    // include_justifications, parallel_requests e os thresholds de run passam
-    // por aqui e não podem ser descartados na higienização.
+    // parallel_requests e os thresholds de run passam por aqui e não podem ser
+    // descartados na higienização.
     expect(
       buildKwargsForCapabilities(
         { include_justifications: true, parallel_requests: 8 },

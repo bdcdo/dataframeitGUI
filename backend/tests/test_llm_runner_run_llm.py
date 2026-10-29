@@ -1185,7 +1185,13 @@ def test_run_llm_canary_lets_recoverable_error_reach_the_statistical_path(
     docs = _docs(4)
     row_specs = {doc["id"]: {} for doc in docs}
     dataframeit_calls: list[dict] = []
-    sb = _build_supabase(_project_row(), docs)
+    sb = _build_supabase(
+        _project_row(
+            # Sem justificativas: o teste compara o conjunto de campos do schema.
+            llm_kwargs={"include_justifications": False}
+        ),
+        docs,
+    )
 
     _run_llm_sync(
         monkeypatch,
@@ -1314,7 +1320,13 @@ def test_run_llm_nao_divide_quando_o_erro_e_do_documento(monkeypatch):
     docs = _docs(4)
     row_specs = {doc["id"]: {} for doc in docs}
     calls: list[dict] = []
-    sb = _build_supabase(_project_row(), docs)
+    sb = _build_supabase(
+        _project_row(
+            # Sem justificativas: o teste compara o conjunto de campos do schema.
+            llm_kwargs={"include_justifications": False}
+        ),
+        docs,
+    )
 
     _run_llm_sync(
         monkeypatch,
@@ -1421,7 +1433,13 @@ def test_run_llm_sucesso_apos_retry_no_canario_nao_dispara_divisao(monkeypatch):
     campos = ["campo_a", "campo_b", "campo_c"]
     row_specs = {doc["id"]: {c: f"v-{c}" for c in campos} for doc in docs}
     calls: list[dict] = []
-    sb = _build_supabase(_project_row(), docs)
+    sb = _build_supabase(
+        _project_row(
+            # Sem justificativas: o teste compara o conjunto de campos do schema.
+            llm_kwargs={"include_justifications": False}
+        ),
+        docs,
+    )
 
     _run_llm_sync(
         monkeypatch, sb, row_specs, dataframeit_calls=calls, retry_success=True
@@ -1448,7 +1466,13 @@ def test_run_llm_sucesso_apos_retry_na_sonda_nao_conta_como_recusa(monkeypatch):
     campos = ["campo_a", "campo_b", "campo_c"]
     row_specs = {doc["id"]: {c: f"v-{c}" for c in campos} for doc in docs}
     calls: list[dict] = []
-    sb = _build_supabase(_project_row(), docs)
+    sb = _build_supabase(
+        _project_row(
+            # Sem justificativas: o teste compara o conjunto de campos do schema.
+            llm_kwargs={"include_justifications": False}
+        ),
+        docs,
+    )
 
     _run_llm_sync(
         monkeypatch,
@@ -1583,3 +1607,30 @@ def test_run_llm_unhandled_exception_is_persisted(monkeypatch):
     error_update = _last_update_where(sb.table("llm_runs"), status="error")
     assert error_update is not None
     assert error_update["error_message"] == "boom"
+
+
+def test_run_llm_asks_justifications_when_the_key_is_absent(monkeypatch):
+    # Chave ausente é "ligado" no DEFAULT da coluna, na higienização do
+    # frontend e no Switch da tela; o runner tem de concordar, senão a tela
+    # mostra justificativas ligadas e a run sai sem elas.
+    docs = _docs(1)
+    row_specs = {"doc-0": {"campo_a": "a", "campo_b": "b", "campo_c": "c"}}
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(_project_row(llm_kwargs={}), docs)
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
+
+    assert "campo_a_justification" in dataframeit_calls[0]["model_fields"]
+
+
+def test_run_llm_skips_justifications_when_explicitly_disabled(monkeypatch):
+    docs = _docs(1)
+    row_specs = {"doc-0": {"campo_a": "a", "campo_b": "b", "campo_c": "c"}}
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(llm_kwargs={"include_justifications": False}), docs
+    )
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
+
+    assert "campo_a_justification" not in dataframeit_calls[0]["model_fields"]

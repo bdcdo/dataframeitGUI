@@ -357,7 +357,7 @@ wheels = [
 
 [[package]]
 name = "dataframeit"
-version = "0.6.0"
+version = "0.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain" },
@@ -366,9 +366,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/de/81/777e748ced32c5b74a96a4e899c2853876d0e5540888b4b592b2176112a9/dataframeit-0.6.0.tar.gz", hash = "sha256:902a1e524849c30d0568345d353eb7a707805b8856ab0c7f8c05909f15057bc3", size = 41976, upload-time = "2026-04-20T20:28:30.766Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/89/ee/d3a7a6047a3b5d8d981c101af0231523878f54cd06b41e6e1882787b1238/dataframeit-0.10.0.tar.gz", hash = "sha256:c04fee8e1d88bcb6cc71d45d960e686c72979859d2e03cd1b1a17b95050584db", size = 66075, upload-time = "2026-09-24T20:58:28.942Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/00/45ee9306853c70b0e2f4bd42a250731251417a7cdd09522da2075fa87736/dataframeit-0.6.0-py3-none-any.whl", hash = "sha256:3d06b5c2e02ceb0ed74053e9c5de97cf5cabfc2dca18da95898835039e9a0951", size = 47936, upload-time = "2026-04-20T20:28:29.355Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/c3/c765ea753a0b86f91a53760f366390a45589ffedd24ba059e92d06e14750/dataframeit-0.10.0-py3-none-any.whl", hash = "sha256:51d7bd0aa95287d1f9b3c7f3848172726dbda5d2907cc2c4a1caa621a97fcaf6", size = 72690, upload-time = "2026-09-24T20:58:27.323Z" },
 ]
 
 [[package]]
@@ -399,7 +399,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dataframeit", specifier = ">=0.6.0" },
+    { name = "dataframeit", specifier = ">=0.10.0" },
     { name = "fastapi", specifier = ">=0.139.2" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "langchain-anthropic", specifier = ">=1.4.8" },

@@ -1,6 +1,11 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { LlmConfigurePane } from "@/components/llm/LlmConfigurePane";
-import { defaultModelForProvider, isProvider } from "@/lib/model-registry";
+import {
+  buildKwargsForCapabilities,
+  defaultModelForProvider,
+  getModelCapabilities,
+  isProvider,
+} from "@/lib/model-registry";
 import type { PydanticField } from "@/lib/types";
 
 // fallow-ignore-next-line complexity -- esta mudança só propaga a revisão do schema; a composição preexistente da página permanece fora deste refactor.
@@ -56,6 +61,7 @@ export default async function LlmConfigurePage({
   const provider = isProvider(project?.llm_provider)
     ? project.llm_provider
     : "google_genai";
+  const model = project?.llm_model || defaultModelForProvider(provider);
 
   return (
     <LlmConfigurePane
@@ -64,12 +70,15 @@ export default async function LlmConfigurePage({
       projectDescription={project?.description ?? ""}
       config={{
         llm_provider: provider,
-        llm_model: project?.llm_model || defaultModelForProvider(provider),
+        llm_model: model,
+        // Mesma regra que a UI aplica ao trocar de modelo e que saveLlmConfig
+        // reaplica ao gravar: um literal aqui era a terceira cópia do default.
         llm_kwargs:
-          (project?.llm_kwargs as Record<string, unknown>) || {
-            temperature: 1.0,
-            thinking_level: "medium",
-          },
+          (project?.llm_kwargs as Record<string, unknown>) ||
+          buildKwargsForCapabilities(
+            {},
+            getModelCapabilities(provider, model),
+          ),
       }}
       pydanticFields={(project?.pydantic_fields as PydanticField[]) || null}
       pydanticCode={(project?.pydantic_code as string | null) ?? null}
