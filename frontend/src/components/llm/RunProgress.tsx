@@ -77,16 +77,19 @@ export function RunProgress({
         {phase === "processing" && `${progress}/${total} documentos processados`}
         {phase === "saving" && "Salvando resultados..."}
       </p>
-      {/* Counters ao vivo: completas / parciais / vazias. Aparecem durante a
-          fase de saving (quando o backend comeca a inserir em responses) e ate
-          o fim da run para que o usuario tenha feedback imediato de como esta
-          saindo.
+      {/* Counters ao vivo: completas / parciais / vazias. Aparecem assim que
+          o primeiro documento e publicado (o backend publica cada documento
+          quando ele volta do provider, ainda na fase de processing) e ficam
+          ate o fim da run, para que o usuario tenha feedback imediato de como
+          esta saindo. A fase de saving so aparece na via rara em que o schema
+          foi partido em lotes de campos e a publicacao espera o fim.
 
           Granularidade DIFERE de `progress` (na Progress acima):
-            - progress = iter no result_df (incrementa antes do INSERT)
+            - progress = documento que voltou do dataframeit (incrementa antes
+              do INSERT)
             - processed_* = linha classificada pelo LLM, ANTES da publicacao
-          Durante a fase de saving as duas medidas podem divergir
-          transitoriamente (ate ~2s, throttle do _persist_run_progress).
+          As duas medidas podem divergir transitoriamente no valor persistido
+          em llm_runs (ate ~2s, throttle do _persist_run_progress).
 
           Estes contadores nao medem gravacao. _record_processed_row_outcome
           incrementa antes da RPC publish_latest_llm_response, entao uma linha

@@ -260,6 +260,17 @@ export function getModelCapabilities(
 export const DEFAULT_THINKING_LEVEL = "high";
 
 /**
+ * Requisições paralelas quando o projeto não escolheu nenhuma: a chave
+ * `parallel_requests` ausente de `llm_kwargs` significa este valor, tanto na
+ * tela quanto no backend, e por isso trocá-lo não pede migration. O backend
+ * declara o mesmo número em `DEFAULT_PARALLEL_REQUESTS`
+ * (backend/services/llm_runner.py), onde está a conta que o justifica (vazão
+ * contra o teto de gasto do provider); o teste do registry lê aquela linha e
+ * amarra os dois.
+ */
+export const DEFAULT_PARALLEL_REQUESTS = 20;
+
+/**
  * Ajusta os kwargs ao que o modelo aceita: descarta o parâmetro que ele recusa
  * e preenche o nível de raciocínio quando o modelo aceita e o valor falta.
  * Preenche também `include_justifications: true` quando a chave falta, para
