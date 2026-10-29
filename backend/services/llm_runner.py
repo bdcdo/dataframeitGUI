@@ -812,6 +812,25 @@ def _pop_threshold(llm_kwargs: dict, key: str, default: float) -> float:
 DEFAULT_PARALLEL_REQUESTS = 20
 
 
+# Prazo, em segundos, de cada chamada ao modelo quando o projeto não manda
+# `timeout` em llm_kwargs. Sem ele, as classes de chat do langchain (Google,
+# OpenAI e Anthropic) passam `timeout=None` ao SDK e esperam para sempre: numa
+# rodada de 268 documentos, uma conexão muda com o Google deixou a rodada
+# parada por 49 minutos. Com prazo, a leitura pendurada vira exceção e cai no
+# retry, que refaz a chamada numa conexão nova. O prazo do httpx é por leitura,
+# não pela chamada inteira: pega a conexão muda, não a resposta que goteja.
+#
+# 600 s dá folga de mais de três vezes sobre a chamada mais longa medida em
+# produção (175 s, gemini-3.8-flash com raciocínio alto), para não cortar
+# documento legítimo, que entraria em retry e pagaria a chamada de novo.
+# tests/test_llm_call_timeout.py prova que cada provider do registro aceita o
+# nome `timeout`.
+#
+# O default mora aqui, e não no dataframeit, porque na biblioteca um modelo
+# lento pode legitimamente passar disso; o GUI conhece os modelos que oferece.
+DEFAULT_LLM_CALL_TIMEOUT_SECONDS = 600
+
+
 def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
     parallel_requests = llm_kwargs.pop("parallel_requests", DEFAULT_PARALLEL_REQUESTS)
     rate_limit_delay = llm_kwargs.pop("rate_limit_delay", 0.5)
@@ -820,6 +839,9 @@ def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
     )
     run_failure_threshold = _pop_threshold(llm_kwargs, "run_failure_threshold", 0.3)
     model_kwargs = {k: v for k, v in llm_kwargs.items() if k not in DATAFRAMEIT_PARAMS}
+    # `setdefault`, e não atribuição: um `timeout` gravado no projeto vence o
+    # default, inclusive `None` explícito para desligar o prazo.
+    model_kwargs.setdefault("timeout", DEFAULT_LLM_CALL_TIMEOUT_SECONDS)
     dfi_kwargs = {k: v for k, v in llm_kwargs.items() if k in DATAFRAMEIT_PARAMS}
     dfi_kwargs.pop("resume", None)
     return _DataframeitRunConfig(

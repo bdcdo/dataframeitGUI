@@ -25,6 +25,7 @@ from supabase import PostgrestAPIError
 
 from services.llm_runner import (
     _PROBE_DOC_ID,
+    DEFAULT_LLM_CALL_TIMEOUT_SECONDS,
     DEFAULT_PARALLEL_REQUESTS,
     _jobs,
     _prepare_llm_model,
@@ -716,7 +717,12 @@ def test_run_llm_routes_kwargs_without_leaking_internal_options(monkeypatch):
     assert kwargs["rate_limit_delay"] == 0.25
     assert kwargs["resume"] is False
     assert kwargs["track_tokens"] is True
-    assert kwargs["model_kwargs"] == {"temperature": 0.2}
+    # O prazo por chamada entra sem o projeto pedir: é o default do runner, e é
+    # este kwarg que chega ao init_chat_model do langchain.
+    assert kwargs["model_kwargs"] == {
+        "temperature": 0.2,
+        "timeout": DEFAULT_LLM_CALL_TIMEOUT_SECONDS,
+    }
     for internal_key in [
         "include_justifications",
         "partial_coverage_threshold",
@@ -724,6 +730,23 @@ def test_run_llm_routes_kwargs_without_leaking_internal_options(monkeypatch):
     ]:
         assert internal_key not in kwargs
         assert internal_key not in kwargs["model_kwargs"]
+
+
+def test_run_llm_repassa_timeout_do_projeto_em_vez_do_default(monkeypatch):
+    """`timeout` gravado em llm_kwargs vence o default do runner.
+
+    O projeto que escolheu outro prazo (um modelo mais lento, por exemplo) tem
+    de ver o valor dele chegar ao dataframeit, e não os 600 s do default.
+    """
+    docs = _docs(1)
+    row_specs = {"doc-0": {"campo_a": "a", "campo_b": "b", "campo_c": "c"}}
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(_project_row(llm_kwargs={"timeout": 1800}), docs)
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
+
+    assert len(dataframeit_calls) == 1
+    assert dataframeit_calls[0]["kwargs"]["model_kwargs"]["timeout"] == 1800
 
 
 def test_run_llm_faz_uma_chamada_so_depois_do_canario(monkeypatch):
