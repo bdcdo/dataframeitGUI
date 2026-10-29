@@ -813,11 +813,12 @@ DEFAULT_PARALLEL_REQUESTS = 20
 
 
 # Prazo, em segundos, de cada chamada ao modelo quando o projeto não manda
-# `timeout` em llm_kwargs. Sem ele, o `ChatGoogleGenerativeAI` do langchain
-# espera para sempre (`timeout=None`): numa rodada de 268 documentos, uma
-# conexão muda com o Google deixou a rodada parada por 49 minutos. Com prazo,
-# a leitura pendurada vira exceção e cai no retry, que refaz a chamada numa
-# conexão nova. OpenAI e Anthropic já têm 600 s de default no SDK.
+# `timeout` em llm_kwargs. Sem ele, as classes de chat do langchain (Google,
+# OpenAI e Anthropic) passam `timeout=None` ao SDK e esperam para sempre: numa
+# rodada de 268 documentos, uma conexão muda com o Google deixou a rodada
+# parada por 49 minutos. Com prazo, a leitura pendurada vira exceção e cai no
+# retry, que refaz a chamada numa conexão nova. O prazo do httpx é por leitura,
+# não pela chamada inteira: pega a conexão muda, não a resposta que goteja.
 #
 # 600 s dá folga de mais de três vezes sobre a chamada mais longa medida em
 # produção (175 s, gemini-3.8-flash com raciocínio alto), para não cortar
@@ -827,8 +828,6 @@ DEFAULT_PARALLEL_REQUESTS = 20
 #
 # O default mora aqui, e não no dataframeit, porque na biblioteca um modelo
 # lento pode legitimamente passar disso; o GUI conhece os modelos que oferece.
-# A biblioteca deixa `timeout` fora da assinatura do checkpoint, então mudar
-# este valor não invalida retomada.
 DEFAULT_LLM_CALL_TIMEOUT_SECONDS = 600
 
 

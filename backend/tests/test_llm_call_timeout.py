@@ -40,8 +40,15 @@ _FAKE_KEYS = {
 
 
 def _registry_models() -> list[tuple[str, str]]:
-    entries = _REGISTRY_ENTRY.findall(_MODEL_REGISTRY.read_text(encoding="utf-8"))
+    texto = _MODEL_REGISTRY.read_text(encoding="utf-8")
+    entries = _REGISTRY_ENTRY.findall(texto)
     assert entries, f"nenhum modelo encontrado em {_MODEL_REGISTRY.name}"
+    # A regex só casa `provider` seguido de `model` na mesma forma de hoje. Se
+    # uma entrada mudar de forma (comentário entre os campos, ordem trocada),
+    # ela sairia do teste em silêncio; a contagem de `model:` pega isso.
+    assert len(entries) == len(re.findall(r'\bmodel:\s*"', texto)), (
+        "entrada do registro fora do formato que este teste lê"
+    )
     return entries
 
 
