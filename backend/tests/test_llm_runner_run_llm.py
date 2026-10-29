@@ -1073,7 +1073,10 @@ def test_run_llm_via_de_lotes_de_campos_publica_no_fim_com_fase_saving(
     )
 
     assert _jobs[JOB_ID]["status"] == "completed"
-    assert all(call["kwargs"]["on_row_done"] is None for call in calls)
+    # Só as duas chamadas por lote sobre o resto recebem callback, e ele não
+    # publica: as asserções de fase abaixo provam isso.
+    assert all(call["kwargs"]["on_row_done"] is None for call in calls[:-2])
+    assert all(callable(call["kwargs"]["on_row_done"]) for call in calls[-2:])
     doc0, *resto = publicacoes
     assert doc0[0] == "doc-0"
     assert doc0[1] == "processing"
@@ -1083,6 +1086,103 @@ def test_run_llm_via_de_lotes_de_campos_publica_no_fim_com_fase_saving(
     assert all(n == len(calls) for _, _, n in resto)
     for r in _published_responses(sb):
         assert set(r["answers"]) == set(campos)
+
+
+def test_run_llm_via_de_lotes_de_campos_renova_o_heartbeat_entre_as_chamadas(
+    monkeypatch,
+):
+    """Na via de lotes, o heartbeat e o progresso andam durante as chamadas.
+
+    Caso medido em revisão: 9 documentos, parallel_requests=2 e schema
+    partido em 2 lotes. Sem callback nas chamadas por lote, o único
+    `_persist_run_progress` entre o canário e o fim saía depois da última
+    chamada, e numa run real cada chamada por lote leva dezenas de minutos,
+    mais que o corte de `mark_stale_runs_as_error`. Cada persistência é
+    registrada com o número de chamadas ao dataframeit já feitas, que diz em
+    qual chamada ela aconteceu.
+    """
+    docs = _docs(9)
+    campos = ["campo_a", "campo_b", "campo_c", "campo_d"]
+    todos = campos + [f"{c}_justification" for c in campos]
+    row_specs = {doc["id"]: {c: f"v-{c}" for c in todos} for doc in docs}
+    calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(
+            pydantic_code=SPLIT_PYDANTIC_CODE,
+            llm_kwargs={"include_justifications": True, "parallel_requests": 2},
+        ),
+        docs,
+    )
+    # Relógio que anda 5 s a cada leitura: desliga o throttle de 2 s, para que
+    # cada renovação que o código tenta chegue a `llm_runs`.
+    relogio = iter(range(0, 10_000, 5))
+    monkeypatch.setattr(
+        "services.llm_runner.time", SimpleNamespace(time=lambda: float(next(relogio)))
+    )
+    persistidos: list[tuple[int, int]] = []
+    from services import llm_runner
+
+    original = llm_runner._persist_run_progress
+
+    def registra(sb_, job_id, jobs_state):
+        persistidos.append((len(calls), jobs_state["progress"]))
+        original(sb_, job_id, jobs_state)
+
+    monkeypatch.setattr("services.llm_runner._persist_run_progress", registra)
+
+    _run_llm_sync(
+        monkeypatch, sb, row_specs, dataframeit_calls=calls, max_schema_fields=4
+    )
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert _jobs[JOB_ID]["progress"] == 9
+    primeiro_lote, ultimo_lote = len(calls) - 1, len(calls)
+    durante = [(n, p) for n, p in persistidos if n in (primeiro_lote, ultimo_lote)]
+    # Heartbeat dentro da primeira chamada por lote, antes de a segunda
+    # começar: é o intervalo que ficava sem nenhuma renovação.
+    assert any(n == primeiro_lote for n, _ in durante)
+    progressos = [p for _, p in durante]
+    assert progressos == sorted(progressos)
+    assert progressos[-1] == 9
+    # Um documento só conta quando o último lote dele volta: as 8 linhas do
+    # primeiro lote valem 4 documentos, somados ao canário.
+    assert max(p for n, p in durante if n == primeiro_lote) == 5
+    assert set(range(1, 10)) <= set(progressos)
+
+
+def test_run_llm_fatal_do_publicador_prevalece_sobre_excecao_da_biblioteca(
+    monkeypatch,
+):
+    """Se o dataframeit levanta depois de um `fatal`, a run registra o `fatal`.
+
+    A publicação de doc-1 recebe a recusa de rodada trocada, que vira `fatal`;
+    em seguida a chamada do dataframeit levanta por conta própria. A causa é a
+    rodada, e é ela que precisa chegar à mensagem de erro.
+    """
+    docs = _docs(4)
+    row_specs = {
+        doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs
+    }
+    sb = _build_supabase(
+        _project_row(),
+        docs,
+        rpc_errors={
+            "publish_latest_llm_response": _failing_publish(
+                {"doc-1": _api_error("P0R01", "rodada trocada")}
+            )
+        },
+    )
+
+    def quebra_depois_do_primeiro(position: int) -> None:
+        if position == 1:
+            raise RuntimeError("biblioteca quebrou")
+
+    _run_llm_sync(monkeypatch, sb, row_specs, row_hook=quebra_depois_do_primeiro)
+
+    assert _jobs[JOB_ID]["status"] == "error"
+    erro = _jobs[JOB_ID]["errors"][0]
+    assert "deixou de ser a corrente" in erro
+    assert "biblioteca quebrou" not in erro
 
 
 def test_run_llm_e_run_llm_fields_sao_sincronas():

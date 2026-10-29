@@ -195,13 +195,16 @@ def mark_stale_runs_as_error(sb, project_id: str) -> int:
     Retorna o número de runs marcadas como erro. Idempotente.
     """
     now = datetime.now(timezone.utc)
-    # 10 minutos sem heartbeat = morta. O heartbeat é renovado a cada
-    # documento publicado (throttle de ~2s), mas só quando algum documento
-    # volta do provider: o canário, que vai sozinho, ou uma fila em que todos
-    # os documentos em voo são lentos (Claude com thinking, OpenAI sob
-    # throttling) podem passar de 5min sem update. 10min absorve
-    # esse caso sem deixar runs zumbis pendurarem por muito tempo. 30min
-    # para runs sem heartbeat (pré-migration) — conservador.
+    # 10 minutos sem heartbeat = morta. O heartbeat é renovado (throttle de
+    # ~2s) a cada documento que volta do provider: na chamada única, quando o
+    # documento é publicado; na via de lotes de campos, quando cada chamada
+    # por lote devolve uma linha, embora a publicação dessa via só aconteça no
+    # fim. Nas duas vias a renovação depende de algum documento voltar: o
+    # canário, que vai sozinho, ou uma fila em que todos os documentos em voo
+    # são lentos (Claude com thinking, OpenAI sob throttling) podem passar de
+    # 5min sem update. 10min absorve esse caso sem deixar runs zumbis
+    # pendurarem por muito tempo. 30min para runs sem heartbeat
+    # (pré-migration) — conservador.
     heartbeat_cutoff_iso = (now - timedelta(minutes=10)).isoformat()
     started_cutoff_iso = (now - timedelta(minutes=30)).isoformat()
 
@@ -1540,6 +1543,17 @@ def _record_processed_row_outcome(
         partial_warnings.append(warning_msg)
         jobs_state.setdefault("warnings", []).append(warning_msg)
 
+    _persist_run_progress_throttled(sb, job_id, jobs_state)
+
+
+def _persist_run_progress_throttled(sb, job_id: str, jobs_state: dict) -> None:
+    """`_persist_run_progress`, no máximo uma vez a cada 2 s.
+
+    Um lugar só para o throttle porque dois caminhos renovam o heartbeat: a
+    publicação de cada linha e o callback da via de lotes de campos, que não
+    publica. Com o intervalo repetido nos dois, um ajuste num deixaria o outro
+    martelando `llm_runs` ou deixando o heartbeat envelhecer.
+    """
     now_ts = time.time()
     if now_ts - jobs_state["last_progress_persist"] >= 2.0:
         _persist_run_progress(sb, job_id, jobs_state)
@@ -1563,9 +1577,11 @@ class _RowPublisher:
     provider. RLock, e não Lock, porque o handler do callback segura o lock em
     volta do progresso e da publicação juntos, para que o heartbeat persistido
     dentro de `publish` já inclua a linha que acabou de chegar. Nada aqui supõe
-    que o callback venha de outra thread: num caso raro a biblioteca o chama da
-    própria thread que fez a chamada (o worker morreu antes de gravar a linha),
-    e essa thread não segura o lock enquanto espera o dataframeit.
+    que o callback venha de outra thread. Com `parallel_requests` <= 1 a
+    biblioteca usa o caminho sequencial e todo callback sai da própria thread
+    que chamou o dataframeit; no paralelo isso também acontece quando o worker
+    morre antes de gravar a linha. Essa thread não segura o lock enquanto
+    espera o dataframeit, então o RLock não chega a ser disputado por ela.
     """
 
     def __init__(
@@ -1760,19 +1776,42 @@ def _row_from_result(result, doc_id: str) -> dict:
 
 
 class _StreamingProgress:
-    """Progresso e ETA da chamada única, avançados a cada linha do callback.
+    """Progresso e ETA dos documentos depois do canário, avançados a cada linha
+    que o callback entrega.
 
-    ETA = latência média observada por documento ÷ parallel_requests ×
-    restantes: com a fila contínua há parallel_requests documentos em voo o
-    tempo todo, então a vazão é esse quociente. A latência vem do
+    `calls_per_doc` é o número de chamadas que cada documento atravessa: 1 na
+    chamada única, o número de lotes na via de lotes de campos. Ali o
+    documento só está completo quando o último lote dele volta, então o
+    progresso conta as linhas entregues somando todos os lotes e divide pelo
+    número de lotes. A divisão inteira mantém o progresso monótono, nunca
+    adianta documento que ainda tem lote por vir, e termina exatamente em
+    `docs` quando todas as linhas de todos os lotes chegaram.
+
+    ETA = latência média observada por linha ÷ parallel_requests × linhas
+    restantes: com a fila contínua há parallel_requests linhas em voo o tempo
+    todo, então a vazão é esse quociente. Na via de lotes as chamadas por lote
+    rodam uma depois da outra, e as linhas restantes incluem as dos lotes que
+    ainda não começaram, por isso a mesma conta vale. A latência vem do
     `elapsed_seconds` de cada linha, e não do relógio da run, que inclui o
-    canário e a rampa inicial dos workers. Sem lock próprio: só é chamado
-    dentro de `_RowPublisher.publish_guarded`, que já segura o do publicador.
+    canário e a rampa inicial dos workers. Sem lock próprio: quem chama segura
+    o lock do publicador (`_RowPublisher.lock`).
     """
 
-    def __init__(self, jobs_state: dict, total: int, parallel_requests: int):
+    def __init__(
+        self,
+        jobs_state: dict,
+        *,
+        docs: int,
+        parallel_requests: int,
+        calls_per_doc: int = 1,
+    ):
         self._jobs_state = jobs_state
-        self._total = total
+        # O progresso de partida é o do canário, já publicado. Guardado aqui,
+        # e não relido a cada linha, porque com `calls_per_doc` > 1 o valor
+        # escrito é derivado do total de linhas, não um incremento.
+        self._base = jobs_state["progress"]
+        self._calls_per_doc = calls_per_doc
+        self._total_rows = docs * calls_per_doc
         self._parallel_requests = max(1, parallel_requests)
         self._rows = 0
         self._latency_sum = 0.0
@@ -1780,11 +1819,11 @@ class _StreamingProgress:
     def advance(self, elapsed_seconds: float) -> None:
         self._rows += 1
         self._latency_sum += elapsed_seconds
-        done = self._jobs_state["progress"] + 1
-        self._jobs_state["progress"] = done
+        self._jobs_state["progress"] = self._base + self._rows // self._calls_per_doc
         mean_latency = self._latency_sum / self._rows
         self._jobs_state["eta_seconds"] = round(
-            mean_latency / self._parallel_requests * (self._total - done), 1
+            mean_latency / self._parallel_requests * (self._total_rows - self._rows),
+            1,
         )
 
 
@@ -1812,7 +1851,7 @@ def _stream_remaining_rows(
     """
     doc_ids = dict(zip(frame.index, frame["id"], strict=True))
     progress = _StreamingProgress(
-        jobs_state, jobs_state["progress"] + len(frame), parallel_requests
+        jobs_state, docs=len(frame), parallel_requests=parallel_requests
     )
     delivered: set[str] = set()
 
@@ -1825,7 +1864,16 @@ def _stream_remaining_rows(
     def on_row_done(result) -> None:
         publisher.publish_guarded(lambda: build_row(result))
 
-    result_frame = call(frame, model, on_row_done=on_row_done)
+    try:
+        result_frame = call(frame, model, on_row_done=on_row_done)
+    except Exception as exc:
+        # O `fatal` é a causa: depois dele toda linha foi descartada, e o que a
+        # biblioteca levantar em seguida é efeito ou ruído. Deixar a exceção
+        # dela subir apagaria de `llm_runs.error_message` o motivo real (a
+        # rodada que mudou, as cinco falhas seguidas de publicação).
+        if publisher.fatal is not None:
+            raise publisher.fatal from exc
+        raise
     if publisher.fatal is not None:
         raise publisher.fatal
     missing = result_frame[~result_frame["id"].isin(delivered)]
@@ -1882,9 +1930,14 @@ def _run_dataframeit_and_publish(
             **config.dfi_kwargs,
         )
 
-    def _call_chunks(frame: pd.DataFrame, chunks: list[list[str]]) -> pd.DataFrame:
+    def _call_chunks(
+        frame: pd.DataFrame, chunks: list[list[str]], on_row_done=None
+    ) -> pd.DataFrame:
         return _merge_chunk_frames(
-            [_call(frame, _submodel(model_class, names)) for names in chunks]
+            [
+                _call(frame, _submodel(model_class, names), on_row_done=on_row_done)
+                for names in chunks
+            ]
         )
 
     def _probe(names: list[str]) -> str | None:
@@ -1940,8 +1993,30 @@ def _run_dataframeit_and_publish(
         # comportamento anterior à fila contínua: chamadas por lote sobre o
         # frame inteiro, fusão e publicação no fim, com a fase 'saving'
         # anunciando na tela a espera pela gravação.
-        result = _call_chunks(rest, chunks)
-        jobs_state["progress"] += len(result)
+        #
+        # O callback existe aqui só para o heartbeat e o progresso, e não
+        # publica nada. Sem ele, entre o canário e o fim da última chamada
+        # por lote nada renovava `heartbeat_at`: numa run de centenas de
+        # documentos cada chamada por lote leva dezenas de minutos, mais que
+        # o corte de `mark_stale_runs_as_error`, e a run viva seria marcada
+        # como abandonada, liberando uma segunda run concorrente.
+        progress = _StreamingProgress(
+            jobs_state,
+            docs=len(rest),
+            parallel_requests=config.parallel_requests,
+            calls_per_doc=len(chunks),
+        )
+
+        def on_chunk_row_done(result) -> None:
+            with publisher.lock:
+                progress.advance(result.elapsed_seconds)
+                _persist_run_progress_throttled(sb, job_id, jobs_state)
+
+        result = _call_chunks(rest, chunks, on_row_done=on_chunk_row_done)
+        # Atribuição, e não incremento: o callback já avançou o progresso, e
+        # isto só fecha a conta se a biblioteca tiver deixado de chamá-lo em
+        # alguma linha.
+        jobs_state["progress"] = len(canary_result) + len(result)
         _persist_run_progress(sb, job_id, jobs_state)
         jobs_state.update(phase="saving", eta_seconds=None)
         _process_and_save_rows(publisher, result)
