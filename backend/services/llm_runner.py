@@ -1812,7 +1812,11 @@ async def run_llm(
             _persist_run_completion(sb, job_id, 0, 0)
             return
 
-        include_justifications = llm_kwargs.pop("include_justifications", False)
+        # Chave ausente conta como ligada, porque é isso que o DEFAULT da coluna
+        # projects.llm_kwargs, a higienização de saveLlmConfig e o Switch da tela
+        # dizem. Com False aqui, um projeto que nunca foi salvo depois da
+        # mudança de default mostraria justificativas ligadas e rodaria sem elas.
+        include_justifications = bool(llm_kwargs.pop("include_justifications", True))
         prepared_model = _prepare_llm_model(
             pydantic_code,
             project.get("pydantic_fields") or [],

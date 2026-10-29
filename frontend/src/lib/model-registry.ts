@@ -262,9 +262,9 @@ export const DEFAULT_THINKING_LEVEL = "high";
 /**
  * Ajusta os kwargs ao que o modelo aceita: descarta o parâmetro que ele recusa
  * e preenche o nível de raciocínio quando o modelo aceita e o valor falta.
- * Preenche também `include_justifications: true` quando a chave falta, porque
- * a tela e o backend tratam chave ausente como "desligado" e o default do
- * produto é pedir justificativa. As demais chaves (`parallel_requests`, os
+ * Preenche também `include_justifications: true` quando a chave falta, para
+ * que o dado gravado diga o que a tela e o backend já assumem da chave
+ * ausente (ligado). As demais chaves (`parallel_requests`, os
  * thresholds de run) passam intactas.
  *
  * A temperatura NÃO é preenchida: ausente, o provider aplica o default dele,

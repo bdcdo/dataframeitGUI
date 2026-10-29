@@ -1,7 +1,8 @@
 -- projects.llm_model: default passa a ser gemini-3.8-flash. projects.llm_kwargs:
 -- o default deixa de fixar temperatura, sobe o raciocinio para high e liga
--- include_justifications, que a tela (`!!`) e o backend (`pop(..., False)`)
--- leem como desligado quando a chave falta.
+-- include_justifications, que ate aqui a tela (`!!`) e o backend
+-- (`pop(..., False)`) liam como desligado quando a chave faltava; os dois
+-- passam a ler como ligado, e a chave gravada aqui deixa o dado explicito.
 --
 -- Motivacao: toda run saia com temperature 1.0, thinking_level medium e sem
 -- justificativas sem nenhum coordenador ter escolhido isso, porque o default
@@ -40,7 +41,9 @@ ALTER TABLE public.projects
 -- "Ausente" segue a leitura do TypeScript (`== null` e `!valor`): chave que
 -- nao existe, `null` dentro do jsonb e string vazia no nivel contam como
 -- ausentes. `jsonb_typeof` antes do cast evita que uma temperatura gravada
--- como texto aborte a migration inteira com "invalid input syntax".
+-- como texto aborte a migration inteira com "invalid input syntax", e a
+-- guarda de `object` evita que `||` transforme um array gravado por engano
+-- num array de objetos (nenhum escritor do app grava array; e so defesa).
 UPDATE public.projects
    SET llm_model = 'gemini-3.8-flash',
        llm_kwargs = (coalesce(llm_kwargs, '{}'::jsonb) - 'temperature')
@@ -50,6 +53,7 @@ UPDATE public.projects
                             ELSE '{"include_justifications": true}'::jsonb
                        END
  WHERE llm_provider = 'google_genai'
+   AND (llm_kwargs IS NULL OR jsonb_typeof(llm_kwargs) = 'object')
    AND llm_model = 'gemini-3.7-flash'
    AND coalesce(llm_kwargs->>'thinking_level', 'medium') IN ('medium', '')
    AND (
