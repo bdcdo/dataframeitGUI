@@ -813,28 +813,22 @@ DEFAULT_PARALLEL_REQUESTS = 20
 
 
 # Prazo, em segundos, de cada chamada ao modelo quando o projeto não manda
-# `timeout` em llm_kwargs. Sem ele, o `ChatGoogleGenerativeAI` do langchain fica
-# com `timeout=None` e espera para sempre: numa rodada de 268 documentos, uma
-# conexão com o Google ficou aberta e muda (nenhum lado mandava byte) e a
-# leitura nunca voltou, o que deixou a rodada parada por 49 minutos até
-# intervenção manual. Com prazo, a leitura pendurada vira exceção e cai no
-# retry do dataframeit e do langchain, que refaz a chamada numa conexão nova.
-# Os clientes da OpenAI e da Anthropic já trazem 600 s de default no SDK; o
-# valor explícito vale para todos e tira o Google da exceção.
+# `timeout` em llm_kwargs. Sem ele, o `ChatGoogleGenerativeAI` do langchain
+# espera para sempre (`timeout=None`): numa rodada de 268 documentos, uma
+# conexão muda com o Google deixou a rodada parada por 49 minutos. Com prazo,
+# a leitura pendurada vira exceção e cai no retry, que refaz a chamada numa
+# conexão nova. OpenAI e Anthropic já têm 600 s de default no SDK.
 #
-# 600 s porque a chamada mais longa medida em produção, no gemini-3.8-flash com
-# raciocínio alto, durou 175 s: o prazo fica com folga de mais de três vezes,
-# pega a conexão muda e não corta documento legítimo, que entraria em retry e
-# pagaria a chamada de novo. O nome `timeout` é aceito pelas classes de chat
-# dos três providers do registro (na OpenAI e na Anthropic como alias do campo
-# de prazo de cada uma); tests/test_llm_call_timeout.py constrói cada modelo do
-# registro com ele.
+# 600 s dá folga de mais de três vezes sobre a chamada mais longa medida em
+# produção (175 s, gemini-3.8-flash com raciocínio alto), para não cortar
+# documento legítimo, que entraria em retry e pagaria a chamada de novo.
+# tests/test_llm_call_timeout.py prova que cada provider do registro aceita o
+# nome `timeout`.
 #
 # O default mora aqui, e não no dataframeit, porque na biblioteca um modelo
-# lento (um modelo "Pro" de raciocínio longo, por exemplo) pode legitimamente
-# passar disso, e quem chama a biblioteca escolhe o prazo; o GUI conhece os
-# modelos que oferece e pode fixar o seu. A biblioteca já deixa `timeout` fora
-# da assinatura do checkpoint, então mudar este valor não invalida retomada.
+# lento pode legitimamente passar disso; o GUI conhece os modelos que oferece.
+# A biblioteca deixa `timeout` fora da assinatura do checkpoint, então mudar
+# este valor não invalida retomada.
 DEFAULT_LLM_CALL_TIMEOUT_SECONDS = 600
 
 
