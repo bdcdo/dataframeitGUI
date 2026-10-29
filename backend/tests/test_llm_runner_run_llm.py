@@ -321,7 +321,9 @@ def _deliver_rows(
     Fiel em dois pontos do contrato: exceção do callback vira
     `warnings.warn` e não interrompe as linhas seguintes, e com
     `callback_threads` as chamadas saem de várias threads ao mesmo tempo, como
-    saem dos workers da biblioteca. `row_hook(position)` roda antes de cada
+    saem dos workers da biblioteca. Sem `callback_threads` elas saem da thread
+    que chamou o dataframeit, que é também o caso raro da biblioteca paralela
+    em que o worker morre antes de gravar a linha. `row_hook(position)` roda antes de cada
     callback, com a chamada do dataframeit ainda em curso, e é por ele que um
     teste observa o estado no meio da rodada.
     """
@@ -857,9 +859,9 @@ def test_run_llm_linha_do_callback_publica_o_mesmo_que_o_laco_do_frame():
     Mesma rodada do fake, lida pelos dois caminhos: o frame que o dataframeit
     devolve, como o canário e a via de lotes publicam, e os RowResult do
     callback, convertidos por `_row_from_result`. As linhas cobrem os casos
-    em que a conversão poderia divergir: completa, parcial, erro do provider
-    (values vazio) e sucesso após retry (texto na coluna de erro com status
-    'processed').
+    em que a conversão poderia divergir: sucesso após retry (texto na coluna
+    de erro com success=True), parcial, erro do provider e texto ausente (os
+    dois com success=False e values vazio).
     """
     docs = _docs(4)
     row_specs = {
@@ -876,7 +878,9 @@ def test_run_llm_linha_do_callback_publica_o_mesmo_que_o_laco_do_frame():
     prepared = _prepare_llm_model(PYDANTIC_CODE, [], True)
     resultados: list[RowResult] = []
     fake = _make_fake_dataframeit(
-        row_specs, errors={"doc-2": "[Erro não-recuperável] boom"}, retry_success=True
+        row_specs,
+        errors={"doc-2": "[Erro não-recuperável] boom", "doc-3": "Texto ausente"},
+        retry_success=True,
     )
     devolvido = fake(
         frame.copy(), prepared.model_class, "prompt", on_row_done=resultados.append
@@ -915,15 +919,42 @@ def test_run_llm_linha_do_callback_publica_o_mesmo_que_o_laco_do_frame():
             doc_id = frame.at[resultado.index, "id"]
             publisher.publish(_row_from_result(resultado, doc_id))
 
+    # A linha convertida é a própria linha do frame, coluna a coluna, e não só
+    # algo que publica igual: hoje a publicação não lê o status, mas o
+    # `_row_error` lê, e uma conversão que errasse o status passaria pela
+    # comparação de payloads sem ser vista.
+    for resultado in resultados:
+        linha = _row_from_result(resultado, frame.at[resultado.index, "id"])
+        do_frame = devolvido.loc[resultado.index]
+        assert linha == {coluna: do_frame[coluna] for coluna in linha}
+        # Campo ausente da linha convertida é vazio no frame. O pandas guarda
+        # esse vazio como NaN ou None, e o runner trata os dois igual
+        # (`_is_nan` em `_extract_answers_from_row`).
+        assert all(
+            pd.isna(do_frame[campo])
+            for campo in prepared.model_class.model_fields
+            if campo not in linha
+        )
+
     esperado = publica(pelo_frame)
     obtido = publica(pelo_callback)
     assert len(esperado[0]) == 4
     assert obtido == esperado
-    # E os quatro casos estão de fato presentes, para a igualdade valer algo.
+    # E os casos estão de fato presentes, para a igualdade valer algo.
     por_doc = {r["document_id"]: r for r in esperado[0]}
-    assert por_doc["doc-1"]["is_partial"] is True
-    assert por_doc["doc-2"]["llm_error"] is not None
+    # Sucesso após retry: `error` preenchido com success=True. O status sai de
+    # `success`, então a resposta é completa, não uma falha.
+    sucesso_com_retry = next(r for r in resultados if r.index == 0)
+    assert sucesso_com_retry.success is True
+    assert sucesso_com_retry.error == "Sucesso após 1 retry(s)"
+    assert por_doc["doc-0"]["is_partial"] is False
+    assert set(por_doc["doc-0"]["answers"]) == {"campo_a", "campo_b", "campo_c"}
     assert por_doc["doc-0"]["justifications"] == {"campo_a": "porque sim"}
+    assert por_doc["doc-1"]["is_partial"] is True
+    assert "boom" in por_doc["doc-2"]["llm_error"]
+    # Texto vazio: a biblioteca chama o callback com success=False.
+    assert "Texto ausente" in por_doc["doc-3"]["llm_error"]
+    assert por_doc["doc-3"]["answers"] == {}
 
 
 def test_run_llm_publica_pelo_frame_a_linha_que_o_callback_nao_entregou(

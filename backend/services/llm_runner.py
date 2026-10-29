@@ -1562,7 +1562,10 @@ class _RowPublisher:
     publicar leva milissegundos, e cada documento leva dezenas de segundos no
     provider. RLock, e não Lock, porque o handler do callback segura o lock em
     volta do progresso e da publicação juntos, para que o heartbeat persistido
-    dentro de `publish` já inclua a linha que acabou de chegar.
+    dentro de `publish` já inclua a linha que acabou de chegar. Nada aqui supõe
+    que o callback venha de outra thread: num caso raro a biblioteca o chama da
+    própria thread que fez a chamada (o worker morreu antes de gravar a linha),
+    e essa thread não segura o lock enquanto espera o dataframeit.
     """
 
     def __init__(
