@@ -1,0 +1,62 @@
+name: Vigia das Machines (Fly.io)
+
+# As duas apps ficam pausadas quando ninguém as usa (auto_stop "suspend"). Uma
+# Machine que não volta derruba a app até alguém agir; este vigia age sozinho.
+# Lógica e motivo em .github/scripts/fly-vigia.sh.
+on:
+  schedule:
+    # Uma vez por hora, com sonda HTTP. A sonda acorda as apps, então ela não
+    # roda a cada passada: cada acordar custa alguns minutos de máquina ligada.
+    - cron: '7 * * * *'
+    # Nas outras passadas, só estado e eventos das Machines, sem tocar as apps.
+    - cron: '22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Vigia do frontend
+    runs-on: ubuntu-latest
+    # Mesma fila do deploy do frontend: durante um bluegreen há Machines
+    # transitórias que o vigia não pode tomar por presas.
+    concurrency:
+      group: fly-deploy-frontend
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # Pin a SHA (tag 1.6) por supply-chain safety, como nos workflows de deploy.
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Conferir e consertar Machines
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
+          VIGIA_MODO: ${{ github.event.schedule == '22,37,52 * * * *' && 'eventos' || 'probe' }}
+        run: |
+          if [[ "$VIGIA_MODO" == "probe" ]]; then
+            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-frontend https://dataframeit.com.br/api/health probe
+          else
+            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-frontend https://dataframeit.com.br/api/health
+          fi
+
+  api:
+    name: Vigia da API
+    runs-on: ubuntu-latest
+    concurrency:
+      group: fly-deploy-backend
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Conferir e consertar Machines
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          VIGIA_MODO: ${{ github.event.schedule == '22,37,52 * * * *' && 'eventos' || 'probe' }}
+        run: |
+          if [[ "$VIGIA_MODO" == "probe" ]]; then
+            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-api https://gui-analise-sistematica-api.fly.dev/health probe
+          else
+            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-api https://gui-analise-sistematica-api.fly.dev/health
+          fi

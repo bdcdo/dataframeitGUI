@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from config import settings
 from routes.llm_routes import router as llm_router
@@ -15,6 +15,14 @@ from services.auto_review_reconciliation import (
     assert_auto_review_reconciliation_capability,
     run_auto_review_reconciliation_wakeup_loop,
 )
+from services.job_keepalive import (
+    KEEPALIVE_PATH,
+    TOKEN_HEADER,
+    is_keepalive_token,
+    keepalive_stream,
+    run_job_keepalive_loop,
+)
+from services.llm_runner import active_job_count
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +59,14 @@ async def lifespan(app: "FastAPI"):
             name="auto-review-reconciliation-wakeup",
         )
 
+    keepalive_task = asyncio.create_task(run_job_keepalive_loop(), name="job-keepalive")
+
     try:
         yield
     finally:
+        keepalive_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await keepalive_task
         if reconciliation_task is not None:
             reconciliation_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -135,7 +148,18 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 
 async def health():
-    return {"status": "ok"}
+    # `active_jobs` é o que o workflow de deploy lê para esperar o fim das runs
+    # antes de trocar a Machine (fly-deploy.yml). Só a contagem: nada de id de
+    # projeto ou job numa rota pública.
+    return {"status": "ok", "active_jobs": active_job_count()}
+
+
+async def job_keepalive(request: Request):
+    # 404, e não 401: a rota só existe para o próprio processo, e um token
+    # errado não deve sinalizar que ela está ali.
+    if not is_keepalive_token(request.headers.get(TOKEN_HEADER)):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return StreamingResponse(keepalive_stream(), media_type="text/plain")
 
 
 # Docs (/docs, /redoc, /openapi.json) desligados por padrão — fail-safe. Num
@@ -190,6 +214,7 @@ def create_app(*, enable_docs: bool = settings.enable_docs) -> FastAPI:
     )
 
     app.get("/health")(health)
+    app.get(KEEPALIVE_PATH, include_in_schema=False)(job_keepalive)
 
     return app
 

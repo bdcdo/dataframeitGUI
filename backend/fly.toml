@@ -2,8 +2,9 @@ app = "gui-analise-sistematica-api"
 primary_region = "gru"
 
 # Dar tempo (5min, maximo permitido pelo Fly) para BackgroundTasks LLM em
-# andamento terminarem antes do SIGKILL durante deploys ou restarts.
-# Default do Fly e 5s, o que matava jobs no meio.
+# andamento terminarem antes do SIGKILL em restarts. Default do Fly e 5s, o que
+# matava jobs no meio. Em deploy, o workflow espera as runs terminarem antes de
+# trocar a Machine (fly-deploy.yml), porque run de horas nao cabe em 5 min.
 kill_timeout = "5m"
 
 [build]
@@ -24,14 +25,19 @@ kill_timeout = "5m"
 [http_service]
   internal_port = 8000
   force_https = true
-  # Manter ao menos 1 maquina rodando: o backend roda LLM em BackgroundTasks
-  # apos retornar o HTTP response. Com auto_stop + min=0 (config anterior), o
-  # Fly considerava a maquina ociosa entre requests e a adormecia no meio do
-  # processamento, matando o job. Alem disso, o cold start (imagem pesada com
-  # pandas + langchain) estourava o timeout do proxy do Fly e gerava 502
-  # [PU02] na primeira request apos a maquina dormir.
-  auto_stop_machines = "off"
-  min_machines_running = 1
+  # Pausa quando ninguém usa (suspend), como o frontend: Machine suspensa
+  # mantém a reserva de CPU no host e volta em centenas de milissegundos (262 ms
+  # medidos em 02/11/2026), então nem o cold start de pandas + langchain que
+  # estourava o proxy (502 PU02, #111) nem a falta de CPU no host que derrubou o
+  # frontend em 2026-08-10 entram no caminho. O vigia agendado
+  # (.github/workflows/fly-vigia.yml) cobre a Machine que mesmo assim não volte.
+  #
+  # Job de LLM roda em BackgroundTasks depois que o POST /run já respondeu, sem
+  # tráfego que o proxy veja; quem impede a pausa no meio dele é o stream que o
+  # processo abre para si mesmo enquanto houver job (services/job_keepalive.py).
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
 
   # Health check: se o processo travar/sair (OOM, deadlock), o Fly reinicia
   # automaticamente. O endpoint /health esta em main.py:23.

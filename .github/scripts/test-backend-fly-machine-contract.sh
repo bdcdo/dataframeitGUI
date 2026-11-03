@@ -26,6 +26,8 @@ cat >"$tmp_dir/bin/sleep" <<'EOF'
 exit 0
 EOF
 chmod +x "$tmp_dir/bin/sleep"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp_dir/bin/curl"
+chmod +x "$tmp_dir/bin/curl"
 
 machine() {
   local state="${1:-started}"
@@ -33,8 +35,10 @@ machine() {
   local cpu_kind="${3:-shared}"
   local cpus="${4:-1}"
   local memory_mb="${5:-512}"
-  printf '[{"id":"machine-1","state":"%s","region":"%s","config":{"guest":{"cpu_kind":"%s","cpus":%s,"memory_mb":%s}}}]' \
-    "$state" "$region" "$cpu_kind" "$cpus" "$memory_mb"
+  local autostop="${6:-\"suspend\"}"
+  local autostart="${7:-true}"
+  printf '[{"id":"machine-1","state":"%s","region":"%s","config":{"guest":{"cpu_kind":"%s","cpus":%s,"memory_mb":%s},"services":[{"internal_port":8000,"autostop":%s,"autostart":%s}]}}]' \
+    "$state" "$region" "$cpu_kind" "$cpus" "$memory_mb" "$autostop" "$autostart"
 }
 
 run_checker() {
@@ -76,7 +80,12 @@ for invalid_machine in \
   "$(machine started iad)" \
   "$(machine started gru performance)" \
   "$(machine started gru shared 2)" \
-  "$(machine started gru shared 1 1024)"
+  "$(machine started gru shared 1 1024)" \
+  "$(machine started gru shared 1 512 false)" \
+  "$(machine started gru shared 1 512 '"stop"')" \
+  "$(machine started gru shared 1 512 '"suspend"' false)" \
+  "$(machine | jq -c '.[0].config.services = []')" \
+  "$(machine | jq -c 'del(.[0].config.services)')"
 do
   MACHINES_JSON="$invalid_machine"
   expect_failure run_checker post
@@ -98,12 +107,23 @@ ruby -ryaml -e '
   steps = workflow.fetch("jobs").fetch("deploy").fetch("steps")
   runs = steps.filter_map { |step| step["run"] }
   pre = runs.index { |run| run.include?("check-backend-fly-machines.sh pre") }
+  # A espera pelas runs vem antes do deploy: trocar a Machine no meio de uma
+  # run de horas mata o job, e o kill_timeout de 5 min não a cobre.
+  wait_jobs = runs.index { |run| run.include?("active_jobs") }
+  abort("workflow sem esperar as runs antes do deploy") unless wait_jobs
   deploy = runs.index { |run| run.include?("flyctl deploy") && run.include?("--ha=false") }
   post = runs.index { |run| run.include?("check-backend-fly-machines.sh post") }
   abort("workflow sem ordem preflight -> deploy -> postflight") unless pre && deploy && post && pre < deploy && deploy < post
+  abort("a espera pelas runs precisa vir antes do deploy") unless wait_jobs < deploy
 ' "$workflow"
 
 grep -Fq 'size = "shared-cpu-1x"' "$fly_config"
 grep -Fq 'memory = "512mb"' "$fly_config"
+# Mesma comparação por linha inteira, sem comentários, do contrato do frontend:
+# o arquivo cita em prosa formas que estas asserções rejeitam.
+fly_directives="$(sed 's/#.*//; s/[[:space:]]*$//; s/^[[:space:]]*//' "$fly_config")"
+for directive in 'auto_stop_machines = "suspend"' 'auto_start_machines = true' 'min_machines_running = 0'; do
+  grep -Fxq "$directive" <<<"$fly_directives" || { echo "backend/fly.toml sem a diretiva esperada: $directive" >&2; exit 1; }
+done
 
 echo "Contrato de Machines do backend validado."

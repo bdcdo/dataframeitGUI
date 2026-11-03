@@ -95,16 +95,28 @@ repos:
         pass_filenames: false
         require_serial: true
 
-      # O frontend e always-on desde 2026-08-10, quando a Machine parou por
-      # ociosidade e nao voltou (o host de gru estava sem CPU livre), e roda
-      # com duas Machines desde o #664, para que perder um host nao derrube a
-      # producao. Cada deploy deve convergir para essa cardinalidade e validar
-      # saude e autostop desligado das DUAS — no fly.toml e na config aplicada.
+      # O frontend pausa (suspend) quando ocioso, e nao para (stop): em
+      # 2026-08-10 a Machine parada nao voltou porque o host de gru estava sem
+      # CPU livre, e a suspensa mantem a reserva no host. Roda com duas Machines
+      # desde o #664. Cada deploy deve convergir para essa cardinalidade e
+      # validar forma, autostop "suspend" e saude das DUAS, no fly.toml e na
+      # config aplicada.
       - id: frontend-fly-machine-contract
         name: frontend Fly machine contract
         entry: .github/scripts/test-frontend-fly-machine-contract.sh
         language: system
         files: ^(\.github/(workflows/frontend-fly-deploy\.yml|scripts/(check|test)-frontend-fly-machine.*\.sh)|frontend/fly\.toml)$
+        pass_filenames: false
+        require_serial: true
+
+      # Vigia agendado que recria Machine presa nas duas apps. O teste simula
+      # flyctl e curl e confere quando o vigia age, e que o modo sem sonda
+      # nunca acorda a app.
+      - id: fly-vigia
+        name: Fly machine watchdog
+        entry: .github/scripts/test-fly-vigia.sh
+        language: system
+        files: ^\.github/(workflows/fly-vigia\.yml|scripts/(test-)?fly-vigia\.sh)$
         pass_filenames: false
         require_serial: true
 

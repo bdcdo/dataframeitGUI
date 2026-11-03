@@ -31,17 +31,17 @@ chmod +x "$tmp_dir/bin/sleep"
 # de id igual, o caso "uma Machine saudável e outra não" seria indistinguível de
 # "as duas saudáveis" e o teste de health passaria a ser vácuo.
 #
-# autostop/autostart sao emitidos como JSON cru (nao entre aspas) porque o
-# flyctl serializa "off" como o booleano false; passar a string "stop" aqui
-# reproduz a outra forma que a API aceita para o mesmo campo.
+# autostop/autostart sao emitidos como JSON cru porque o mesmo campo aceita
+# string ("suspend", "stop") e booleano (false para "off"); cada caso passa a
+# forma literal que o flyctl devolveria.
 machine() {
   local id="${1:-machine-1}"
   local state="${2:-started}"
   local region="${3:-gru}"
   local cpu_kind="${4:-shared}"
   local cpus="${5:-1}"
-  local memory_mb="${6:-512}"
-  local autostop="${7:-false}"
+  local memory_mb="${6:-1024}"
+  local autostop="${7:-\"suspend\"}"
   local autostart="${8:-true}"
   printf '{"id":"%s","state":"%s","region":"%s","config":{"guest":{"cpu_kind":"%s","cpus":%s,"memory_mb":%s},"services":[{"internal_port":3000,"autostop":%s,"autostart":%s}]}}' \
     "$id" "$state" "$region" "$cpu_kind" "$cpus" "$memory_mb" "$autostop" "$autostart"
@@ -125,11 +125,11 @@ for invalid_machine in \
   "$(machine machine-2 started iad)" \
   "$(machine machine-2 started gru performance)" \
   "$(machine machine-2 started gru shared 2)" \
-  "$(machine machine-2 started gru shared 1 1024)" \
-  "$(machine machine-2 started gru shared 1 512 true)" \
-  "$(machine machine-2 started gru shared 1 512 '"stop"')" \
-  "$(machine machine-2 started gru shared 1 512 '"suspend"')" \
-  "$(machine machine-2 started gru shared 1 512 false false)" \
+  "$(machine machine-2 started gru shared 1 512)" \
+  "$(machine machine-2 started gru shared 1 1024 true)" \
+  "$(machine machine-2 started gru shared 1 1024 '"stop"')" \
+  "$(machine machine-2 started gru shared 1 1024 false)" \
+  "$(machine machine-2 started gru shared 1 1024 '"suspend"' false)" \
   "$(machine machine-2 | jq -c '.config.services = []')" \
   "$(machine machine-2 | jq -c 'del(.config.services)')"
 do
@@ -141,11 +141,23 @@ done
 for invalid_machine in \
   "$(machine machine-1 stopped)" \
   "$(machine machine-1 started iad)" \
-  "$(machine machine-1 started gru shared 1 512 true)"
+  "$(machine machine-1 started gru shared 1 1024 false)"
 do
   MACHINES_JSON="$(machines "$invalid_machine" "$(machine machine-2)")"
   expect_failure run_checker post
 done
+
+# O proxy pode pausar uma Machine ociosa entre o bluegreen e o postflight:
+# suspensa passa, e o health se mede só na iniciada. Todas suspensas reprova,
+# porque aí nada provou que a imagem nova sobe.
+MACHINES_JSON="$(machines "$(machine machine-1)" "$(machine machine-2 suspended)")"
+CHECKS_JSON="$(checks_for machine-1)"
+run_checker post >/dev/null
+CHECKS_JSON="$(checks_for machine-2)"
+expect_failure run_checker post
+MACHINES_JSON="$(machines "$(machine machine-1 suspended)" "$(machine machine-2 suspended)")"
+CHECKS_JSON="$two_healthy"
+expect_failure run_checker post
 
 # Health por id. O caso decisivo é o mapa que cobre só a primeira Machine: é o
 # único que reprova uma implementação que leia o id de .[0] e nunca olhe a
@@ -206,15 +218,18 @@ assert_directive() {
 }
 
 assert_directive 'strategy = "bluegreen"'
-# Always-on é asserido aqui, e não só documentado no fly.toml, porque a volta
-# silenciosa do scale-to-zero foi o que tirou o site do ar em 2026-08-10: a
-# Machine parou por ociosidade e o host de gru não tinha CPU livre para
-# reacendê-la. Reintroduzir "stop"/0 tem que passar por esta linha.
-assert_directive 'auto_stop_machines = "off"'
+# Suspend, e não "stop", é asserido aqui, e não só documentado no fly.toml: foi
+# o "stop" que tirou o site do ar em 2026-08-10, porque a Machine parada perdeu
+# a vez no host de gru sem CPU livre. Voltar a ele tem que passar por esta linha.
+assert_directive 'auto_stop_machines = "suspend"'
 assert_directive 'auto_start_machines = true'
-assert_directive 'min_machines_running = 2'
-assert_directive 'swap_size_mb = 512'
+assert_directive 'min_machines_running = 0'
 assert_directive 'size = "shared-cpu-1x"'
-assert_directive 'memory = "512mb"'
+assert_directive 'memory = "1gb"'
+# Suspend não aceita swap: com ele de volta, o Fly recusa pausar a Machine.
+if grep -Eq '^swap_size_mb[[:space:]]*=' <<<"$fly_directives"; then
+  echo "frontend/fly.toml com swap: suspend exige Machine sem swap" >&2
+  exit 1
+fi
 
 echo "Contrato de Machines do frontend validado."

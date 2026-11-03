@@ -25,6 +25,27 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin a SHA (tag 1.6) por supply-chain safety — @master é floating ref.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      - name: Esperar as runs de LLM em curso terminarem
+        # Trocar a Machine no meio de uma run mata o job, e o kill_timeout de
+        # 5 min não cobre runs de horas. O /health informa quantas runs estão
+        # ativas; o deploy espera zerar, por até 4 h, e segue se a API não
+        # responder, porque API fora do ar não tem run em curso. Versão sem o
+        # campo (anterior a esta espera) conta como zero.
+        timeout-minutes: 250
+        run: |
+          for ((attempt = 1; attempt <= 240; attempt += 1)); do
+            if ! active_jobs="$(curl -fsS --max-time 60 https://gui-analise-sistematica-api.fly.dev/health | jq -er '.active_jobs // 0')"; then
+              echo "API sem resposta legível; nenhuma run em curso para esperar."
+              exit 0
+            fi
+            if [[ "$active_jobs" == "0" ]]; then
+              echo "Nenhuma run em curso."
+              exit 0
+            fi
+            echo "$active_jobs run(s) em curso; nova consulta em 60 s (tentativa $attempt/240)."
+            sleep 60
+          done
+          echo "Runs ainda em curso depois de 4 h; o deploy segue e pode interromper a run."
       - name: Recusar cardinalidade divergente antes do deploy
         run: bash .github/scripts/check-backend-fly-machines.sh pre
         env:

@@ -1,3 +1,4 @@
+import { ApiWarmup } from "@/components/shell/ApiWarmup";
 import { requirePageAuthUser } from "@/lib/page-auth";
 
 export default async function AppLayout({
@@ -9,5 +10,10 @@ export default async function AppLayout({
   // layouts e pages filhos compartilham uma única resolução por request.
   await requirePageAuthUser();
 
-  return <>{children}</>;
+  return (
+    <>
+      <ApiWarmup />
+      {children}
+    </>
+  );
 }

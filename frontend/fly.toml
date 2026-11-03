@@ -8,10 +8,6 @@
 app = "gui-analise-sistematica-frontend"
 primary_region = "gru"
 
-# Swap como amortecedor de picos de memoria: o next-server chegava a ~152 MB
-# de RSS sob trafego real e era OOM-killed nas VMs de 256 MB (2026-07-02).
-swap_size_mb = 512
-
 [build]
   dockerfile = "Dockerfile"
 
@@ -31,37 +27,24 @@ swap_size_mb = 512
 [http_service]
   internal_port = 3000
   force_https = true
-  # Always-on: rollback do scale-to-zero habilitado no #644, na forma que
-  # aquele PR já previa ("restaurar auto_stop_machines = off e
-  # min_machines_running = 1, mantendo uma única Machine").
+  # Pausa quando ninguém usa, e não desligamento. Em 2026-08-10 o scale-to-zero
+  # com "stop" (#644) derrubou o site: a Machine parada não conseguiu voltar
+  # porque o host de gru onde ela estava presa ficou sem CPU livre ("insufficient
+  # CPUs available ... on the current host"), e o proxy insistiu nela. Machine
+  # suspensa, segundo a documentação do Fly, continua com CPU e memória
+  # reservadas no host, então acordá-la não disputa capacidade; e volta em
+  # centenas de milissegundos em vez de bootar o Next. Para o resto (snapshot
+  # perdido, host em manutenção, crash em loop), o vigia agendado em
+  # .github/workflows/fly-vigia.yml clona a Machine presa em outro host.
   #
-  # Em 2026-08-10 a Machine parou por ociosidade e não conseguiu voltar: cada
-  # tentativa de acordá-la falhou com "could not reserve resource for machine:
-  # insufficient CPUs available to fulfill request on the current host" — o
-  # host de gru onde ela estava alocada ficou sem CPU livre. Como o proxy só
-  # tenta reacender sob demanda, o resultado foi um loop de start/crash e o
-  # site inteiro fora do ar até a Machine ser recriada em outro host.
-  #
-  # O custo do scale-to-zero, portanto, não é apenas o cold start medido: é
-  # depender da capacidade do host no instante de acordar. Com a Machine
-  # sempre ligada, esse instante deixa de existir no caminho crítico.
-  #
-  # auto_start_machines segue true de propósito: é a rede que reacende a
-  # Machine se ela parar por outro motivo (restart, manutenção do host).
-  #
-  auto_stop_machines = "off"
+  # Suspend exige Machine sem swap e com até 2 GB, por isso o swap saiu e a
+  # memória foi para 1 GB (ver a seção vm abaixo).
+  auto_stop_machines = "suspend"
   auto_start_machines = true
-  # Duas Machines (#664). Manter a Machine acesa tira o "acordar" do caminho
-  # crítico, mas não desfaz a dependência de um único host: se ele reiniciar,
-  # entrar em manutenção ou ficar sem CPU no instante em que a Machine precise
-  # ser recriada, a produção cai de novo e não volta sozinha.
-  #
-  # Com auto_stop_machines = "off" este valor é inerte — min_machines_running
-  # só age quando o autostop está ligado. Ele fica aqui como declaração de
-  # intenção e como trava contra um retorno silencioso do scale-to-zero com
-  # cardinalidade 1. Quem de fato cria e mantém as duas é o `flyctl scale
-  # count 2` do workflow, verificado pelo postflight fail-closed.
-  min_machines_running = 2
+  # Duas Machines (#664) continuam: com tráfego baixo o proxy só acorda uma, e a
+  # segunda, pausada, custa só disco e é a alternativa que não depende do mesmo
+  # host. Quem as cria é o `flyctl scale count 2` do workflow.
+  min_machines_running = 0
 
   [[http_service.checks]]
     grace_period = "10s"
@@ -71,8 +54,10 @@ swap_size_mb = 512
     path = "/api/health"
 
 [[vm]]
-  # 512 MB persiste o `fly scale memory 512` de 2026-07-02: sem esta secao,
-  # um `fly deploy` futuro recriaria as maquinas com o default de 256 MB e
-  # o OOM-kill do next-server voltaria.
+  # 1 GB sem swap. Com 512 MB o next-server chegava a 467 MB usados mais 172 MB
+  # de swap (Prometheus do Fly, 22/10 a 02/11/2026), e as duas Machines
+  # abortaram (exit 134) em 01/11. Suspend não aceita swap, então a folga tem de
+  # vir de memória. Sem esta seção, um deploy recriaria as Machines com o
+  # default de 256 MB.
   size = "shared-cpu-1x"
-  memory = "512mb"
+  memory = "1gb"
