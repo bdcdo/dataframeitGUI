@@ -12,8 +12,8 @@
 #     Machine que não está de pé;
 #   - pela sonda HTTP, só no modo "probe": se a URL de health não responde, o
 #     vigia manda religar cada Machine fora de "started", e a presa é a que
-#     recusa o start. A sonda acorda a app, por isso o workflow a roda uma vez
-#     por hora e não a cada passada.
+#     recusa o start por falta de capacidade no host. A sonda acorda a app, por
+#     isso o workflow a roda uma vez por hora e não a cada passada.
 set -euo pipefail
 
 app="${1:-}"
@@ -96,22 +96,52 @@ if [[ "$mode" == "probe" ]]; then
     # suspensa, legitimamente; e uma falha de rede do runner deixa a sonda
     # vermelha sem nada errado no Fly. O que separa a pausada da presa é
     # mandar religá-la: a de 2026-08-10 recusava o start com "could not
-    # reserve resource ... insufficient CPUs available". Só a que recusa é
-    # recriada. O `</dev/null` impede o flyctl de consumir a lista que
+    # reserve resource for machine: insufficient CPUs available".
+    #
+    # Só essa recusa condena a Machine. O start também falha por 5xx, timeout
+    # ou 429 da API do Fly, por lease ocupado (deploy ou `machine update` fora
+    # da fila do Actions) e por estado transitório (suspending, stopping,
+    # replacing); em todos esses a Machine pode estar saudável, e recriá-la
+    # seria derrubar a app para consertar nada. Por isso o padrão de capacidade
+    # é casado no stderr, sem diferenciar maiúsculas, e qualquer outra falha só
+    # vai para o summary. O stderr é repassado ao log do job para o diagnóstico
+    # não se perder. O `</dev/null` impede o flyctl de consumir a lista que
     # alimenta o `read`.
     not_started_ids="$(list_machines | jq -r '.[] | select(.state != "started") | .id')"
+    start_stderr="$(mktemp)"
+    trap 'rm -f "$start_stderr"' EXIT
     start_failed_ids=""
+    start_accepted=""
+    start_failed_other=""
     while read -r machine_id; do
       [[ -n "$machine_id" ]] || continue
-      if ! flyctl machine start "$machine_id" -a "$app" </dev/null; then
+      if flyctl machine start "$machine_id" -a "$app" </dev/null 2>"$start_stderr"; then
+        start_accepted=1
+        cat "$start_stderr" >&2
+        continue
+      fi
+      cat "$start_stderr" >&2
+      if grep -Eqi 'insufficient|could not reserve|capacity' "$start_stderr"; then
         start_failed_ids+="$machine_id"$'\n'
+      else
+        start_failed_other=1
+        summary "$app: o start da Machine $machine_id falhou por motivo que não é capacidade do host; nada recriado por isso."
       fi
     done <<<"$not_started_ids"
-    # Todas as Machines iniciam (ou já estavam de pé) e o health segue sem
-    # responder: o defeito está na aplicação, na borda ou na rede do runner,
-    # e recriar Machine não o resolve. O vigia só avisa, falhando o job.
+    # Nenhuma Machine condenada: recriar não resolve, e o vigia só avisa,
+    # falhando o job. Se algum start foi aceito, a sonda roda de novo para
+    # separar dois casos. Health verde quer dizer que o start manual trouxe a
+    # app de volta, e mesmo assim é anomalia, porque o proxy devia tê-la
+    # religado sozinho na primeira sonda. Health ainda vermelho com as Machines
+    # iniciando põe o defeito na aplicação, na borda ou na rede do runner.
     if [[ -z "$start_failed_ids" && -z "$stuck_ids" ]]; then
-      summary "$app: health não respondeu e as Machines iniciam; defeito fora do host, nada recriado."
+      if [[ -n "$start_accepted" ]] && probe; then
+        summary "$app: health voltou depois do start manual; o proxy não religou a app sozinho. Nada recriado."
+      elif [[ -n "$start_failed_other" ]]; then
+        summary "$app: health não respondeu e nenhuma Machine recusou o start por capacidade; nada recriado."
+      else
+        summary "$app: health não respondeu e as Machines iniciam; defeito fora do host, nada recriado."
+      fi
       exit 1
     fi
     stuck_ids="$(printf '%s\n%s\n' "$stuck_ids" "$start_failed_ids" | sed '/^$/d' | sort -u)"

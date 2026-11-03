@@ -26,8 +26,14 @@ cat >"$tmp_dir/bin/sleep" <<'EOF'
 exit 0
 EOF
 chmod +x "$tmp_dir/bin/sleep"
-printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp_dir/bin/curl"
+# O curl falso registra a chamada: o postflight acorda a Machine antes de
+# listá-la, e o preflight não precisa tocar a app.
+cat >"$tmp_dir/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$CURL_LOG"
+EOF
 chmod +x "$tmp_dir/bin/curl"
+CURL_LOG="$tmp_dir/curl.log"
 
 machine() {
   local state="${1:-started}"
@@ -46,6 +52,7 @@ run_checker() {
     "PATH=$tmp_dir/bin:$PATH" \
     MACHINES_JSON="$MACHINES_JSON" \
     CHECKS_JSON="$CHECKS_JSON" \
+    CURL_LOG="$CURL_LOG" \
     bash "$checker" "$1"
 }
 
@@ -73,7 +80,17 @@ expect_failure run_checker pre
 # O postflight exige a topologia versionada e ao menos um health check verde.
 MACHINES_JSON="$(machine)"
 CHECKS_JSON='{"machine-1":[{"name":"servicecheck-00-http-8000","status":"passing"}]}'
+: >"$CURL_LOG"
+run_checker pre >/dev/null
+if [[ -s "$CURL_LOG" ]]; then
+  echo "o preflight não deveria acordar a app" >&2
+  exit 1
+fi
 run_checker post >/dev/null
+if ! grep -Fq "https://gui-analise-sistematica-api.fly.dev/health" "$CURL_LOG"; then
+  echo "o postflight precisa acordar a Machine antes de listá-la" >&2
+  exit 1
+fi
 
 for invalid_machine in \
   "$(machine stopped)" \
