@@ -35,7 +35,10 @@ _RETRY_SECONDS = 5.0
 
 
 def is_keepalive_token(value: str | None) -> bool:
-    return value is not None and hmac.compare_digest(value, _TOKEN)
+    # Compara bytes, e não str: `hmac.compare_digest` levanta TypeError com str
+    # que tenha caractere fora do ASCII, e o Starlette decodifica o header como
+    # latin-1, então um header com byte alto viraria 500 em vez do 404 da rota.
+    return value is not None and hmac.compare_digest(value.encode(), _TOKEN.encode())
 
 
 async def keepalive_stream() -> AsyncIterator[bytes]:

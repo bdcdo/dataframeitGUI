@@ -20,6 +20,18 @@ if [[ "$mode" != "pre" && "$mode" != "post" ]]; then
   exit 64
 fi
 
+# As Machines pausam sozinhas quando ociosas (auto_stop "suspend"), e entre o
+# fim do bluegreen e este passo o proxy pode ter pausado as duas; o postflight
+# então reprovaria por não achar Machine iniciada para medir o health. Uma
+# requisição ao health antes de listar acorda ao menos uma, como o checker do
+# backend faz. Vai ao hostname .fly.dev, que testa borda e Machines sem
+# depender do DNS do domínio próprio. A falha aqui não decide nada: o estado e o
+# health check abaixo é que decidem. Só no modo post: o preflight lê a
+# cardinalidade, que não depende de a Machine estar acordada.
+if [[ "$mode" == "post" ]]; then
+  curl -fsS --max-time 60 -o /dev/null https://gui-analise-sistematica-frontend.fly.dev/api/health || true
+fi
+
 machines_json="$(flyctl machine list -c "$fly_config" --json)"
 if ! machine_count="$(jq -er '
   if type == "array" then length

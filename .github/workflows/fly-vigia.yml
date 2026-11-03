@@ -29,11 +29,15 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin a SHA (tag 1.6) por supply-chain safety, como nos workflows de deploy.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      # A sonda vai ao hostname .fly.dev, e não ao domínio próprio: ela testa a
+      # borda do Fly e as Machines, que é o que o vigia sabe consertar, sem
+      # depender do DNS e do certificado de dataframeit.com.br. Um defeito ali
+      # deixaria a sonda vermelha sem Machine nenhuma presa.
       - name: Conferir e consertar Machines
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
           VIGIA_MODO: ${{ github.event.schedule != '22,37,52 * * * *' && 'probe' || '' }}
-        run: bash .github/scripts/fly-vigia.sh gui-analise-sistematica-frontend https://dataframeit.com.br/api/health ${VIGIA_MODO:+"$VIGIA_MODO"}
+        run: bash .github/scripts/fly-vigia.sh gui-analise-sistematica-frontend https://gui-analise-sistematica-frontend.fly.dev/api/health ${VIGIA_MODO:+"$VIGIA_MODO"}
 
   api:
     name: Vigia da API

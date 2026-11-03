@@ -12,7 +12,9 @@ mkdir -p "$tmp_dir/bin"
 # O flyctl falso registra toda chamada que muda produção em $CALLS_LOG; é o que
 # os casos asserem. `machine list` devolve MACHINES_JSON na primeira chamada e
 # MACHINES_AFTER_PROBE_JSON (quando dado) nas seguintes, para simular a Machine
-# que segue sem iniciar depois da sonda.
+# que segue sem iniciar depois da sonda. `machine start` falha para os ids em
+# START_FAILS (separados por espaço), a forma da Machine presa de 2026-08-10,
+# cujo start voltava "insufficient CPUs available".
 cat >"$tmp_dir/bin/flyctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -27,6 +29,15 @@ case "${1:-} ${2:-}" in
     else
       printf '%s' "$MACHINES_JSON"
     fi
+    ;;
+  "machine start")
+    echo "$*" >>"$CALLS_LOG"
+    for failing in ${START_FAILS:-}; do
+      if [[ "$3" == "$failing" ]]; then
+        echo "could not reserve resource for machine: insufficient CPUs available" >&2
+        exit 1
+      fi
+    done
     ;;
   "machine clone"|"machine destroy") echo "$*" >>"$CALLS_LOG" ;;
   *) echo "flyctl inesperado: $*" >&2; exit 64 ;;
@@ -76,6 +87,7 @@ run_vigia() {
     MACHINES_JSON="$MACHINES_JSON" \
     MACHINES_AFTER_PROBE_JSON="${MACHINES_AFTER_PROBE_JSON:-}" \
     PROBE_OK="${PROBE_OK:-1}" \
+    START_FAILS="${START_FAILS:-}" \
     bash "$vigia" app-teste https://app.test/health "$@"
 }
 
@@ -126,11 +138,32 @@ expect_failure
 assert_calls "machine clone m2 -a app-teste --region gru
 machine destroy m2 -a app-teste --force"
 
-# Crash em loop na SEGUNDA Machine: prova que a regra olha todas, não só .[0].
-MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2 started "$recent_loop")")"
+# Crash em loop que esgotou os restarts (Machine "stopped") na SEGUNDA
+# Machine: recria, e prova que a regra olha todas, não só .[0].
+MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2 stopped "$recent_loop")")"
 expect_failure
 assert_calls "machine clone m2 -a app-teste --region gru
 machine destroy m2 -a app-teste --force"
+
+# Os mesmos três crashes com a Machine "started": ela voltou a subir e pode
+# estar no meio de uma run da API; o vigia não a derruba.
+MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2 started "$recent_loop")")"
+expect_success
+assert_calls ""
+
+# Pausa e retomada no formato lido em produção, três vezes na janela, com a
+# Machine suspensa: não é "exit", não é crash, nada a recriar.
+suspend_cycle() {
+  local at="$1"
+  printf '{"type":"suspension","status":"suspending","source":"user","timestamp":%s},' "$at"
+  printf '{"type":"suspension","status":"suspended","source":"flyd","timestamp":%s},' "$at"
+  printf '{"type":"start","status":"starting","source":"proxy","timestamp":%s},' "$at"
+  printf '{"type":"start","status":"started","source":"flyd","request":{},"timestamp":%s}' "$at"
+}
+suspend_resume="$(suspend_cycle "$(minutes_ago 2)"),$(suspend_cycle "$(minutes_ago 5)"),$(suspend_cycle "$(minutes_ago 9)")"
+MACHINES_JSON="$(machines "$(machine m1 suspended "$suspend_resume")")"
+expect_success
+assert_calls ""
 
 # Abaixo do limiar, fora da janela ou pedido por deploy: não é loop.
 two_recent="$(exit_event "$(minutes_ago 2)"),$(exit_event "$(minutes_ago 5)")"
@@ -148,14 +181,29 @@ PROBE_OK=1
 expect_success probe
 assert_calls ""
 
-# Sonda vermelha e uma Machine que não saiu de suspended: é a presa.
+# Sonda vermelha e uma Machine suspensa que recusa o start: é a presa.
 PROBE_OK=0
 MACHINES_AFTER_PROBE_JSON="$(machines "$(machine m1)" "$(machine m2 suspended)")"
+START_FAILS="m2"
 expect_failure probe
-assert_calls "machine clone m2 -a app-teste --region gru
+assert_calls "machine start m2 -a app-teste
+machine clone m2 -a app-teste --region gru
 machine destroy m2 -a app-teste --force"
+START_FAILS=""
 
-# Sonda vermelha com todas iniciadas: defeito da aplicação; avisa e não recria.
+# m1 de pé com health vermelho e m2 suspensa que inicia: a suspensa é a pausa
+# legítima do tráfego baixo, não a causa. Avisa, falha e não recria nada.
+expect_failure probe
+assert_calls "machine start m2 -a app-teste"
+
+# As duas suspensas, os dois starts aceitos, sonda vermelha: é a forma de uma
+# falha de rede do runner ou da borda. Não recria nada.
+MACHINES_AFTER_PROBE_JSON="$(machines "$(machine m1 suspended)" "$(machine m2 suspended)")"
+expect_failure probe
+assert_calls "machine start m1 -a app-teste
+machine start m2 -a app-teste"
+
+# Sonda vermelha com todas iniciadas: nada a religar nem a recriar; avisa.
 MACHINES_AFTER_PROBE_JSON="$(machines "$(machine m1)" "$(machine m2)")"
 expect_failure probe
 assert_calls ""
@@ -183,6 +231,16 @@ ruby -ryaml -e '
   trigger = workflow["on"] || workflow[true]
   crons = trigger.fetch("schedule").map { |entry| entry.fetch("cron") }
   abort("vigia precisa de dois agendamentos: com e sem sonda") unless crons.length == 2
+  # As passadas sem sonda são as frequentes, de vários minutos por hora; a
+  # horária, com sonda, tem um minuto só. A expressão inteira é comparada, e não
+  # só a presença do cron, para que trocar `!=` por `==` (sonda em toda passada
+  # frequente e nunca na horária) reprove.
+  no_probe_cron = crons.find { |c| c.split.first.include?(",") }
+  abort("sem o agendamento frequente, sem sonda") unless no_probe_cron
+  # \x27 é a aspa simples, que não cabe literal dentro do script entre aspas
+  # simples do bash.
+  q = "\x27"
+  expected_mode = "${{ github.event.schedule != #{q}#{no_probe_cron}#{q} && #{q}probe#{q} || #{q}#{q} }}"
   jobs = workflow.fetch("jobs")
   {
     "frontend" => ["fly-deploy-frontend", "gui-analise-sistematica-frontend", "FLY_API_TOKEN_FRONTEND"],
@@ -195,7 +253,7 @@ ruby -ryaml -e '
     abort("#{name}: app errada") unless step["run"].include?(app)
     abort("#{name}: token errado") unless step.fetch("env").fetch("FLY_API_TOKEN").include?(token)
     probe = step.fetch("env").fetch("VIGIA_MODO")
-    abort("#{name}: a sonda tem de depender do agendamento") unless crons.any? { |c| probe.include?(c) }
+    abort("#{name}: a sonda tem de depender do agendamento: #{probe}") unless probe == expected_mode
   end
 ' "$workflow"
 

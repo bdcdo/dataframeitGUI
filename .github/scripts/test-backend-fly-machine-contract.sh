@@ -111,11 +111,105 @@ ruby -ryaml -e '
   # run de horas mata o job, e o kill_timeout de 5 min não a cobre.
   wait_jobs = runs.index { |run| run.include?("active_jobs") }
   abort("workflow sem esperar as runs antes do deploy") unless wait_jobs
+  # O build vem antes da espera, e o deploy só implanta a imagem pronta: com
+  # build e troca no mesmo comando, uma run iniciada durante os minutos de
+  # build morreria na troca, depois de a espera já ter visto zero runs.
+  build = runs.index { |run| run.include?("flyctl deploy") && run.include?("--build-only") }
   deploy = runs.index { |run| run.include?("flyctl deploy") && run.include?("--ha=false") }
   post = runs.index { |run| run.include?("check-backend-fly-machines.sh post") }
+  abort("workflow sem passo de build separado") unless build
   abort("workflow sem ordem preflight -> deploy -> postflight") unless pre && deploy && post && pre < deploy && deploy < post
-  abort("a espera pelas runs precisa vir antes do deploy") unless wait_jobs < deploy
+  abort("workflow sem ordem build -> espera -> deploy") unless build < wait_jobs && wait_jobs < deploy
+  build_run = runs.fetch(build)
+  deploy_run = runs.fetch(deploy)
+  ["--push", "--remote-only", "--image-label \"deploy-${GITHUB_SHA}\"", "-a gui-analise-sistematica-api"].each do |arg|
+    abort("build sem #{arg}") unless build_run.include?(arg)
+  end
+  # O deploy pede a imagem pelo mesmo rótulo do build; sem `--image`, o flyctl
+  # construiria de novo e a janela do build voltaria.
+  ["--image \"registry.fly.io/gui-analise-sistematica-api:deploy-${GITHUB_SHA}\"", "-a gui-analise-sistematica-api"].each do |arg|
+    abort("deploy sem #{arg}") unless deploy_run.include?(arg)
+  end
+  [build, deploy].each do |index|
+    step = steps.select { |s| s["run"] }.fetch(index)
+    abort("#{step["name"]}: precisa rodar em backend, onde está o fly.toml") unless step["working-directory"] == "backend"
+  end
+  wait_step = steps.select { |s| s["run"] }.fetch(wait_jobs)
+  # Sem `shell: bash` explícito o Actions roda `bash -e` sem pipefail.
+  abort("a espera precisa de shell: bash (pipefail)") unless wait_step["shell"] == "bash"
+  abort("timeout da espera abaixo do prazo de 4 h") unless wait_step.fetch("timeout-minutes") > 240
 ' "$workflow"
+
+# Comportamento da espera: o `run` do passo é extraído do YAML e executado com
+# curl e sleep falsos e o `date` real, na mesma invocação que o Actions usa para
+# `shell: bash`. CURL_RESPONSES é uma linha por chamada: "FAIL" faz o curl sair
+# 22 (a forma do 502 com -f); qualquer outra linha, inclusive vazia, sai no
+# stdout com status 0.
+wait_script="$tmp_dir/wait-jobs.sh"
+ruby -ryaml -e '
+  workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+  step = workflow.fetch("jobs").fetch("deploy").fetch("steps").find { |s| s["run"]&.include?("active_jobs") }
+  File.write(ARGV.fetch(1), step.fetch("run"))
+' "$workflow" "$wait_script"
+
+wait_bin="$tmp_dir/wait-bin"
+mkdir -p "$wait_bin"
+cat >"$wait_bin/curl" <<'EOF'
+#!/usr/bin/env bash
+count="$(cat "$WAIT_LOG.curl" 2>/dev/null || echo 0)"
+echo "$((count + 1))" >"$WAIT_LOG.curl"
+line="$(sed -n "$((count + 1))p" "$CURL_RESPONSES")"
+if [[ "$line" == "FAIL" ]]; then
+  exit 22
+fi
+printf '%s' "$line"
+EOF
+cat >"$wait_bin/sleep" <<'EOF'
+#!/usr/bin/env bash
+echo "$1" >>"$WAIT_LOG.sleep"
+EOF
+chmod +x "$wait_bin/curl" "$wait_bin/sleep"
+
+run_wait() {
+  printf '%s\n' "$@" >"$tmp_dir/curl-responses"
+  rm -f "$tmp_dir/wait.curl" "$tmp_dir/wait.sleep"
+  touch "$tmp_dir/wait.sleep"
+  if ! wait_output="$(env "PATH=$wait_bin:$PATH" WAIT_LOG="$tmp_dir/wait" CURL_RESPONSES="$tmp_dir/curl-responses" \
+    timeout 20 bash --noprofile --norc -eo pipefail "$wait_script" 2>&1)"; then
+    printf 'a espera falhou ou estourou o tempo:\n%s\n' "$wait_output" >&2
+    exit 1
+  fi
+}
+
+assert_wait() {
+  local expected_message="$1" expected_sleeps="$2" actual_sleeps
+  actual_sleeps="$(paste -sd' ' "$tmp_dir/wait.sleep")"
+  if [[ "$wait_output" != *"$expected_message"* || "$actual_sleeps" != "$expected_sleeps" ]]; then
+    printf 'espera divergente\nesperado: "%s", sleeps "%s"\nobtido: sleeps "%s"\n%s\n' \
+      "$expected_message" "$expected_sleeps" "$actual_sleeps" "$wait_output" >&2
+    exit 1
+  fi
+}
+
+# Nenhuma run: sai na hora.
+run_wait '{"status":"ok","active_jobs":0}'
+assert_wait "Nenhuma run em curso." ""
+# Duas runs, depois nenhuma: espera uma volta e sai.
+run_wait '{"status":"ok","active_jobs":2}' '{"status":"ok","active_jobs":0}'
+assert_wait "Nenhuma run em curso." "60"
+# Versão anterior da API, sem o campo: conta como zero.
+run_wait '{"status":"ok"}'
+assert_wait "Nenhuma run em curso." ""
+# Três leituras falhas seguidas: API fora do ar, nada a esperar.
+run_wait FAIL FAIL FAIL
+assert_wait "API sem resposta" "10 10"
+# Corpo vazio com status 0, a forma em que jq 1.6 com `-e` sai 0 sem imprimir
+# nada: conta como leitura falha, e não como run em curso.
+run_wait '' '' ''
+assert_wait "API sem resposta" "10 10"
+# Um 502 transitório não encerra a espera com run ativa.
+run_wait FAIL '{"status":"ok","active_jobs":1}' '{"status":"ok","active_jobs":0}'
+assert_wait "Nenhuma run em curso." "10 60"
 
 grep -Fq 'size = "shared-cpu-1x"' "$fly_config"
 grep -Fq 'memory = "512mb"' "$fly_config"
@@ -125,5 +219,10 @@ fly_directives="$(sed 's/#.*//; s/[[:space:]]*$//; s/^[[:space:]]*//' "$fly_conf
 for directive in 'auto_stop_machines = "suspend"' 'auto_start_machines = true' 'min_machines_running = 0'; do
   grep -Fxq "$directive" <<<"$fly_directives" || { echo "backend/fly.toml sem a diretiva esperada: $directive" >&2; exit 1; }
 done
+# Suspend não aceita swap: com ele, o Fly recusa pausar a Machine.
+if grep -Eq '^swap_size_mb[[:space:]]*=' <<<"$fly_directives"; then
+  echo "backend/fly.toml com swap: suspend exige Machine sem swap" >&2
+  exit 1
+fi
 
 echo "Contrato de Machines do backend validado."

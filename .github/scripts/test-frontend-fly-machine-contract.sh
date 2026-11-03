@@ -26,6 +26,14 @@ cat >"$tmp_dir/bin/sleep" <<'EOF'
 exit 0
 EOF
 chmod +x "$tmp_dir/bin/sleep"
+# O curl falso registra a chamada: o postflight acorda as Machines antes de
+# listá-las, e o preflight não precisa tocar a app.
+cat >"$tmp_dir/bin/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"$CURL_LOG"
+EOF
+chmod +x "$tmp_dir/bin/curl"
+CURL_LOG="$tmp_dir/curl.log"
 
 # O id é parametrizado porque CHECKS_JSON é indexado por id: com dois elementos
 # de id igual, o caso "uma Machine saudável e outra não" seria indistinguível de
@@ -67,6 +75,7 @@ run_checker() {
     "PATH=$tmp_dir/bin:$PATH" \
     MACHINES_JSON="$MACHINES_JSON" \
     CHECKS_JSON="$CHECKS_JSON" \
+    CURL_LOG="$CURL_LOG" \
     bash "$checker" "$1"
 }
 
@@ -107,7 +116,17 @@ expect_failure run_checker pre
 
 MACHINES_JSON="$two_machines"
 CHECKS_JSON="$two_healthy"
+: >"$CURL_LOG"
+run_checker pre >/dev/null
+if [[ -s "$CURL_LOG" ]]; then
+  echo "o preflight não deveria acordar a app" >&2
+  exit 1
+fi
 run_checker post >/dev/null
+if ! grep -Fq "https://gui-analise-sistematica-frontend.fly.dev/api/health" "$CURL_LOG"; then
+  echo "o postflight precisa acordar as Machines antes de listá-las" >&2
+  exit 1
+fi
 
 # Cardinalidade: uma só deixou de bastar (#664), três também não.
 MACHINES_JSON="$(machines "$(machine machine-1)")"

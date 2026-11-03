@@ -8,11 +8,12 @@
 #
 # Duas formas de reconhecer Machine presa:
 #   - pelo estado e pelos eventos, sem tocar a app (não acorda Machine pausada):
-#     estado "failed" ou crash em loop (saídas não pedidas em sequência);
-#   - pela sonda HTTP, só no modo "probe": se a URL de health não responde, a
-#     Machine que segue fora de "started" depois da tentativa é a que não volta.
-#     A sonda acorda a app, por isso o workflow a roda uma vez por hora e não a
-#     cada passada.
+#     estado "failed", ou crash em loop (saídas não pedidas em sequência) numa
+#     Machine que não está de pé;
+#   - pela sonda HTTP, só no modo "probe": se a URL de health não responde, o
+#     vigia manda religar cada Machine fora de "started", e a presa é a que
+#     recusa o start. A sonda acorda a app, por isso o workflow a roda uma vez
+#     por hora e não a cada passada.
 set -euo pipefail
 
 app="${1:-}"
@@ -64,6 +65,12 @@ fi
 # trazia `requested_stop=false`, e o abort do Node de 2026-11-01 nem trazia o
 # campo. Deploy e escala marcam `requested_stop=true` e ficam de fora. Um crash
 # isolado o Fly já religa sozinho; só a sequência dentro da janela é loop.
+#
+# O loop só conta em Machine fora de "started". Crash em loop que esgotou os
+# restarts deixa a Machine "stopped"; a que está "started" voltou a subir e
+# serve tráfego, e recriá-la mataria a run de LLM em curso na API por causa de
+# crashes que já passaram. Pausa e retomada (eventos "suspension" e "start")
+# não são "exit" e não entram na conta.
 now_ms="$(($(date +%s) * 1000))"
 stuck_ids="$(jq -r \
   --argjson since "$((now_ms - crash_window_minutes * 60 * 1000))" \
@@ -71,11 +78,12 @@ stuck_ids="$(jq -r \
   .[]
   | select(
       .state == "failed"
-      or ([.events[]?
-           | select(.type == "exit"
-               and .timestamp >= $since
-               and ((.request.exit_event.requested_stop // false) | not))]
-          | length) >= $exits)
+      or (.state != "started"
+          and ([.events[]?
+                | select(.type == "exit"
+                    and .timestamp >= $since
+                    and ((.request.exit_event.requested_stop // false) | not))]
+               | length) >= $exits))
   | .id
 ' <<<"$machines_json")"
 
@@ -83,16 +91,30 @@ if [[ "$mode" == "probe" ]]; then
   if probe; then
     summary "$app: health respondeu."
   else
-    # Lista de novo depois da sonda: a Machine que o proxy tentou acordar e
-    # segue fora de "started" é a presa. Se todas estão "started" e o health
-    # mesmo assim falha, o defeito é da aplicação, e recriar Machine não o
-    # resolve; aí o vigia só avisa.
-    after_probe_ids="$(list_machines | jq -r '.[] | select(.state != "started") | .id')"
-    if [[ -z "$after_probe_ids" && -z "$stuck_ids" ]]; then
-      summary "$app: health não respondeu com todas as Machines iniciadas; defeito na aplicação, nada recriado."
+    # Sonda vermelha com Machine fora de "started" não prova Machine presa. No
+    # frontend, com tráfego baixo, o proxy acorda uma Machine e deixa a outra
+    # suspensa, legitimamente; e uma falha de rede do runner deixa a sonda
+    # vermelha sem nada errado no Fly. O que separa a pausada da presa é
+    # mandar religá-la: a de 2026-08-10 recusava o start com "could not
+    # reserve resource ... insufficient CPUs available". Só a que recusa é
+    # recriada. O `</dev/null` impede o flyctl de consumir a lista que
+    # alimenta o `read`.
+    not_started_ids="$(list_machines | jq -r '.[] | select(.state != "started") | .id')"
+    start_failed_ids=""
+    while read -r machine_id; do
+      [[ -n "$machine_id" ]] || continue
+      if ! flyctl machine start "$machine_id" -a "$app" </dev/null; then
+        start_failed_ids+="$machine_id"$'\n'
+      fi
+    done <<<"$not_started_ids"
+    # Todas as Machines iniciam (ou já estavam de pé) e o health segue sem
+    # responder: o defeito está na aplicação, na borda ou na rede do runner,
+    # e recriar Machine não o resolve. O vigia só avisa, falhando o job.
+    if [[ -z "$start_failed_ids" && -z "$stuck_ids" ]]; then
+      summary "$app: health não respondeu e as Machines iniciam; defeito fora do host, nada recriado."
       exit 1
     fi
-    stuck_ids="$(printf '%s\n%s\n' "$stuck_ids" "$after_probe_ids" | sed '/^$/d' | sort -u)"
+    stuck_ids="$(printf '%s\n%s\n' "$stuck_ids" "$start_failed_ids" | sed '/^$/d' | sort -u)"
   fi
 fi
 
@@ -105,10 +127,11 @@ fi
 # e na mesma região, porque os gates de deploy recusam Machine fora de gru. O
 # clone herda a config da origem; quem escolhe o host é o scheduler do Fly, que
 # não põe a Machine nova num host sem capacidade para ela.
+# O `</dev/null` tem o mesmo motivo do laço de start acima.
 while read -r stuck_id; do
   summary "$app: Machine $stuck_id presa; clonando em $region e destruindo a original."
-  flyctl machine clone "$stuck_id" -a "$app" --region "$region"
-  flyctl machine destroy "$stuck_id" -a "$app" --force
+  flyctl machine clone "$stuck_id" -a "$app" --region "$region" </dev/null
+  flyctl machine destroy "$stuck_id" -a "$app" --force </dev/null
 done <<<"$stuck_ids"
 
 if probe; then

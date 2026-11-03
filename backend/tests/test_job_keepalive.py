@@ -65,6 +65,17 @@ def test_keepalive_route_hides_itself_without_the_process_token() -> None:
     )
 
 
+def test_keepalive_token_with_non_ascii_header_is_rejected_not_an_error() -> None:
+    # `hmac.compare_digest` com str fora do ASCII levanta TypeError; a rota
+    # pública transformaria isso em 500 e sinalizaria que existe.
+    assert job_keepalive.is_keepalive_token("chute-ç") is False
+    response = TestClient(main.app).get(
+        job_keepalive.KEEPALIVE_PATH,
+        headers={job_keepalive.TOKEN_HEADER: "chute-ç".encode("latin-1")},
+    )
+    assert response.status_code == 404
+
+
 def test_keepalive_route_streams_while_jobs_run_and_ends_without_them(
     monkeypatch,
 ) -> None:
@@ -136,3 +147,61 @@ def test_loop_reopens_the_stream_after_a_failure(monkeypatch) -> None:
 
     asyncio.run(scenario())
     assert attempts == 2
+
+
+def test_lifespan_starts_the_keepalive_loop(monkeypatch) -> None:
+    # Fio entre o módulo e a aplicação: sem esta tarefa no lifespan, nada abre
+    # o stream e o proxy pausa a Machine no meio de um job longo. O dublê
+    # registra a chamada ao ser invocado, e não dentro da corrotina, para que o
+    # teste não dependa de a tarefa chegar a rodar antes do fim do lifespan.
+    # Sem FRONTEND_INTERNAL_URL o loop de reconciliação não sobe, então o
+    # keepalive é a única tarefa de fundo aqui.
+    monkeypatch.setattr(main.settings, "frontend_internal_url", "")
+    calls: list[None] = []
+
+    async def idle() -> None:
+        await asyncio.Event().wait()
+
+    def fake_loop():
+        calls.append(None)
+        return idle()
+
+    monkeypatch.setattr(main, "run_job_keepalive_loop", fake_loop)
+
+    with TestClient(main.app) as client:
+        assert client.get("/health").status_code == 200
+    assert calls == [None]
+
+
+def test_loop_opens_no_stream_while_no_job_runs(monkeypatch) -> None:
+    # Sem job, nenhuma requisição pode sair: o stream seguraria a Machine
+    # acordada para sempre e a pausa por ociosidade nunca aconteceria.
+    monkeypatch.setenv("FLY_APP_NAME", "app-teste")
+    monkeypatch.setenv("FLY_MACHINE_ID", "machine-1")
+    idle_iterations = 3
+    count_calls = 0
+
+    def fake_count() -> int:
+        nonlocal count_calls
+        count_calls += 1
+        if count_calls > idle_iterations:
+            raise asyncio.CancelledError
+        return 0
+
+    monkeypatch.setattr(job_keepalive, "active_job_count", fake_count)
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        raise asyncio.CancelledError
+
+    async def scenario() -> None:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(asyncio.CancelledError):
+                await job_keepalive.run_job_keepalive_loop(
+                    client, idle_check_seconds=0, retry_seconds=0
+                )
+
+    asyncio.run(scenario())
+    assert requests == []
+    assert count_calls == idle_iterations + 1
