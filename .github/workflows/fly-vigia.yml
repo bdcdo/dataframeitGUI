@@ -32,13 +32,8 @@ jobs:
       - name: Conferir e consertar Machines
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN_FRONTEND }}
-          VIGIA_MODO: ${{ github.event.schedule == '22,37,52 * * * *' && 'eventos' || 'probe' }}
-        run: |
-          if [[ "$VIGIA_MODO" == "probe" ]]; then
-            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-frontend https://dataframeit.com.br/api/health probe
-          else
-            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-frontend https://dataframeit.com.br/api/health
-          fi
+          VIGIA_MODO: ${{ github.event.schedule != '22,37,52 * * * *' && 'probe' || '' }}
+        run: bash .github/scripts/fly-vigia.sh gui-analise-sistematica-frontend https://dataframeit.com.br/api/health ${VIGIA_MODO:+"$VIGIA_MODO"}
 
   api:
     name: Vigia da API
@@ -53,10 +48,5 @@ jobs:
       - name: Conferir e consertar Machines
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          VIGIA_MODO: ${{ github.event.schedule == '22,37,52 * * * *' && 'eventos' || 'probe' }}
-        run: |
-          if [[ "$VIGIA_MODO" == "probe" ]]; then
-            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-api https://gui-analise-sistematica-api.fly.dev/health probe
-          else
-            bash .github/scripts/fly-vigia.sh gui-analise-sistematica-api https://gui-analise-sistematica-api.fly.dev/health
-          fi
+          VIGIA_MODO: ${{ github.event.schedule != '22,37,52 * * * *' && 'probe' || '' }}
+        run: bash .github/scripts/fly-vigia.sh gui-analise-sistematica-api https://gui-analise-sistematica-api.fly.dev/health ${VIGIA_MODO:+"$VIGIA_MODO"}

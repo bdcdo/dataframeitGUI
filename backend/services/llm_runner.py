@@ -44,9 +44,9 @@ _jobs: dict[str, dict] = {}
 _ACTIVE_JOB_STALE_SECONDS = 15 * 60
 
 
-def active_job_count(now: float | None = None) -> int:
+def active_job_count() -> int:
     """Quantos jobs deste processo estão em curso, com heartbeat recente."""
-    now = time.time() if now is None else now
+    now = time.time()
     # `list()` copia os valores antes de iterar: as runs rodam em threads do
     # threadpool e `init_job` acrescenta chaves a `_jobs` enquanto isto roda no
     # event loop (mesmo motivo da cópia em `get_job_status`).

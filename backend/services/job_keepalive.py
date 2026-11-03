@@ -44,26 +44,19 @@ async def keepalive_stream() -> AsyncIterator[bytes]:
         await asyncio.sleep(_STREAM_TICK_SECONDS)
 
 
-def _keepalive_target() -> tuple[str, str] | None:
-    # O Fly injeta as duas variáveis em toda Machine. Fora dele (dev, testes)
-    # não há proxy que pause nada, e o loop não faz nada.
-    app_name = os.environ.get("FLY_APP_NAME")
-    machine_id = os.environ.get("FLY_MACHINE_ID")
-    if not app_name or not machine_id:
-        return None
-    return f"https://{app_name}.fly.dev{KEEPALIVE_PATH}", machine_id
-
-
 async def run_job_keepalive_loop(
     client: httpx.AsyncClient | None = None,
     *,
     idle_check_seconds: float = _IDLE_CHECK_SECONDS,
     retry_seconds: float = _RETRY_SECONDS,
 ) -> None:
-    target = _keepalive_target()
-    if target is None:
+    # O Fly injeta as duas variáveis em toda Machine. Fora dele (dev, testes)
+    # não há proxy que pause nada, e o loop não faz nada.
+    app_name = os.environ.get("FLY_APP_NAME")
+    machine_id = os.environ.get("FLY_MACHINE_ID")
+    if not app_name or not machine_id:
         return
-    url, machine_id = target
+    url = f"https://{app_name}.fly.dev{KEEPALIVE_PATH}"
     # `fly-force-instance-id` prende a requisição nesta Machine: num deploy
     # bluegreen há duas, e o stream que caísse na nova seguraria a errada.
     headers = {TOKEN_HEADER: _TOKEN, "fly-force-instance-id": machine_id}
@@ -81,8 +74,6 @@ async def run_job_keepalive_loop(
                     response.raise_for_status()
                     async for _ in response.aiter_bytes():
                         pass
-            except asyncio.CancelledError:
-                raise
             except Exception:
                 # Conexão caída não encerra o job; só abre a janela em que o
                 # proxy poderia pausar a Machine. Reabrir logo é o conserto.

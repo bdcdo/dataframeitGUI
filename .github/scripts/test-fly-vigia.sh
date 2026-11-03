@@ -68,7 +68,7 @@ machines() {
 }
 
 run_vigia() {
-  rm -f "$CALLS_LOG" "$CALLS_LOG.list" "$CALLS_LOG.curl"
+  rm -f "$CALLS_LOG.list" "$CALLS_LOG.curl"
   : >"$CALLS_LOG"
   env \
     "PATH=$tmp_dir/bin:$PATH" \
