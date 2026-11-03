@@ -1,11 +1,11 @@
 import { useEffect } from "react";
 import { warmUpApi } from "@/lib/api";
 
-// O proxy do Fly pausa a API depois de "alguns minutos" sem tráfego (valor não
-// documentado); pingar a cada 4 min mantém a API acordada enquanto a aba está
-// visível na maior parte do tempo, e quando a pausa vence entre dois pings a
-// retomada leva centenas de milissegundos. Aba escondida não pinga, então uma
-// aba esquecida em segundo plano não segura a máquina ligada.
+// Feito para a API com autostop ligado, que o proxy do Fly pausava depois de
+// "alguns minutos" sem tráfego: pingar a cada 4 min a mantinha acordada com a
+// aba visível. Hoje a API fica sempre ligada (backend/fly.toml) e o ping não
+// muda nada; ele fica para o caso de o autostop voltar em outra forma. Aba
+// escondida não pinga, então uma aba esquecida não seguraria a máquina ligada.
 export const API_WARMUP_INTERVAL_MS = 4 * 60 * 1000;
 
 export function useApiWarmup(): void {

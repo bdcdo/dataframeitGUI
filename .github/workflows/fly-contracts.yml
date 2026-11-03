@@ -1,0 +1,32 @@
+name: Contratos do Fly
+
+# Os contratos das Machines e o teste do vigia rodavam só no pre-commit local,
+# que `--no-verify`, a edição pela web ou uma máquina sem `pre-commit install`
+# pulam. Aqui eles reprovam no servidor o que o pre-commit deixou passar, em
+# especial a volta de um scale-to-zero ("stop" ou "suspend") no fly.toml: o
+# postflight do deploy só o veria depois de aplicado às Machines.
+#
+# Sem filtro de `paths`: os três scripts rodam em segundos, e um check que não
+# dispara fica "Expected" para sempre se um dia virar obrigatório (ver #649).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  contratos:
+    name: Contratos das Machines e vigia
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # jq e ruby vêm na imagem ubuntu-latest; os scripts não chamam o Fly.
+      - name: Contrato do frontend
+        run: bash .github/scripts/test-frontend-fly-machine-contract.sh
+      - name: Contrato do backend
+        run: bash .github/scripts/test-backend-fly-machine-contract.sh
+      - name: Vigia
+        run: bash .github/scripts/test-fly-vigia.sh

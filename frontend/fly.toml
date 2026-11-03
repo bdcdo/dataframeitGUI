@@ -27,24 +27,28 @@ primary_region = "gru"
 [http_service]
   internal_port = 3000
   force_https = true
-  # Pausa quando ninguém usa, e não desligamento. Em 2026-08-10 o scale-to-zero
-  # com "stop" (#644) derrubou o site: a Machine parada não conseguiu voltar
-  # porque o host de gru onde ela estava presa ficou sem CPU livre ("insufficient
-  # CPUs available ... on the current host"), e o proxy insistiu nela. Machine
-  # suspensa, segundo a documentação do Fly, continua com CPU e memória
-  # reservadas no host, então acordá-la não disputa capacidade; e volta em
-  # centenas de milissegundos em vez de bootar o Next. Para o resto (snapshot
-  # perdido, host em manutenção, crash em loop), o vigia agendado em
-  # .github/workflows/fly-vigia.yml clona a Machine presa em outro host.
+  # Sempre ligada, sem pausa nem desligamento por ociosidade. As duas formas de
+  # scale-to-zero do Fly já derrubaram o site:
   #
-  # Suspend exige Machine sem swap e com até 2 GB, por isso o swap saiu e a
-  # memória foi para 1 GB (ver a seção vm abaixo).
-  auto_stop_machines = "suspend"
+  # - "stop" (#644), em 2026-08-10: a Machine parada não conseguiu voltar porque
+  #   o host de gru onde ela estava presa ficou sem CPU livre ("insufficient
+  #   CPUs available ... on the current host"), e o proxy insistiu nela.
+  # - "suspend" (#837), em 2026-11-03: a Machine voltou da pausa com o relógio
+  #   parado na hora em que tinha sido suspensa, quase 11 h atrás, e continuou
+  #   assim por minutos. O Clerk recusou o token da sessão ("nbf" no futuro) e
+  #   entrou em loop de redirecionamento; página e documento não carregavam.
+  #
+  # O contrato do deploy (test-frontend-fly-machine-contract.sh) só aceita "off"
+  # aqui, e o postflight confere o mesmo na config aplicada às Machines.
+  auto_stop_machines = "off"
+  # A rede que reacende a Machine se ela parar por outro motivo (restart,
+  # manutenção do host).
   auto_start_machines = true
-  # Duas Machines (#664) continuam: com tráfego baixo o proxy só acorda uma, e a
-  # segunda, pausada, custa só disco e é a alternativa que não depende do mesmo
-  # host. Quem as cria é o `flyctl scale count 2` do workflow.
-  min_machines_running = 0
+  # Duas Machines (#664), para não depender de um host só. Com o autostop
+  # desligado este valor é inerte; fica como trava contra um retorno silencioso
+  # do scale-to-zero com cardinalidade 1. Quem cria as duas é o `flyctl scale
+  # count 2` do workflow.
+  min_machines_running = 2
 
   [[http_service.checks]]
     grace_period = "10s"
@@ -56,8 +60,7 @@ primary_region = "gru"
 [[vm]]
   # 1 GB sem swap. Com 512 MB o next-server chegava a 467 MB usados mais 172 MB
   # de swap (Prometheus do Fly, 22/10 a 02/11/2026), e as duas Machines
-  # abortaram (exit 134) em 01/11. Suspend não aceita swap, então a folga tem de
-  # vir de memória. Sem esta seção, um deploy recriaria as Machines com o
-  # default de 256 MB.
+  # abortaram (exit 134) em 01/11, então a folga vem de memória. Sem esta seção,
+  # um deploy recriaria as Machines com o default de 256 MB.
   size = "shared-cpu-1x"
   memory = "1gb"

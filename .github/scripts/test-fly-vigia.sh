@@ -53,9 +53,28 @@ esac
 EOF
 # O curl falso responde conforme PROBE_OK; com PROBE_OK_FROM_CALL, passa a
 # responder a partir dessa chamada, para simular a app que volta entre a
-# primeira sonda e a segunda.
+# primeira sonda e a segunda. A requisição presa a uma Machine
+# (fly-force-instance-id) é a da conferência do relógio: fica registrada em
+# $CALLS_LOG.clock e devolve o health com `server_time` deslocado em CLOCK_SKEW
+# segundos para os ids em SKEWED_IDS, ou HEALTH_BODY quando dado.
 cat >"$tmp_dir/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+for arg in "$@"; do
+  if [[ "$arg" == fly-force-instance-id:* ]]; then
+    id="${arg#fly-force-instance-id: }"
+    echo "$id" >>"$CALLS_LOG.clock"
+    if [[ -n "${HEALTH_BODY:-}" ]]; then
+      printf '%s' "$HEALTH_BODY"
+      exit 0
+    fi
+    skew=0
+    for skewed in ${SKEWED_IDS:-}; do
+      [[ "$id" == "$skewed" ]] && skew="$CLOCK_SKEW"
+    done
+    printf '{"status":"ok","server_time":%s}' "$(($(date +%s) + skew))"
+    exit 0
+  fi
+done
 echo "curl" >>"$CALLS_LOG.curl"
 if [[ -n "${PROBE_OK_FROM_CALL:-}" ]]; then
   (($(wc -l <"$CALLS_LOG.curl") >= PROBE_OK_FROM_CALL))
@@ -96,7 +115,7 @@ machines() {
 # A saída do job (stdout e stderr) fica em $CALLS_LOG.out e o summary em
 # $CALLS_LOG.summary, para os casos que asserem o diagnóstico.
 run_vigia() {
-  rm -f "$CALLS_LOG.list" "$CALLS_LOG.curl" "$CALLS_LOG.summary"
+  rm -f "$CALLS_LOG.list" "$CALLS_LOG.curl" "$CALLS_LOG.clock" "$CALLS_LOG.summary"
   : >"$CALLS_LOG"
   env \
     "PATH=$tmp_dir/bin:$PATH" \
@@ -109,6 +128,9 @@ run_vigia() {
     START_FAILS="${START_FAILS:-}" \
     START_FAILS_OTHER="${START_FAILS_OTHER:-}" \
     START_OTHER_MESSAGE="${START_OTHER_MESSAGE:-}" \
+    SKEWED_IDS="${SKEWED_IDS:-}" \
+    CLOCK_SKEW="${CLOCK_SKEW:-0}" \
+    HEALTH_BODY="${HEALTH_BODY:-}" \
     bash "$vigia" app-teste https://app.test/health "$@"
 }
 
@@ -205,10 +227,56 @@ for events in "$two_recent" "$old_three" "$requested_three"; do
 done
 
 # Sonda verde: nada a fazer.
-MACHINES_JSON="$(machines "$(machine m1 suspended)" "$(machine m2 suspended)")"
+MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2 suspended)")"
 PROBE_OK=1
 expect_success probe
 assert_calls ""
+
+# Sonda verde sem Machine iniciada, ou com a segunda listagem quebrada: o
+# relógio não foi conferido, e isso reprova em vez de passar calado.
+MACHINES_JSON="$(machines "$(machine m1 suspended)" "$(machine m2 stopped)")"
+expect_failure probe
+assert_calls ""
+assert_contains "$CALLS_LOG.summary" "não foi possível listar Machines iniciadas"
+MACHINES_JSON="$(machines "$(machine m1)")"
+MACHINES_AFTER_PROBE_JSON="Error: 502 from API"
+expect_failure probe
+assert_calls ""
+assert_contains "$CALLS_LOG.summary" "não foi possível listar Machines iniciadas"
+unset MACHINES_AFTER_PROBE_JSON
+
+# Relógio: cada Machine iniciada é conferida, presa pelo id, e só elas.
+MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2)" "$(machine m3 stopped)")"
+expect_success probe
+assert_calls ""
+if [[ "$(paste -sd' ' "$CALLS_LOG.clock")" != "m1 m2" ]]; then
+  echo "o relógio tem de ser conferido em m1 e m2, presas pelo id: $(cat "$CALLS_LOG.clock")" >&2
+  exit 1
+fi
+# A forma de 2026-11-03: a SEGUNDA Machine com o relógio quase 11 h atrás.
+# Falha e avisa, sem recriar nada. Um atraso dentro da folga passa, e o
+# adiantado reprova como o atrasado.
+SKEWED_IDS="m2"
+for CLOCK_SKEW in -38996 120; do
+  expect_failure probe
+  assert_calls ""
+  assert_contains "$CALLS_LOG.summary" "relógio da Machine m2 difere do runner"
+done
+CLOCK_SKEW=-5
+expect_success probe
+SKEWED_IDS=""
+CLOCK_SKEW=0
+# Health sem server_time (versão anterior da app) também reprova.
+HEALTH_BODY='{"status":"ok"}'
+expect_failure probe
+assert_contains "$CALLS_LOG.summary" "não informou server_time"
+unset HEALTH_BODY
+# Sem sonda, o relógio não é conferido.
+expect_success
+if [[ -s "$CALLS_LOG.clock" ]]; then
+  echo "o modo sem sonda não confere relógio" >&2
+  exit 1
+fi
 
 # Sonda vermelha e uma Machine suspensa que recusa o start: é a presa.
 PROBE_OK=0

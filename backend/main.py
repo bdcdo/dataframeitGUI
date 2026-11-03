@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+import time
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -150,8 +151,15 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 async def health():
     # `active_jobs` é o que o workflow de deploy lê para esperar o fim das runs
     # antes de trocar a Machine (fly-deploy.yml). Só a contagem: nada de id de
-    # projeto ou job numa rota pública.
-    return {"status": "ok", "active_jobs": active_job_count()}
+    # projeto ou job numa rota pública. `server_time` (segundos Unix) é o relógio
+    # da Machine, que o vigia (fly-vigia.sh) compara com o do runner: Machine
+    # retomada de pausa já voltou com o relógio horas atrás, e o JWT do Clerk
+    # deixa de validar sem nenhum outro sinal.
+    return {
+        "status": "ok",
+        "active_jobs": active_job_count(),
+        "server_time": int(time.time()),
+    }
 
 
 async def job_keepalive(request: Request):

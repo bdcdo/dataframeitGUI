@@ -1,12 +1,14 @@
 """Segura a Machine acordada enquanto houver job de LLM em curso.
 
-A API fica pausada (auto_stop "suspend" em fly.toml) quando o proxy do Fly não
-vê tráfego. Os jobs rodam em BackgroundTasks depois que o POST /run já
+Com autostop ligado no fly.toml, o proxy do Fly pausa ou para a Machine que
+não vê tráfego. Os jobs rodam em BackgroundTasks depois que o POST /run já
 respondeu, então um job longo, sem ninguém olhando a tela, não gera tráfego e o
-proxy pausaria a Machine no meio dele. Enquanto houver job ativo, o processo
-abre uma requisição a si mesmo pela borda do Fly e a mantém aberta: para o
-proxy é uma conexão em curso, e Machine com conexão não é pausada. Sem job, o
-stream termina e a pausa volta a valer.
+proxy a pausaria no meio dele. Enquanto houver job ativo, o processo abre uma
+requisição a si mesmo pela borda do Fly e a mantém aberta: para o proxy é uma
+conexão em curso, e Machine com conexão não é pausada. Sem job, o stream
+termina. Hoje a API fica sempre ligada (auto_stop "off", motivo em fly.toml) e
+este stream não muda nada; ele fica como proteção dos jobs se o autostop
+voltar em outra forma.
 """
 
 import asyncio

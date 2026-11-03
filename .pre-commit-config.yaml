@@ -95,12 +95,12 @@ repos:
         pass_filenames: false
         require_serial: true
 
-      # O frontend pausa (suspend) quando ocioso, e nao para (stop): em
-      # 2026-08-10 a Machine parada nao voltou porque o host de gru estava sem
-      # CPU livre, e a suspensa mantem a reserva no host. Roda com duas Machines
-      # desde o #664. Cada deploy deve convergir para essa cardinalidade e
-      # validar forma, autostop "suspend" e saude das DUAS, no fly.toml e na
-      # config aplicada.
+      # O frontend fica sempre ligado: o "stop" derrubou o site em 2026-08-10
+      # (Machine parada sem CPU livre no host para voltar) e o "suspend" em
+      # 2026-11-03 (Machine retomada com o relogio horas atras). Roda com duas
+      # Machines desde o #664. Cada deploy deve convergir para essa
+      # cardinalidade e validar forma, autostop desligado e saude das DUAS, no
+      # fly.toml e na config aplicada.
       - id: frontend-fly-machine-contract
         name: frontend Fly machine contract
         entry: .github/scripts/test-frontend-fly-machine-contract.sh

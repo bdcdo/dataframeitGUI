@@ -26,14 +26,6 @@ cat >"$tmp_dir/bin/sleep" <<'EOF'
 exit 0
 EOF
 chmod +x "$tmp_dir/bin/sleep"
-# O curl falso registra a chamada: o postflight acorda as Machines antes de
-# listá-las, e o preflight não precisa tocar a app.
-cat >"$tmp_dir/bin/curl" <<'EOF'
-#!/usr/bin/env bash
-echo "$*" >>"$CURL_LOG"
-EOF
-chmod +x "$tmp_dir/bin/curl"
-CURL_LOG="$tmp_dir/curl.log"
 
 # O id é parametrizado porque CHECKS_JSON é indexado por id: com dois elementos
 # de id igual, o caso "uma Machine saudável e outra não" seria indistinguível de
@@ -49,7 +41,7 @@ machine() {
   local cpu_kind="${4:-shared}"
   local cpus="${5:-1}"
   local memory_mb="${6:-1024}"
-  local autostop="${7:-\"suspend\"}"
+  local autostop="${7:-false}"
   local autostart="${8:-true}"
   printf '{"id":"%s","state":"%s","region":"%s","config":{"guest":{"cpu_kind":"%s","cpus":%s,"memory_mb":%s},"services":[{"internal_port":3000,"autostop":%s,"autostart":%s}]}}' \
     "$id" "$state" "$region" "$cpu_kind" "$cpus" "$memory_mb" "$autostop" "$autostart"
@@ -75,7 +67,6 @@ run_checker() {
     "PATH=$tmp_dir/bin:$PATH" \
     MACHINES_JSON="$MACHINES_JSON" \
     CHECKS_JSON="$CHECKS_JSON" \
-    CURL_LOG="$CURL_LOG" \
     bash "$checker" "$1"
 }
 
@@ -116,17 +107,8 @@ expect_failure run_checker pre
 
 MACHINES_JSON="$two_machines"
 CHECKS_JSON="$two_healthy"
-: >"$CURL_LOG"
 run_checker pre >/dev/null
-if [[ -s "$CURL_LOG" ]]; then
-  echo "o preflight não deveria acordar a app" >&2
-  exit 1
-fi
 run_checker post >/dev/null
-if ! grep -Fq "https://gui-analise-sistematica-frontend.fly.dev/api/health" "$CURL_LOG"; then
-  echo "o postflight precisa acordar as Machines antes de listá-las" >&2
-  exit 1
-fi
 
 # Cardinalidade: uma só deixou de bastar (#664), três também não.
 MACHINES_JSON="$(machines "$(machine machine-1)")"
@@ -141,14 +123,16 @@ expect_failure run_checker post
 CHECKS_JSON="$two_healthy"
 for invalid_machine in \
   "$(machine machine-2 stopped)" \
+  "$(machine machine-2 suspended)" \
   "$(machine machine-2 started iad)" \
   "$(machine machine-2 started gru performance)" \
   "$(machine machine-2 started gru shared 2)" \
   "$(machine machine-2 started gru shared 1 512)" \
   "$(machine machine-2 started gru shared 1 1024 true)" \
   "$(machine machine-2 started gru shared 1 1024 '"stop"')" \
-  "$(machine machine-2 started gru shared 1 1024 false)" \
-  "$(machine machine-2 started gru shared 1 1024 '"suspend"' false)" \
+  "$(machine machine-2 started gru shared 1 1024 '"suspend"')" \
+  "$(machine machine-2 started gru shared 1 1024 null)" \
+  "$(machine machine-2 started gru shared 1 1024 false false)" \
   "$(machine machine-2 | jq -c '.config.services = []')" \
   "$(machine machine-2 | jq -c 'del(.config.services)')"
 do
@@ -160,23 +144,11 @@ done
 for invalid_machine in \
   "$(machine machine-1 stopped)" \
   "$(machine machine-1 started iad)" \
-  "$(machine machine-1 started gru shared 1 1024 false)"
+  "$(machine machine-1 started gru shared 1 1024 '"suspend"')"
 do
   MACHINES_JSON="$(machines "$invalid_machine" "$(machine machine-2)")"
   expect_failure run_checker post
 done
-
-# O proxy pode pausar uma Machine ociosa entre o bluegreen e o postflight:
-# suspensa passa, e o health se mede só na iniciada. Todas suspensas reprova,
-# porque aí nada provou que a imagem nova sobe.
-MACHINES_JSON="$(machines "$(machine machine-1)" "$(machine machine-2 suspended)")"
-CHECKS_JSON="$(checks_for machine-1)"
-run_checker post >/dev/null
-CHECKS_JSON="$(checks_for machine-2)"
-expect_failure run_checker post
-MACHINES_JSON="$(machines "$(machine machine-1 suspended)" "$(machine machine-2 suspended)")"
-CHECKS_JSON="$two_healthy"
-expect_failure run_checker post
 
 # Health por id. O caso decisivo é o mapa que cobre só a primeira Machine: é o
 # único que reprova uma implementação que leia o id de .[0] e nunca olhe a
@@ -237,17 +209,24 @@ assert_directive() {
 }
 
 assert_directive 'strategy = "bluegreen"'
-# Suspend, e não "stop", é asserido aqui, e não só documentado no fly.toml: foi
-# o "stop" que tirou o site do ar em 2026-08-10, porque a Machine parada perdeu
-# a vez no host de gru sem CPU livre. Voltar a ele tem que passar por esta linha.
-assert_directive 'auto_stop_machines = "suspend"'
+# Sempre ligada é asserido aqui, e não só documentado no fly.toml: o "stop"
+# tirou o site do ar em 2026-08-10 e o "suspend" em 2026-11-03. Voltar a
+# qualquer um deles tem que passar por esta linha e pela busca abaixo.
+assert_directive 'auto_stop_machines = "off"'
 assert_directive 'auto_start_machines = true'
-assert_directive 'min_machines_running = 0'
+assert_directive 'min_machines_running = 2'
 assert_directive 'size = "shared-cpu-1x"'
 assert_directive 'memory = "1gb"'
-# Suspend não aceita swap: com ele de volta, o Fly recusa pausar a Machine.
-if grep -Eq '^swap_size_mb[[:space:]]*=' <<<"$fly_directives"; then
-  echo "frontend/fly.toml com swap: suspend exige Machine sem swap" >&2
+# Nenhuma forma de scale-to-zero: "stop" derrubou o site em 2026-08-10 e
+# "suspend" em 2026-11-03 (motivos no comentário do auto_stop_machines em
+# frontend/fly.toml). Toda linha de auto_stop_machines, inclusive num bloco
+# [[services]] separado que a asserção acima não vê, tem de ser "off" ou false.
+# Lista do que se aceita, e não do que se proíbe: o flyctl também lê 'stop'
+# (string literal do TOML) e true (o stop legado), e uma lista de proibidos
+# deixava as duas passarem.
+if grep -E '^auto_stop_machines[[:space:]]*=' <<<"$fly_directives" \
+  | grep -Evxq 'auto_stop_machines[[:space:]]*=[[:space:]]*("off"|false)'; then
+  echo "frontend/fly.toml com scale-to-zero: todo auto_stop_machines tem de ser \"off\"" >&2
   exit 1
 fi
 

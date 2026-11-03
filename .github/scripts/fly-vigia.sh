@@ -7,13 +7,19 @@
 # e destruiu a original. Este script é esse conserto, automático.
 #
 # Duas formas de reconhecer Machine presa:
-#   - pelo estado e pelos eventos, sem tocar a app (não acorda Machine pausada):
+#   - pelo estado e pelos eventos, sem chamar a app:
 #     estado "failed", ou crash em loop (saídas não pedidas em sequência) numa
 #     Machine que não está de pé;
 #   - pela sonda HTTP, só no modo "probe": se a URL de health não responde, o
 #     vigia manda religar cada Machine fora de "started", e a presa é a que
-#     recusa o start por falta de capacidade no host. A sonda acorda a app, por
-#     isso o workflow a roda uma vez por hora e não a cada passada.
+#     recusa o start por falta de capacidade no host. O workflow a roda uma vez
+#     por hora e não a cada passada.
+#
+# No modo "probe", com a sonda verde, o vigia também confere o relógio de cada
+# Machine iniciada contra o do runner. Em 2026-11-03 uma Machine retomada de
+# pausa (auto_stop "suspend") voltou com o relógio quase 11 h atrás e assim
+# ficou por minutos; o health seguia verde, e o Clerk recusava toda sessão.
+# Relógio errado não se conserta recriando Machine, então o vigia só avisa.
 set -euo pipefail
 
 app="${1:-}"
@@ -30,6 +36,9 @@ readonly crash_window_minutes=30
 readonly crash_exits=3
 readonly probe_attempts=3
 readonly probe_interval_seconds=20
+# Folga para a latência da requisição e o arredondamento a segundos; o atraso
+# de 2026-11-03 foi de horas.
+readonly max_clock_skew_seconds=30
 
 summary() {
   echo "$1"
@@ -53,6 +62,35 @@ probe() {
     fi
   done
   return 1
+}
+
+# Uma requisição por Machine iniciada, presa a ela pelo cabeçalho
+# fly-force-instance-id: com duas Machines, a sonda comum cai em qualquer uma, e
+# em 2026-11-03 só uma das duas estava com o relógio errado. Falha fechado:
+# health sem `server_time`, listagem que falha e nenhuma Machine iniciada
+# reprovam, porque em todos eles o relógio não foi conferido.
+check_clocks() {
+  local started_ids machine_id body server_time skew failed=""
+  if ! started_ids="$(list_machines | jq -er '[.[] | select(.state == "started") | .id] | select(length > 0) | .[]')"; then
+    summary "$app: não foi possível listar Machines iniciadas para conferir o relógio."
+    return 1
+  fi
+  while read -r machine_id; do
+    [[ -n "$machine_id" ]] || continue
+    if ! body="$(curl -fsS --max-time 60 -H "fly-force-instance-id: $machine_id" "$health_url" </dev/null)" \
+      || ! server_time="$(jq -er '.server_time | select(type == "number")' <<<"$body" 2>/dev/null)"; then
+      summary "$app: a Machine $machine_id não informou server_time no health; relógio não conferido."
+      failed=1
+      continue
+    fi
+    skew="$(($(date +%s) - server_time))"
+    skew="${skew#-}"
+    if ((skew > max_clock_skew_seconds)); then
+      summary "$app: o relógio da Machine $machine_id difere do runner em ${skew}s; reiniciar a Machine corrige."
+      failed=1
+    fi
+  done <<<"$started_ids"
+  [[ -z "$failed" ]]
 }
 
 machines_json="$(list_machines)"
@@ -87,16 +125,18 @@ stuck_ids="$(jq -r \
   | .id
 ' <<<"$machines_json")"
 
+clock_failed=""
 if [[ "$mode" == "probe" ]]; then
   if probe; then
     summary "$app: health respondeu."
+    check_clocks || clock_failed=1
   else
-    # Sonda vermelha com Machine fora de "started" não prova Machine presa. No
-    # frontend, com tráfego baixo, o proxy acorda uma Machine e deixa a outra
-    # suspensa, legitimamente; e uma falha de rede do runner deixa a sonda
-    # vermelha sem nada errado no Fly. O que separa a pausada da presa é
-    # mandar religá-la: a de 2026-08-10 recusava o start com "could not
-    # reserve resource for machine: insufficient CPUs available".
+    # Sonda vermelha com Machine fora de "started" não prova Machine presa:
+    # uma falha de rede do runner deixa a sonda vermelha sem nada errado no
+    # Fly, e uma Machine parada por restart ou manutenção do host volta com o
+    # start. O que separa a parada da presa é mandar religá-la: a de 2026-08-10
+    # recusava o start com "could not reserve resource for machine:
+    # insufficient CPUs available".
     #
     # Só essa recusa condena a Machine. O start também falha por 5xx, timeout
     # ou 429 da API do Fly, por lease ocupado (deploy ou `machine update` fora
@@ -150,7 +190,8 @@ fi
 
 if [[ -z "$stuck_ids" ]]; then
   summary "$app: nenhuma Machine presa."
-  exit 0
+  [[ -z "$clock_failed" ]]
+  exit
 fi
 
 # Clona antes de destruir para não deixar a app sem Machine no meio do conserto,
