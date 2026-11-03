@@ -102,7 +102,7 @@ if ! jq -e '
   exit 1
 fi
 
-machine_ids_json="$(jq -er '[.[].id | select(type == "string" and length > 0)]' <<<"$machines_json")"
+machine_ids_json="$(jq -r '[.[].id | select(type == "string" and length > 0)]' <<<"$machines_json")"
 if ! jq -e --argjson expected "$expected_machines" 'length == $expected' >/dev/null <<<"$machine_ids_json"; then
   echo "Deploy inválido: não foi possível ler o id de todas as $expected_machines Machines." >&2
   exit 1
