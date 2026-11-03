@@ -1,12 +1,12 @@
 name: Vigia das Machines (Fly.io)
 
-# As duas apps ficam pausadas quando ninguém as usa (auto_stop "suspend"). Uma
-# Machine que não volta derruba a app até alguém agir; este vigia age sozinho.
-# Lógica e motivo em .github/scripts/fly-vigia.sh.
+# As duas apps ficam sempre ligadas (auto_stop "off"), mas uma Machine que para
+# por outro motivo e não volta derruba a app até alguém agir; este vigia age
+# sozinho, e uma vez por hora confere também o relógio das Machines. Lógica e
+# motivo em .github/scripts/fly-vigia.sh.
 on:
   schedule:
-    # Uma vez por hora, com sonda HTTP. A sonda acorda as apps, então ela não
-    # roda a cada passada: cada acordar custa alguns minutos de máquina ligada.
+    # Uma vez por hora, com sonda HTTP e conferência do relógio.
     - cron: '7 * * * *'
     # Nas outras passadas, só estado e eventos das Machines, sem tocar as apps.
     - cron: '22,37,52 * * * *'

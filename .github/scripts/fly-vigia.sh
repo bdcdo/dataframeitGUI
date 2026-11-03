@@ -12,8 +12,14 @@
 #     Machine que não está de pé;
 #   - pela sonda HTTP, só no modo "probe": se a URL de health não responde, o
 #     vigia manda religar cada Machine fora de "started", e a presa é a que
-#     recusa o start por falta de capacidade no host. A sonda acorda a app, por
-#     isso o workflow a roda uma vez por hora e não a cada passada.
+#     recusa o start por falta de capacidade no host. O workflow a roda uma vez
+#     por hora e não a cada passada.
+#
+# No modo "probe", com a sonda verde, o vigia também confere o relógio de cada
+# Machine iniciada contra o do runner. Em 2026-11-03 uma Machine retomada de
+# pausa (auto_stop "suspend") voltou com o relógio quase 11 h atrás e assim
+# ficou por minutos; o health seguia verde, e o Clerk recusava toda sessão.
+# Relógio errado não se conserta recriando Machine, então o vigia só avisa.
 set -euo pipefail
 
 app="${1:-}"
@@ -30,6 +36,9 @@ readonly crash_window_minutes=30
 readonly crash_exits=3
 readonly probe_attempts=3
 readonly probe_interval_seconds=20
+# Folga para a latência da requisição e o arredondamento a segundos; o atraso
+# de 2026-11-03 foi de horas.
+readonly max_clock_skew_seconds=30
 
 summary() {
   echo "$1"
@@ -53,6 +62,30 @@ probe() {
     fi
   done
   return 1
+}
+
+# Uma requisição por Machine iniciada, presa a ela pelo cabeçalho
+# fly-force-instance-id: com duas Machines, a sonda comum cai em qualquer uma, e
+# em 2026-11-03 só uma das duas estava com o relógio errado. Health sem
+# `server_time` também reprova, porque aí o relógio não foi conferido.
+check_clocks() {
+  local machine_id body server_time skew failed=""
+  while read -r machine_id; do
+    [[ -n "$machine_id" ]] || continue
+    if ! body="$(curl -fsS --max-time 60 -H "fly-force-instance-id: $machine_id" "$health_url" </dev/null)" \
+      || ! server_time="$(jq -er '.server_time | select(type == "number")' <<<"$body" 2>/dev/null)"; then
+      summary "$app: a Machine $machine_id não informou server_time no health; relógio não conferido."
+      failed=1
+      continue
+    fi
+    skew="$(($(date +%s) - server_time))"
+    skew="${skew#-}"
+    if ((skew > max_clock_skew_seconds)); then
+      summary "$app: o relógio da Machine $machine_id difere do runner em ${skew}s; reiniciar a Machine corrige."
+      failed=1
+    fi
+  done < <(list_machines | jq -r '.[] | select(.state == "started") | .id')
+  [[ -z "$failed" ]]
 }
 
 machines_json="$(list_machines)"
@@ -87,9 +120,11 @@ stuck_ids="$(jq -r \
   | .id
 ' <<<"$machines_json")"
 
+clock_failed=""
 if [[ "$mode" == "probe" ]]; then
   if probe; then
     summary "$app: health respondeu."
+    check_clocks || clock_failed=1
   else
     # Sonda vermelha com Machine fora de "started" não prova Machine presa. No
     # frontend, com tráfego baixo, o proxy acorda uma Machine e deixa a outra
@@ -150,7 +185,8 @@ fi
 
 if [[ -z "$stuck_ids" ]]; then
   summary "$app: nenhuma Machine presa."
-  exit 0
+  [[ -z "$clock_failed" ]]
+  exit
 fi
 
 # Clona antes de destruir para não deixar a app sem Machine no meio do conserto,

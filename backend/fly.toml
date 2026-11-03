@@ -25,19 +25,16 @@ kill_timeout = "5m"
 [http_service]
   internal_port = 8000
   force_https = true
-  # Pausa quando ninguém usa (suspend), como o frontend: Machine suspensa
-  # mantém a reserva de CPU no host e volta em centenas de milissegundos (262 ms
-  # medidos em 02/11/2026), então nem o cold start de pandas + langchain que
-  # estourava o proxy (502 PU02, #111) nem a falta de CPU no host que derrubou o
-  # frontend em 2026-08-10 entram no caminho. O vigia agendado
-  # (.github/workflows/fly-vigia.yml) cobre a Machine que mesmo assim não volte.
-  #
-  # Job de LLM roda em BackgroundTasks depois que o POST /run já respondeu, sem
-  # tráfego que o proxy veja; quem impede a pausa no meio dele é o stream que o
-  # processo abre para si mesmo enquanto houver job (services/job_keepalive.py).
-  auto_stop_machines = "suspend"
+  # Sempre ligada. O backend roda LLM em BackgroundTasks depois de responder o
+  # HTTP, e o cold start (pandas + langchain) estourava o proxy (502 PU02, #111)
+  # quando a Machine dormia com "stop". O "suspend" (#837) também saiu: em
+  # 2026-11-03 Machine retomada da pausa voltou com o relógio parado na hora da
+  # suspensão, e tudo o que compara horário (validade do JWT do Clerk, o prazo
+  # de heartbeat dos jobs) erra enquanto ele não se corrige. Motivo completo em
+  # frontend/fly.toml; o contrato do deploy só aceita "off" aqui.
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
 
   # Health check: se o processo travar/sair (OOM, deadlock), o Fly reinicia
   # automaticamente. O endpoint /health esta em main.py:23.

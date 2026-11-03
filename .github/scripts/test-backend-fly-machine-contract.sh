@@ -26,14 +26,6 @@ cat >"$tmp_dir/bin/sleep" <<'EOF'
 exit 0
 EOF
 chmod +x "$tmp_dir/bin/sleep"
-# O curl falso registra a chamada: o postflight acorda a Machine antes de
-# listá-la, e o preflight não precisa tocar a app.
-cat >"$tmp_dir/bin/curl" <<'EOF'
-#!/usr/bin/env bash
-echo "$*" >>"$CURL_LOG"
-EOF
-chmod +x "$tmp_dir/bin/curl"
-CURL_LOG="$tmp_dir/curl.log"
 
 machine() {
   local state="${1:-started}"
@@ -41,7 +33,7 @@ machine() {
   local cpu_kind="${3:-shared}"
   local cpus="${4:-1}"
   local memory_mb="${5:-512}"
-  local autostop="${6:-\"suspend\"}"
+  local autostop="${6:-false}"
   local autostart="${7:-true}"
   printf '[{"id":"machine-1","state":"%s","region":"%s","config":{"guest":{"cpu_kind":"%s","cpus":%s,"memory_mb":%s},"services":[{"internal_port":8000,"autostop":%s,"autostart":%s}]}}]' \
     "$state" "$region" "$cpu_kind" "$cpus" "$memory_mb" "$autostop" "$autostart"
@@ -52,7 +44,6 @@ run_checker() {
     "PATH=$tmp_dir/bin:$PATH" \
     MACHINES_JSON="$MACHINES_JSON" \
     CHECKS_JSON="$CHECKS_JSON" \
-    CURL_LOG="$CURL_LOG" \
     bash "$checker" "$1"
 }
 
@@ -80,17 +71,8 @@ expect_failure run_checker pre
 # O postflight exige a topologia versionada e ao menos um health check verde.
 MACHINES_JSON="$(machine)"
 CHECKS_JSON='{"machine-1":[{"name":"servicecheck-00-http-8000","status":"passing"}]}'
-: >"$CURL_LOG"
 run_checker pre >/dev/null
-if [[ -s "$CURL_LOG" ]]; then
-  echo "o preflight não deveria acordar a app" >&2
-  exit 1
-fi
 run_checker post >/dev/null
-if ! grep -Fq "https://gui-analise-sistematica-api.fly.dev/health" "$CURL_LOG"; then
-  echo "o postflight precisa acordar a Machine antes de listá-la" >&2
-  exit 1
-fi
 
 for invalid_machine in \
   "$(machine stopped)" \
@@ -98,9 +80,11 @@ for invalid_machine in \
   "$(machine started gru performance)" \
   "$(machine started gru shared 2)" \
   "$(machine started gru shared 1 1024)" \
-  "$(machine started gru shared 1 512 false)" \
+  "$(machine started gru shared 1 512 '"suspend"')" \
   "$(machine started gru shared 1 512 '"stop"')" \
-  "$(machine started gru shared 1 512 '"suspend"' false)" \
+  "$(machine started gru shared 1 512 true)" \
+  "$(machine started gru shared 1 512 null)" \
+  "$(machine started gru shared 1 512 false false)" \
   "$(machine | jq -c '.[0].config.services = []')" \
   "$(machine | jq -c 'del(.[0].config.services)')"
 do
@@ -233,12 +217,15 @@ grep -Fq 'memory = "512mb"' "$fly_config"
 # Mesma comparação por linha inteira, sem comentários, do contrato do frontend:
 # o arquivo cita em prosa formas que estas asserções rejeitam.
 fly_directives="$(sed 's/#.*//; s/[[:space:]]*$//; s/^[[:space:]]*//' "$fly_config")"
-for directive in 'auto_stop_machines = "suspend"' 'auto_start_machines = true' 'min_machines_running = 0'; do
+for directive in 'auto_stop_machines = "off"' 'auto_start_machines = true' 'min_machines_running = 1'; do
   grep -Fxq "$directive" <<<"$fly_directives" || { echo "backend/fly.toml sem a diretiva esperada: $directive" >&2; exit 1; }
 done
-# Suspend não aceita swap: com ele, o Fly recusa pausar a Machine.
-if grep -Eq '^swap_size_mb[[:space:]]*=' <<<"$fly_directives"; then
-  echo "backend/fly.toml com swap: suspend exige Machine sem swap" >&2
+# Nenhuma forma de scale-to-zero: "stop" derrubou o site em 2026-08-10 e
+# "suspend" em 2026-11-03 (motivos no comentário do auto_stop_machines em
+# frontend/fly.toml). A busca pega também a diretiva escrita num bloco
+# [[services]] separado, que a asserção de linha acima não vê.
+if grep -Eq 'suspend|"stop"' <<<"$fly_directives"; then
+  echo "backend/fly.toml com scale-to-zero (stop ou suspend): a Machine tem de ficar sempre ligada" >&2
   exit 1
 fi
 

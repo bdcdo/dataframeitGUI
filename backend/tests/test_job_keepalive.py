@@ -1,7 +1,7 @@
 """Keepalive da Machine durante jobs de LLM e contagem de jobs ativos.
 
-A API fica pausada no Fly quando não há tráfego; o que impede a pausa no meio
-de um job é o stream que o processo abre para si mesmo enquanto houver job
+Com autostop ligado, o Fly pausaria a API sem tráfego; o que impede a pausa no
+meio de um job é o stream que o processo abre para si mesmo enquanto houver job
 ativo. Os casos que importam: job ativo conta, job terminado ou travado não
 conta (senão a Machine nunca mais pausa), e ninguém de fora segura o stream.
 """
@@ -48,9 +48,13 @@ def test_active_job_count_counts_only_running_jobs_with_recent_heartbeat() -> No
 
 def test_health_reports_active_jobs() -> None:
     llm_runner._jobs["a"] = _job("running", started_ago=1, persisted_ago=None)
+    before = int(time.time())
     response = TestClient(main.app).get("/health")
+    after = int(time.time())
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "active_jobs": 1}
+    body = response.json()
+    assert before <= body.pop("server_time") <= after
+    assert body == {"status": "ok", "active_jobs": 1}
 
 
 def test_keepalive_route_hides_itself_without_the_process_token() -> None:
