@@ -20,6 +20,18 @@ if [[ "$mode" != "pre" && "$mode" != "post" ]]; then
   exit 64
 fi
 
+# As Machines pausam sozinhas quando ociosas (auto_stop "suspend"), e entre o
+# fim do bluegreen e este passo o proxy pode ter pausado as duas; o postflight
+# então reprovaria por não achar Machine iniciada para medir o health. Uma
+# requisição ao health antes de listar acorda ao menos uma, como o checker do
+# backend faz. Vai ao hostname .fly.dev, que testa borda e Machines sem
+# depender do DNS do domínio próprio. A falha aqui não decide nada: o estado e o
+# health check abaixo é que decidem. Só no modo post: o preflight lê a
+# cardinalidade, que não depende de a Machine estar acordada.
+if [[ "$mode" == "post" ]]; then
+  curl -fsS --max-time 60 -o /dev/null https://gui-analise-sistematica-frontend.fly.dev/api/health || true
+fi
+
 machines_json="$(flyctl machine list -c "$fly_config" --json)"
 if ! machine_count="$(jq -er '
   if type == "array" then length
@@ -65,45 +77,57 @@ fi
 # parada ou com outro tamanho. A região não entra aqui — já foi verificada
 # acima, para os dois modos, e repeti-la abriria espaço para as duas definições
 # divergirem.
+#
+# "suspended" é aceito porque o proxy pode pausar uma Machine ociosa entre o fim
+# do bluegreen e este passo. "stopped" não: Machine parada perde a reserva de
+# CPU no host, que é o que o suspend existe para manter.
 if ! jq -e '
   all(.[];
-    .state == "started"
+    (.state == "started" or .state == "suspended")
     and .config.guest.cpu_kind == "shared"
     and .config.guest.cpus == 1
-    and .config.guest.memory_mb == 512)
+    and .config.guest.memory_mb == 1024)
 ' >/dev/null <<<"$machines_json"; then
-  echo "Deploy inválido: todas as Machines devem estar iniciadas com shared-cpu-1x e 512 MB." >&2
+  echo "Deploy inválido: todas as Machines devem estar iniciadas ou suspensas, com shared-cpu-1x e 1 GB." >&2
   exit 1
 fi
 
 # O autostop é conferido na config APLICADA, e não só no fly.toml, porque foi
-# por aí que o site caiu em 2026-08-10 e por aí que ele voltou: a Machine foi
-# recriada com `machine clone` (que herda a config da origem, ainda com
-# autostop ligado) e só depois corrigida com `machine update --autostop=off`,
-# tudo fora do fluxo de deploy. O grep do fly.toml prova a intenção declarada;
-# esta asserção prova o que a Machine de fato tem.
+# por aí que o site caiu em 2026-08-10: a Machine tinha autostop "stop", parou,
+# e não conseguiu voltar ao host sem CPU livre. A forma contratada agora é
+# "suspend", que mantém a reserva no host; um `machine clone` ou `machine
+# update` fora do fluxo de deploy pode deixar outra forma na Machine, e o grep
+# do fly.toml só prova a intenção declarada.
 #
 # Quantifica sobre TODAS as Machines pelo mesmo motivo da validação de forma
 # acima: com duas, conferir só a config aplicada de .[0] aprovaria um deploy em
 # que a segunda ficou com o autostop ligado — e é justamente a segunda que
 # tende a nascer de um `scale count`/`clone`, fora do fluxo que corrige a config.
 #
-# `== false` é fail-closed de propósito: o flyctl serializa "off" como booleano
-# false, então as formas string ("stop", "suspend"), o true e o campo ausente
-# (null) reprovam todos.
+# `== "suspend"` é fail-closed de propósito: o "off" (booleano false), o "stop",
+# o true e o campo ausente (null) reprovam todos. Sem autostart, a Machine
+# pausada nunca voltaria.
 if ! jq -e '
   all(.[];
     (.config.services | type) == "array"
     and (.config.services | length) > 0
-    and all(.config.services[]; .autostop == false and .autostart == true))
+    and all(.config.services[]; .autostop == "suspend" and .autostart == true))
 ' >/dev/null <<<"$machines_json"; then
-  echo "Deploy inválido: todas as Machines precisam estar com autostop desligado e autostart ligado." >&2
+  echo "Deploy inválido: todas as Machines precisam estar com autostop \"suspend\" e autostart ligado." >&2
   exit 1
 fi
 
-machine_ids_json="$(jq -er '[.[].id | select(type == "string" and length > 0)]' <<<"$machines_json")"
-if ! jq -e --argjson expected "$expected_machines" 'length == $expected' >/dev/null <<<"$machine_ids_json"; then
+# Health só se mede em Machine iniciada; a suspensa não roda o check. Ao menos
+# uma tem de estar iniciada e verde, senão o deploy não provou que a imagem nova
+# sobe. Todas as ids precisam ser legíveis, para que uma Machine sem id não saia
+# da conta em silêncio.
+if ! jq -e --argjson expected "$expected_machines" '[.[].id | select(type == "string" and length > 0)] | length == $expected' >/dev/null <<<"$machines_json"; then
   echo "Deploy inválido: não foi possível ler o id de todas as $expected_machines Machines." >&2
+  exit 1
+fi
+machine_ids_json="$(jq -c '[.[] | select(.state == "started") | .id]' <<<"$machines_json")"
+if ! jq -e 'length > 0' >/dev/null <<<"$machine_ids_json"; then
+  echo "Deploy inválido: nenhuma Machine iniciada para medir o health depois do deploy." >&2
   exit 1
 fi
 readonly health_attempts=12
@@ -123,7 +147,7 @@ for ((attempt = 1; attempt <= health_attempts; attempt += 1)); do
       and ($checks | length) > 0
       and all($checks[]; .status == "passing"))
   ' >/dev/null <<<"$checks_json"; then
-    echo "Postflight Fly aprovado: $expected_machines Machines saudáveis em $expected_region, shared-cpu-1x/512 MB."
+    echo "Postflight Fly aprovado: $expected_machines Machines em $expected_region, shared-cpu-1x/1 GB, iniciadas saudáveis."
     exit 0
   fi
 
@@ -133,5 +157,5 @@ for ((attempt = 1; attempt <= health_attempts; attempt += 1)); do
   fi
 done
 
-echo "Deploy inválido: as $expected_machines Machines não apresentaram health check verde após $health_attempts tentativa(s)." >&2
+echo "Deploy inválido: as Machines iniciadas não apresentaram health check verde após $health_attempts tentativa(s)." >&2
 exit 1

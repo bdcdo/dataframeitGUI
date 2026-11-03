@@ -3,11 +3,20 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fly_config="$repo_root/backend/fly.toml"
+health_url="https://gui-analise-sistematica-api.fly.dev/health"
 mode="${1:-}"
 
 if [[ "$mode" != "pre" && "$mode" != "post" ]]; then
   echo "uso: $0 pre|post" >&2
   exit 64
+fi
+
+# A Machine pausa sozinha quando ociosa (auto_stop "suspend"). Uma requisição
+# ao health antes de ler o estado a acorda, para que o postflight meça a Machine
+# nova em vez de reprovar uma pausa legítima. A falha aqui não decide nada: o
+# estado e o health check abaixo é que decidem.
+if [[ "$mode" == "post" ]]; then
+  curl -fsS --max-time 60 -o /dev/null "$health_url" || true
 fi
 
 machines_json="$(flyctl machine list -c "$fly_config" --json)"
@@ -43,6 +52,19 @@ if ! jq -e '
   and .[0].config.guest.memory_mb == 512
 ' >/dev/null <<<"$machines_json"; then
   echo "Deploy inválido: a Machine deve estar iniciada em gru com shared-cpu-1x e 512 MB." >&2
+  exit 1
+fi
+
+# Config APLICADA, não só o fly.toml: um `machine clone` ou `machine update` fora
+# do deploy pode deixar outra forma. "stop" perderia a reserva de CPU no host e
+# "off" (false) deixaria a Machine ligada para sempre; sem autostart, a pausada
+# nunca voltaria.
+if ! jq -e '
+  (.[0].config.services | type) == "array"
+  and (.[0].config.services | length) > 0
+  and all(.[0].config.services[]; .autostop == "suspend" and .autostart == true)
+' >/dev/null <<<"$machines_json"; then
+  echo "Deploy inválido: a Machine precisa estar com autostop \"suspend\" e autostart ligado." >&2
   exit 1
 fi
 

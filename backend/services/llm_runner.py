@@ -37,6 +37,28 @@ logger = logging.getLogger(__name__)
 # In-memory job tracking
 _jobs: dict[str, dict] = {}
 
+# Job "running" sem heartbeat há mais que isto não conta como ativo. É o corte
+# de 10 min de mark_stale_runs_as_error, com folga: uma thread travada, ou um
+# except que falhou ao gravar o erro, deixaria o status preso em "running", e o
+# keepalive (services/job_keepalive.py) nunca mais deixaria a Machine pausar.
+_ACTIVE_JOB_STALE_SECONDS = 15 * 60
+
+
+def active_job_count() -> int:
+    """Quantos jobs deste processo estão em curso, com heartbeat recente."""
+    now = time.time()
+    # `list()` copia os valores antes de iterar: as runs rodam em threads do
+    # threadpool e `init_job` acrescenta chaves a `_jobs` enquanto isto roda no
+    # event loop (mesmo motivo da cópia em `get_job_status`).
+    return sum(
+        1
+        for job in list(_jobs.values())
+        if job.get("status") == "running"
+        and now - max(job.get("started_at", 0.0), job.get("last_progress_persist", 0.0))
+        < _ACTIVE_JOB_STALE_SECONDS
+    )
+
+
 _JUSTIFICATION_FIELD_SUFFIX = "_justification"
 _GENERATED_JUSTIFICATION_FIELDS_ATTR = "__generated_justification_fields__"
 

@@ -59,3 +59,13 @@ export async function fetchFastAPI<T>(
 
   return res.json();
 }
+
+/**
+ * Acorda a API sem esperar a resposta. A API fica pausada no Fly quando ninguém
+ * a usa; chamar isto quando alguém abre a GUI faz a retomada acontecer enquanto
+ * a pessoa navega, e não no clique em "Executar". `/health` é público e não
+ * toca o banco. A falha é ignorada: aquecer é otimização, não requisito.
+ */
+export function warmUpApi(): void {
+  void fetch(`${API_URL}/health`, { cache: "no-store" }).catch(() => {});
+}

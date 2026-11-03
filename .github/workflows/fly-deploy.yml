@@ -25,12 +25,92 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       # Pin a SHA (tag 1.6) por supply-chain safety — @master é floating ref.
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      # Build separado do deploy: a imagem fica pronta no registry antes da
+      # espera pelas runs, e a troca da Machine vem logo depois dela. Com build
+      # e troca no mesmo `flyctl deploy`, a espera via zero runs e o build ainda
+      # levava minutos; uma run iniciada nesse intervalo morria na troca. O
+      # rótulo com o SHA liga a imagem a este commit, e o passo de deploy a
+      # pede pelo mesmo nome.
+      - name: Construir e publicar a imagem
+        run: flyctl deploy --build-only --push --remote-only --image-label "deploy-${GITHUB_SHA}" -a gui-analise-sistematica-api
+        working-directory: backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      - name: Esperar as runs de LLM em curso terminarem
+        # Trocar a Machine no meio de uma run mata o job, e o kill_timeout de
+        # 5 min não cobre runs de horas. O /health informa quantas runs estão
+        # ativas; o deploy espera zerar, por até 4 h, e segue se a API não
+        # responder, porque API fora do ar não tem run em curso. Versão sem o
+        # campo (anterior a esta espera) conta como zero.
+        #
+        # `shell: bash` explícito vira `bash -eo pipefail`; o padrão do Actions
+        # é `bash -e` sem pipefail. O comportamento deste passo é testado em
+        # .github/scripts/test-backend-fly-machine-contract.sh, que extrai este
+        # `run` e o executa com curl e sleep falsos.
+        #
+        # O prazo é medido em segundos de relógio, e não em número de voltas,
+        # porque cada volta custa até 60 s de curl mais 60 s de sleep. Depois do
+        # prazo cabe no máximo mais uma volta (60 s de sleep e três leituras de
+        # até 60 s com 10 s entre elas, cerca de 4,5 min), e o timeout do passo
+        # fica acima dessa soma.
+        timeout-minutes: 250
+        shell: bash
+        run: |
+          readonly health_url="https://gui-analise-sistematica-api.fly.dev/health"
+          readonly deadline=$(($(date +%s) + 4 * 60 * 60))
+          readonly read_attempts=3
+          readonly read_retry_seconds=10
+          readonly poll_seconds=60
+
+          # Imprime a contagem e sai 0 só com um inteiro na mão. Saída vazia,
+          # JSON inválido ou valor não numérico saem 1 explicitamente: com jq
+          # 1.6, entrada vazia em `jq -e` sai 0 sem imprimir nada, e a espera
+          # leria "" como "runs em curso" até o prazo de 4 h.
+          read_active_jobs() {
+            local body count
+            body="$(curl -fsS --max-time 60 "$health_url")" || return 1
+            count="$(jq -r '.active_jobs // 0' <<<"$body" 2>/dev/null)" || return 1
+            [[ "$count" =~ ^[0-9]+$ ]] || return 1
+            printf '%s' "$count"
+          }
+
+          while true; do
+            # Um 502 transitório da borda não pode encerrar a espera com run
+            # ativa: só três leituras falhas seguidas contam como API fora do ar.
+            active_jobs=""
+            for ((reading = 1; reading <= read_attempts; reading += 1)); do
+              if active_jobs="$(read_active_jobs)"; then
+                break
+              fi
+              active_jobs=""
+              if ((reading < read_attempts)); then
+                echo "Leitura do /health falhou ($reading/$read_attempts); nova leitura em ${read_retry_seconds} s."
+                sleep "$read_retry_seconds"
+              fi
+            done
+            if [[ -z "$active_jobs" ]]; then
+              echo "API sem resposta legível em $read_attempts leituras; nenhuma run em curso para esperar."
+              exit 0
+            fi
+            if ((active_jobs == 0)); then
+              echo "Nenhuma run em curso."
+              exit 0
+            fi
+            if (($(date +%s) >= deadline)); then
+              echo "Runs ainda em curso depois de 4 h; o deploy segue e pode interromper a run."
+              exit 0
+            fi
+            echo "$active_jobs run(s) em curso; nova consulta em ${poll_seconds} s."
+            sleep "$poll_seconds"
+          done
       - name: Recusar cardinalidade divergente antes do deploy
         run: bash .github/scripts/check-backend-fly-machines.sh pre
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      # Implanta a imagem já construída, sem novo build. O working-directory é
+      # o backend para o flyctl ler o fly.toml (serviços, autostop, região).
       - name: flyctl deploy
-        run: flyctl deploy --remote-only --ha=false -a gui-analise-sistematica-api
+        run: flyctl deploy --image "registry.fly.io/gui-analise-sistematica-api:deploy-${GITHUB_SHA}" --ha=false -a gui-analise-sistematica-api
         working-directory: backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
