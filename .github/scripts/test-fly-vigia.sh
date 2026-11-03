@@ -227,10 +227,23 @@ for events in "$two_recent" "$old_three" "$requested_three"; do
 done
 
 # Sonda verde: nada a fazer.
-MACHINES_JSON="$(machines "$(machine m1 suspended)" "$(machine m2 suspended)")"
+MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2 suspended)")"
 PROBE_OK=1
 expect_success probe
 assert_calls ""
+
+# Sonda verde sem Machine iniciada, ou com a segunda listagem quebrada: o
+# relógio não foi conferido, e isso reprova em vez de passar calado.
+MACHINES_JSON="$(machines "$(machine m1 suspended)" "$(machine m2 stopped)")"
+expect_failure probe
+assert_calls ""
+assert_contains "$CALLS_LOG.summary" "não foi possível listar Machines iniciadas"
+MACHINES_JSON="$(machines "$(machine m1)")"
+MACHINES_AFTER_PROBE_JSON="Error: 502 from API"
+expect_failure probe
+assert_calls ""
+assert_contains "$CALLS_LOG.summary" "não foi possível listar Machines iniciadas"
+unset MACHINES_AFTER_PROBE_JSON
 
 # Relógio: cada Machine iniciada é conferida, presa pelo id, e só elas.
 MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2)" "$(machine m3 stopped)")"

@@ -155,7 +155,8 @@ def test_loop_reopens_the_stream_after_a_failure(monkeypatch) -> None:
 
 def test_lifespan_starts_the_keepalive_loop(monkeypatch) -> None:
     # Fio entre o módulo e a aplicação: sem esta tarefa no lifespan, nada abre
-    # o stream e o proxy pausa a Machine no meio de um job longo. O dublê
+    # o stream, e com autostop ligado o proxy pausaria a Machine no meio de
+    # um job longo. O dublê
     # registra a chamada ao ser invocado, e não dentro da corrotina, para que o
     # teste não dependa de a tarefa chegar a rodar antes do fim do lifespan.
     # Sem FRONTEND_INTERNAL_URL o loop de reconciliação não sobe, então o
@@ -178,8 +179,9 @@ def test_lifespan_starts_the_keepalive_loop(monkeypatch) -> None:
 
 
 def test_loop_opens_no_stream_while_no_job_runs(monkeypatch) -> None:
-    # Sem job, nenhuma requisição pode sair: o stream seguraria a Machine
-    # acordada para sempre e a pausa por ociosidade nunca aconteceria.
+    # Sem job, nenhuma requisição pode sair: com autostop ligado, o stream
+    # seguraria a Machine acordada para sempre e a pausa por ociosidade nunca
+    # aconteceria.
     monkeypatch.setenv("FLY_APP_NAME", "app-teste")
     monkeypatch.setenv("FLY_MACHINE_ID", "machine-1")
     idle_iterations = 3

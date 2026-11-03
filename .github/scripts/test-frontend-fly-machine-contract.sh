@@ -219,10 +219,14 @@ assert_directive 'size = "shared-cpu-1x"'
 assert_directive 'memory = "1gb"'
 # Nenhuma forma de scale-to-zero: "stop" derrubou o site em 2026-08-10 e
 # "suspend" em 2026-11-03 (motivos no comentário do auto_stop_machines em
-# frontend/fly.toml). A busca pega também a diretiva escrita num bloco
-# [[services]] separado, que a asserção de linha acima não vê.
-if grep -Eq 'suspend|"stop"' <<<"$fly_directives"; then
-  echo "frontend/fly.toml com scale-to-zero (stop ou suspend): a Machine tem de ficar sempre ligada" >&2
+# frontend/fly.toml). Toda linha de auto_stop_machines, inclusive num bloco
+# [[services]] separado que a asserção acima não vê, tem de ser "off" ou false.
+# Lista do que se aceita, e não do que se proíbe: o flyctl também lê 'stop'
+# (string literal do TOML) e true (o stop legado), e uma lista de proibidos
+# deixava as duas passarem.
+if grep -E '^auto_stop_machines[[:space:]]*=' <<<"$fly_directives" \
+  | grep -Evxq 'auto_stop_machines[[:space:]]*=[[:space:]]*("off"|false)'; then
+  echo "frontend/fly.toml com scale-to-zero: todo auto_stop_machines tem de ser \"off\"" >&2
   exit 1
 fi
 

@@ -7,7 +7,7 @@
 # e destruiu a original. Este script é esse conserto, automático.
 #
 # Duas formas de reconhecer Machine presa:
-#   - pelo estado e pelos eventos, sem tocar a app (não acorda Machine pausada):
+#   - pelo estado e pelos eventos, sem chamar a app:
 #     estado "failed", ou crash em loop (saídas não pedidas em sequência) numa
 #     Machine que não está de pé;
 #   - pela sonda HTTP, só no modo "probe": se a URL de health não responde, o
@@ -66,10 +66,15 @@ probe() {
 
 # Uma requisição por Machine iniciada, presa a ela pelo cabeçalho
 # fly-force-instance-id: com duas Machines, a sonda comum cai em qualquer uma, e
-# em 2026-11-03 só uma das duas estava com o relógio errado. Health sem
-# `server_time` também reprova, porque aí o relógio não foi conferido.
+# em 2026-11-03 só uma das duas estava com o relógio errado. Falha fechado:
+# health sem `server_time`, listagem que falha e nenhuma Machine iniciada
+# reprovam, porque em todos eles o relógio não foi conferido.
 check_clocks() {
-  local machine_id body server_time skew failed=""
+  local started_ids machine_id body server_time skew failed=""
+  if ! started_ids="$(list_machines | jq -er '[.[] | select(.state == "started") | .id] | select(length > 0) | .[]')"; then
+    summary "$app: não foi possível listar Machines iniciadas para conferir o relógio."
+    return 1
+  fi
   while read -r machine_id; do
     [[ -n "$machine_id" ]] || continue
     if ! body="$(curl -fsS --max-time 60 -H "fly-force-instance-id: $machine_id" "$health_url" </dev/null)" \
@@ -84,7 +89,7 @@ check_clocks() {
       summary "$app: o relógio da Machine $machine_id difere do runner em ${skew}s; reiniciar a Machine corrige."
       failed=1
     fi
-  done < <(list_machines | jq -r '.[] | select(.state == "started") | .id')
+  done <<<"$started_ids"
   [[ -z "$failed" ]]
 }
 
@@ -126,12 +131,12 @@ if [[ "$mode" == "probe" ]]; then
     summary "$app: health respondeu."
     check_clocks || clock_failed=1
   else
-    # Sonda vermelha com Machine fora de "started" não prova Machine presa. No
-    # frontend, com tráfego baixo, o proxy acorda uma Machine e deixa a outra
-    # suspensa, legitimamente; e uma falha de rede do runner deixa a sonda
-    # vermelha sem nada errado no Fly. O que separa a pausada da presa é
-    # mandar religá-la: a de 2026-08-10 recusava o start com "could not
-    # reserve resource for machine: insufficient CPUs available".
+    # Sonda vermelha com Machine fora de "started" não prova Machine presa:
+    # uma falha de rede do runner deixa a sonda vermelha sem nada errado no
+    # Fly, e uma Machine parada por restart ou manutenção do host volta com o
+    # start. O que separa a parada da presa é mandar religá-la: a de 2026-08-10
+    # recusava o start com "could not reserve resource for machine:
+    # insufficient CPUs available".
     #
     # Só essa recusa condena a Machine. O start também falha por 5xx, timeout
     # ou 429 da API do Fly, por lease ocupado (deploy ou `machine update` fora
