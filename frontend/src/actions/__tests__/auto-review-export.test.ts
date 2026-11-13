@@ -71,12 +71,12 @@ const reviewRow = {
   cycle_no: 1,
   superseded_at: null,
   superseded_reason: null,
+  documents: { external_id: "N-1", title: "Doc" },
 };
 
 function fixture(): TableResults {
   return {
     projects: { data: { name: "Zolg", pydantic_fields: [{ name: "q_a", type: "text", hash: "hA" }] } },
-    documents: { data: [{ id: "d1", external_id: "N-1", title: "Doc" }] },
     field_reviews: {
       data: [reviewRow, { ...reviewRow, id: "fr2", self_reviewer_id: "u1" }, { ...reviewRow, id: "fr3" }],
     },
@@ -112,19 +112,22 @@ describe("getAutoReviewVerdicts — leitura", () => {
         { table: "field_reviews", method: "eq", column: "project_id", value: "p1" },
         { table: "field_reviews", method: "not", column: "self_verdict", value: null },
         { table: "field_reviews", method: "is", column: "superseded_at", value: null },
+        // Documento embutido com !inner: excluído não entra.
+        { table: "field_reviews", method: "is", column: "documents.excluded_at", value: null },
       ]),
     );
+    expect(selectCalls.find((c) => c.table === "field_reviews")?.columns).toContain("documents!inner(external_id, title)");
+    // Sem a opção, o histórico nem é lido.
+    expect(selectCalls.some((c) => c.table === "field_review_cycle_history_entries")).toBe(false);
     expect(filterCalls).toEqual(
-      expect.arrayContaining([
-        { table: "documents", method: "is", column: "excluded_at", value: null },
-        { table: "profiles", method: "in", column: "id", value: ["u2", "u1"] },
-      ]),
+      expect.arrayContaining([{ table: "profiles", method: "in", column: "id", value: ["u2", "u1"] }]),
     );
     expect(selectCalls.every((c) => !c.columns.includes("*"))).toBe(true);
 
     expect(result.projectName).toBe("Zolg");
     expect(result.includeArchived).toBe(false);
     expect(result.reviews).toHaveLength(3);
+    expect(result.reviews[0]).not.toHaveProperty("documents");
     expect(result.documents).toEqual([{ id: "d1", external_id: "N-1", title: "Doc" }]);
     // Ordenados por nome; um id por pesquisador.
     expect(result.reviewers).toEqual([
@@ -133,13 +136,38 @@ describe("getAutoReviewVerdicts — leitura", () => {
     ]);
   });
 
-  it("com includeArchived não filtra superseded_at", async () => {
-    serverTableResults = fixture();
+  it("com includeArchived lê também o histórico, onde o banco guarda os ciclos arquivados", async () => {
+    serverTableResults = {
+      ...fixture(),
+      field_review_cycle_history_entries: {
+        data: [
+          // Arquivado em outro documento: entra.
+          { ...reviewRow, id: "h1", document_id: "d2", cycle_no: 1, superseded_at: "t", superseded_reason: "answer_changed", documents: { external_id: "N-2", title: "Doc 2" } },
+          // Mesmo id de uma linha de field_reviews: a de field_reviews vence.
+          { ...reviewRow, id: "fr1", self_verdict: "admite_erro", superseded_at: "t", superseded_reason: "answer_changed" },
+        ],
+      },
+    };
     const getAutoReviewVerdicts = await loadAction();
     const result = await getAutoReviewVerdicts("p1", { includeArchived: true });
     if ("error" in result) throw new Error(result.error);
     expect(result.includeArchived).toBe(true);
-    expect(filterCalls.some((c) => c.table === "field_reviews" && c.column === "superseded_at")).toBe(false);
+    expect(filterCalls.some((c) => c.column === "superseded_at")).toBe(false);
+    expect(filterCalls).toEqual(
+      expect.arrayContaining([
+        { table: "field_review_cycle_history_entries", method: "eq", column: "project_id", value: "p1" },
+        { table: "field_review_cycle_history_entries", method: "is", column: "documents.excluded_at", value: null },
+      ]),
+    );
+    expect(result.reviews.map((r) => r.id).sort()).toEqual(["fr1", "fr2", "fr3", "h1"]);
+    expect(result.reviews.find((r) => r.id === "fr1")?.self_verdict).toBe("ambiguo");
+    expect(result.documents.map((d) => d.external_id).sort()).toEqual(["N-1", "N-2"]);
+  });
+
+  it("propaga erro de leitura do histórico", async () => {
+    serverTableResults = { ...fixture(), field_review_cycle_history_entries: { error: { message: "sem histórico" } } };
+    const getAutoReviewVerdicts = await loadAction();
+    expect(await getAutoReviewVerdicts("p1", { includeArchived: true })).toEqual({ error: "sem histórico" });
   });
 
   it("só o true literal liga a opção vinda do cliente", async () => {

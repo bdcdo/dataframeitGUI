@@ -1,8 +1,21 @@
+import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { DocumentUpload } from "@/components/documents/DocumentUpload";
 import { DocumentsPageClient } from "@/components/documents/DocumentsPageClient";
 import { ExportCard } from "@/components/documents/ExportCard";
 import { AutoReviewVerdictsExport } from "@/components/documents/AutoReviewVerdictsExport";
+
+async function loadAutomationMode(
+  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  projectId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from("projects")
+    .select("automation_mode")
+    .eq("id", projectId)
+    .single();
+  return data?.automation_mode ?? null;
+}
 
 export default async function ConfigDocumentsPage({
   params,
@@ -17,6 +30,8 @@ export default async function ConfigDocumentsPage({
     createSupabaseServer(),
   ]);
   const showExcluded = show === "excluded";
+  // Em voo junto das leituras abaixo; quem espera é o card, em Suspense.
+  const automationMode = loadAutomationMode(supabase, id);
 
   let query = supabase
     .from("documents")
@@ -73,7 +88,9 @@ export default async function ConfigDocumentsPage({
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <DocumentUpload projectId={id} />
       <ExportCard projectId={id} />
-      <AutoReviewVerdictsExport projectId={id} />
+      <Suspense fallback={null}>
+        <AutoReviewVerdictsExport projectId={id} automationMode={automationMode} />
+      </Suspense>
       <DocumentsPageClient
         documents={docsWithCounts}
         projectId={id}

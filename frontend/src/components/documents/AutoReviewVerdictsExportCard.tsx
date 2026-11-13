@@ -48,9 +48,12 @@ async function buildXlsxBlob(sheets: AutoReviewVerdictSheets): Promise<Blob> {
   review.eachRow((row) => {
     row.alignment = { wrapText: true, vertical: "top" };
   });
-  const header = review.getRow(1);
-  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_FILL } };
+  // Por célula: estilo na linha (Row.fill) pinta a linha inteira no Excel,
+  // muito além da última coluna.
+  review.getRow(1).eachCell((cell) => {
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: HEADER_FILL } };
+  });
   review.autoFilter = {
     from: { row: 1, column: 1 },
     to: { row: 1 + sheets.review.rows.length, column: sheets.review.headers.length },
@@ -67,11 +70,8 @@ async function buildXlsxBlob(sheets: AutoReviewVerdictSheets): Promise<Blob> {
   });
 }
 
+// O botão fica desabilitado sem linha, então aqui sempre há o que baixar.
 async function downloadSheets(sheets: AutoReviewVerdictSheets, projectName: string) {
-  if (sheets.review.rows.length === 0) {
-    toast.info("Nenhum veredito com esses filtros.");
-    return;
-  }
   try {
     const blob = await buildXlsxBlob(sheets);
     const timestamp = formatDateForFilename(new Date());
@@ -147,12 +147,16 @@ function DownloadControls({
   reviewerId,
   onReviewerChange,
   rowCount,
+  loading,
+  onReload,
   onDownload,
 }: {
   reviewers: AutoReviewReviewer[];
   reviewerId: string;
   onReviewerChange: (id: string) => void;
   rowCount: number;
+  loading: boolean;
+  onReload: () => void;
   onDownload: () => void;
 }) {
   return (
@@ -176,11 +180,16 @@ function DownloadControls({
         </Select>
       </div>
       <p className="text-sm text-muted-foreground" aria-live="polite">
-        {rowCount} célula{rowCount === 1 ? "" : "s"}
+        {rowCount} linha{rowCount === 1 ? "" : "s"}
       </p>
+      {/* Uma arbitragem feita depois da carga só entra recarregando. */}
+      <Button variant="outline" onClick={onReload} disabled={loading}>
+        {loading && <Loader2 className="mr-1.5 size-4 animate-spin" />}
+        Recarregar
+      </Button>
       <Button
         onClick={onDownload}
-        disabled={rowCount === 0}
+        disabled={loading || rowCount === 0}
         className="bg-brand text-brand-foreground hover:bg-brand/90"
       >
         <Download className="mr-1.5 size-4" />
@@ -220,8 +229,15 @@ export function AutoReviewVerdictsExportCard({ projectId }: { projectId: string 
     setError(null);
     try {
       const result = await getAutoReviewVerdicts(projectId, { includeArchived });
-      if ("error" in result) setError(result.error);
-      else setData(result);
+      if ("error" in result) {
+        setError(result.error);
+        return;
+      }
+      setData(result);
+      // O pesquisador escolhido pode não ter ciclo na carga nova.
+      setReviewerId((current) =>
+        result.reviewers.some((reviewer) => reviewer.id === current) ? current : ALL_REVIEWERS,
+      );
     } catch {
       setError("Não foi possível carregar os vereditos da auto-revisão.");
     } finally {
@@ -255,6 +271,8 @@ export function AutoReviewVerdictsExportCard({ projectId }: { projectId: string 
             reviewerId={reviewerId}
             onReviewerChange={setReviewerId}
             rowCount={sheets.review.rows.length}
+            loading={loading}
+            onReload={() => void load()}
             onDownload={() => void downloadSheets(sheets, data.projectName)}
           />
         ) : (

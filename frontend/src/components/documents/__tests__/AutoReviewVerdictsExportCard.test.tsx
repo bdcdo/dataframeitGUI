@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { stubRadixJsdomApis } from "@/test-utils/radix-jsdom";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AutoReviewVerdictsExportCard } from "@/components/documents/AutoReviewVerdictsExportCard";
@@ -63,7 +64,10 @@ function makeData(over: Partial<AutoReviewVerdictData> = {}): AutoReviewVerdictD
 }
 
 // Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
-beforeAll(() => warmUpJsdom(), 30_000);
+beforeAll(() => {
+  stubRadixJsdomApis();
+  return warmUpJsdom({ select: true });
+}, 30_000);
 
 afterEach(cleanup);
 beforeEach(() => {
@@ -81,19 +85,19 @@ describe("AutoReviewVerdictsExportCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Carregar vereditos" }));
 
     expect(hoisted.getAutoReviewVerdicts).toHaveBeenCalledWith("p1", { includeArchived: false });
-    expect(await screen.findByText("2 células")).toBeTruthy();
+    expect(await screen.findByText("2 linhas")).toBeTruthy();
   });
 
   it("marcar um veredito refiltra sem nova ida ao banco", async () => {
     hoisted.getAutoReviewVerdicts.mockResolvedValue(makeData());
     render(<AutoReviewVerdictsExportCard projectId="p1" />);
     await userEvent.click(screen.getByRole("button", { name: "Carregar vereditos" }));
-    await screen.findByText("2 células");
+    await screen.findByText("2 linhas");
 
     await userEvent.click(screen.getByRole("checkbox", { name: "Equivalente" }));
-    expect(screen.getByText("3 células")).toBeTruthy();
+    expect(screen.getByText("3 linhas")).toBeTruthy();
     await userEvent.click(screen.getByRole("checkbox", { name: "Ambíguo" }));
-    expect(screen.getByText("2 células")).toBeTruthy();
+    expect(screen.getByText("2 linhas")).toBeTruthy();
     expect(hoisted.getAutoReviewVerdicts).toHaveBeenCalledTimes(1);
   });
 
@@ -101,13 +105,33 @@ describe("AutoReviewVerdictsExportCard", () => {
     hoisted.getAutoReviewVerdicts.mockResolvedValue(makeData());
     render(<AutoReviewVerdictsExportCard projectId="p1" />);
     await userEvent.click(screen.getByRole("button", { name: "Carregar vereditos" }));
-    await screen.findByText("2 células");
+    await screen.findByText("2 linhas");
 
     await userEvent.click(screen.getByRole("checkbox", { name: "Incluir ciclos que não valem mais" }));
-    expect(screen.queryByText("2 células")).toBeNull();
+    expect(screen.queryByText("2 linhas")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Carregar vereditos" }));
 
     expect(hoisted.getAutoReviewVerdicts).toHaveBeenLastCalledWith("p1", { includeArchived: true });
+  });
+
+  it("recarregar busca de novo e volta a 'Todos' se o pesquisador escolhido sumiu", async () => {
+    hoisted.getAutoReviewVerdicts.mockResolvedValueOnce(makeData());
+    render(<AutoReviewVerdictsExportCard projectId="p1" />);
+    await userEvent.click(screen.getByRole("button", { name: "Carregar vereditos" }));
+    await screen.findByText("2 linhas");
+
+    await userEvent.click(screen.getByRole("combobox", { name: "Pesquisador" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Bia" }));
+    expect(screen.getByText("1 linha")).toBeTruthy();
+
+    hoisted.getAutoReviewVerdicts.mockResolvedValueOnce(
+      makeData({ reviews: [review({ id: "9" })], reviewers: [{ id: "u1", name: "Ana" }] }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Recarregar" }));
+
+    expect(await screen.findByText("1 linha")).toBeTruthy();
+    expect(hoisted.getAutoReviewVerdicts).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("combobox", { name: "Pesquisador" }).textContent).toBe("Todos");
   });
 
   it("mostra o erro da action", async () => {
@@ -121,7 +145,7 @@ describe("AutoReviewVerdictsExportCard", () => {
     hoisted.getAutoReviewVerdicts.mockResolvedValue(makeData());
     render(<AutoReviewVerdictsExportCard projectId="p1" />);
     await userEvent.click(screen.getByRole("button", { name: "Carregar vereditos" }));
-    await screen.findByText("2 células");
+    await screen.findByText("2 linhas");
 
     await userEvent.click(screen.getByRole("button", { name: /Baixar XLSX/ }));
 
@@ -135,7 +159,7 @@ describe("AutoReviewVerdictsExportCard", () => {
     hoisted.getAutoReviewVerdicts.mockResolvedValue(makeData({ reviews: [] }));
     render(<AutoReviewVerdictsExportCard projectId="p1" />);
     await userEvent.click(screen.getByRole("button", { name: "Carregar vereditos" }));
-    await screen.findByText("0 células");
+    await screen.findByText("0 linhas");
     expect(screen.getByRole("button", { name: /Baixar XLSX/ }).hasAttribute("disabled")).toBe(true);
   });
 });

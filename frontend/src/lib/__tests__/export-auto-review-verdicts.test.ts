@@ -202,6 +202,32 @@ describe("buildAutoReviewVerdictSheets — ciclos que não valem mais", () => {
     ]);
   });
 
+  it("ciclo que não vale mais e não foi arbitrado não aparece como aguardando arbitragem", () => {
+    const { review } = buildAutoReviewVerdictSheets(
+      data(
+        [
+          row({ id: "a", self_verdict: "contesta_llm", superseded_at: "t", superseded_reason: "answer_changed" }),
+          row({ id: "b", self_verdict: "contesta_llm", document_id: "d2", field_hash: "velho" }),
+          row({ id: "c", self_verdict: "contesta_llm", document_id: "d3", final_verdict: "llm", superseded_at: "t", superseded_reason: "answer_changed" }),
+        ],
+        true,
+      ),
+      { ...defaults, includeArchived: true },
+    );
+    expect(review.rows.map((r) => `${r[2]}|${r[10]}`)).toEqual(["d3|LLM", "N-2|", "N-10|"]);
+  });
+
+  it("o Resumo conta células: só os vigentes nos vereditos, os demais em coluna própria", () => {
+    const { summary } = buildAutoReviewVerdictSheets(data(reviews, true), { ...defaults, includeArchived: true });
+    expect(summary).toEqual({
+      headers: ["Pergunta", "Ambíguo", "Contestou o LLM", "Aceitou o LLM", "Total", "Ciclos que não valem mais"],
+      rows: [
+        ["q_a", "1", "0", "0", "1", "2"],
+        ["q_sumiu", "0", "0", "0", "0", "1"],
+      ],
+    });
+  });
+
   it("a opção não tem efeito se os dados vieram sem os arquivados", () => {
     const { review } = buildAutoReviewVerdictSheets(data(reviews, false), { ...defaults, includeArchived: true });
     expect(review.headers).not.toContain("Situação");

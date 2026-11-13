@@ -9,11 +9,15 @@
 // export geral não o traz. A especificação veio do script manual do Zolgensma
 // (`zolgensma-coleta/scripts/revisao.py`).
 //
-// Ciclo que não vale mais: o arquivado (`superseded_at`) e o vigente cuja
-// pergunta mudou (`fieldReviewIsCurrent`, a corrida descrita em
+// Ciclo que não vale mais: o arquivado (`superseded_at`), que o banco move
+// para `field_review_cycle_history_entries`, e o vigente cuja pergunta mudou
+// (`fieldReviewIsCurrent`, a corrida descrita em
 // 20260927130000_judgments_follow_question.sql). Por padrão ficam de fora,
 // porque o veredito foi dado sobre outra versão da pergunta ou da resposta;
-// com `includeArchived` entram, com a coluna "Situação" dizendo o motivo.
+// com `includeArchived` entram, com a coluna "Situação" dizendo o motivo. Uma
+// célula pode então ter várias linhas (uma por ciclo), e o Resumo continua
+// contando células: só os ciclos vigentes entram nas colunas de veredito, e
+// os demais vão para a coluna "Ciclos que não valem mais".
 //
 // Puro e client-safe.
 import type { PydanticField, SelfVerdict } from "@/lib/types";
@@ -141,9 +145,11 @@ export function cycleStatus(
   return CYCLE_STATUS_CURRENT;
 }
 
-function arbitrationLabel(review: AutoReviewVerdictRow): string {
+// Ciclo que não vale mais e não foi arbitrado nunca será: não está aguardando.
+function arbitrationLabel(review: AutoReviewVerdictRow, status: string): string {
   if (review.final_verdict) return ARBITRATION_LABELS[review.final_verdict];
-  return review.self_verdict === "contesta_llm" ? "Aguardando arbitragem" : "";
+  const pending = review.self_verdict === "contesta_llm" && status === CYCLE_STATUS_CURRENT;
+  return pending ? "Aguardando arbitragem" : "";
 }
 
 const BASE_HEADERS = [
@@ -163,6 +169,8 @@ const BASE_HEADERS = [
 const BASE_WIDTHS = [24, 20, 14, 30, 26, 50, 30, 30, 50, 40, 16, 30];
 const STATUS_HEADER = "Situação";
 const STATUS_WIDTH = 28;
+const STALE = "stale";
+const STALE_HEADER = "Ciclos que não valem mais";
 const EDITABLE_HEADERS = ["Nova decisão", "Observação"];
 const EDITABLE_WIDTHS = [20, 30];
 
@@ -225,7 +233,7 @@ export function buildAutoReviewVerdictSheets(
       formatExportValue(row.llm_answer_snapshot),
       formatExportValue(row.llm_justification_snapshot),
       row.self_justification ?? "",
-      arbitrationLabel(row),
+      arbitrationLabel(row, status),
       row.arbitrator_comment ?? "",
       ...(includeArchived ? [status] : []),
       "",
@@ -234,11 +242,14 @@ export function buildAutoReviewVerdictSheets(
   };
 
   // O Resumo conta só o que está na aba de revisão, e só os vereditos pedidos.
+  // Nas colunas de veredito entram só os ciclos vigentes (um por célula); os
+  // que não valem mais têm coluna própria.
   const summaryVerdicts = AUTO_REVIEW_VERDICTS.filter((verdict) => verdicts.has(verdict));
-  const counts = new Map<string, Map<SelfVerdict, number>>();
-  for (const { review: row } of rows) {
-    const byVerdict = counts.get(row.field_name) ?? new Map<SelfVerdict, number>();
-    byVerdict.set(row.self_verdict, (byVerdict.get(row.self_verdict) ?? 0) + 1);
+  const counts = new Map<string, Map<SelfVerdict | typeof STALE, number>>();
+  for (const { review: row, status } of rows) {
+    const key = status === CYCLE_STATUS_CURRENT ? row.self_verdict : STALE;
+    const byVerdict = counts.get(row.field_name) ?? new Map<SelfVerdict | typeof STALE, number>();
+    byVerdict.set(key, (byVerdict.get(key) ?? 0) + 1);
     counts.set(row.field_name, byVerdict);
   }
   const summaryFields = [...counts.keys()].sort(
@@ -246,11 +257,18 @@ export function buildAutoReviewVerdictSheets(
       (fieldOrder.get(a) ?? unknownField) - (fieldOrder.get(b) ?? unknownField) || a.localeCompare(b),
   );
   const summary: ExportSheet = {
-    headers: ["Pergunta", ...summaryVerdicts.map((verdict) => SELF_VERDICT_SHORT_LABELS[verdict]), "Total"],
+    headers: [
+      "Pergunta",
+      ...summaryVerdicts.map((verdict) => SELF_VERDICT_SHORT_LABELS[verdict]),
+      "Total",
+      ...(includeArchived ? [STALE_HEADER] : []),
+    ],
     rows: summaryFields.map((fieldName) => {
       const byVerdict = counts.get(fieldName)!;
       const cells = summaryVerdicts.map((verdict) => byVerdict.get(verdict) ?? 0);
-      return [fieldName, ...cells.map(String), String(cells.reduce((sum, n) => sum + n, 0))];
+      const total = cells.reduce((sum, n) => sum + n, 0);
+      const stale = includeArchived ? [String(byVerdict.get(STALE) ?? 0)] : [];
+      return [fieldName, ...cells.map(String), String(total), ...stale];
     }),
   };
 
