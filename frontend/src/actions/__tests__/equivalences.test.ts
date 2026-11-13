@@ -192,6 +192,10 @@ describe("confirmEquivalentVerdict", () => {
     serverTableResults = {
       reviews: { error: null },
     };
+    rpcResults.record_value_equivalences = {
+      data: [{ field_name: "q1", value_a: "N/A", value_b: "NI" }],
+      error: null,
+    };
     const { confirmEquivalentVerdict } = await loadActions();
 
     const result = await confirmEquivalentVerdict({
@@ -224,9 +228,10 @@ describe("confirmEquivalentVerdict", () => {
     expect(mockSyncCompareAssignment).toHaveBeenCalledOnce();
     expect(afterCallbacks).toHaveLength(1);
     await afterCallbacks[0]();
+    // A propagação usa o que a RPC devolveu, sem reler as respostas.
     expect(mockPropagate).toHaveBeenCalledExactlyOnceWith({
       projectId: "p1",
-      changes: [{ fieldName: "q1", responseIds: ["r2", "r1"] }],
+      changes: [{ fieldName: "q1", values: ["N/A", "NI"] }],
     });
     expect(upsertsOn("reviews")[0]?.payload).toMatchObject({
       project_id: "p1",
@@ -330,15 +335,32 @@ describe("markLlmEquivalent", () => {
         source: "llm_insights",
       }] },
     }]);
+    // O par de valores já existia: nada novo a propagar.
+    expect(afterCallbacks).toHaveLength(0);
+  });
+
+  it("par de valores novo agenda a propagação", async () => {
+    rpcResults.record_value_equivalences = {
+      data: [{ field_name: "q1", value_a: "humano", value_b: "llm" }],
+      error: null,
+    };
+    const { markLlmEquivalent } = await loadActions();
+
+    await markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1");
+
     expect(afterCallbacks).toHaveLength(1);
+    await afterCallbacks[0]();
+    expect(mockPropagate).toHaveBeenCalledExactlyOnceWith({
+      projectId: "p1",
+      changes: [{ fieldName: "q1", values: ["humano", "llm"] }],
+    });
   });
 });
 
 describe("unmarkEquivalencePair", () => {
   it("caminho feliz → retorna {}, não apaga veredito e agenda a classe de ANTES da remoção", async () => {
-    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
     rpcResults.remove_value_equivalence = {
-      data: [{ field_name: "q1" }],
+      data: [{ field_name: "q1", field_hash: "aaaaaaaaaaaa", value_a: "NI", value_b: "N/A" }],
       error: null,
     };
     const { unmarkEquivalencePair } = await loadActions();
@@ -346,6 +368,7 @@ describe("unmarkEquivalencePair", () => {
     const result = await unmarkEquivalencePair("p1", "eq1");
 
     expect(result).toEqual({});
+    // Sem leitura antes de remover: a RPC devolve o que separou.
     expect(rpcCalls).toEqual([
       {
         fn: "remove_value_equivalence",
@@ -356,23 +379,28 @@ describe("unmarkEquivalencePair", () => {
     // valor): nem a action nem a RPC tocam em `reviews`.
     expect(writeCalls.some((c) => c.table === "reviews")).toBe(false);
     expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
-    // A classe antiga inteira (NI = N/A = não se aplica), e não só as duas
-    // pontas: é onde a divergência pode reaparecer.
+    // A equivalência desfeita vai junto, para a propagação calcular a classe
+    // antiga, onde a divergência pode reaparecer.
     expect(afterCallbacks).toHaveLength(1);
     await afterCallbacks[0]();
-    expect(mockPropagate).toHaveBeenCalledOnce();
-    const call = (mockPropagate.mock.calls[0] as unknown as [{ changes: Array<{ valueKeys: Set<string>; fieldName: string }> }])[0].changes[0];
-    expect(call.fieldName).toBe("q1");
-    expect([...call.valueKeys].sort()).toEqual(
-      [JSON.stringify("n/a"), JSON.stringify("nao se aplica"), JSON.stringify("ni")].sort(),
-    );
+    expect(mockPropagate).toHaveBeenCalledExactlyOnceWith({
+      projectId: "p1",
+      changes: [{
+        fieldName: "q1",
+        values: ["NI", "N/A"],
+        removed: { id: "eq1", reviewer_id: null, field_name: "q1", field_hash: "aaaaaaaaaaaa", value_a: "NI", value_b: "N/A" },
+      }],
+    });
   });
 
   // Na Comparação, quem desfaz está num documento: o assignment dele ali
   // reflete a mudança já, sem esperar a propagação.
   it("com documento, sincroniza já o assignment de quem desfez nele", async () => {
     serverTableResults = structuredClone(TARGET_EQUIVALENCE);
-    rpcResults.remove_value_equivalence = { data: [{ field_name: "q1" }], error: null };
+    rpcResults.remove_value_equivalence = {
+      data: [{ field_name: "q1", field_hash: "aaaaaaaaaaaa", value_a: "NI", value_b: "N/A" }],
+      error: null,
+    };
     const { unmarkEquivalencePair } = await loadActions();
 
     const result = await unmarkEquivalencePair("p1", "eq1", "doc1");
@@ -398,18 +426,6 @@ describe("unmarkEquivalencePair", () => {
     });
     expect(writeCalls).toEqual([]);
     expect(afterCallbacks).toHaveLength(0);
-  });
-
-  it("equivalência inexistente → { error } sem chamar a RPC", async () => {
-    serverTableResults = { value_equivalences: { data: [] } };
-    const { unmarkEquivalencePair } = await loadActions();
-
-    const result = await unmarkEquivalencePair("p1", "eq-sumiu");
-
-    expect(result).toEqual({
-      error: "Equivalência não encontrada ou sem permissão para removê-la.",
-    });
-    expect(rpcCalls).toEqual([]);
   });
 
   it("RPC aborta a transação → retorna { error } e não agenda propagação", async () => {

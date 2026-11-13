@@ -2,11 +2,10 @@ import "server-only";
 
 import { computeBacklogRows, type HumanResponseRow, type LlmResponseRow } from "@/lib/auto-review-backlog";
 import {
-  affectedValueKeys,
   currentValueEquivalences,
-  equivalenceValueKey,
+  equivalencesInClassesOf,
   groupValueEquivalencesByField,
-  type ValueEquivalence,
+  type ValueEquivalencesByField,
 } from "@/lib/equivalence";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
@@ -48,7 +47,7 @@ interface ReconciliationInputs {
   pydanticHash: string | null;
   humans: VersionedHumanResponse[];
   llm: VersionedLlmResponse | null;
-  equivalences: ValueEquivalence[];
+  equivalencesByField: ValueEquivalencesByField;
 }
 
 export interface ReconciliationDrainResult {
@@ -182,18 +181,21 @@ async function eligibleHumanResponses(
 // uma vez por projeto e reusa. Ler uma lista desatualizada é seguro pela
 // mesma razão de `expectedEquivalenceIds` (desfeita no meio recusa na RPC;
 // criada no meio reenfileira o documento).
-type EquivalenceCache = Map<string, Promise<ValueEquivalence[]>>;
+// Guarda o mapa por campo, e não a lista: as listas mantêm a identidade entre
+// requests, e o recorte por versão e as classes (memoizados por identidade em
+// `lib/equivalence.ts`) são calculados uma vez por drenagem.
+type EquivalenceCache = Map<string, Promise<ValueEquivalencesByField>>;
 
 function projectEquivalences(
   admin: AdminClient,
   projectId: string,
   cache: EquivalenceCache,
-): Promise<ValueEquivalence[]> {
+): Promise<ValueEquivalencesByField> {
   let pending = cache.get(projectId);
   if (!pending) {
     pending = fetchProjectValueEquivalences(admin, projectId).then((result) => {
       if (result.error) throw new Error(result.error.message);
-      return result.data;
+      return groupValueEquivalencesByField(result.data);
     });
     // Falha não fica no cache: a próxima request do lote tenta de novo.
     pending.catch(() => cache.delete(projectId));
@@ -246,7 +248,7 @@ async function readReconciliationInputs(
     pydanticHash: projectResult.data?.pydantic_hash ?? null,
     humans: (humansResult.data ?? []) as VersionedHumanResponse[],
     llm: llmResult.data as VersionedLlmResponse | null,
-    equivalences: equivalencesResult,
+    equivalencesByField: equivalencesResult,
   };
 }
 
@@ -270,24 +272,20 @@ function divergentFieldsByHuman(
 // recorte por documento evita que um "=" noutro documento derrube toda
 // reconciliação em curso no projeto.
 export function expectedEquivalenceIds(
-  equivalences: readonly ValueEquivalence[],
+  equivalencesByField: ValueEquivalencesByField,
   fields: readonly PydanticField[],
   humanAnswers: Record<string, unknown> | null,
   llmAnswers: Record<string, unknown> | null,
 ): string[] {
-  const ids: string[] = [];
-  for (const field of fields) {
-    const current = currentValueEquivalences(equivalences, field);
-    if (current.length === 0) continue;
-    const seeds = [humanAnswers?.[field.name], llmAnswers?.[field.name]].filter(
-      (value) => value !== undefined,
-    );
-    const keys = affectedValueKeys(current, field, seeds);
-    for (const equivalence of current) {
-      if (keys.has(equivalenceValueKey(equivalence.value_a))) ids.push(equivalence.id);
-    }
-  }
-  return ids.sort();
+  return fields
+    .flatMap((field) =>
+      equivalencesInClassesOf(
+        currentValueEquivalences(equivalencesByField.get(field.name), field),
+        [humanAnswers?.[field.name], llmAnswers?.[field.name]].filter((value) => value !== undefined),
+      ),
+    )
+    .map((equivalence) => equivalence.id)
+    .sort();
 }
 
 function buildReconciliationGroups(
@@ -306,7 +304,7 @@ function buildReconciliationGroups(
     expected_llm_updated_at: inputs.llm.updated_at,
     expected_project_pydantic_hash: inputs.pydanticHash,
     expected_equivalence_ids: expectedEquivalenceIds(
-      inputs.equivalences,
+      inputs.equivalencesByField,
       inputs.fields,
       human.answers,
       inputs.llm.answers,
@@ -340,7 +338,7 @@ async function reconcileRequest(
     request.project_id,
     humans,
     llmByDocument,
-    groupValueEquivalencesByField(inputs.equivalences),
+    inputs.equivalencesByField,
     inputs.fields,
   );
   const groups = buildReconciliationGroups({ ...inputs, llm }, humans, fieldReviewRows);

@@ -144,7 +144,7 @@ DO $$
 DECLARE
   v_row RECORD;
 BEGIN
-  IF public.record_value_equivalences(pg_temp.pair('1', '01', '11', '3')) <> 1 THEN
+  IF (SELECT count(*) FROM public.record_value_equivalences(pg_temp.pair('1', '01', '11', '3'))) <> 1 THEN
     RAISE EXCEPTION 'FALHOU: a equivalencia deveria ser gravada';
   END IF;
   SELECT * INTO v_row FROM public.value_equivalences
@@ -157,11 +157,11 @@ BEGIN
   END IF;
   -- O mesmo par de valores marcado em outro documento, e na ordem inversa:
   -- a equivalencia ja existe no projeto.
-  IF public.record_value_equivalences(pg_temp.pair('2', '12', '02', '3')) <> 0 THEN
+  IF (SELECT count(*) FROM public.record_value_equivalences(pg_temp.pair('2', '12', '02', '3'))) <> 0 THEN
     RAISE EXCEPTION 'FALHOU: o mesmo par de valores nao deveria duplicar';
   END IF;
   -- Valores identicos nao tem o que fundir.
-  IF public.record_value_equivalences(pg_temp.pair('1', '01', '11', '3', 'g')) <> 0 THEN
+  IF (SELECT count(*) FROM public.record_value_equivalences(pg_temp.pair('1', '01', '11', '3', 'g'))) <> 0 THEN
     RAISE EXCEPTION 'FALHOU: valores identicos nao deveriam gravar';
   END IF;
   IF (SELECT count(*) FROM public.value_equivalences
@@ -546,6 +546,34 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: campo que volta deveria enfileirar só quem tem um dos valores';
   END IF;
   RAISE NOTICE 'OK: campo que volta ao schema enfileira só quem usa os valores';
+END;
+$$;
+
+-- (i3) Auto-revisão com ciclo carimbado em outra versão da pergunta (o save
+-- "por fora" escapou do gatilho): o veredito 'equivalente' não grava a
+-- equivalência, que nasceria já morta.
+SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
+DELETE FROM public.value_equivalences WHERE project_id = '5e100000-0000-0000-0000-000000000001';
+INSERT INTO public.field_reviews (id, project_id, document_id, field_name, human_response_id, llm_response_id, self_reviewer_id)
+VALUES ('5e400000-0000-0000-0000-000000000003', '5e100000-0000-0000-0000-000000000001', '5e200000-0000-0000-0000-000000000001', 'f',
+        '5e300000-0000-0000-0000-000000000011', '5e300000-0000-0000-0000-000000000031', '5e000000-0000-0000-0000-000000000003');
+SET LOCAL session_replication_role = replica;
+UPDATE public.projects
+SET pydantic_fields = jsonb_set(pydantic_fields, '{0}', pydantic_fields->0 || '{"description":"Por fora","hash":"f00000000009"}')
+WHERE id = '5e100000-0000-0000-0000-000000000001';
+SET LOCAL session_replication_role = origin;
+SELECT public.submit_auto_review_verdicts(
+  '5e100000-0000-0000-0000-000000000001',
+  '5e200000-0000-0000-0000-000000000001',
+  '5e000000-0000-0000-0000-000000000003',
+  '[{"field_review_id":"5e400000-0000-0000-0000-000000000003","field_name":"f","verdict":"equivalente"}]'::JSONB
+);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.value_equivalences WHERE project_id = '5e100000-0000-0000-0000-000000000001') THEN
+    RAISE EXCEPTION 'FALHOU: ciclo de outra versão da pergunta gravou equivalência';
+  END IF;
+  RAISE NOTICE 'OK: auto-revisão de outra versão da pergunta não grava equivalência';
 END;
 $$;
 

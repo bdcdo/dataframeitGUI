@@ -13,40 +13,38 @@ import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 // cada classe de fato funde respostas. Puro: quem chama traz as equivalências
 // já recortadas pela versão atual da pergunta (`currentValueEquivalences`).
 
-export interface EquivalenceClassView {
+export interface EquivalenceClassView<T extends ValueEquivalence = ValueEquivalence> {
   /** Chave estável da classe (a menor chave normalizada de valor). */
   classKey: string;
   /** Um valor bruto por chave normalizada, na ordem em que aparecem. */
   values: unknown[];
-  equivalences: ValueEquivalence[];
+  equivalences: T[];
 }
 
-export function equivalenceClasses(
-  equivalences: readonly ValueEquivalence[],
-): EquivalenceClassView[] {
+export function equivalenceClasses<T extends ValueEquivalence>(
+  equivalences: readonly T[],
+): EquivalenceClassView<T>[] {
   const classOf = valueClassKeys(equivalences);
-  const byClass = new Map<string, EquivalenceClassView>();
-  const seenByClass = new Map<string, Set<string>>();
+  const byClass = new Map<string, EquivalenceClassView<T> & { seen: Set<string> }>();
   for (const equivalence of equivalences) {
     const keyA = equivalenceValueKey(equivalence.value_a);
     const classKey = classOf.get(keyA) ?? keyA;
     let view = byClass.get(classKey);
-    let seen = seenByClass.get(classKey);
-    if (!view || !seen) {
-      view = { classKey, values: [], equivalences: [] };
-      seen = new Set();
+    if (!view) {
+      view = { classKey, values: [], equivalences: [], seen: new Set() };
       byClass.set(classKey, view);
-      seenByClass.set(classKey, seen);
     }
     view.equivalences.push(equivalence);
     for (const value of [equivalence.value_a, equivalence.value_b]) {
       const key = equivalenceValueKey(value);
-      if (seen.has(key)) continue;
-      seen.add(key);
+      if (view.seen.has(key)) continue;
+      view.seen.add(key);
       view.values.push(value);
     }
   }
-  return [...byClass.values()].toSorted((a, b) => b.equivalences.length - a.equivalences.length || a.classKey.localeCompare(b.classKey));
+  return [...byClass.values()]
+    .map(({ classKey, values, equivalences: members }) => ({ classKey, values, equivalences: members }))
+    .toSorted((a, b) => b.equivalences.length - a.equivalences.length || a.classKey.localeCompare(b.classKey));
 }
 
 export interface FieldAnswerRow {

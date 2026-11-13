@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { formatDate } from "@/lib/date-format";
 import { ChevronRight, Link2, Undo2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +17,6 @@ import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog";
 import {
   loadEquivalenceUsage,
   unmarkEquivalencePair,
-  type EquivalenceUsageDocument,
 } from "@/actions/equivalences";
 import type {
   EquivalenceClassRowView,
@@ -24,17 +24,16 @@ import type {
   EquivalenceHistoryView,
   EquivalenceRowView,
 } from "@/lib/reviews/equivalences-view-model";
+import type { UsageDocument } from "@/lib/value-equivalence-usage";
 
-const DATE_FORMAT = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" });
-
-function formatDate(value: string | null): string {
-  return value ? DATE_FORMAT.format(new Date(value)) : "—";
+function formatOptionalDate(value: string | null): string {
+  return value ? formatDate(value) : "—";
 }
 
 type UsageState =
   | { status: "idle" }
   | { status: "loading" }
-  | { status: "loaded"; usage: Record<string, EquivalenceUsageDocument[]> }
+  | { status: "loaded"; usage: Record<string, UsageDocument[]> }
   | { status: "error"; message: string };
 
 export function EquivalencesView({
@@ -161,16 +160,16 @@ function ClassRow({
   projectId: string;
   cls: EquivalenceClassRowView;
   /** `null` enquanto "onde se aplica" não foi carregado. */
-  documents: EquivalenceUsageDocument[] | null;
+  documents: UsageDocument[] | null;
 }) {
   return (
     <li className="space-y-1.5 px-3 py-2">
       <div className="flex flex-wrap items-center gap-1">
         {cls.values.map((value, index) => (
-          <span key={`${index}:${value}`} className="flex items-center gap-1">
+          <span key={value.key} className="flex items-center gap-1">
             {index > 0 && <span className="text-xs text-muted-foreground" aria-hidden="true">=</span>}
-            <Badge variant="secondary" className="max-w-md truncate font-normal" title={value}>
-              {value}
+            <Badge variant="secondary" className="max-w-md truncate font-normal" title={value.display}>
+              {value.display}
             </Badge>
           </span>
         ))}
@@ -216,7 +215,7 @@ function EquivalenceLine({
         {equivalence.display}
       </span>
       <span className="shrink-0">
-        {equivalence.sourceLabel} · {equivalence.reviewerName} · {formatDate(equivalence.createdAt)}
+        {equivalence.sourceLabel} · {equivalence.reviewerName} · {formatOptionalDate(equivalence.createdAt)}
       </span>
       {equivalence.canUndo && (
         <Button
@@ -256,7 +255,7 @@ function UsageList({
   documents,
 }: {
   projectId: string;
-  documents: EquivalenceUsageDocument[];
+  documents: UsageDocument[];
 }) {
   if (documents.length === 0) {
     return (
@@ -314,7 +313,7 @@ function HistorySection({ history }: { history: EquivalenceHistoryView[] }) {
                 {row.reasonLabel}
               </Badge>
               <span className="shrink-0 text-muted-foreground">
-                {row.reviewerName} · {formatDate(row.supersededAt)}
+                {row.reviewerName} · {formatOptionalDate(row.supersededAt)}
               </span>
             </li>
           ))}

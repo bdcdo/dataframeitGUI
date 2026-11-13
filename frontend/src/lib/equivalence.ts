@@ -28,22 +28,14 @@ export const VALUE_EQUIVALENCE_SELECT =
 // mesma lista vale para todos os documentos.
 export type ValueEquivalencesByField = ReadonlyMap<string, readonly ValueEquivalence[]>;
 
-export function groupValueEquivalencesByField(
-  rows: readonly ValueEquivalence[] | null | undefined,
-): Map<string, ValueEquivalence[]> {
-  const byField = new Map<string, ValueEquivalence[]>();
+export function groupValueEquivalencesByField<T extends ValueEquivalence>(
+  rows: readonly T[] | null | undefined,
+): Map<string, T[]> {
+  const byField = new Map<string, T[]>();
   for (const row of rows ?? []) {
     const list = byField.get(row.field_name);
-    const equivalence: ValueEquivalence = {
-      id: row.id,
-      field_name: row.field_name,
-      field_hash: row.field_hash,
-      value_a: row.value_a,
-      value_b: row.value_b,
-      reviewer_id: row.reviewer_id ?? null,
-    };
-    if (list) list.push(equivalence);
-    else byField.set(row.field_name, [equivalence]);
+    if (list) list.push(row);
+    else byField.set(row.field_name, [row]);
   }
   return byField;
 }
@@ -55,27 +47,13 @@ export function equivalenceValueKey(value: unknown): string {
   return normalizeForComparison(value);
 }
 
-// As equivalências que valem para o campo na versão atual da pergunta. Campo
-// fora do schema, ou sem hash, não tem como provar a versão: nenhuma vale.
-export function currentValueEquivalences(
-  equivalences: readonly ValueEquivalence[] | undefined,
-  field: Pick<PydanticField, "name" | "hash"> | undefined,
-): ValueEquivalence[] {
-  if (!field || typeof field.hash !== "string") return [];
-  return (equivalences ?? []).filter(
-    (equivalence) =>
-      equivalence.field_name === field.name && equivalence.field_hash === field.hash,
-  );
-}
-
-// Classes de valores por union-find sobre as chaves normalizadas: A=B e B=C
-// fundem A, B e C, mesmo que nenhum documento tenha os três. Devolve
-// chave -> chave da classe (a menor chave, estável). Valores sem
-// equivalência não entram no mapa.
-export function valueClassKeys(
-  equivalences: readonly ValueEquivalence[],
-): Map<string, string> {
+// Union-find com a menor chave como raiz: a chave da classe é estável e
+// determinística. Usado sobre chaves de valor e sobre ids de resposta.
+function unionFind() {
   const parent = new Map<string, string>();
+  const add = (key: string) => {
+    if (!parent.has(key)) parent.set(key, key);
+  };
   const find = (key: string): string => {
     let root = key;
     while (parent.get(root) !== root) root = parent.get(root)!;
@@ -87,19 +65,66 @@ export function valueClassKeys(
     }
     return root;
   };
+  const union = (a: string, b: string) => {
+    if (!parent.has(a) || !parent.has(b)) return;
+    const rootA = find(a);
+    const rootB = find(b);
+    if (rootA === rootB) return;
+    if (rootA < rootB) parent.set(rootB, rootA);
+    else parent.set(rootA, rootB);
+  };
+  return { add, find, union, keys: () => parent.keys() };
+}
+
+// As listas por campo chegam com a mesma identidade a todo documento de uma
+// leitura (fila da Comparação, export, métricas, reconciliador). Os dois
+// caches abaixo, presos à identidade da lista, fazem o recorte pela versão e
+// o union-find rodarem uma vez por lista, e não uma vez por documento.
+const currentCache = new WeakMap<readonly ValueEquivalence[], Map<string, ValueEquivalence[]>>();
+const classCache = new WeakMap<readonly ValueEquivalence[], Map<string, string>>();
+
+// As equivalências que valem para o campo na versão atual da pergunta. Campo
+// fora do schema, ou sem hash, não tem como provar a versão: nenhuma vale.
+export function currentValueEquivalences(
+  equivalences: readonly ValueEquivalence[] | undefined,
+  field: Pick<PydanticField, "name" | "hash"> | undefined,
+): ValueEquivalence[] {
+  if (!equivalences || !field || typeof field.hash !== "string") return [];
+  let byVersion = currentCache.get(equivalences);
+  if (!byVersion) {
+    byVersion = new Map();
+    currentCache.set(equivalences, byVersion);
+  }
+  const versionKey = `${field.name}\u0000${field.hash}`;
+  let current = byVersion.get(versionKey);
+  if (!current) {
+    current = equivalences.filter(
+      (equivalence) =>
+        equivalence.field_name === field.name && equivalence.field_hash === field.hash,
+    );
+    byVersion.set(versionKey, current);
+  }
+  return current;
+}
+
+// Classes de valores por union-find sobre as chaves normalizadas: A=B e B=C
+// fundem A, B e C, mesmo que nenhum documento tenha os três. Devolve
+// chave -> chave da classe (a menor chave, estável). Valores sem
+// equivalência não entram no mapa.
+export function valueClassKeys(equivalences: readonly ValueEquivalence[]): Map<string, string> {
+  const cached = classCache.get(equivalences);
+  if (cached) return cached;
+  const classes = unionFind();
   for (const equivalence of equivalences) {
     const a = equivalenceValueKey(equivalence.value_a);
     const b = equivalenceValueKey(equivalence.value_b);
-    if (!parent.has(a)) parent.set(a, a);
-    if (!parent.has(b)) parent.set(b, b);
-    const rootA = find(a);
-    const rootB = find(b);
-    if (rootA === rootB) continue;
-    if (rootA < rootB) parent.set(rootB, rootA);
-    else parent.set(rootA, rootB);
+    classes.add(a);
+    classes.add(b);
+    classes.union(a, b);
   }
   const result = new Map<string, string>();
-  for (const key of parent.keys()) result.set(key, find(key));
+  for (const key of classes.keys()) result.set(key, classes.find(key));
+  classCache.set(equivalences, result);
   return result;
 }
 
@@ -108,37 +133,19 @@ export interface EquivalenceEdge {
   response_b_id: string;
 }
 
-// As arestas entre RESPOSTAS de um documento que as equivalências de valor
-// implicam: duas respostas dadas à versão atual da pergunta cujos valores
-// caem na mesma classe. Resposta dada a outra versão da pergunta
-// (`isCurrent` falso) ou sem resposta não é fundida por equivalência — só
-// pelo valor idêntico, em `buildResponseGroupKeys`. `field` é obrigatório
-// para que nenhum leitor esqueça a regra da versão.
-export function valueEquivalenceEdges<T extends { id: string }>(
+// As arestas entre RESPOSTAS de um documento que as equivalências (já
+// recortadas pela versão atual) implicam: duas respostas dadas à versão atual
+// da pergunta cujos valores caem na mesma classe. Resposta dada a outra
+// versão (`isCurrent` falso) ou sem resposta não é fundida por equivalência —
+// só pelo valor idêntico, em `buildResponseGroupKeys`.
+function edgesForCurrent<T extends { id: string }>(
   items: readonly T[],
-  equivalences: readonly ValueEquivalence[] | undefined,
-  field: Pick<PydanticField, "name" | "hash"> | undefined,
+  current: readonly ValueEquivalence[],
   getAnswer: (item: T) => unknown,
   isCurrent: (item: T) => boolean,
 ): EquivalenceEdge[] {
-  return responseEdgesForEquivalences(
-    items,
-    currentValueEquivalences(equivalences, field),
-    getAnswer,
-    isCurrent,
-  );
-}
-
-// O mesmo, para quem já tem a lista recortada pela versão atual da pergunta
-// (`currentValueEquivalences`), como os cards da Comparação.
-function responseEdgesForEquivalences<T extends { id: string }>(
-  items: readonly T[],
-  currentEquivalences: readonly ValueEquivalence[],
-  getAnswer: (item: T) => unknown,
-  isCurrent: (item: T) => boolean,
-): EquivalenceEdge[] {
-  const classes = valueClassKeys(currentEquivalences);
-  if (classes.size === 0) return [];
+  if (current.length === 0) return [];
+  const classes = valueClassKeys(current);
   const firstByClass = new Map<string, string>();
   const edges: EquivalenceEdge[] = [];
   for (const item of items) {
@@ -153,59 +160,41 @@ function responseEdgesForEquivalences<T extends { id: string }>(
   return edges;
 }
 
-// Unified grouping key via union-find: fuses responses connected via
-// explicit edges OR sharing the same normalized answer. Two responses
-// end up in the same group iff they're reachable via a chain of
-// edges and same-answer edges. Returns id -> classKey (lex-smallest
-// id in the class — stable and deterministic).
-//
-// Same-answer fusion is required so responses with the same literal text as
-// a fused response don't end up in a separate group.
+// O mesmo a partir da lista do campo, aplicando a regra da versão. `field` é
+// obrigatório para que nenhum leitor esqueça a regra.
+export function valueEquivalenceEdges<T extends { id: string }>(
+  items: readonly T[],
+  equivalences: readonly ValueEquivalence[] | undefined,
+  field: Pick<PydanticField, "name" | "hash"> | undefined,
+  getAnswer: (item: T) => unknown,
+  isCurrent: (item: T) => boolean,
+): EquivalenceEdge[] {
+  return edgesForCurrent(items, currentValueEquivalences(equivalences, field), getAnswer, isCurrent);
+}
+
+// Classes de RESPOSTAS: funde as ligadas por aresta OU com a mesma resposta
+// normalizada. Duas respostas caem no mesmo grupo sse há uma cadeia de
+// arestas e de respostas iguais entre elas. Devolve id -> chave do grupo (o
+// menor id, estável).
 export function buildResponseGroupKeys<T extends { id: string }>(
   responses: readonly T[],
   edges: readonly EquivalenceEdge[],
   getAnswerKey: (r: T) => string,
 ): Map<string, string> {
-  const parent = new Map<string, string>();
-  for (const r of responses) parent.set(r.id, r.id);
+  const groups = unionFind();
+  for (const response of responses) groups.add(response.id);
+  for (const edge of edges) groups.union(edge.response_a_id, edge.response_b_id);
 
-  function find(x: string): string {
-    let root = x;
-    while (parent.get(root) !== root) root = parent.get(root)!;
-    let cur = x;
-    while (parent.get(cur) !== root) {
-      const next = parent.get(cur)!;
-      parent.set(cur, root);
-      cur = next;
-    }
-    return root;
-  }
-
-  function union(a: string, b: string) {
-    // Edges whose endpoints aren't in the current response set are silently
-    // ignored.
-    if (!parent.has(a) || !parent.has(b)) return;
-    const ra = find(a);
-    const rb = find(b);
-    if (ra === rb) return;
-    // Keep the lex-smaller id as the root for stable class keys.
-    if (ra < rb) parent.set(rb, ra);
-    else parent.set(ra, rb);
-  }
-
-  for (const edge of edges) union(edge.response_a_id, edge.response_b_id);
-
-  // Second pass: union responses sharing the same normalized answer.
   const firstByAnswer = new Map<string, string>();
-  for (const r of responses) {
-    const key = getAnswerKey(r);
+  for (const response of responses) {
+    const key = getAnswerKey(response);
     const seen = firstByAnswer.get(key);
-    if (seen === undefined) firstByAnswer.set(key, r.id);
-    else union(seen, r.id);
+    if (seen === undefined) firstByAnswer.set(key, response.id);
+    else groups.union(seen, response.id);
   }
 
   const result = new Map<string, string>();
-  for (const r of responses) result.set(r.id, find(r.id));
+  for (const response of responses) result.set(response.id, groups.find(response.id));
   return result;
 }
 
@@ -216,7 +205,7 @@ export function buildResponseGroupKeys<T extends { id: string }>(
 export function answerGroupKeys(
   docResponses: readonly {
     id: string;
-    answers: Record<string, unknown> | null;
+    answers: Record<string, unknown> | null | undefined;
     answer_field_hashes?: AnswerFieldHashes | null;
   }[],
   equivalences: readonly ValueEquivalence[] | undefined,
@@ -235,7 +224,23 @@ export function answerGroupKeys(
     (item) => item.answer,
     (item) => answersCurrentQuestion(item.answerFieldHashes, field),
   );
-  return buildResponseGroupKeys(items, edges, (item) => normalizeForComparison(item.answer));
+  return buildResponseGroupKeys(items, edges, (item) => equivalenceValueKey(item.answer));
+}
+
+// Os grupos de cards da Comparação: respostas presentes ao campo, fundidas
+// pelas equivalências já recortadas pela versão atual da pergunta (só nas
+// respostas dadas a ela) e pela resposta normalizada idêntica. Fonte única do
+// agrupamento que os cards, a contagem do painel e o hook de dados exibem.
+export function cardGroupKeys<
+  T extends { id: string; answer: unknown; answersCurrentQuestion: boolean },
+>(present: readonly T[], currentEquivalences: readonly ValueEquivalence[]): Map<string, string> {
+  const edges = edgesForCurrent(
+    present,
+    currentEquivalences,
+    (response) => response.answer,
+    (response) => response.answersCurrentQuestion,
+  );
+  return buildResponseGroupKeys(present, edges, (response) => equivalenceValueKey(response.answer));
 }
 
 /**
@@ -260,20 +265,25 @@ export function affectedValueKeys(
   return keys;
 }
 
-// Os grupos de cards da Comparação: respostas presentes ao campo, fundidas
-// pelas equivalências já recortadas pela versão atual da pergunta (só nas
-// respostas dadas a ela) e pela resposta normalizada idêntica. Fonte única do
-// agrupamento que os cards, a contagem do painel e o hook de dados exibem.
-export function cardGroupKeys<
-  T extends { id: string; answer: unknown; answersCurrentQuestion: boolean },
->(present: readonly T[], currentEquivalences: readonly ValueEquivalence[]): Map<string, string> {
-  const edges = responseEdgesForEquivalences(
-    present,
-    currentEquivalences,
-    (response) => response.answer,
-    (response) => response.answersCurrentQuestion,
+/**
+ * As equivalências (já da versão atual) que formam as classes dos valores
+ * dados, inclusive os elos do meio de uma cadeia: em A=B=C=D com os valores A
+ * e D, entra também B=C. São as que fundem esses valores — as variantes de um
+ * card e a versão que o reconciliador confere.
+ */
+export function equivalencesInClassesOf(
+  current: readonly ValueEquivalence[],
+  values: readonly unknown[],
+): ValueEquivalence[] {
+  if (current.length === 0) return [];
+  const classes = valueClassKeys(current);
+  const valueClasses = new Set(
+    values.flatMap((value) => {
+      const classKey = classes.get(equivalenceValueKey(value));
+      return classKey === undefined ? [] : [classKey];
+    }),
   );
-  return buildResponseGroupKeys(present, edges, (response) =>
-    normalizeForComparison(response.answer),
+  return current.filter((equivalence) =>
+    valueClasses.has(classes.get(equivalenceValueKey(equivalence.value_a))!),
   );
 }

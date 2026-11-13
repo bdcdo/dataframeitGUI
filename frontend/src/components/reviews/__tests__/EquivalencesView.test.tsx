@@ -33,7 +33,7 @@ const FIELDS: EquivalenceFieldView[] = [{
   label: "Data de nascimento",
   classes: [{
     classKey: "k1",
-    values: ["Não informada", "NI"],
+    values: [{ key: "k-a", display: "Não informada" }, { key: "k-b", display: "NI" }],
     equivalences: [
       { id: "e1", display: "Não informada = NI", reviewerName: "ana", createdAt: "2026-11-01T12:00:00Z", sourceLabel: "Comparação", canUndo: true },
       { id: "e2", display: "NI = N/A", reviewerName: "bia", createdAt: null, sourceLabel: "Auto-revisão", canUndo: false },

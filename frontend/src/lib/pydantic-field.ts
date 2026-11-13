@@ -135,7 +135,9 @@ export const editablePydanticFieldsSchema = z
 export const pydanticFieldsSchema =
   editablePydanticFieldsSchema.superRefine(refineUniqueNames);
 
-const PYTHON_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
+// Nome de campo e de subcampo. Exportado porque o nome também entra como
+// caminho JSON em queries do PostgREST (value-equivalence-query.ts).
+export const PYTHON_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const isStrictDunder = (name: string): boolean =>
   name.startsWith("__") && name.endsWith("__");
 

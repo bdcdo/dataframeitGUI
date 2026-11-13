@@ -27,7 +27,6 @@ import { OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 export interface EquivalentVariant {
   pairId: string; // value_equivalences.id
   reviewerId: string | null;
-  respondentName: string;
   answerDisplay: string;
 }
 
@@ -556,7 +555,7 @@ function FusedVariantsPopover({
                 <div className="min-w-0 flex-1">
                   <p className="truncate">{v.answerDisplay}</p>
                   <p className="truncate text-[10px] text-muted-foreground">
-                    {v.respondentName}
+                    Vale em todo o projeto, neste campo
                   </p>
                 </div>
                 {showUnmark && (

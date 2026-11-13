@@ -1,9 +1,9 @@
+import type { ValueEquivalence } from "@/lib/equivalence";
 import { describe, it, expect } from "vitest";
 import {
   computeLlmErrorMetrics,
   type AutoReviewProvenance,
   type LlmErrorMetricsInput,
-  type MetricsEquivalence,
   type MetricsFinalAnswer,
   type MetricsResponse,
   type MetricsReview,
@@ -82,8 +82,8 @@ function equiv(
   b: string,
   valueA: unknown,
   valueB: unknown,
-  overrides: Partial<MetricsEquivalence> = {},
-): MetricsEquivalence {
+  overrides: Partial<ValueEquivalence> = {},
+): ValueEquivalence {
   return {
     id: `eq-${a}-${b}`,
     field_name: "x",

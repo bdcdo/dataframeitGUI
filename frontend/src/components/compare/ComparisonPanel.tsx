@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
-import type { FieldEquivalencePair } from "./AgreementGroup";
 import {
   CompareFieldReview,
   type ComparisonResponse,
@@ -11,7 +10,7 @@ import {
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { cardGroupKeys } from "@/lib/equivalence";
+import { cardGroupKeys, type ValueEquivalence } from "@/lib/equivalence";
 import {
   comparableMultiOptions,
   multiSelectionSets,
@@ -65,7 +64,7 @@ interface ComparisonPanelProps {
   commentCount: number;
   suggestionCount: number;
   equivalence: EquivalenceConfig;
-  equivalences: FieldEquivalencePair[];
+  equivalences: ValueEquivalence[];
   onConfirmEquivalent: (
     origin: VerdictOrigin,
     responseIds: string[],

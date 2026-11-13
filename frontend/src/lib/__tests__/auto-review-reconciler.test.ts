@@ -1,3 +1,4 @@
+import { groupValueEquivalencesByField } from "@/lib/equivalence";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const computeBacklogRows = vi.hoisted(() => vi.fn());
@@ -297,7 +298,7 @@ describe("expectedEquivalenceIds", () => {
   it("só as das classes dos valores do humano e do LLM, na versão atual, em ordem de id", async () => {
     const { expectedEquivalenceIds } = await import("@/lib/auto-review-reconciler");
     expect(expectedEquivalenceIds(
-      [
+      groupValueEquivalencesByField([
         eq("c3", "q1", "NI", "N/A"),
         // Mesma classe por transitividade: desfazê-la separa os valores.
         eq("b2", "q1", "N/A", "não se aplica"),
@@ -306,7 +307,7 @@ describe("expectedEquivalenceIds", () => {
         // Outra versão da pergunta e campo fora do schema.
         eq("d4", "q2", "x", "y", "velho"),
         eq("e5", "q9", "NI", "N/A"),
-      ],
+      ]),
       fields,
       { q1: "NI", q2: "x" },
       { q1: "não se aplica", q2: "y" },

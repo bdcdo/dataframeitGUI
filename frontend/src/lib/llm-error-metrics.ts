@@ -187,7 +187,6 @@ export interface LapsedDecision {
   resolvedAt: string;
 }
 
-export type MetricsEquivalence = ValueEquivalence;
 
 export interface LlmErrorMetricsInput {
   fields: PydanticField[];
@@ -214,7 +213,7 @@ export interface LlmErrorMetricsInput {
   /** Já filtradas por projeto; vazio quando o projeto não usa auto-revisão. */
   finalAnswers: MetricsFinalAnswer[];
   /** Equivalências de valor do projeto, COM `field_hash`. */
-  equivalences: MetricsEquivalence[];
+  equivalences: ValueEquivalence[];
   errorResolutions: Map<string, ErrorResolutionRow>;
 }
 

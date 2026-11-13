@@ -1,4 +1,9 @@
-import { currentValueEquivalences, type ValueEquivalence } from "@/lib/equivalence";
+import {
+  currentValueEquivalences,
+  equivalenceValueKey,
+  groupValueEquivalencesByField,
+  type ValueEquivalence,
+} from "@/lib/equivalence";
 import { equivalenceClasses } from "@/lib/value-equivalence-usage";
 import { formatCardAnswer } from "@/lib/verdict-display";
 import type { PydanticField } from "@/lib/types";
@@ -18,8 +23,8 @@ export interface EquivalenceRowView {
 
 export interface EquivalenceClassRowView {
   classKey: string;
-  /** Os valores fundidos pela classe, já formatados. */
-  values: string[];
+  /** Os valores fundidos pela classe: chave normalizada e texto formatado. */
+  values: Array<{ key: string; display: string }>;
   equivalences: EquivalenceRowView[];
 }
 
@@ -97,23 +102,23 @@ export function buildEquivalenceFieldViews(
   nameOf: ReadonlyMap<string, string>,
   viewer: ViewerAuthority,
 ): EquivalenceFieldView[] {
-  const metaOf = new Map(rows.map((row) => [row.id, row]));
+  const byField = groupValueEquivalencesByField(rows);
   const views: EquivalenceFieldView[] = [];
   for (const field of fields) {
-    const current = currentValueEquivalences(rows, field);
+    const current = currentValueEquivalences(byField.get(field.name), field) as EquivalenceRowWithMeta[];
     if (current.length === 0) continue;
     views.push({
       name: field.name,
       label: fieldLabel(field),
       classes: equivalenceClasses(current).map((cls) => ({
         classKey: cls.classKey,
-        values: cls.values.map(displayValue),
+        values: cls.values.map((value) => ({ key: equivalenceValueKey(value), display: displayValue(value) })),
         equivalences: cls.equivalences.map((equivalence) => ({
           id: equivalence.id,
           display: displayPair(equivalence),
           reviewerName: (equivalence.reviewer_id && nameOf.get(equivalence.reviewer_id)) || "—",
-          createdAt: metaOf.get(equivalence.id)?.created_at ?? null,
-          sourceLabel: SOURCE_LABELS[metaOf.get(equivalence.id)?.source ?? ""] ?? "—",
+          createdAt: equivalence.created_at,
+          sourceLabel: SOURCE_LABELS[equivalence.source] ?? "—",
           canUndo: canUndo(equivalence.reviewer_id, viewer),
         })),
       })),

@@ -21,7 +21,7 @@ import { copiedVerdictInDomain, type DomainField } from "@/lib/review-validity";
 import {
   cardGroupKeys,
   equivalenceValueKey,
-  valueClassKeys,
+  equivalencesInClassesOf,
   type ValueEquivalence,
 } from "@/lib/equivalence";
 import { HelpCircle, Link2 } from "lucide-react";
@@ -38,11 +38,6 @@ interface AgreementResponse {
   schemaVersion?: string | null;
 }
 
-/**
- * Equivalência de valor do campo, já recortada pela versão atual da pergunta
- * (`currentValueEquivalences`). Vale no projeto inteiro.
- */
-export type FieldEquivalencePair = ValueEquivalence;
 
 function compareVersionsDesc(a: string, b: string): number {
   const [am, an, ap] = a.split(".").map((n) => Number.parseInt(n, 10));
@@ -72,7 +67,7 @@ interface AgreementGroupProps {
    */
   domainField: DomainField | null;
   allowEquivalence: boolean;
-  equivalences: FieldEquivalencePair[];
+  equivalences: ValueEquivalence[];
   onConfirmEquivalent?: (
     responseIds: string[],
     gabaritoId: string,
@@ -114,7 +109,7 @@ const EQUIVALENCE_UNAVAILABLE =
  */
 function buildRenderedGroups(
   responses: AgreementResponse[],
-  equivalences: FieldEquivalencePair[],
+  equivalences: ValueEquivalence[],
 ): RenderedGroup[] {
   const present = responses.filter((r) => r.answer !== undefined);
   const groups = groupByEquivalenceKey(present, equivalences);
@@ -133,7 +128,7 @@ function buildRenderedGroups(
  */
 function groupByEquivalenceKey(
   present: AgreementResponse[],
-  equivalences: FieldEquivalencePair[],
+  equivalences: ValueEquivalence[],
 ): RenderedGroup[] {
   const groupKeys = cardGroupKeys(present, equivalences);
   const map = new Map<string, RenderedGroup>();
@@ -164,30 +159,15 @@ function groupByEquivalenceKey(
  */
 function variantsWithinGroup(
   group: RenderedGroup,
-  equivalences: FieldEquivalencePair[],
+  equivalences: ValueEquivalence[],
 ): EquivalentVariant[] {
-  const keys = new Set(
-    group.responses
-      .filter((r) => r.answersCurrentQuestion)
-      .map((r) => equivalenceValueKey(r.answer)),
-  );
-  if (keys.size < 2) return [];
-  const classOf = valueClassKeys(equivalences);
-  const groupClasses = new Set([...keys].flatMap((key) => {
-    const classKey = classOf.get(key);
-    return classKey === undefined ? [] : [classKey];
+  const values = group.responses.filter((r) => r.answersCurrentQuestion).map((r) => r.answer);
+  if (new Set(values.map(equivalenceValueKey)).size < 2) return [];
+  return equivalencesInClassesOf(equivalences, values).map((e) => ({
+    pairId: e.id,
+    reviewerId: e.reviewer_id,
+    answerDisplay: `${formatCardAnswer(e.value_a)} = ${formatCardAnswer(e.value_b)}`,
   }));
-  const variants: EquivalentVariant[] = [];
-  for (const e of equivalences) {
-    if (!groupClasses.has(classOf.get(equivalenceValueKey(e.value_a)) ?? "")) continue;
-    variants.push({
-      pairId: e.id,
-      reviewerId: e.reviewer_id,
-      respondentName: "Vale em todo o projeto, neste campo",
-      answerDisplay: `${formatCardAnswer(e.value_a)} = ${formatCardAnswer(e.value_b)}`,
-    });
-  }
-  return variants;
 }
 
 /**

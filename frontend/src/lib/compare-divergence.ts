@@ -1,11 +1,6 @@
-import { normalizeForComparison } from "@/lib/utils";
 import { isFieldVisible } from "@/lib/conditional";
-import {
-  buildResponseGroupKeys,
-  valueEquivalenceEdges,
-  type ValueEquivalencesByField,
-} from "@/lib/equivalence";
-import { answersCurrentQuestion, fieldExistedWhenCoded } from "@/lib/answer-staleness";
+import { answerGroupKeys, type ValueEquivalencesByField } from "@/lib/equivalence";
+import { fieldExistedWhenCoded } from "@/lib/answer-staleness";
 import {
   multiSelectionSets,
   multiSelectionsAgree,
@@ -86,20 +81,11 @@ export function computeDivergentFieldNames(
     // é equivalente a agrupar por resposta normalizada (comportamento antigo do
     // ramo scalar). multi tem seu próprio caminho (set de opções) acima, pois
     // sua UI de revisão (MultiOptionReview) não tem cards de equivalência.
-    const items = applicable.map((r) => ({
-      id: r.id,
-      answer: (r.answers as Record<string, unknown>)?.[field.name],
-      answerFieldHashes: r.answerFieldHashes,
-    }));
-    const edges = valueEquivalenceEdges(
-      items,
+    const groupKeys = answerGroupKeys(
+      applicable.map((r) => ({ id: r.id, answers: r.answers, answer_field_hashes: r.answerFieldHashes })),
       equivalencesByField?.get(field.name),
       field,
-      (item) => item.answer,
-      (item) => answersCurrentQuestion(item.answerFieldHashes, field),
-    );
-    const groupKeys = buildResponseGroupKeys(items, edges, (r) =>
-      normalizeForComparison(r.answer),
+      field.name,
     );
     const keys = new Set<string>();
     for (const r of applicable) keys.add(groupKeys.get(r.id) ?? r.id);

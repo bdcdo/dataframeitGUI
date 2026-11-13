@@ -269,7 +269,7 @@ export default async function ComparePageRoute({
   );
 
   // Maps don't cross the RSC boundary.
-  const serializedEquivalences = serializeEquivalencesForClient(equivalencesByField);
+  const serializedEquivalences = serializeEquivalencesForClient(equivalencesByField, fields);
 
   return (
     <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>

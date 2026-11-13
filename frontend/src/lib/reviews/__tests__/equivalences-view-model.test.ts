@@ -35,7 +35,7 @@ describe("buildEquivalenceFieldViews", () => {
     expect(views.map((v) => [v.name, v.label])).toEqual([["q1", "Data de nascimento"], ["q2", "q2"]]);
     expect(views[0].classes).toHaveLength(1);
     // Data parcial sai como nos cards da Comparação (`formatCardAnswer`).
-    expect(views[0].classes[0].values).toEqual(["Não informada", "—/—/—", "NI"]);
+    expect(views[0].classes[0].values.map((v) => v.display)).toEqual(["Não informada", "—/—/—", "NI"]);
     expect(views[0].classes[0].equivalences.map((e) => [e.id, e.reviewerName, e.sourceLabel, e.canUndo])).toEqual([
       ["e1", "ana", "Comparação", true],
       ["e2", "bia", "Comparação", false],

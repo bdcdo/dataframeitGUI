@@ -1,3 +1,4 @@
+import type { ValueEquivalence } from "@/lib/equivalence";
 // "Ambos corretos" grava o valor comum quando o veredito ficou para trás
 // (#758). A fila calcula o valor (`bothCorrectCommonValue`) e o envia com a
 // decisão; `set_error_resolution` só confere o que o contexto prova (fonte,
@@ -9,7 +10,6 @@ import {
   answersAgree,
   bothCorrectCommonValue,
   verdictMatchesAnswer,
-  type MetricsEquivalence,
   type MetricsResponse,
 } from "@/lib/llm-error-metrics";
 import type { PydanticField } from "@/lib/types";
@@ -44,7 +44,7 @@ function response(id: keyof typeof answers, overrides: Partial<MetricsResponse> 
 
 // Equivalência de valor do campo, na versão `h-<campo>` da pergunta (a das
 // fixtures) salvo quando `fieldHash` diz outra.
-function pair(fieldName: string, valueA: unknown, valueB: unknown, fieldHash = `h-${fieldName}`): MetricsEquivalence {
+function pair(fieldName: string, valueA: unknown, valueB: unknown, fieldHash = `h-${fieldName}`): ValueEquivalence {
   return { id: `eq-${fieldName}`, field_name: fieldName, field_hash: fieldHash, value_a: valueA, value_b: valueB, reviewer_id: null };
 }
 

@@ -8,7 +8,11 @@
 // A página fica responsável só por buscar dados no Supabase, chamar estas
 // funções em sequência e montar as props de <ComparePage>.
 
-import type { ValueEquivalence, ValueEquivalencesByField } from "@/lib/equivalence";
+import {
+  currentValueEquivalences,
+  type ValueEquivalence,
+  type ValueEquivalencesByField,
+} from "@/lib/equivalence";
 import { comparisonSet, type ComparisonSet } from "@/lib/comparison-set";
 import type { CompareFiltersValue } from "@/lib/compare-filters";
 import {
@@ -468,14 +472,16 @@ export function sortDocumentsByPendingDivergence(
 }
 
 // Serialize equivalences for the client component (Maps don't cross the RSC
-// boundary). Equivalence is project-wide per field, so the same lists serve
-// every document.
+// boundary). Only the current question version of each field ships: an
+// equivalence of another version fuses nothing, and values can be long texts.
 export function serializeEquivalencesForClient(
   equivalencesByField: ValueEquivalencesByField,
+  fields: readonly PydanticField[],
 ): Record<string, ValueEquivalence[]> {
   const serialized: Record<string, ValueEquivalence[]> = {};
-  for (const [fieldName, equivalences] of equivalencesByField) {
-    serialized[fieldName] = [...equivalences];
+  for (const field of fields) {
+    const current = currentValueEquivalences(equivalencesByField.get(field.name), field);
+    if (current.length > 0) serialized[field.name] = current;
   }
   return serialized;
 }

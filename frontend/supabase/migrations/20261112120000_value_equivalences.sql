@@ -102,6 +102,12 @@ CREATE POLICY "Members view value_equivalences"
 
 REVOKE ALL ON public.value_equivalences FROM anon;
 
+-- As leituras por valor (documentos afetados por uma equivalencia, "onde se
+-- aplica") varrem as respostas vigentes do projeto paginando por id.
+CREATE INDEX IF NOT EXISTS idx_responses_project_latest_id
+  ON public.responses (project_id, id)
+  WHERE is_latest;
+
 -- ── Historico ────────────────────────────────────────────────────────────────
 CREATE TABLE public.value_equivalence_history_entries (
   id                 UUID PRIMARY KEY,
@@ -121,8 +127,9 @@ CREATE TABLE public.value_equivalence_history_entries (
   )
 );
 
-CREATE INDEX idx_value_equivalence_history_project_field
-  ON public.value_equivalence_history_entries (project_id, field_name);
+-- A aba lista o historico do projeto pelo mais recente.
+CREATE INDEX idx_value_equivalence_history_project_recent
+  ON public.value_equivalence_history_entries (project_id, superseded_at DESC);
 
 ALTER TABLE public.value_equivalence_history_entries ENABLE ROW LEVEL SECURITY;
 
@@ -178,16 +185,17 @@ FOR EACH ROW EXECUTE FUNCTION public.archive_value_equivalence_before_delete();
 -- reviewer_id, source}). Os VALORES saem das respostas, e o hash, do schema
 -- atual: o cliente nao escolhe nem um nem outro. As duas respostas precisam
 -- ter sido dadas a versao atual da pergunta (`response_answers_current_question`,
--- a regra de leitura de `valueEquivalenceEdges`). Valores identicos nao gravam
--- nada. Devolve quantas equivalencias novas entraram.
+-- a regra de leitura do TS). Valores identicos nao gravam nada. Devolve as
+-- equivalencias novas (campo e valores), que a action propaga aos outros
+-- documentos sem reler as respostas.
 CREATE FUNCTION public.record_value_equivalences(p_rows JSONB)
-RETURNS INTEGER
+RETURNS TABLE(field_name TEXT, value_a JSONB, value_b JSONB)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
-DECLARE
-  v_inserted INTEGER;
+-- As colunas de saida tem os nomes das colunas da tabela.
+#variable_conflict use_column
 BEGIN
   IF p_rows IS NULL OR pg_catalog.jsonb_typeof(p_rows) <> 'array' THEN
     RAISE EXCEPTION 'p_rows must be a JSON array';
@@ -288,6 +296,7 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
+  RETURN QUERY
   WITH candidates AS (
     SELECT DISTINCT ON (
       project.id, field.name,
@@ -327,11 +336,12 @@ BEGIN
       project_id, field_name, field_hash,
       (pg_catalog.md5(value_a::TEXT)), (pg_catalog.md5(value_b::TEXT))
     ) DO NOTHING
-    RETURNING 1
+    RETURNING
+      public.value_equivalences.field_name,
+      public.value_equivalences.value_a,
+      public.value_equivalences.value_b
   )
-  SELECT count(*)::INTEGER INTO v_inserted FROM inserted;
-
-  RETURN v_inserted;
+  SELECT inserted.field_name, inserted.value_a, inserted.value_b FROM inserted;
 END;
 $$;
 
@@ -344,22 +354,24 @@ GRANT EXECUTE ON FUNCTION public.record_value_equivalences(JSONB)
 -- veredito: o voto num valor continua valido depois da separacao, e a
 -- divergencia que reaparecer leva o documento de volta a fila pelo sync.
 -- Autoridade: o dono pela identidade de trabalho (alias-aware), coordenacao,
--- criadora ou master, como remove_response_equivalence. Conjunto vazio quando
--- a linha nao existe ou a autoridade nao bate; a action trata os dois como
--- falha.
+-- criadora ou master, como remove_response_equivalence. Devolve o campo, o
+-- hash e os valores separados, que a action propaga. Conjunto vazio quando a linha nao
+-- existe ou a autoridade nao bate; a action trata os dois como falha.
 CREATE FUNCTION public.remove_value_equivalence(
   p_project_id UUID,
   p_equivalence_id UUID
-) RETURNS TABLE(field_name TEXT)
+) RETURNS TABLE(field_name TEXT, field_hash TEXT, value_a JSONB, value_b JSONB)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
+-- As colunas de saida tem os nomes das colunas da tabela.
+#variable_conflict use_column
 DECLARE
-  v_field_name TEXT;
+  v_removed public.value_equivalences%ROWTYPE;
 BEGIN
-  SELECT equivalence.field_name
-  INTO v_field_name
+  SELECT equivalence.*
+  INTO v_removed
   FROM public.value_equivalences AS equivalence
   WHERE equivalence.id = p_equivalence_id
     AND equivalence.project_id = p_project_id
@@ -378,15 +390,11 @@ BEGIN
     RETURN;
   END IF;
 
-  UPDATE public.value_equivalences AS equivalence
-  SET superseded_at = pg_catalog.now(),
-      superseded_reason = 'manually_removed'
-  WHERE equivalence.id = p_equivalence_id;
-
+  -- O gatilho de historico grava 'manually_removed' quando o motivo nao vem.
   DELETE FROM public.value_equivalences AS equivalence
   WHERE equivalence.id = p_equivalence_id;
 
-  RETURN QUERY SELECT v_field_name;
+  RETURN QUERY SELECT v_removed.field_name, v_removed.field_hash, v_removed.value_a, v_removed.value_b;
 END;
 $$;
 
@@ -664,18 +672,17 @@ BEGIN
 
     IF v_verdict = 'equivalente' THEN
       -- O veredito vira equivalencia de VALOR (valor humano = valor do LLM)
-      -- na versao da pergunta do ciclo: o carimbo do ciclo, ou o hash atual
-      -- para ciclo legado sem carimbo. Valor ausente (SQL NULL) nao e valor
-      -- julgado, e valores identicos nao tem o que fundir.
-      v_field_hash := COALESCE(
-        v_review.field_hash,
-        public.pydantic_field_by_name(
-          (SELECT project.pydantic_fields FROM public.projects AS project
-           WHERE project.id = p_project_id),
-          v_review.field_name
-        ) ->> 'hash'
-      );
+      -- na versao ATUAL da pergunta. Ciclo carimbado com outra versao (que
+      -- escapou do save do schema) nao grava: nasceria ja morta. Valor
+      -- ausente (SQL NULL) nao e valor julgado, e valores identicos nao tem o
+      -- que fundir.
+      v_field_hash := public.pydantic_field_by_name(
+        (SELECT project.pydantic_fields FROM public.projects AS project
+         WHERE project.id = p_project_id),
+        v_review.field_name
+      ) ->> 'hash';
       IF v_field_hash IS NOT NULL
+         AND (v_review.field_hash IS NULL OR v_review.field_hash = v_field_hash)
          AND v_review.human_answer_snapshot IS NOT NULL
          AND v_review.llm_answer_snapshot IS NOT NULL
          AND v_review.human_answer_snapshot IS DISTINCT FROM v_review.llm_answer_snapshot THEN

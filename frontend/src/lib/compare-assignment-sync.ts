@@ -222,25 +222,20 @@ interface PlannedChange {
   row: AssignmentRow;
 }
 
-// Quatro leituras paginadas do projeto em vez de quatro por assignment, para
-// caber no save do schema. `null`: nada a ressincronizar.
-//
-// Só a rodada corrente. Comparação de rodada antiga é histórico, e o veredito
-// antigo que perdeu a validade é rearbitrado na rodada corrente. Reabri-la
-// chamaria um segundo revisor para a célula que a rodada corrente já cobre, ou
-// bateria no gatilho contra autoarbitragem quando o revisor antigo codificou o
-// documento na rodada corrente, derrubando a ressincronização do projeto.
-// Projeto sem `current_round_id` (a coluna aceita nulo) não tem rodada
-// corrente, e todo assignment dele, com `round_id` obrigatório, é histórico.
 // Lote do `.in("document_id", ...)`: uma lista longa de UUIDs vai na URL do
 // PostgREST, e cem ficam bem abaixo do limite.
 const DOCUMENT_CHUNK = 100;
 
-async function fetchForDocuments<T>(
+type PagedRead<T> = Promise<{ data: T[]; error: { message: string } | null }>;
+
+// Leitura do projeto inteiro ou, com `documentIds`, só desses documentos, em
+// lotes. Duas fábricas porque o builder do PostgREST não se deixa tipar como
+// genérico sem estourar a inferência.
+async function readProjectRows<T>(
   documentIds: readonly string[] | null,
-  fetchAll: () => Promise<{ data: T[]; error: { message: string } | null }>,
-  fetchChunk: (ids: string[]) => Promise<{ data: T[]; error: { message: string } | null }>,
-): Promise<{ data: T[]; error: { message: string } | null }> {
+  fetchAll: () => PagedRead<T>,
+  fetchChunk: (ids: string[]) => PagedRead<T>,
+): PagedRead<T> {
   if (documentIds === null) return fetchAll();
   const chunks: string[][] = [];
   for (let i = 0; i < documentIds.length; i += DOCUMENT_CHUNK) {
@@ -252,6 +247,16 @@ async function fetchForDocuments<T>(
   return { data: results.flatMap((result) => result.data), error: null };
 }
 
+// Quatro leituras paginadas do projeto em vez de quatro por assignment, para
+// caber no save do schema. `null`: nada a ressincronizar.
+//
+// Só a rodada corrente. Comparação de rodada antiga é histórico, e o veredito
+// antigo que perdeu a validade é rearbitrado na rodada corrente. Reabri-la
+// chamaria um segundo revisor para a célula que a rodada corrente já cobre, ou
+// bateria no gatilho contra autoarbitragem quando o revisor antigo codificou o
+// documento na rodada corrente, derrubando a ressincronização do projeto.
+// Projeto sem `current_round_id` (a coluna aceita nulo) não tem rodada
+// corrente, e todo assignment dele, com `round_id` obrigatório, é histórico.
 async function loadProjectCompareState(
   supabase: SupabaseServerClient,
   projectId: string,
@@ -273,14 +278,14 @@ async function loadProjectCompareState(
   const documentIds = onlyDocumentIds === null ? null : [...new Set(assignments.map((row) => row.document_id))];
   const reviewColumns = "id, document_id, reviewer_id, field_name, verdict, field_hash, chosen_response_id";
   const [responses, reviews, equivalences] = await Promise.all([
-    fetchForDocuments<ResponseRow>(
+    readProjectRows<ResponseRow>(
       documentIds,
       () => fetchAllPaged<ResponseRow>(() => supabase
         .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId), ["id"]),
       (ids) => fetchAllPaged<ResponseRow>(() => supabase
         .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId).in("document_id", ids), ["id"]),
     ),
-    fetchForDocuments<ReviewRow>(
+    readProjectRows<ReviewRow>(
       documentIds,
       () => fetchAllPaged<ReviewRow>(() => supabase
         .from("reviews").select(reviewColumns).eq("project_id", projectId), ["id"]),

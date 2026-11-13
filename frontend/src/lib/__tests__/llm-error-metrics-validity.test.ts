@@ -1,3 +1,4 @@
+import type { ValueEquivalence } from "@/lib/equivalence";
 // A métrica e a fila do LLM Insights sob a regra única de validade do veredito
 // (`review-validity.ts`): o veredito vale enquanto a pergunta não muda, a
 // rodada não entra na regra, e o LLM é medido contra o VALOR do veredito, não
@@ -6,7 +7,6 @@ import { describe, it, expect } from "vitest";
 import {
   computeLlmErrorMetrics,
   type LlmErrorMetricsInput,
-  type MetricsEquivalence,
   type MetricsResponse,
   type MetricsReview,
 } from "@/lib/llm-error-metrics";
@@ -65,7 +65,7 @@ function review(overrides: Partial<MetricsReview> & { round_id?: string } = {}):
 
 // Equivalência de VALOR no campo `x`, na versão atual da pergunta (HASH). Os
 // ids das respostas só compõem o id.
-function equiv(a: string, b: string, valueA: unknown, valueB: unknown): MetricsEquivalence {
+function equiv(a: string, b: string, valueA: unknown, valueB: unknown): ValueEquivalence {
   return {
     id: `eq-${a}-${b}`,
     field_name: "x",

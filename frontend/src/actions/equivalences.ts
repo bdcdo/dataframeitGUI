@@ -13,7 +13,6 @@ import {
   fetchFieldAnswers,
   fetchProjectValueEquivalences,
 } from "@/lib/value-equivalence-query";
-import { affectedValueKeys } from "@/lib/equivalence";
 import {
   equivalenceUsageByClass,
   type UsageDocument,
@@ -27,8 +26,9 @@ import { fetchFieldDefinition } from "@/lib/reviews/field-definition";
 // A equivalência "=" é de VALOR (`value_equivalences`): marcar respostas como
 // equivalentes grava "no campo X, na versão atual da pergunta, estes valores
 // são a mesma resposta", e isso vale no projeto inteiro. As RPCs tiram os
-// valores das próprias respostas e o hash do schema atual; o cliente só diz
-// quais respostas o revisor fundiu.
+// valores das próprias respostas e o hash do schema atual (o cliente só diz
+// quais respostas o revisor fundiu) e devolvem o que mudou, que a propagação
+// usa sem reler nada.
 
 type EquivalenceSource = "comparacao" | "llm_insights";
 
@@ -59,10 +59,24 @@ function equivalenceRows(
   }));
 }
 
+// O que as RPCs devolvem: o campo e os valores gravados ou separados.
+interface ChangedEquivalence {
+  field_name: string;
+  field_hash?: string;
+  value_a: unknown;
+  value_b: unknown;
+}
+
+function changesOf(rows: readonly ChangedEquivalence[] | null): ValueEquivalenceChange[] {
+  return (rows ?? []).map((row) => ({ fieldName: row.field_name, values: [row.value_a, row.value_b] }));
+}
+
 // A equivalência vale no projeto inteiro: os outros documentos com os mesmos
 // valores são reconciliados e ressincronizados depois da resposta ao clique.
-function schedulePropagation(projectId: string, change: ValueEquivalenceChange) {
-  after(() => propagateValueEquivalenceChange({ projectId, changes: [change] }));
+// Sem mudança (o par de valores já existia), não há o que propagar.
+function schedulePropagation(projectId: string, changes: ValueEquivalenceChange[]) {
+  if (changes.length === 0) return;
+  after(() => propagateValueEquivalenceChange({ projectId, changes }));
 }
 
 function revalidateEquivalenceViews(projectId: string) {
@@ -121,9 +135,11 @@ export async function confirmEquivalentVerdict({
     projectId, documentId, fieldName, reviewerId, source: "comparacao",
   });
 
+  let recorded: ChangedEquivalence[] | null;
   try {
-    const { error: equivErr } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
+    const { data, error: equivErr } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
     if (equivErr) throw new Error(equivErr.message);
+    recorded = data as ChangedEquivalence[] | null;
 
     const { error: reviewErr } = await supabase.from("reviews").upsert(
       {
@@ -157,7 +173,7 @@ export async function confirmEquivalentVerdict({
       `[confirmEquivalentVerdict] falha ao sincronizar o assignment: ${errorMessage(e)}`,
     );
   }
-  schedulePropagation(projectId, { fieldName, responseIds });
+  schedulePropagation(projectId, changesOf(recorded));
 
   revalidateEquivalenceViews(projectId);
   return {};
@@ -187,14 +203,16 @@ export async function markLlmEquivalent(
     projectId, documentId, fieldName, reviewerId, source: "llm_insights",
   });
 
+  let recorded: ChangedEquivalence[] | null;
   try {
-    const { error } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
+    const { data, error } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
     if (error) throw new Error(error.message);
+    recorded = data as ChangedEquivalence[] | null;
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
   }
 
-  schedulePropagation(projectId, { fieldName, responseIds: [llmResponseId, chosenResponseId] });
+  schedulePropagation(projectId, changesOf(recorded));
   revalidateEquivalenceViews(projectId);
   return {};
 }
@@ -217,25 +235,9 @@ export async function unmarkEquivalencePair(
   if (!actor.ok) return { error: actor.error };
 
   const supabase = await createSupabaseServer();
-  let fieldName: string;
-  let valueKeys: Set<string>;
+  let removed: Required<ChangedEquivalence>;
 
   try {
-    // A classe ANTES da remoção é onde a divergência pode reaparecer; depois
-    // dela, os valores já estão separados.
-    const equivalences = await fetchProjectValueEquivalences(supabase, projectId);
-    if (equivalences.error) throw new Error(equivalences.error.message);
-    const target = equivalences.data.find((row) => row.id === equivalenceId);
-    if (!target) {
-      throw new ZeroRowsError(
-        "value_equivalences",
-        "delete",
-        "Equivalência não encontrada ou sem permissão para removê-la.",
-      );
-    }
-    const field = await fetchFieldDefinition(supabase, projectId, target.field_name);
-    valueKeys = affectedValueKeys(equivalences.data, field, [target.value_a, target.value_b]);
-
     const { data, error } = await supabase.rpc("remove_value_equivalence", {
       p_project_id: projectId,
       p_equivalence_id: equivalenceId,
@@ -246,7 +248,7 @@ export async function unmarkEquivalencePair(
     // RPC não distingue, e nenhum dos dois é sucesso. Sem este guard a action
     // retornaria `{}` sobre nada removido e a revisora veria "desfeito" — o
     // sucesso falso do #178.
-    const row = (data as Array<{ field_name: string | null }> | null)?.[0];
+    const row = (data as Array<Required<ChangedEquivalence>> | null)?.[0];
     if (!row?.field_name) {
       throw new ZeroRowsError(
         "value_equivalences",
@@ -254,7 +256,7 @@ export async function unmarkEquivalencePair(
         "Equivalência não encontrada ou sem permissão para removê-la.",
       );
     }
-    fieldName = row.field_name;
+    removed = row;
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
   }
@@ -268,12 +270,16 @@ export async function unmarkEquivalencePair(
       );
     }
   }
-  schedulePropagation(projectId, { fieldName, valueKeys });
+  // A equivalência desfeita entra no cálculo da classe: a classe ANTIGA é onde
+  // a divergência pode reaparecer.
+  schedulePropagation(projectId, [{
+    fieldName: removed.field_name,
+    values: [removed.value_a, removed.value_b],
+    removed: { id: equivalenceId, reviewer_id: null, ...removed },
+  }]);
   revalidateEquivalenceViews(projectId);
   return {};
 }
-
-export type { UsageDocument as EquivalenceUsageDocument } from "@/lib/value-equivalence-usage";
 
 // "Onde se aplica", sob demanda por campo na aba Equivalências: por classe de
 // equivalência, os documentos em que ela funde respostas vigentes dadas à

@@ -1,30 +1,32 @@
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import { VALUE_EQUIVALENCE_SELECT, type ValueEquivalence } from "@/lib/equivalence";
+import { PYTHON_IDENTIFIER } from "@/lib/pydantic-field";
+
+type DataClient = Pick<SupabaseServerClient, "from">;
 
 // Todas as equivalências de valor vivas do projeto. O escopo é o projeto, não
 // o documento: a mesma lista vale para todo documento, por isso nenhum leitor
 // filtra por documento. Paginado porque um projeto pode passar das 1000
 // linhas do teto do PostgREST, e truncar aqui fundiria menos do que devia sem
 // erro nenhum. Serve ao cliente do usuário (RLS de leitura por membro) e ao
-// admin, que têm a mesma interface.
-export function fetchProjectValueEquivalences(
-  client: Pick<SupabaseServerClient, "from">,
+// admin, que têm a mesma interface. `extraColumns` para quem precisa de mais
+// que o necessário à fusão (a aba Equivalências: origem e data).
+export function fetchProjectValueEquivalences<T extends ValueEquivalence = ValueEquivalence>(
+  client: DataClient,
   projectId: string,
-): Promise<{ data: ValueEquivalence[]; error: { message: string } | null }> {
-  return fetchAllPaged<ValueEquivalence>(
-    () =>
-      client
-        .from("value_equivalences")
-        .select(VALUE_EQUIVALENCE_SELECT)
-        .eq("project_id", projectId),
+  extraColumns = "",
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  // `as typeof VALUE_EQUIVALENCE_SELECT`: o parser de select do supabase-js
+  // não infere colunas de string montada; o tipo das linhas vem de `T`.
+  const columns = (extraColumns
+    ? `${VALUE_EQUIVALENCE_SELECT}, ${extraColumns}`
+    : VALUE_EQUIVALENCE_SELECT) as typeof VALUE_EQUIVALENCE_SELECT;
+  return fetchAllPaged<T>(
+    () => client.from("value_equivalences").select(columns).eq("project_id", projectId) as never,
     ["id"],
   );
 }
-
-// Pydantic exige identificador Python, e o nome entra no `select` como
-// caminho JSON do PostgREST: qualquer outra coisa é recusada antes da query.
-export const FIELD_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export interface FieldAnswerQueryRow {
   id: string;
@@ -36,13 +38,17 @@ export interface FieldAnswerQueryRow {
 }
 
 // As respostas vigentes ao campo nos documentos ativos do projeto, só com o
-// valor do campo (caminho JSON), não o `answers` inteiro.
+// valor do campo (caminho JSON), não o `answers` inteiro. Fonte única da
+// leitura por valor: os documentos afetados por uma equivalência e o "onde se
+// aplica" da aba usam a mesma régua de quais respostas contam.
 export function fetchFieldAnswers(
-  client: Pick<SupabaseServerClient, "from">,
+  client: DataClient,
   projectId: string,
   fieldName: string,
 ): Promise<{ data: FieldAnswerQueryRow[]; error: { message: string } | null }> {
-  if (!FIELD_NAME_PATTERN.test(fieldName)) {
+  // O nome entra no select como caminho JSON do PostgREST: só identificador
+  // de campo do schema passa.
+  if (!PYTHON_IDENTIFIER.test(fieldName)) {
     return Promise.resolve({ data: [], error: { message: `nome de campo inválido: ${fieldName}` } });
   }
   // Tipado como `string` para o parser de select do supabase-js não tentar
@@ -55,7 +61,9 @@ export function fetchFieldAnswers(
         .select(columns)
         .eq("project_id", projectId)
         .eq("is_latest", true)
-        // SQL NULL só sem a chave: quem não respondeu o campo fica de fora.
+        // `answers->campo` é SQL NULL só sem a chave (o JSON null é `'null'`):
+        // a resposta que não respondeu o campo fica de fora, como na
+        // Comparação, e não se confunde com quem respondeu null.
         .not(`answers->${fieldName}`, "is", null)
         .is("documents.excluded_at", null)
         .returns<FieldAnswerQueryRow[]>(),

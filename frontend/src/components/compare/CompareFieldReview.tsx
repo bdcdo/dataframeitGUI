@@ -1,6 +1,7 @@
 "use client";
 
-import { AgreementGroup, type FieldEquivalencePair } from "./AgreementGroup";
+import { AgreementGroup } from "./AgreementGroup";
+import type { ValueEquivalence } from "@/lib/equivalence";
 import { MultiOptionReview } from "./MultiOptionReview";
 import { DivergenceActionsPanel } from "./DivergenceActionsPanel";
 import { UnansweredNotice } from "./UnansweredNotice";
@@ -60,7 +61,7 @@ interface CompareFieldReviewProps {
   comment: string;
   onCommentChange: (value: string) => void;
   equivalence: EquivalenceConfig;
-  equivalences: FieldEquivalencePair[];
+  equivalences: ValueEquivalence[];
   onConfirmEquivalent: (
     origin: VerdictOrigin,
     responseIds: string[],
@@ -241,7 +242,7 @@ function SingleAnswerGroup({
   pendingVerdict: PendingVerdict | null;
   onPrepareVerdict: (pending: PendingVerdict) => void;
   equivalence: EquivalenceConfig;
-  equivalences: FieldEquivalencePair[];
+  equivalences: ValueEquivalence[];
   onConfirmEquivalent: CompareFieldReviewProps["onConfirmEquivalent"];
   onUnmarkEquivalencePair: (pairId: string) => Promise<void>;
   currentUserId: string;

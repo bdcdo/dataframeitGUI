@@ -510,10 +510,16 @@ describe("sortDocumentsByPendingDivergence", () => {
 });
 
 describe("serializeEquivalencesForClient", () => {
-  it("serializa as equivalências do projeto por campo (Maps não cruzam o RSC)", () => {
+  it("serializa por campo só a versão atual da pergunta (Maps não cruzam o RSC)", () => {
     const e1 = { id: "e1", field_name: "a", field_hash: "h-a", value_a: "x", value_b: "y", reviewer_id: "u1" };
     const e2 = { id: "e2", field_name: "b", field_hash: "h-b", value_a: "z", value_b: "w", reviewer_id: null };
-    const serialized = serializeEquivalencesForClient(groupValueEquivalencesByField([e1, e2]));
+    const stale = { id: "e3", field_name: "b", field_hash: "h-velho", value_a: "p", value_b: "q", reviewer_id: null };
+    const gone = { id: "e4", field_name: "removido", field_hash: "h", value_a: "p", value_b: "q", reviewer_id: null };
+    const fields = [
+      { name: "a", type: "text", description: "", hash: "h-a" },
+      { name: "b", type: "text", description: "", hash: "h-b" },
+    ] as PydanticField[];
+    const serialized = serializeEquivalencesForClient(groupValueEquivalencesByField([e1, e2, stale, gone]), fields);
     expect(serialized).toEqual({ a: [e1], b: [e2] });
   });
 });

@@ -7,7 +7,7 @@ import type { PydanticField } from "@/lib/types";
  * domínio do voto antes da escrita (`copiedVerdictInDomain`).
  */
 export async function fetchFieldDefinition(
-  supabase: SupabaseServerClient,
+  supabase: Pick<SupabaseServerClient, "from">,
   projectId: string,
   fieldName: string,
 ): Promise<PydanticField | undefined> {

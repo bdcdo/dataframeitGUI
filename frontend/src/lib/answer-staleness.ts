@@ -84,8 +84,8 @@ export function isFieldStale({
 // casos nos testes: com ela o banco recusa gravar a equivalência a partir de
 // resposta de outra versão (`record_value_equivalences`). A equivalência tem
 // o próprio `field_hash`, que o save do schema confere para levá-la ao
-// histórico; todo leitor passa por `valueEquivalenceEdges`, que aplica as
-// duas regras.
+// histórico; todo leitor passa por `lib/equivalence.ts` (`answerGroupKeys`,
+// `cardGroupKeys`), que aplica as duas regras.
 export function answersCurrentQuestion(
   answerFieldHashes: AnswerFieldHashes | undefined,
   field: Pick<PydanticField, "name" | "hash"> | undefined,

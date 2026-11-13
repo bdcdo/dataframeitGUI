@@ -17,6 +17,7 @@ import {
   type VerdictQuestionRow,
 } from "@/lib/reviews/comments-mapper";
 import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
+import { loadReviewerNames } from "@/lib/reviews/reviewer-names";
 
 export default async function CommentsPage({
   params,
@@ -139,16 +140,7 @@ export default async function CommentsPage({
   // backstop no layout.
   const isCoordinator = coordinatorGate(accessResult, { failOpen: true });
 
-  let reviewerMap = new Map<string, string>();
-  if (reviewerIds.length > 0) {
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, email")
-      .in("id", reviewerIds);
-    reviewerMap = new Map(
-      profiles?.map((p) => [p.id, p.email?.split("@")[0] || "Anônimo"]) || [],
-    );
-  }
+  const reviewerMap = await loadReviewerNames(supabase, reviewerIds);
 
   const reviewComments = mapReviewComments(reviews || [], docMap, fieldMap, reviewerMap);
 
