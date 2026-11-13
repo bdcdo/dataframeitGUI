@@ -58,7 +58,12 @@ export function parseSelfComparisonArgs(argv: readonly string[]): SelfComparison
   return { projectId, userId, approverId, source, dryRun };
 }
 
-export type SkipReason = "não codificou" | "comparação ativa" | "já tem comparação nesta rodada";
+export type SkipReason =
+  | "documento fora da base"
+  | "não codificou"
+  | "codificação em aberto na rodada"
+  | "comparação ativa na rodada"
+  | "já tem comparação nesta rodada";
 
 export interface SelfComparisonPlan {
   assign: string[];
@@ -66,27 +71,32 @@ export interface SelfComparisonPlan {
 }
 
 /**
- * Quais documentos recebem a autocomparação. Fica de fora o documento que o
- * pesquisador não codificou (não seria autocomparação), o que já tem
- * comparação ativa (um revisor por documento) e o que já tem comparação dele
- * na rodada (a UNIQUE da rodada recusaria).
+ * Quais documentos recebem a autocomparação, na ordem das razões de recusa:
+ * documento arquivado ou em revisão de escopo; documento sem codificação
+ * entregue do pesquisador (rascunho não conta: não haveria o que comparar);
+ * codificação dele ainda aberta na rodada (a tela também não oferece); outra
+ * comparação ativa na rodada (um revisor por documento por rodada); e
+ * comparação dele já existente na rodada (a UNIQUE da rodada recusaria).
  */
 export function planSelfComparisons(input: {
   documentIds: readonly string[];
+  inBase: ReadonlySet<string>;
   codedByUser: ReadonlySet<string>;
-  activeComparison: ReadonlySet<string>;
+  openCodingThisRound: ReadonlySet<string>;
+  activeComparisonThisRound: ReadonlySet<string>;
   userComparisonThisRound: ReadonlySet<string>;
 }): SelfComparisonPlan {
+  const checks: [ReadonlySet<string>, boolean, SkipReason][] = [
+    [input.inBase, false, "documento fora da base"],
+    [input.codedByUser, false, "não codificou"],
+    [input.openCodingThisRound, true, "codificação em aberto na rodada"],
+    [input.activeComparisonThisRound, true, "comparação ativa na rodada"],
+    [input.userComparisonThisRound, true, "já tem comparação nesta rodada"],
+  ];
   const plan: SelfComparisonPlan = { assign: [], skipped: [] };
   for (const documentId of new Set(input.documentIds)) {
-    const reason: SkipReason | null = !input.codedByUser.has(documentId)
-      ? "não codificou"
-      : input.activeComparison.has(documentId)
-        ? "comparação ativa"
-        : input.userComparisonThisRound.has(documentId)
-          ? "já tem comparação nesta rodada"
-          : null;
-    if (reason) plan.skipped.push({ documentId, reason });
+    const failed = checks.find(([set, skipWhenPresent]) => set.has(documentId) === skipWhenPresent);
+    if (failed) plan.skipped.push({ documentId, reason: failed[2] });
     else plan.assign.push(documentId);
   }
   return plan;
@@ -97,18 +107,17 @@ function rowsOrThrow<T>(label: string, result: { data: T[] | null; error: { mess
   return result.data ?? [];
 }
 
+interface ProjectRow {
+  automation_mode: string | null;
+  current_round_id: string | null;
+}
+
 async function backlogDocumentsCodedBy(
   client: SupabaseServerClient,
   projectId: string,
+  mode: string | null,
   userId: string,
 ): Promise<string[]> {
-  const { data: project, error } = await client
-    .from("projects")
-    .select("automation_mode")
-    .eq("id", projectId)
-    .single();
-  if (error) throw new Error(`projects: ${error.message}`);
-  const mode = project?.automation_mode;
   if (mode !== "compare_humans" && mode !== "compare_llm") {
     throw new Error(`o projeto está em '${mode}', sem backlog de comparação; use --documents`);
   }
@@ -121,14 +130,28 @@ export async function assignSelfComparisons(
   client: SupabaseServerClient,
   args: SelfComparisonArgs,
 ): Promise<SelfComparisonPlan> {
+  const { data: project, error: projectError } = await client
+    .from("projects")
+    .select("automation_mode, current_round_id")
+    .eq("id", args.projectId)
+    .single<ProjectRow>();
+  if (projectError) throw new Error(`projects: ${projectError.message}`);
+  const roundId = project?.current_round_id;
+  if (!roundId) throw new Error("O projeto não possui uma rodada atual.");
   const documentIds =
     args.source.kind === "backlog"
-      ? await backlogDocumentsCodedBy(client, args.projectId, args.userId)
+      ? await backlogDocumentsCodedBy(client, args.projectId, project.automation_mode, args.userId)
       : args.source.ids;
   if (documentIds.length === 0) return { assign: [], skipped: [] };
 
-  const [projectResult, codedResult, comparisonsResult] = await Promise.all([
-    client.from("projects").select("current_round_id").eq("id", args.projectId).single(),
+  const [documentsResult, codedResult, assignmentsResult] = await Promise.all([
+    client
+      .from("documents")
+      .select("id")
+      .eq("project_id", args.projectId)
+      .is("excluded_at", null)
+      .is("exclusion_pending_at", null)
+      .in("id", documentIds),
     client
       .from("responses")
       .select("document_id")
@@ -136,27 +159,31 @@ export async function assignSelfComparisons(
       .eq("respondent_id", args.userId)
       .eq("respondent_type", "humano")
       .eq("is_latest", true)
+      .eq("is_partial", false)
       .in("document_id", documentIds),
     client
       .from("assignments")
-      .select("document_id, user_id, status, round_id")
+      .select("document_id, user_id, type, status")
       .eq("project_id", args.projectId)
-      .eq("type", "comparacao")
+      .eq("round_id", roundId)
+      .in("type", ["codificacao", "comparacao"])
       .in("document_id", documentIds),
   ]);
-  if (projectResult.error) throw new Error(`projects: ${projectResult.error.message}`);
-  const roundId = projectResult.data?.current_round_id;
-  const comparisons = rowsOrThrow("assignments", comparisonsResult);
+  const assignments = rowsOrThrow("assignments", assignmentsResult);
+  const ids = (rows: { document_id: string }[]) => new Set(rows.map((r) => r.document_id));
   const plan = planSelfComparisons({
     documentIds,
-    codedByUser: new Set(rowsOrThrow("responses", codedResult).map((r) => r.document_id)),
-    activeComparison: new Set(comparisons.filter((c) => c.status !== "concluido").map((c) => c.document_id)),
-    userComparisonThisRound: new Set(
-      comparisons.filter((c) => c.user_id === args.userId && c.round_id === roundId).map((c) => c.document_id),
+    inBase: new Set(rowsOrThrow("documents", documentsResult).map((d) => d.id)),
+    codedByUser: ids(rowsOrThrow("responses", codedResult)),
+    openCodingThisRound: ids(
+      assignments.filter((a) => a.type === "codificacao" && a.user_id === args.userId && a.status !== "concluido"),
     ),
+    activeComparisonThisRound: ids(assignments.filter((a) => a.type === "comparacao" && a.status !== "concluido")),
+    userComparisonThisRound: ids(assignments.filter((a) => a.type === "comparacao" && a.user_id === args.userId)),
   });
   if (args.dryRun || plan.assign.length === 0) return plan;
 
+  // Um INSERT só: o lote entra inteiro ou nada entra, e rodar de novo é seguro.
   const { error } = await client.from("assignments").insert(
     plan.assign.map((documentId) => ({
       project_id: args.projectId,
@@ -167,6 +194,11 @@ export async function assignSelfComparisons(
       self_comparison_approved_by: args.approverId,
     })),
   );
+  if (error?.code === "23505") {
+    throw new Error(
+      "Outro revisor recebeu a comparação de algum destes documentos entre o plano e a gravação. Nada foi gravado; rode de novo.",
+    );
+  }
   if (error) throw new Error(`assignments: ${error.message}`);
   return plan;
 }
