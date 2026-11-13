@@ -10,6 +10,7 @@ import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { getExportDataset } from "@/actions/export";
 import { formatDateForFilename } from "@/lib/date-format";
+import { downloadBlob } from "@/lib/download-blob";
 import type { ExportDataset, ExportSheet } from "@/lib/export/assemble";
 
 // BOM + escaping manual herdados do antigo ExportPanel (comportamento validado
@@ -27,15 +28,6 @@ function buildCsv(sheet: ExportSheet): string {
   const headerLine = sheet.headers.map(escapeCsvField).join(",");
   const dataLines = sheet.rows.map((row) => row.map(escapeCsvField).join(","));
   return bom + [headerLine, ...dataLines].join("\n");
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 // Monta o XLSX com exceljs (import dinâmico — pesado, lazy). Aba Documentos
