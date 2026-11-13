@@ -833,6 +833,8 @@ describe("status inicial do assignment de codificação (#521)", () => {
       assignments: { data: [] },
       projects: { data: PROJECT_ROW },
       responses: [
+        // Autoria do par (`isHumanCoder`), lida em paralelo às atribuições.
+        { count: 1 },
         {
           data: {
             id: "r1",
@@ -865,12 +867,127 @@ describe("status inicial do assignment de codificação (#521)", () => {
     serverTableResults = {
       assignments: { data: [] },
       projects: { data: PROJECT_ROW },
-      responses: [{ data: null }, { data: [] }],
+      responses: [{ count: 0 }, { data: null }, { data: [] }],
     };
 
     await cycleAssignment("p1", "d1", "u1");
 
     const insert = writeCalls.find((c) => c.table === "assignments" && c.op === "insert");
     expect(insert?.payload).toMatchObject({ status: "pendente", completed_at: null });
+  });
+});
+
+// Autocomparação (20261113120000): o banco recusa com 23514 a comparação dada a
+// quem codificou o documento, salvo com a liberação do coordenador. Antes, o
+// ciclo manual promovia a codificação pendente sem olhar a autoria e o 23514
+// do gatilho chegava cru ao toast — sem caminho para liberar a exceção.
+describe("cycleAssignment — autocomparação", () => {
+  const PROJECT = { data: { current_round_id: "round-1" } };
+  const pendingCoding = { data: [{ id: "a1", status: "pendente", type: "codificacao" }] };
+  const doneCoding = { data: [{ id: "a1", status: "concluido", type: "codificacao" }] };
+  const coder = { count: 1 };
+  const notCoder = { count: 0 };
+  const assignmentWrites = () => writeCalls.filter((c) => c.table === "assignments");
+
+  it("pede confirmação, sem gravar, antes de dar a comparação a quem codificou", async () => {
+    serverTableResults = { projects: PROJECT, assignments: [pendingCoding], responses: coder };
+
+    const result = await cycleAssignment("p1", "d1", "u1");
+
+    expect(result).toEqual({ needsSelfComparisonConfirmation: true });
+    expect(assignmentWrites()).toHaveLength(0);
+  });
+
+  it("com a confirmação, promove e registra quem liberou", async () => {
+    serverTableResults = { projects: PROJECT, assignments: [pendingCoding, { data: null }], responses: coder };
+
+    const result = await cycleAssignment("p1", "d1", "u1", { allowSelfComparison: true });
+
+    expect(result.error).toBeUndefined();
+    expect(assignmentWrites()).toEqual([
+      { table: "assignments", op: "update", payload: { type: "comparacao", self_comparison_approved_by: "user-1" } },
+    ]);
+  });
+
+  it("sem codificação do par, promove como sempre, sem liberação", async () => {
+    serverTableResults = { projects: PROJECT, assignments: [pendingCoding, { data: null }], responses: notCoder };
+
+    const result = await cycleAssignment("p1", "d1", "u1");
+
+    expect(result).toEqual({});
+    expect(assignmentWrites()).toEqual([
+      { table: "assignments", op: "update", payload: { type: "comparacao" } },
+    ]);
+  });
+
+  it("codificação concluída ganha a comparação da própria codificação, com confirmação", async () => {
+    serverTableResults = { projects: PROJECT, assignments: [doneCoding], responses: coder };
+    expect(await cycleAssignment("p1", "d1", "u1")).toEqual({ needsSelfComparisonConfirmation: true });
+    expect(assignmentWrites()).toHaveLength(0);
+
+    serverTableResults = { projects: PROJECT, assignments: [doneCoding, { data: null }], responses: coder };
+    const result = await cycleAssignment("p1", "d1", "u1", { allowSelfComparison: true });
+
+    expect(result.error).toBeUndefined();
+    expect(assignmentWrites()).toEqual([
+      {
+        table: "assignments",
+        op: "insert",
+        payload: {
+          project_id: "p1",
+          document_id: "d1",
+          user_id: "u1",
+          type: "comparacao",
+          status: "pendente",
+          self_comparison_approved_by: "user-1",
+        },
+      },
+    ]);
+  });
+
+  it("codificação concluída de quem não codificou segue travada, com aviso", async () => {
+    serverTableResults = { projects: PROJECT, assignments: [doneCoding], responses: notCoder };
+
+    expect((await cycleAssignment("p1", "d1", "u1")).error).toMatch(/não tem codificação corrente/);
+    expect(assignmentWrites()).toHaveLength(0);
+  });
+
+  it("confirmação que já não corresponde ao par (passo mudou) não grava nada", async () => {
+    // A outra aba concluiu a promoção: o próximo passo seria apagar.
+    serverTableResults = {
+      projects: PROJECT,
+      assignments: [{ data: [{ id: "a1", status: "pendente", type: "comparacao" }] }],
+      responses: coder,
+    };
+    expect((await cycleAssignment("p1", "d1", "u1", { allowSelfComparison: true })).error).toMatch(/mudou/);
+
+    // A codificação sumiu: a promoção deixou de ser autocomparação.
+    serverTableResults = { projects: PROJECT, assignments: [pendingCoding], responses: notCoder };
+    expect((await cycleAssignment("p1", "d1", "u1", { allowSelfComparison: true })).error).toMatch(/mudou/);
+
+    expect(assignmentWrites()).toHaveLength(0);
+  });
+
+  it("23514 do gatilho (codificação surgida entre a checagem e a escrita) reabre a confirmação", async () => {
+    serverTableResults = {
+      projects: PROJECT,
+      assignments: [pendingCoding, { error: { code: "23514", message: "o codificador do documento não pode receber sua comparação" } }],
+      responses: notCoder,
+    };
+
+    expect(await cycleAssignment("p1", "d1", "u1")).toEqual({ needsSelfComparisonConfirmation: true });
+  });
+
+  it("outro 23514 em assignments é erro real, não pedido de confirmação", async () => {
+    serverTableResults = {
+      projects: PROJECT,
+      assignments: [pendingCoding, { error: { code: "23514", message: "violates check constraint \"assignments_self_comparison_approval_shape\"" } }],
+      responses: notCoder,
+    };
+
+    const result = await cycleAssignment("p1", "d1", "u1");
+
+    expect(result.needsSelfComparisonConfirmation).toBeUndefined();
+    expect(result.error).toMatch(/assignments_self_comparison_approval_shape/);
   });
 });

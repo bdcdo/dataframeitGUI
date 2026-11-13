@@ -30,6 +30,7 @@ import {
 import type { ResponseRoundFields, RoundContext } from "@/lib/rounds";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField, Round } from "@/lib/types";
+import { decideSelfComparison, planAssignmentCycle, type CycleStep } from "@/lib/assignment-cycle";
 import { z } from "zod";
 
 // --- Status inicial do assignment de codificação (issue #521) ---
@@ -257,19 +258,109 @@ async function insertCodingAssignment(
  * 23505 vira mensagem em português em vez de vazar o texto do Postgres para o
  * toast do coordenador. `conflict` distingue essa recusa esperada de uma falha
  * real, que o chamador propaga como exceção.
+ *
+ * `selfComparisonApprover`: o coordenador liberou a autocomparação (o
+ * pesquisador codificou o documento). O banco recusa sem a liberação
+ * (enforce_comparison_assignment_actor) e carimba quem e quando a partir da
+ * sessão (guard_self_comparison_approval, 20261113120000).
  */
 async function promoteToComparison(
   supabase: SupabaseServerClient,
   assignmentId: string,
-): Promise<{ error?: string; conflict?: boolean }> {
+  selfComparisonApprover: string | null,
+): Promise<ComparisonWriteResult> {
   const { error } = await supabase
     .from("assignments")
-    .update({ type: "comparacao" })
+    .update({
+      type: "comparacao",
+      ...selfComparisonApproval(selfComparisonApprover),
+    })
     .eq("id", assignmentId);
+  return comparisonWriteResult(error);
+}
+
+/**
+ * Comparação da própria codificação ao lado de uma codificação concluída na
+ * rodada: a única forma de o pesquisador que já entregou o documento recebê-lo
+ * para comparar. Só existe com a liberação do coordenador — sem ela, o ciclo
+ * sobre codificação concluída continua sem efeito.
+ */
+async function insertSelfComparison(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+  // react-doctor-disable-next-line react-doctor/supabase-client-owned-authz-field
+  userId: string,
+  approver: string | null,
+): Promise<ComparisonWriteResult> {
+  const { error } = await supabase.from("assignments").insert({
+    project_id: projectId,
+    document_id: documentId,
+    user_id: userId,
+    type: "comparacao",
+    status: "pendente",
+    ...selfComparisonApproval(approver),
+  });
+  return comparisonWriteResult(error);
+}
+
+// Só o aprovador: o gatilho guard_self_comparison_approval carimba o horário
+// (e, com sessão, substitui o aprovador pelo dono da sessão).
+function selfComparisonApproval(approver: string | null) {
+  return approver ? { self_comparison_approved_by: approver } : {};
+}
+
+function toCycleResult(result: ComparisonWriteResult): CycleAssignmentResult {
+  if (result.selfComparisonRace) return { needsSelfComparisonConfirmation: true };
+  if (result.conflict) return { error: result.error };
+  if (result.error) throw new Error(result.error);
+  return {};
+}
+
+// Mensagem do gatilho enforce_comparison_assignment_actor. Só ela é a
+// recusa de autocomparação; outro 23514 em assignments (o CHECK da forma da
+// liberação, por exemplo) é falha real e segue como erro.
+const SELF_COMPARISON_TRIGGER_MESSAGE = "o codificador do documento não pode receber sua comparação";
+
+interface ComparisonWriteResult {
+  error?: string;
+  conflict?: boolean;
+  /** Corrida: a codificação do par apareceu entre a checagem e a escrita. */
+  selfComparisonRace?: boolean;
+}
+
+function comparisonWriteResult(
+  error: { code?: string; message: string } | null,
+): ComparisonWriteResult {
   if (error?.code === "23505") {
     return { error: "Este documento já tem um revisor de comparação atribuído.", conflict: true };
   }
+  if (error?.code === "23514" && error.message.includes(SELF_COMPARISON_TRIGGER_MESSAGE)) {
+    return { selfComparisonRace: true };
+  }
   return error ? { error: error.message } : {};
+}
+
+/**
+ * O par tem codificação humana corrente no documento — o mesmo predicado de
+ * enforce_comparison_assignment_actor, de qualquer rodada.
+ */
+async function isHumanCoder(
+  supabase: SupabaseServerClient,
+  projectId: string,
+  documentId: string,
+  userId: string,
+): Promise<boolean> {
+  const { count, error } = await supabase
+    .from("responses")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("respondent_id", userId)
+    .eq("respondent_type", "humano")
+    .eq("is_latest", true);
+  if (error) throw new Error(error.message);
+  return (count ?? 0) > 0;
 }
 
 async function getCurrentRoundId(
@@ -299,16 +390,6 @@ async function insertCodingAssignmentOrThrow(
   if (error) throw new Error(error);
 }
 
-async function promoteToComparisonOrThrow(
-  supabase: SupabaseServerClient,
-  assignmentId: string,
-): Promise<string | undefined> {
-  const { error, conflict } = await promoteToComparison(supabase, assignmentId);
-  if (conflict) return error;
-  if (error) throw new Error(error);
-  return undefined;
-}
-
 async function deleteAssignmentsOrThrow(
   supabase: SupabaseServerClient,
   assignmentIds: string[],
@@ -317,29 +398,39 @@ async function deleteAssignmentsOrThrow(
   if (error) throw new Error(error.message);
 }
 
-async function applyPendingAssignmentTransition(
+export interface CycleAssignmentResult {
+  error?: string;
+  /**
+   * O passo daria a comparação a quem codificou o documento. Nada foi
+   * gravado: a tela pede a confirmação do coordenador e repete a chamada com
+   * `allowSelfComparison`.
+   */
+  needsSelfComparisonConfirmation?: boolean;
+}
+
+async function applyCycleStep(
   supabase: SupabaseServerClient,
   projectId: string,
   documentId: string,
   userId: string,
-  pendingCoding: { id: string } | undefined,
-  pendingComparison: { id: string } | undefined,
-): Promise<string | undefined> {
-  const transition = `${Number(Boolean(pendingCoding))}${Number(Boolean(pendingComparison))}`;
-  switch (transition) {
-    case "00":
+  step: CycleStep,
+  selfComparisonApprover: string | null,
+): Promise<CycleAssignmentResult> {
+  switch (step.kind) {
+    case "none":
+      return {};
+    case "insertCoding":
       await insertCodingAssignmentOrThrow(supabase, projectId, documentId, userId);
-      return undefined;
-    case "10":
-      return promoteToComparisonOrThrow(supabase, pendingCoding!.id);
-    case "01":
-      await deleteAssignmentsOrThrow(supabase, [pendingComparison!.id]);
-      return undefined;
-    case "11":
-      await deleteAssignmentsOrThrow(supabase, [pendingCoding!.id, pendingComparison!.id]);
-      return undefined;
-    default:
-      throw new Error("Transição de atribuição inválida");
+      return {};
+    case "delete":
+      await deleteAssignmentsOrThrow(supabase, step.ids);
+      return {};
+    case "promote":
+      return toCycleResult(await promoteToComparison(supabase, step.codingId, selfComparisonApprover));
+    case "selfComparisonBesideDone":
+      return toCycleResult(
+        await insertSelfComparison(supabase, projectId, documentId, userId, selfComparisonApprover),
+      );
   }
 }
 
@@ -347,47 +438,54 @@ async function applyPendingAssignmentTransition(
  * Cicla a atribuição de um par (documento, pesquisador) por três estados:
  *   vazio → codificacao → comparacao → vazio
  *
- * Assignments em_andamento/concluido de qualquer tipo bloqueiam o ciclo.
+ * Assignments em_andamento/concluido de qualquer tipo bloqueiam o ciclo, salvo
+ * a comparação da própria codificação concluída (ver `planAssignmentCycle`).
  * Só atribuições pendentes podem ser modificadas/removidas.
+ *
+ * Dar a comparação a quem codificou o documento exige `allowSelfComparison`:
+ * sem ela a action devolve `needsSelfComparisonConfirmation` sem gravar nada.
  */
 export async function cycleAssignment(
   projectId: string,
   documentId: string,
   userId: string,
-): Promise<{ error?: string }> {
+  options: { allowSelfComparison?: boolean } = {},
+): Promise<CycleAssignmentResult> {
   const gate = await requireCoordinator(projectId, "Apenas coordenadores podem alterar atribuições.");
   if (!gate.ok) return { error: gate.error };
   const supabase = await createSupabaseServer();
   const currentRoundId = await getCurrentRoundId(supabase, projectId);
   if (!currentRoundId) return { error: "O projeto não possui uma rodada atual." };
 
-  const { data: existing } = await supabase
-    .from("assignments")
-    .select("id, status, type")
-    .eq("document_id", documentId)
-    .eq("user_id", userId)
-    .eq("project_id", projectId)
-    .eq("round_id", currentRoundId);
-
-  const rows = existing || [];
-
-  // Bloquear ciclo se houver assignment não-pendente de qualquer tipo
-  const hasNonPending = rows.some((r) => r.status !== "pendente");
-  if (hasNonPending) return {};
-
-  const pendingCod = rows.find((r) => r.type === "codificacao");
-  const pendingComp = rows.find((r) => r.type === "comparacao");
-
   try {
-    const conflictError = await applyPendingAssignmentTransition(
+    // Independentes: as linhas do par na rodada e a autoria do documento.
+    const [{ data: existing, error: existingError }, coder] = await Promise.all([
+      supabase
+        .from("assignments")
+        .select("id, status, type")
+        .eq("document_id", documentId)
+        .eq("user_id", userId)
+        .eq("project_id", projectId)
+        .eq("round_id", currentRoundId),
+      isHumanCoder(supabase, projectId, documentId, userId),
+    ]);
+    if (existingError) throw new Error(existingError.message);
+    const decision = decideSelfComparison(
+      planAssignmentCycle(existing ?? []),
+      coder,
+      options.allowSelfComparison === true,
+    );
+    if (decision.outcome === "confirm") return { needsSelfComparisonConfirmation: true };
+    if (decision.outcome === "rejected") return { error: decision.error };
+    const result = await applyCycleStep(
       supabase,
       projectId,
       documentId,
       userId,
-      pendingCod,
-      pendingComp,
+      decision.step,
+      options.allowSelfComparison ? gate.user.id : null,
     );
-    if (conflictError) return { error: conflictError };
+    if (result.error || result.needsSelfComparisonConfirmation) return result;
   } catch (e) {
     return { error: errorMessage(e) || "Erro ao alterar a atribuição" };
   }

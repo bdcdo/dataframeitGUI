@@ -118,7 +118,7 @@ export default async function AssignmentsPage({
     supabase
       .from("assignments")
       .select(
-        "id, project_id, document_id, user_id, status, type, batch_id, completed_at, round_id",
+        "id, project_id, document_id, user_id, status, type, batch_id, completed_at, round_id, self_comparison_approved_by",
       )
       .eq("project_id", id)
       .eq("round_id", selectedRoundId ?? "00000000-0000-0000-0000-000000000000")

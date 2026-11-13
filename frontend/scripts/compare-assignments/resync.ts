@@ -17,10 +17,9 @@
  * SUPABASE_SERVICE_ROLE_KEY no .env.local (ou SUPABASE_ENV_PATH).
  */
 
-import { createClient } from "@supabase/supabase-js";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
-import { loadEnv } from "../comentarios-relatorio/load-env";
+import { MISSING_SERVICE_ENV, serviceClientFromEnv } from "../comentarios-relatorio/load-env";
 
 /** Ressincroniza cada projeto, relata as mudanças e devolve o código de saída. */
 export async function resyncProjects(
@@ -74,14 +73,11 @@ async function main(argv: string[]): Promise<number> {
     console.error("uso: npm run resync:compare -- (--project <id> | --all) [--dry-run]");
     return 2;
   }
-  loadEnv();
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) {
-    console.error("Faltam NEXT_PUBLIC_SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY (frontend/.env.local ou SUPABASE_ENV_PATH).");
+  const client = serviceClientFromEnv();
+  if (!client) {
+    console.error(MISSING_SERVICE_ENV);
     return 2;
   }
-  const client = createClient(url, key, { auth: { persistSession: false } });
   let projectIds = args.projectId ? [args.projectId] : [];
   if (!args.projectId) {
     const { data, error } = await client.from("projects").select("id");

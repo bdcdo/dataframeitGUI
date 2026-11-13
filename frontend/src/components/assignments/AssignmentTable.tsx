@@ -1,9 +1,11 @@
 "use client";
 
-import { useOptimistic, useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import { cycleAssignment } from "@/actions/assignments";
+import { planAssignmentCycle } from "@/lib/assignment-cycle";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { SelfComparisonDialog, type SelfComparisonRequest } from "./SelfComparisonDialog";
 import {
   Tooltip,
   TooltipContent,
@@ -70,6 +72,11 @@ function cycleOptimistic(
   return others;
 }
 
+const docLabel = (doc: AssignmentTableProps["documents"][number]) =>
+  doc.external_id || doc.id.slice(0, 8);
+const researcherName = (r: AssignmentTableProps["researchers"][number]) =>
+  r.profiles?.first_name || r.profiles?.email?.split("@")[0] || "";
+
 export function AssignmentTable({ projectId, documents, researchers, assignments, readOnly = false }: AssignmentTableProps) {
   const [isPending, startTransition] = useTransition();
 
@@ -87,12 +94,24 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
     else entry.comp = a;
     cellMap.set(key, entry);
   }
+  // Um revisor ativo por documento (assignments_one_active_comparacao_per_doc):
+  // documento já em comparação não oferece a autocomparação.
+  const docsInComparison = new Set(
+    optimisticAssignments
+      .filter((a) => a.type === "comparacao" && a.status !== "concluido")
+      .map((a) => a.document_id),
+  );
 
-  const handleCycle = (documentId: string, userId: string) => {
+  // Par em que o passo seguinte daria a comparação a quem codificou o
+  // documento: a action não grava e pede a confirmação do coordenador.
+  const [selfComparison, setSelfComparison] = useState<SelfComparisonRequest | null>(null);
+
+  const handleCycle = (request: SelfComparisonRequest) => {
     startTransition(async () => {
-      applyOptimistic({ docId: documentId, userId });
-      const result = await cycleAssignment(projectId, documentId, userId);
-      if (result?.error) toast.error(result.error);
+      applyOptimistic({ docId: request.docId, userId: request.userId });
+      const result = await cycleAssignment(projectId, request.docId, request.userId);
+      if (result.needsSelfComparisonConfirmation) setSelfComparison(request);
+      else if (result.error) toast.error(result.error);
     });
   };
 
@@ -105,7 +124,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
               <th className="px-3 py-2 text-left font-medium">Documento</th>
               {researchers.map((r) => (
                 <th key={r.user_id} className="px-3 py-2 text-center font-medium">
-                  {r.profiles?.first_name || r.profiles?.email?.split("@")[0]}
+                  {researcherName(r)}
                 </th>
               ))}
             </tr>
@@ -113,7 +132,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
           <tbody>
             {documents.map((doc) => (
               <tr key={doc.id} className="border-b">
-                <td className="px-3 py-1.5 font-mono text-xs">{doc.external_id || doc.id.slice(0, 8)}</td>
+                <td className="px-3 py-1.5 font-mono text-xs">{docLabel(doc)}</td>
                 {researchers.map((r) => {
                   const state = cellMap.get(`${doc.id}:${r.user_id}`) || {};
                   const { cod, comp } = state;
@@ -134,6 +153,12 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const status = dominant?.status;
 
                   const isNonRemovable = status === "concluido" || status === "em_andamento";
+                  // Codificação entregue ainda aceita a comparação da própria
+                  // codificação, mediante confirmação — o mesmo planner da action.
+                  const canAddSelfComparison =
+                    planAssignmentCycle([cod, comp].filter((a): a is Assignment => !!a)).kind ===
+                      "selfComparisonBesideDone" && !docsInComparison.has(doc.id);
+                  const isLocked = readOnly || isPending || (isNonRemovable && !canAddSelfComparison);
 
                   // Cor base pelo status
                   const baseColor = status === "concluido"
@@ -158,16 +183,25 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const cell = (
                     <button
                       type="button"
-                      onClick={() => handleCycle(doc.id, r.user_id)}
-                      disabled={readOnly || isNonRemovable || isPending}
+                      onClick={() =>
+                        handleCycle({
+                          docId: doc.id,
+                          userId: r.user_id,
+                          docLabel: docLabel(doc),
+                          researcherName: researcherName(r),
+                        })
+                      }
+                      disabled={isLocked}
                       className={cn(
                         "relative size-6 rounded border transition-colors",
                         baseColor,
-                        (readOnly || isNonRemovable || isPending) && "cursor-default",
+                        isLocked && "cursor-default",
                       )}
                       aria-label={
                         !hasAny
                           ? "Atribuir codificação"
+                          : canAddSelfComparison
+                          ? "Codificação concluída (clique para atribuir a comparação da própria codificação)"
                           : cod && !comp
                           ? "Atribuição de codificação (clique para trocar por comparação)"
                           : comp && !cod
@@ -194,6 +228,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const tooltipParts: string[] = [];
                   if (cod) tooltipParts.push(`Codificação (${cod.status})`);
                   if (comp) tooltipParts.push(`Comparação (${comp.status})`);
+                  if (comp?.self_comparison_approved_by) tooltipParts.push("Autocomparação liberada pelo coordenador");
 
                   return (
                     <td key={r.user_id} className="px-3 py-1.5 text-center">
@@ -245,6 +280,11 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
           </tfoot>
         </table>
       </div>
+      <SelfComparisonDialog
+        projectId={projectId}
+        request={selfComparison}
+        onClose={() => setSelfComparison(null)}
+      />
     </TooltipProvider>
   );
 }

@@ -8,6 +8,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { createClient } from "@supabase/supabase-js";
 
 export function loadEnv(): void {
   const cwd = process.cwd();
@@ -38,4 +39,19 @@ export function loadEnv(): void {
       /* try next */
     }
   }
+}
+
+/**
+ * Cliente com a service key para os scripts de manutenção, que rodam fora de
+ * sessão Clerk. `null` quando faltam as variáveis — o chamador sai com 2,
+ * depois de imprimir `MISSING_SERVICE_ENV`.
+ */
+export const MISSING_SERVICE_ENV =
+  "Faltam NEXT_PUBLIC_SUPABASE_URL e/ou SUPABASE_SERVICE_ROLE_KEY (frontend/.env.local ou SUPABASE_ENV_PATH).";
+
+export function serviceClientFromEnv() {
+  loadEnv();
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  return url && key ? createClient(url, key, { auth: { persistSession: false } }) : null;
 }

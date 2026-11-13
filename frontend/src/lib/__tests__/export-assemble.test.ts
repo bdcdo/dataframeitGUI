@@ -242,6 +242,72 @@ describe("assembleExport — prioridade do veredicto sobre a concordância", () 
   });
 });
 
+// --- Autocomparação ---
+
+describe("assembleExport — autocomparação", () => {
+  const coded = (id: string, respondentId: string) => ({
+    id,
+    document_id: "A",
+    respondent_name: respondentId,
+    respondent_type: "humano",
+    respondent_id: respondentId,
+    is_partial: false,
+    answers: { campo: "humano" },
+  });
+  const llm = { id: "l", document_id: "A", respondent_name: null, respondent_type: "llm", is_partial: false, answers: { campo: "llm" } };
+  const verdictBy = (reviewerId: string) => ({
+    id: "rv",
+    document_id: "A",
+    field_name: "campo",
+    verdict: "humano",
+    comment: null,
+    created_at: "2026-01-01T00:00:00Z",
+    field_hash: null,
+    chosen_response_id: null,
+    reviewer_id: reviewerId,
+  });
+
+  it("marca a linha de Gabarito cujo veredito veio de quem codificou o documento, e o valor conta", () => {
+    const d = run({
+      fields: [field("campo")],
+      documents: [doc("A")],
+      responses: [coded("h1", "mariana"), llm],
+      reviews: [verdictBy("mariana")],
+    });
+    const row = d.verdicts.rows[0];
+    expect(row[idx(d.verdicts, "campo")]).toBe("humano");
+    expect(row[idx(d.verdicts, "autocomparacao")]).toBe("sim");
+    const csvRow = d.csv.rows.find((r) => r[idx(d.csv, "source")] === "comparacao")!;
+    expect(csvRow[idx(d.csv, "autocomparacao")]).toBe("sim");
+  });
+
+  it("veredito de revisor neutro não é autocomparação", () => {
+    const d = run({
+      fields: [field("campo")],
+      documents: [doc("A")],
+      responses: [coded("h1", "mariana"), llm],
+      reviews: [verdictBy("revisor")],
+    });
+    expect(d.verdicts.rows[0][idx(d.verdicts, "autocomparacao")]).toBe("não");
+  });
+
+  it("linhas de resposta e de documento deixam a marca vazia no CSV", () => {
+    const d = run({
+      fields: [field("campo")],
+      documents: [doc("A"), doc("B")],
+      responses: [coded("h1", "mariana"), llm],
+      reviews: [verdictBy("mariana")],
+    });
+    const marks = d.csv.rows.map((r) => [r[idx(d.csv, "source")], r[idx(d.csv, "autocomparacao")]]);
+    expect(marks).toEqual([
+      ["codificacao", ""],
+      ["llm", ""],
+      ["comparacao", "sim"],
+      ["documento", ""],
+    ]);
+  });
+});
+
 // --- Linha source=documento ---
 
 describe("assembleExport — linha source=documento", () => {
@@ -310,8 +376,8 @@ describe("assembleExport — documentos antigos sem linha original", () => {
     });
     // Sem colunas originais: aba Documentos = document_id + document_title só.
     expect(d.documents.headers).toEqual(["document_id", "document_title"]);
-    // CSV = 5 controles + campo do schema + reviewer_comments + rascunho (sem
-    // originais).
+    // CSV = 5 controles + campo do schema + reviewer_comments + rascunho +
+    // autocomparacao (sem originais).
     expect(d.csv.headers).toEqual([
       "document_id",
       "document_title",
@@ -321,6 +387,7 @@ describe("assembleExport — documentos antigos sem linha original", () => {
       "campo",
       "reviewer_comments",
       "rascunho",
+      "autocomparacao",
     ]);
   });
 
@@ -1442,14 +1509,18 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(d)).toEqual([["A", "campo", "poucas respostas"]]);
     });
 
-    it("Respostas e CSV mostram o rascunho nas duas posições da opção, marcado na última coluna", () => {
+    it("Respostas e CSV mostram o rascunho nas duas posições da opção, marcado na coluna própria", () => {
       const responses = [resp("h1", "humano", "Sim"), draft("h2", "Sim"), resp("l", "llm", "Sim")];
       for (const includeDrafts of [false, true]) {
         const d = exported({ documents: [doc("A"), doc("B")], responses, includeDrafts });
         expect(d.responses.headers.at(-1)).toBe("rascunho");
         expect(d.responses.rows.map((r) => [r[2], r.at(-1)])).toEqual([["h1", "não"], ["h2", "sim"], ["l", "não"]]);
-        expect(d.csv.headers.slice(-2)).toEqual(["reviewer_comments", "rascunho"]);
-        const bySource = d.csv.rows.map((r) => [r[idx(d.csv, "source")], r[idx(d.csv, "respondent")], r.at(-1)]);
+        expect(d.csv.headers.slice(-3)).toEqual(["reviewer_comments", "rascunho", "autocomparacao"]);
+        const bySource = d.csv.rows.map((r) => [
+          r[idx(d.csv, "source")],
+          r[idx(d.csv, "respondent")],
+          r[idx(d.csv, "rascunho")],
+        ]);
         // Linha de Gabarito e de documento não é resposta: a marca fica vazia.
         expect(bySource).toEqual([
           ["codificacao", "h1", "não"], ["codificacao", "h2", "sim"], ["llm", "l", "não"],

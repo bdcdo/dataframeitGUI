@@ -61,6 +61,8 @@ export interface ExportResponse {
   document_id: string;
   respondent_name: string | null;
   respondent_type: string;
+  /** Marca a autocomparação: o revisor que também codificou o documento. */
+  respondent_id?: string | null;
   answers: Record<string, unknown> | null;
   /** Decide se um par "=" ainda vale para a versão atual da pergunta. */
   answer_field_hashes?: AnswerFieldHashes;
@@ -86,6 +88,8 @@ export interface ExportReview {
   /** `reviews.field_hash`: o hash do campo quando a arbitragem foi feita. */
   field_hash: string | null;
   chosen_response_id: string | null;
+  /** Comparado aos codificadores do documento para marcar a autocomparação. */
+  reviewer_id?: string | null;
 }
 
 export interface AssembleInput {
@@ -148,6 +152,12 @@ const REVIEWER_COMMENTS = "reviewer_comments";
 // no conjunto reservado, como as colunas de controle.
 const DRAFT_COLUMN = "rascunho";
 const draftCell = (r: ExportResponse): string => (isSubmittedResponse(r) ? "não" : "sim");
+// Marca, na linha de Gabarito, que algum veredito dela veio de quem também
+// codificou o documento: a autocomparação que o coordenador pode liberar
+// (20261113120000). Os vereditos contam no gabarito e nas métricas como
+// qualquer outro; a coluna só deixa a origem visível para quem analisa. Vai
+// no fim, pelo mesmo motivo de `DRAFT_COLUMN`.
+const SELF_COMPARISON_COLUMN = "autocomparacao";
 
 // Resolve os cabeçalhos exibidos das colunas originais garantindo unicidade:
 // colidiu com um nome reservado → prefixo `original_`; se o resultado ainda
@@ -178,6 +188,8 @@ interface DocIdentity {
 interface VerdictEntry {
   fields: Map<string, string>;
   comments: string[];
+  /** Algum valor da linha veio de veredito de quem codificou o documento. */
+  selfCompared?: boolean;
 }
 
 // Identidade e título de cada documento derivam da base (document_id =
@@ -223,6 +235,7 @@ function unionOriginalColumns(baseDocs: ExportDocument[]): string[] {
 function buildVerdictsByDoc(
   reviews: ExportReview[],
   fieldByName: ReadonlyMap<string, PydanticField>,
+  coderIdsByDoc: ReadonlyMap<string, ReadonlySet<string>>,
 ): Map<string, VerdictEntry> {
   const byDoc = new Map<string, VerdictEntry>();
   const entryOf = (documentId: string) => {
@@ -234,7 +247,11 @@ function buildVerdictsByDoc(
     return entry;
   };
   for (const r of pickValidCellReviews(reviews, fieldByName).values()) {
-    entryOf(r.document_id).fields.set(r.field_name, formatVerdict(r.verdict));
+    const entry = entryOf(r.document_id);
+    entry.fields.set(r.field_name, formatVerdict(r.verdict));
+    if (r.reviewer_id && coderIdsByDoc.get(r.document_id)?.has(r.reviewer_id)) {
+      entry.selfCompared = true;
+    }
   }
   for (const r of reviews) {
     if (!r.comment || !reviewIsValid(r, fieldByName.get(r.field_name))) continue;
@@ -285,6 +302,18 @@ function applyExportResolutions(
     entry.comments.push(errorResolutionComment(row));
     verdicts.set(row.document_id, entry);
   }
+}
+
+// Quem tem codificação humana corrente em cada documento.
+function coderIdsByDocument(responses: ExportResponse[]): Map<string, Set<string>> {
+  const byDoc = new Map<string, Set<string>>();
+  for (const r of responses) {
+    if (r.respondent_type !== "humano" || !r.respondent_id) continue;
+    let ids = byDoc.get(r.document_id);
+    if (!ids) byDoc.set(r.document_id, (ids = new Set()));
+    ids.add(r.respondent_id);
+  }
+  return byDoc;
 }
 
 function cellKey(documentId: string, fieldName: string): string {
@@ -782,6 +811,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     ...CONTROL_COLUMNS,
     REVIEWER_COMMENTS,
     DRAFT_COLUMN,
+    SELF_COMPARISON_COLUMN,
     ...fieldNames,
   ]);
   // Reserva `document_text` só quando há coluna de texto: assim uma coluna
@@ -810,7 +840,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
 
   const fieldByName = new Map<string, PydanticField>();
   for (const f of fields) if (!fieldByName.has(f.name)) fieldByName.set(f.name, f);
-  const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName);
+  const verdictsByDoc = buildVerdictsByDoc(baseReviews, fieldByName, coderIdsByDocument(baseResponses));
   applyExportResolutions(verdictsByDoc, input.errorResolutions ?? [], identity, fieldNameSet);
   const { filledByDoc, notApplicableByDoc, pendingRows, llmOnlyRows } = resolveOpenCells({
     baseDocs,
@@ -887,6 +917,9 @@ export function assembleExport(input: AssembleInput): ExportDataset {
     }),
   };
 
+  const selfComparisonCell = (docId: string): string =>
+    verdictsByDoc.get(docId)?.selfCompared ? "sim" : "não";
+
   // --- Visão Gabarito ---
   const verdictsSheet: ExportSheet = {
     headers: [
@@ -895,6 +928,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       "source",
       ...fieldNames,
       REVIEWER_COMMENTS,
+      SELF_COMPARISON_COLUMN,
     ],
     rows: gabaritoIds.map((docId) => {
       const info = identity.get(docId)!;
@@ -904,6 +938,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
         "comparacao",
         ...verdictFieldCells(docId),
         (verdictsByDoc.get(docId)?.comments ?? []).join(" | "),
+        selfComparisonCell(docId),
       ];
     }),
   };
@@ -934,6 +969,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       ...responseFieldCells(r),
       "",
       draftCell(r),
+      "",
     ];
   });
   const verdictCsvRows = gabaritoIds.map((docId) => {
@@ -948,6 +984,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       ...verdictFieldCells(docId),
       (verdictsByDoc.get(docId)?.comments ?? []).join(" | "),
       "",
+      selfComparisonCell(docId),
     ];
   });
   // Linha source=documento apenas para documentos SEM resposta E SEM gabarito.
@@ -965,6 +1002,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
         ...fieldNames.map(() => ""),
         "",
         "",
+        "",
       ];
     });
 
@@ -975,6 +1013,7 @@ export function assembleExport(input: AssembleInput): ExportDataset {
       ...fieldNames,
       REVIEWER_COMMENTS,
       DRAFT_COLUMN,
+      SELF_COMPARISON_COLUMN,
     ],
     rows: [...responseCsvRows, ...verdictCsvRows, ...documentoCsvRows],
   };

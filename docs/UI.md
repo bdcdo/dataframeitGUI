@@ -34,6 +34,12 @@ Marcar respostas como equivalentes grava que, naquele campo e na versão atual d
 
 Desfazer uma equivalência **não apaga veredito nenhum**. É uma inversão deliberada da regra do [#545](https://github.com/bdcdo/dataframeitGUI/issues/545) para pares de resposta. Por valor, um clique alcança centenas de documentos (no Zolgensma, uma equivalência sozinha cobria ~313), e o voto num valor continua válido depois que ele se separa do outro. Desfazer só muda o agrupamento daqui em diante, e documento sem veredito que volta a divergir reaparece na fila. A aba "Equivalências", em Revisões, lista as equivalências por campo, mostra onde cada classe funde respostas e permite desfazer.
 
+## Autocomparação é exceção por atribuição, não configuração do projeto
+
+Por padrão quem codificou um documento não recebe a comparação dele, e o banco impõe isso. O coordenador pode liberar a exceção numa atribuição específica, na tabela de atribuições, depois de confirmar num diálogo. Os sorteios de comparação, automático e manual, continuam excluindo codificadores.
+
+A alternativa descartada foi uma opção do projeto em Configurações > Regras que deixasse os sorteios usarem o codificador quando não houvesse revisor neutro. A exceção por atribuição venceu porque o caso de uso é pontual (pesquisador comparando a própria codificação com a do LLM muito tempo depois, ou equipe pequena demais), porque cada liberação fica registrada com quem a deu e quando, e porque não muda o comportamento dos sorteios. Os vereditos de autocomparação contam no gabarito e nas métricas como os demais. O export apenas os marca na coluna `autocomparacao`.
+
 ## Onde procurar o que este arquivo não descreve
 
 - **Mapeamento entre tipo de campo e controle de formulário** (incluindo campos de data, grupos de subcampos e a opção "Outro"): `frontend/src/components/coding/FieldRenderer.tsx` — é a fonte única, e reproduzi-lo em prosa apenas criaria uma cópia para divergir.
