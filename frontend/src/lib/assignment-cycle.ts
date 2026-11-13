@@ -1,7 +1,7 @@
 // Ciclo manual da tabela de atribuições (`cycleAssignment`). Puro, fora do
 // módulo "use server", que só pode exportar funções assíncronas.
 
-export interface CycleRow {
+interface CycleRow {
   id: string;
   status: string;
   type: string;
@@ -34,9 +34,8 @@ export function planAssignmentCycle(rows: CycleRow[]): CycleStep {
   return { kind: "delete", ids: [coding?.id, comparison?.id].filter((id): id is string => Boolean(id)) };
 }
 
-
-export type SelfComparisonDecision =
-  | { outcome: "apply"; step: CycleStep; approve: boolean }
+type SelfComparisonDecision =
+  | { outcome: "apply"; step: CycleStep }
   | { outcome: "confirm" }
   | { outcome: "rejected"; error: string };
 
@@ -61,12 +60,12 @@ export function decideSelfComparison(
   const selfComparison = givesComparison && coder;
   if (allowed) {
     return selfComparison
-      ? { outcome: "apply", step, approve: true }
+      ? { outcome: "apply", step }
       : { outcome: "rejected", error: SELF_COMPARISON_STALE_MESSAGE };
   }
   if (selfComparison) return { outcome: "confirm" };
   if (step.kind === "selfComparisonBesideDone") {
     return { outcome: "rejected", error: SELF_COMPARISON_NOT_CODER_MESSAGE };
   }
-  return { outcome: "apply", step, approve: false };
+  return { outcome: "apply", step };
 }

@@ -2,6 +2,7 @@
 
 import { useOptimistic, useState, useTransition } from "react";
 import { cycleAssignment } from "@/actions/assignments";
+import { planAssignmentCycle } from "@/lib/assignment-cycle";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { SelfComparisonDialog, type SelfComparisonRequest } from "./SelfComparisonDialog";
@@ -71,6 +72,11 @@ function cycleOptimistic(
   return others;
 }
 
+const docLabel = (doc: AssignmentTableProps["documents"][number]) =>
+  doc.external_id || doc.id.slice(0, 8);
+const researcherName = (r: AssignmentTableProps["researchers"][number]) =>
+  r.profiles?.first_name || r.profiles?.email?.split("@")[0] || "";
+
 export function AssignmentTable({ projectId, documents, researchers, assignments, readOnly = false }: AssignmentTableProps) {
   const [isPending, startTransition] = useTransition();
 
@@ -118,7 +124,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
               <th className="px-3 py-2 text-left font-medium">Documento</th>
               {researchers.map((r) => (
                 <th key={r.user_id} className="px-3 py-2 text-center font-medium">
-                  {r.profiles?.first_name || r.profiles?.email?.split("@")[0]}
+                  {researcherName(r)}
                 </th>
               ))}
             </tr>
@@ -126,9 +132,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
           <tbody>
             {documents.map((doc) => (
               <tr key={doc.id} className="border-b">
-                <td className="px-3 py-1.5 font-mono text-xs">{doc.external_id || doc.id.slice(0, 8)}</td>
+                <td className="px-3 py-1.5 font-mono text-xs">{docLabel(doc)}</td>
                 {researchers.map((r) => {
-                  const researcherName = r.profiles?.first_name || r.profiles?.email?.split("@")[0] || "";
                   const state = cellMap.get(`${doc.id}:${r.user_id}`) || {};
                   const { cod, comp } = state;
                   const hasAny = !!(cod || comp);
@@ -149,9 +154,10 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
 
                   const isNonRemovable = status === "concluido" || status === "em_andamento";
                   // Codificação entregue ainda aceita a comparação da própria
-                  // codificação, mediante confirmação (`planAssignmentCycle`).
+                  // codificação, mediante confirmação — o mesmo planner da action.
                   const canAddSelfComparison =
-                    cod?.status === "concluido" && !comp && !docsInComparison.has(doc.id);
+                    planAssignmentCycle([cod, comp].filter((a): a is Assignment => !!a)).kind ===
+                      "selfComparisonBesideDone" && !docsInComparison.has(doc.id);
                   const isLocked = readOnly || isPending || (isNonRemovable && !canAddSelfComparison);
 
                   // Cor base pelo status
@@ -181,8 +187,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                         handleCycle({
                           docId: doc.id,
                           userId: r.user_id,
-                          docLabel: doc.external_id || doc.id.slice(0, 8),
-                          researcherName,
+                          docLabel: docLabel(doc),
+                          researcherName: researcherName(r),
                         })
                       }
                       disabled={isLocked}

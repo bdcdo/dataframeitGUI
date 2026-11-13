@@ -291,7 +291,7 @@ async function insertSelfComparison(
   documentId: string,
   // react-doctor-disable-next-line react-doctor/supabase-client-owned-authz-field
   userId: string,
-  approver: string,
+  approver: string | null,
 ): Promise<ComparisonWriteResult> {
   const { error } = await supabase.from("assignments").insert({
     project_id: projectId,
@@ -308,6 +308,13 @@ async function insertSelfComparison(
 // (e, com sessão, substitui o aprovador pelo dono da sessão).
 function selfComparisonApproval(approver: string | null) {
   return approver ? { self_comparison_approved_by: approver } : {};
+}
+
+function toCycleResult(result: ComparisonWriteResult): CycleAssignmentResult {
+  if (result.selfComparisonRace) return { needsSelfComparisonConfirmation: true };
+  if (result.conflict) return { error: result.error };
+  if (result.error) throw new Error(result.error);
+  return {};
 }
 
 // Mensagem do gatilho enforce_comparison_assignment_actor. Só ela é a
@@ -409,7 +416,6 @@ async function applyCycleStep(
   step: CycleStep,
   selfComparisonApprover: string | null,
 ): Promise<CycleAssignmentResult> {
-  let result: ComparisonWriteResult = {};
   switch (step.kind) {
     case "none":
       return {};
@@ -420,16 +426,12 @@ async function applyCycleStep(
       await deleteAssignmentsOrThrow(supabase, step.ids);
       return {};
     case "promote":
-      result = await promoteToComparison(supabase, step.codingId, selfComparisonApprover);
-      break;
+      return toCycleResult(await promoteToComparison(supabase, step.codingId, selfComparisonApprover));
     case "selfComparisonBesideDone":
-      result = await insertSelfComparison(supabase, projectId, documentId, userId, selfComparisonApprover!);
-      break;
+      return toCycleResult(
+        await insertSelfComparison(supabase, projectId, documentId, userId, selfComparisonApprover),
+      );
   }
-  if (result.selfComparisonRace) return { needsSelfComparisonConfirmation: true };
-  if (result.conflict) return { error: result.error };
-  if (result.error) throw new Error(result.error);
-  return {};
 }
 
 /**
@@ -475,14 +477,13 @@ export async function cycleAssignment(
     );
     if (decision.outcome === "confirm") return { needsSelfComparisonConfirmation: true };
     if (decision.outcome === "rejected") return { error: decision.error };
-    if (decision.step.kind === "none") return {};
     const result = await applyCycleStep(
       supabase,
       projectId,
       documentId,
       userId,
       decision.step,
-      decision.approve ? gate.user.id : null,
+      options.allowSelfComparison ? gate.user.id : null,
     );
     if (result.error || result.needsSelfComparisonConfirmation) return result;
   } catch (e) {

@@ -40,8 +40,8 @@ describe("decideSelfComparison", () => {
   it("sem confirmação: pede para quem codificou, aplica para os demais", () => {
     expect(decideSelfComparison(promote, true, false)).toEqual({ outcome: "confirm" });
     expect(decideSelfComparison(beside, true, false)).toEqual({ outcome: "confirm" });
-    expect(decideSelfComparison(promote, false, false)).toEqual({ outcome: "apply", step: promote, approve: false });
-    expect(decideSelfComparison(del, true, false)).toEqual({ outcome: "apply", step: del, approve: false });
+    expect(decideSelfComparison(promote, false, false)).toEqual({ outcome: "apply", step: promote });
+    expect(decideSelfComparison(del, true, false)).toEqual({ outcome: "apply", step: del });
     expect(decideSelfComparison(beside, false, false)).toEqual({
       outcome: "rejected",
       error: SELF_COMPARISON_NOT_CODER_MESSAGE,
@@ -49,8 +49,8 @@ describe("decideSelfComparison", () => {
   });
 
   it("com confirmação: só aplica o passo que dá a comparação a quem codificou", () => {
-    expect(decideSelfComparison(promote, true, true)).toEqual({ outcome: "apply", step: promote, approve: true });
-    expect(decideSelfComparison(beside, true, true)).toEqual({ outcome: "apply", step: beside, approve: true });
+    expect(decideSelfComparison(promote, true, true)).toEqual({ outcome: "apply", step: promote });
+    expect(decideSelfComparison(beside, true, true)).toEqual({ outcome: "apply", step: beside });
     const stale: [CycleStep, boolean][] = [[del, true], [promote, false], [beside, false]];
     for (const [step, coder] of stale) {
       expect(decideSelfComparison(step, coder, true)).toEqual({
