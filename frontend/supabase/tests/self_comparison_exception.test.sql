@@ -1,4 +1,4 @@
--- Contrato da migration 20261112120000_self_comparison_exception: o codificador
+-- Contrato da migration 20261113120000_self_comparison_exception: o codificador
 -- do documento continua sem receber a comparação dele (regra de
 -- 20260716160100), salvo quando o coordenador libera a autocomparação naquela
 -- atribuição. A liberação é carimbada pelo banco (quem e quando) e não pode

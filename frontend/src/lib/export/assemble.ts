@@ -154,7 +154,7 @@ const DRAFT_COLUMN = "rascunho";
 const draftCell = (r: ExportResponse): string => (isSubmittedResponse(r) ? "não" : "sim");
 // Marca, na linha de Gabarito, que algum veredito dela veio de quem também
 // codificou o documento: a autocomparação que o coordenador pode liberar
-// (20261112120000). Os vereditos contam no gabarito e nas métricas como
+// (20261113120000). Os vereditos contam no gabarito e nas métricas como
 // qualquer outro; a coluna só deixa a origem visível para quem analisa. Vai
 // no fim, pelo mesmo motivo de `DRAFT_COLUMN`.
 const SELF_COMPARISON_COLUMN = "autocomparacao";

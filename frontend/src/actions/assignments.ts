@@ -262,7 +262,7 @@ async function insertCodingAssignment(
  * `selfComparisonApprover`: o coordenador liberou a autocomparação (o
  * pesquisador codificou o documento). O banco recusa sem a liberação
  * (enforce_comparison_assignment_actor) e carimba quem e quando a partir da
- * sessão (guard_self_comparison_approval, 20261112120000).
+ * sessão (guard_self_comparison_approval, 20261113120000).
  */
 async function promoteToComparison(
   supabase: SupabaseServerClient,

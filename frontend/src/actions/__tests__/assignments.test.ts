@@ -877,7 +877,7 @@ describe("status inicial do assignment de codificação (#521)", () => {
   });
 });
 
-// Autocomparação (20261112120000): o banco recusa com 23514 a comparação dada a
+// Autocomparação (20261113120000): o banco recusa com 23514 a comparação dada a
 // quem codificou o documento, salvo com a liberação do coordenador. Antes, o
 // ciclo manual promovia a codificação pendente sem olhar a autoria e o 23514
 // do gatilho chegava cru ao toast — sem caminho para liberar a exceção.
