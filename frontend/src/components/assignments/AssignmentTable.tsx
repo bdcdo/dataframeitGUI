@@ -1,9 +1,10 @@
 "use client";
 
-import { useOptimistic, useTransition } from "react";
+import { useOptimistic, useState, useTransition } from "react";
 import { cycleAssignment } from "@/actions/assignments";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog";
 import {
   Tooltip,
   TooltipContent,
@@ -26,6 +27,8 @@ type CellState = {
 };
 
 type OptimisticAction = { docId: string; userId: string };
+
+type SelfComparisonRequest = { docId: string; userId: string; docLabel: string; researcherName: string };
 
 /**
  * Calcula a próxima lista de assignments após um ciclo na célula (docId, userId).
@@ -88,11 +91,32 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
     cellMap.set(key, entry);
   }
 
-  const handleCycle = (documentId: string, userId: string) => {
+  // Par em que o passo seguinte daria a comparação a quem codificou o
+  // documento: a action não grava e pede a confirmação do coordenador.
+  const [selfComparison, setSelfComparison] = useState<SelfComparisonRequest | null>(null);
+  const [isConfirming, startConfirm] = useTransition();
+
+  const handleCycle = (request: SelfComparisonRequest) => {
     startTransition(async () => {
-      applyOptimistic({ docId: documentId, userId });
-      const result = await cycleAssignment(projectId, documentId, userId);
-      if (result?.error) toast.error(result.error);
+      applyOptimistic({ docId: request.docId, userId: request.userId });
+      const result = await cycleAssignment(projectId, request.docId, request.userId);
+      if (result.needsSelfComparisonConfirmation) setSelfComparison(request);
+      else if (result.error) toast.error(result.error);
+    });
+  };
+
+  const confirmSelfComparison = () => {
+    if (!selfComparison) return;
+    startConfirm(async () => {
+      const result = await cycleAssignment(projectId, selfComparison.docId, selfComparison.userId, {
+        allowSelfComparison: true,
+      });
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      setSelfComparison(null);
+      toast.success("Autocomparação liberada.");
     });
   };
 
@@ -115,6 +139,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
               <tr key={doc.id} className="border-b">
                 <td className="px-3 py-1.5 font-mono text-xs">{doc.external_id || doc.id.slice(0, 8)}</td>
                 {researchers.map((r) => {
+                  const researcherName = r.profiles?.first_name || r.profiles?.email?.split("@")[0] || "";
                   const state = cellMap.get(`${doc.id}:${r.user_id}`) || {};
                   const { cod, comp } = state;
                   const hasAny = !!(cod || comp);
@@ -134,6 +159,10 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const status = dominant?.status;
 
                   const isNonRemovable = status === "concluido" || status === "em_andamento";
+                  // Codificação entregue ainda aceita a comparação da própria
+                  // codificação, mediante confirmação (`planAssignmentCycle`).
+                  const canAddSelfComparison = cod?.status === "concluido" && !comp;
+                  const isLocked = readOnly || isPending || (isNonRemovable && !canAddSelfComparison);
 
                   // Cor base pelo status
                   const baseColor = status === "concluido"
@@ -158,16 +187,25 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const cell = (
                     <button
                       type="button"
-                      onClick={() => handleCycle(doc.id, r.user_id)}
-                      disabled={readOnly || isNonRemovable || isPending}
+                      onClick={() =>
+                        handleCycle({
+                          docId: doc.id,
+                          userId: r.user_id,
+                          docLabel: doc.external_id || doc.id.slice(0, 8),
+                          researcherName,
+                        })
+                      }
+                      disabled={isLocked}
                       className={cn(
                         "relative size-6 rounded border transition-colors",
                         baseColor,
-                        (readOnly || isNonRemovable || isPending) && "cursor-default",
+                        isLocked && "cursor-default",
                       )}
                       aria-label={
                         !hasAny
                           ? "Atribuir codificação"
+                          : canAddSelfComparison
+                          ? "Codificação concluída (clique para atribuir a comparação da própria codificação)"
                           : cod && !comp
                           ? "Atribuição de codificação (clique para trocar por comparação)"
                           : comp && !cod
@@ -194,6 +232,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const tooltipParts: string[] = [];
                   if (cod) tooltipParts.push(`Codificação (${cod.status})`);
                   if (comp) tooltipParts.push(`Comparação (${comp.status})`);
+                  if (comp?.self_comparison_approved_by) tooltipParts.push("Autocomparação liberada pelo coordenador");
 
                   return (
                     <td key={r.user_id} className="px-3 py-1.5 text-center">
@@ -245,6 +284,20 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
           </tfoot>
         </table>
       </div>
+      <ConfirmActionDialog
+        open={selfComparison !== null}
+        onClose={() => setSelfComparison(null)}
+        title="Liberar autocomparação?"
+        description={
+          selfComparison
+            ? `${selfComparison.researcherName} codificou o documento ${selfComparison.docLabel}. Por padrão, quem codificou não compara o próprio documento. Liberando, essa pessoa compara a própria codificação com as demais respostas (por exemplo, a do LLM). A liberação fica registrada com seu nome, e o export marca o documento como autocomparação.`
+            : ""
+        }
+        confirmLabel="Liberar autocomparação"
+        isPending={isConfirming}
+        pendingLabel="Liberando..."
+        onConfirm={confirmSelfComparison}
+      />
     </TooltipProvider>
   );
 }

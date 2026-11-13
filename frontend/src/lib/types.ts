@@ -190,6 +190,11 @@ export interface Assignment {
   batch_id: string | null;
   completed_at: string | null;
   round_id: string;
+  /**
+   * Coordenador que liberou a comparação para quem codificou o documento
+   * (autocomparação). Carimbado pelo banco; só em `comparacao`.
+   */
+  self_comparison_approved_by?: string | null;
 }
 
 /**

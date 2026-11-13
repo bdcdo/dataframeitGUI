@@ -77,7 +77,7 @@ export async function getExportDataset(
     fetchAllPaged<ExportResponse>(() =>
       supabase
         .from("responses")
-        .select("id, document_id, respondent_name, respondent_type, answers, answer_field_hashes, is_partial")
+        .select("id, document_id, respondent_name, respondent_type, respondent_id, answers, answer_field_hashes, is_partial")
         .eq("project_id", projectId)
         .eq("is_latest", true),
       ["id"],
@@ -85,7 +85,7 @@ export async function getExportDataset(
     fetchAllPaged<ExportReview>(() =>
       supabase
         .from("reviews")
-        .select("id, document_id, field_name, verdict, comment, created_at, field_hash, chosen_response_id")
+        .select("id, document_id, field_name, verdict, comment, created_at, field_hash, chosen_response_id, reviewer_id")
         .eq("project_id", projectId),
       ["id"],
     ),
