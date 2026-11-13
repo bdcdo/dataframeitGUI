@@ -4,12 +4,13 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { ExportOption } from "@/components/documents/ExportOption";
 import { getExportDataset } from "@/actions/export";
 import { formatDateForFilename } from "@/lib/date-format";
+import { downloadBlob } from "@/lib/download-blob";
 import type { ExportDataset, ExportSheet } from "@/lib/export/assemble";
 
 // BOM + escaping manual herdados do antigo ExportPanel (comportamento validado
@@ -27,15 +28,6 @@ function buildCsv(sheet: ExportSheet): string {
   const headerLine = sheet.headers.map(escapeCsvField).join(",");
   const dataLines = sheet.rows.map((row) => row.map(escapeCsvField).join(","));
   return bom + [headerLine, ...dataLines].join("\n");
-}
-
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 // Monta o XLSX com exceljs (import dinâmico — pesado, lazy). Aba Documentos
@@ -62,43 +54,6 @@ async function buildXlsxBlob(data: ExportDataset): Promise<Blob> {
 const PREVIEW_LIMIT = 10;
 
 type ExportFormat = "csv" | "xlsx";
-
-// Uma opção que muda a montagem do dataset, desligada por padrão pelo motivo
-// que a doc dela em `AssembleInput` dá. Fica travada enquanto o dataset
-// carrega: a resposta em curso foi montada com o valor anterior e, trocada a
-// opção no meio, chegaria depois como prévia da opção nova.
-function ExportOption({
-  id,
-  label,
-  help,
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  id: string;
-  label: string;
-  help: string;
-  checked: boolean;
-  disabled: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id={id}
-          checked={checked}
-          disabled={disabled}
-          onCheckedChange={(v) => onCheckedChange(v === true)}
-        />
-        <Label htmlFor={id} className="text-sm">
-          {label}
-        </Label>
-      </div>
-      <p className="pl-6 text-xs text-muted-foreground">{help}</p>
-    </div>
-  );
-}
 
 // Controles do card: seletor de formato + botões "Gerar prévia"/"Baixar".
 function ExportControls({
