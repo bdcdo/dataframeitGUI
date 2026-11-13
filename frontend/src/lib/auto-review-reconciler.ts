@@ -1,7 +1,14 @@
 import "server-only";
 
 import { computeBacklogRows, type HumanResponseRow, type LlmResponseRow } from "@/lib/auto-review-backlog";
-import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-divergence";
+import {
+  affectedValueKeys,
+  currentValueEquivalences,
+  equivalenceValueKey,
+  groupValueEquivalencesByField,
+  type ValueEquivalence,
+} from "@/lib/equivalence";
+import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { PydanticField } from "@/lib/types";
 
@@ -41,7 +48,7 @@ interface ReconciliationInputs {
   pydanticHash: string | null;
   humans: VersionedHumanResponse[];
   llm: VersionedLlmResponse | null;
-  equivalences: EquivalenceRow[];
+  equivalences: ValueEquivalence[];
 }
 
 export interface ReconciliationDrainResult {
@@ -171,9 +178,34 @@ async function eligibleHumanResponses(
   return currentHumans.filter((human) => dependencyIds.has(human.respondent_id));
 }
 
+// As equivalências de valor são do projeto, não do documento: uma drenagem lê
+// uma vez por projeto e reusa. Ler uma lista desatualizada é seguro pela
+// mesma razão de `expectedEquivalenceIds` (desfeita no meio recusa na RPC;
+// criada no meio reenfileira o documento).
+type EquivalenceCache = Map<string, Promise<ValueEquivalence[]>>;
+
+function projectEquivalences(
+  admin: AdminClient,
+  projectId: string,
+  cache: EquivalenceCache,
+): Promise<ValueEquivalence[]> {
+  let pending = cache.get(projectId);
+  if (!pending) {
+    pending = fetchProjectValueEquivalences(admin, projectId).then((result) => {
+      if (result.error) throw new Error(result.error.message);
+      return result.data;
+    });
+    // Falha não fica no cache: a próxima request do lote tenta de novo.
+    pending.catch(() => cache.delete(projectId));
+    cache.set(projectId, pending);
+  }
+  return pending;
+}
+
 async function readReconciliationInputs(
   admin: AdminClient,
   request: ReconciliationRequest,
+  equivalenceCache: EquivalenceCache,
 ): Promise<ReconciliationInputs> {
   const [projectResult, humansResult, llmResult, equivalencesResult] =
     await Promise.all([
@@ -204,21 +236,9 @@ async function readReconciliationInputs(
         .eq("is_partial", false)
         .eq("id", request.llm_response_id)
         .maybeSingle(),
-      admin
-        .from("response_equivalences")
-        .select(
-          "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot",
-        )
-        .eq("project_id", request.project_id)
-        .eq("document_id", request.document_id)
-        .is("superseded_at", null),
+      projectEquivalences(admin, request.project_id, equivalenceCache),
     ]);
-  const readError = firstError([
-    projectResult,
-    humansResult,
-    llmResult,
-    equivalencesResult,
-  ]);
+  const readError = firstError([projectResult, humansResult, llmResult]);
   if (readError) throw new Error(readError.message);
 
   return {
@@ -226,7 +246,7 @@ async function readReconciliationInputs(
     pydanticHash: projectResult.data?.pydantic_hash ?? null,
     humans: (humansResult.data ?? []) as VersionedHumanResponse[],
     llm: llmResult.data as VersionedLlmResponse | null,
-    equivalences: (equivalencesResult.data ?? []) as EquivalenceRow[],
+    equivalences: equivalencesResult,
   };
 }
 
@@ -242,18 +262,32 @@ function divergentFieldsByHuman(
   return result;
 }
 
-function directEquivalenceIds(
-  equivalences: EquivalenceRow[],
-  humanId: string,
-  llmId: string,
+// As equivalências que este worker usou para o par humano/LLM: as das classes
+// dos valores de cada um, campo a campo, na versão atual da pergunta. A RPC
+// recusa a reconciliação se alguma delas foi desfeita no meio. Equivalência
+// criada no meio não precisa recusar: a propagação dela reenfileira o
+// documento com outro `requested_at`, que o ACK desta leitura não apaga. O
+// recorte por documento evita que um "=" noutro documento derrube toda
+// reconciliação em curso no projeto.
+export function expectedEquivalenceIds(
+  equivalences: readonly ValueEquivalence[],
+  fields: readonly PydanticField[],
+  humanAnswers: Record<string, unknown> | null,
+  llmAnswers: Record<string, unknown> | null,
 ): string[] {
-  return equivalences
-    .filter((equivalence) => {
-      const ids = new Set([equivalence.response_a_id, equivalence.response_b_id]);
-      return ids.has(humanId) && ids.has(llmId);
-    })
-    .map((equivalence) => equivalence.id)
-    .sort();
+  const ids: string[] = [];
+  for (const field of fields) {
+    const current = currentValueEquivalences(equivalences, field);
+    if (current.length === 0) continue;
+    const seeds = [humanAnswers?.[field.name], llmAnswers?.[field.name]].filter(
+      (value) => value !== undefined,
+    );
+    const keys = affectedValueKeys(current, field, seeds);
+    for (const equivalence of current) {
+      if (keys.has(equivalenceValueKey(equivalence.value_a))) ids.push(equivalence.id);
+    }
+  }
+  return ids.sort();
 }
 
 function buildReconciliationGroups(
@@ -271,10 +305,11 @@ function buildReconciliationGroups(
     expected_human_updated_at: human.updated_at,
     expected_llm_updated_at: inputs.llm.updated_at,
     expected_project_pydantic_hash: inputs.pydanticHash,
-    expected_equivalence_ids: directEquivalenceIds(
+    expected_equivalence_ids: expectedEquivalenceIds(
       inputs.equivalences,
-      human.id,
-      inputs.llm.id,
+      inputs.fields,
+      human.answers,
+      inputs.llm.answers,
     ),
   }));
 }
@@ -282,8 +317,9 @@ function buildReconciliationGroups(
 async function reconcileRequest(
   admin: AdminClient,
   request: ReconciliationRequest,
+  equivalenceCache: EquivalenceCache,
 ): Promise<"processed" | "stale"> {
-  const inputs = await readReconciliationInputs(admin, request);
+  const inputs = await readReconciliationInputs(admin, request, equivalenceCache);
   const llm = inputs.llm;
   // A geração enfileirada deixou de ser a corrente e completa (rerun, publicação
   // parcial, remoção). O pedido é obsoleto: quem publicar a próxima geração
@@ -300,12 +336,11 @@ async function reconcileRequest(
     inputs.humans,
   );
   const llmByDocument = new Map([[request.document_id, llm]]);
-  const equivalencesByDocument = buildEquivalenceMap(inputs.equivalences);
   const { fieldReviewRows } = computeBacklogRows(
     request.project_id,
     humans,
     llmByDocument,
-    equivalencesByDocument,
+    groupValueEquivalencesByField(inputs.equivalences),
     inputs.fields,
   );
   const groups = buildReconciliationGroups({ ...inputs, llm }, humans, fieldReviewRows);
@@ -338,9 +373,10 @@ function logReconciliationFailure(
 async function processRequest(
   admin: AdminClient,
   request: ReconciliationRequest,
+  equivalenceCache: EquivalenceCache,
 ): Promise<ReconciliationOutcome> {
   try {
-    return await reconcileRequest(admin, request);
+    return await reconcileRequest(admin, request, equivalenceCache);
   } catch (requestError) {
     await recordFailure(admin, request, requestError);
     logReconciliationFailure(request, requestError);
@@ -396,6 +432,7 @@ export async function drainAutoReviewReconciliationRequests(
     failed: 0,
     remaining: 0,
   };
+  const equivalenceCache: EquivalenceCache = new Map();
 
   while (processedRequestCount(result) < maxRequests) {
     // react-doctor-disable-next-line react-doctor/async-await-in-loop
@@ -406,7 +443,7 @@ export async function drainAutoReviewReconciliationRequests(
       // because reconciliation is versioned by the RPC's expected_* inputs and
       // the ACK matches the exact request row (generation + requested_at).
       // react-doctor-disable-next-line react-doctor/async-await-in-loop
-      const outcome = await processRequest(admin, request);
+      const outcome = await processRequest(admin, request, equivalenceCache);
       result[outcome] += 1;
     }
     if (requests.length < batchSize) break;

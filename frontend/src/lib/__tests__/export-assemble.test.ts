@@ -8,7 +8,7 @@ import {
   type ExportResponse,
   type ExportSheet,
 } from "@/lib/export/assemble";
-import type { EquivalenceRow } from "@/lib/compare-divergence";
+import type { ValueEquivalence } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 import type { ErrorDecision, ErrorResolutionContext, ErrorResolutionRow } from "@/lib/error-resolution";
 import { resolutionFixture } from "./error-resolution-fixture";
@@ -699,14 +699,15 @@ describe("assembleExport: células sem veredito", () => {
   const resp = (id: string, type: "humano" | "llm", value: unknown, docId = "A"): ExportResponse => ({
     id, document_id: docId, respondent_name: id, respondent_type: type, is_partial: false, answers: { campo: value },
   });
-  // Par "=" com os snapshots iguais às respostas atuais, salvo quando o teste
-  // passa outro.
-  const pair = (a: ExportResponse, b: ExportResponse, snapA: unknown = a.answers?.campo): EquivalenceRow => ({
-    id: `${a.id}-${b.id}`, document_id: a.document_id, field_name: "campo", response_a_id: a.id, response_b_id: b.id,
-    reviewer_id: null, response_a_answer_snapshot: snapA, response_b_answer_snapshot: b.answers?.campo,
+  // Equivalência de valor entre as respostas de `a` e `b`, na versão atual da
+  // pergunta (`campo-hash`), salvo quando o teste passa outra.
+  const CAMPO_HASH = "campo-hash";
+  const pair = (a: ExportResponse, b: ExportResponse, fieldHash = CAMPO_HASH): ValueEquivalence => ({
+    id: `${a.id}-${b.id}`, field_name: "campo", field_hash: fieldHash,
+    value_a: a.answers?.campo, value_b: b.answers?.campo, reviewer_id: null,
   });
   const exported = (overrides: Partial<AssembleInput>) =>
-    run({ fields: [field("campo")], documents: [doc("A")], ...overrides });
+    run({ fields: [field("campo", { hash: CAMPO_HASH })], documents: [doc("A")], ...overrides });
   const cellOf = (d: ReturnType<typeof run>, docId = "A") =>
     d.verdicts.rows.find((r) => r[0] === docId)?.[idx(d.verdicts, "campo")] ?? "";
   const pendingOf = (d: ReturnType<typeof run>) => d.pending.rows.map((r) => [r[0], r[2], r[3]]);
@@ -716,6 +717,17 @@ describe("assembleExport: células sem veredito", () => {
     const d = exported({ responses: [h1, h2, h3, llm], equivalences: [pair(h3, h1)] });
     expect(cellOf(d)).toBe("NI");
     expect(d.pending.rows).toEqual([]);
+  });
+
+  it("\"=\" vale por valor: funde as mesmas respostas em outro documento", () => {
+    const decided = [resp("h1", "humano", "NI"), resp("h2", "humano", "N/A")];
+    const other = [resp("x1", "humano", "ni ", "B"), resp("x2", "humano", "N/A", "B"), resp("xl", "llm", "Sim", "B")];
+    const d = exported({
+      documents: [doc("A"), doc("B")],
+      responses: [...decided, resp("l", "llm", "Sim"), ...other],
+      equivalences: [pair(decided[0], decided[1])],
+    });
+    expect(cellOf(d, "B")).not.toBe("");
   });
 
   it("empate de frequência cai na ordem alfabética, qualquer que seja a ordem das linhas", () => {
@@ -754,9 +766,9 @@ describe("assembleExport: células sem veredito", () => {
     expect(pendingOf(d)).toEqual([["A", "campo", "aguarda arbitragem"]]);
   });
 
-  it("par \"=\" com snapshot desatualizado não funde", () => {
+  it("\"=\" de outra versão da pergunta não funde", () => {
     const [h1, h2, llm] = [resp("h1", "humano", "NI"), resp("h2", "humano", "N/A"), resp("l", "llm", "Sim")];
-    const d = exported({ responses: [h1, h2, llm], equivalences: [pair(h1, h2, "Não informado")] });
+    const d = exported({ responses: [h1, h2, llm], equivalences: [pair(h1, h2, "hash-antigo")] });
     expect(cellOf(d)).toBe("");
     expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
   });
@@ -1399,16 +1411,17 @@ describe("assembleExport: células sem veredito", () => {
       expect(pendingOf(comRascunho)).toEqual([["A", "campo", "aguarda arbitragem"]]);
     });
 
-    it("par \"=\" que só se fecha pelo rascunho: desligada, o par cai e os pesquisadores divergem, como na Comparação", () => {
-      // O rascunho a é a ponte: a = b e a = c, com b e c diferentes entre si.
+    it("\"=\" cuja ponte é o valor de um rascunho: desligada, os pesquisadores seguem fundidos", () => {
+      // A equivalência é de VALOR: NI = N/A e NI = "Não informado" fundem N/A e
+      // "Não informado" no campo, esteja ou não o rascunho que diz NI na conta.
       const [a, b, c] = [draft("a", "NI"), resp("b", "humano", "N/A"), resp("c", "humano", "Não informado")];
       const equivalences = [pair(a, b), pair(a, c)];
       const comRascunho = exported({ responses: [a, b, c], equivalences, includeDrafts: true });
       expect(cellOf(comRascunho)).toBe("N/A");
       expect(comRascunho.pending.rows).toEqual([]);
       const d = exported({ responses: [a, b, c], equivalences });
-      expect(cellOf(d)).toBe("");
-      expect(pendingOf(d)).toEqual([["A", "campo", "divergência entre pesquisadores"]]);
+      expect(cellOf(d)).not.toBe("");
+      expect(d.pending.rows).toEqual([]);
     });
 
     it("auto-revisão decidida sobre um rascunho vale nas duas posições da opção", () => {

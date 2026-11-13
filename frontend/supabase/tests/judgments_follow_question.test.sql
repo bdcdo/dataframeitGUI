@@ -1,6 +1,6 @@
 -- Contrato: a mudanca da pergunta derruba os julgamentos presos a respostas.
 --
--- Julgamentos: par "=" (`response_equivalences`), auto-revisao
+-- Julgamentos: equivalencia "=" de valor (`value_equivalences`), auto-revisao
 -- (`field_reviews`) e decisao do LLM Insights (`error_resolutions`). Eventos
 -- da matriz, um campo do projeto por evento para que um nao contamine o outro:
 --   `a` pergunta identica (o schema e salvo, o campo nao muda);
@@ -8,18 +8,20 @@
 --   `e` resposta editada (o schema nao muda);
 --   `r` campo renomeado (vira `r2`);
 --   `x` campo removido.
--- A regra de leitura do par "=" diante da pergunta alterada vive no
--- TypeScript (`filterCurrentEquivalencePairs`, com a matriz em
--- `equivalence.test.ts`); aqui entram a escrita do par e o que o banco faz.
+-- A equivalencia e por valor, dentro da versao da pergunta (hash do campo):
+-- a regra de leitura vive no TypeScript (`valueEquivalenceEdges`, com a
+-- matriz em `equivalence.test.ts`); aqui entram a escrita e o que o banco faz
+-- quando a pergunta muda (a equivalencia vai ao historico).
 --
 -- Blocos:
 --   (a) catalogo: coluna, gatilhos, grants;
 --   (b) matriz de `field_review_question_current`, a mesma de
 --       `fieldReviewIsCurrent` em `review-validity.test.ts`;
 --   (c) carimbo do ciclo e imutabilidade para o cliente;
---   (d) `record_response_equivalences` so aceita respostas vigentes;
---   (e) matriz julgamento x evento, com o save do schema real, e o par "="
---       que deixou de valer levando o documento de volta ao reconciliador;
+--   (d) `record_value_equivalences` so aceita respostas vigentes;
+--   (e) matriz julgamento x evento, com o save do schema real, e a
+--       equivalencia que deixou de valer levando o documento de volta ao
+--       reconciliador;
 --   (f) defesas: ciclo carimbado com outra versao que escapou do gatilho cai
 --       na view, no reconciliador e em llm_error_context;
 --   (g) decisao do LLM Insights cai com a edicao de QUALQUER resposta humana
@@ -155,8 +157,8 @@ INSERT INTO public.responses (id, project_id, document_id, respondent_id, respon
   ('7a300000-0000-0000-0000-000000000017', '7a100000-0000-0000-0000-000000000001',
    '7a200000-0000-0000-0000-000000000007', '7a000000-0000-0000-0000-000000000002', 'humano', '{"a":"llm"}', '{}', false);
 
--- Documento 8: LLM e humano divergem so em `q`, e um par "=" os funde, entao
--- nao ha ciclo. Nenhum ciclo arquivado o levaria de volta ao reconciliador.
+-- Documento 8: LLM e humano divergem so em `q`, e uma equivalencia "=" funde
+-- os valores, entao nao ha ciclo. Nenhum ciclo arquivado o levaria de volta ao reconciliador.
 INSERT INTO public.documents (id, project_id, title, text) VALUES
   ('7a200000-0000-0000-0000-000000000008', '7a100000-0000-0000-0000-000000000001', 'Doc 8', 'Texto');
 INSERT INTO public.responses (id, project_id, document_id, respondent_id, respondent_type, answers, answer_field_hashes, is_partial) VALUES
@@ -292,7 +294,8 @@ CREATE FUNCTION pg_temp.pair_row(p_a TEXT, p_b TEXT) RETURNS JSONB LANGUAGE sql 
   SELECT jsonb_build_object(
     'project_id', '7a100000-0000-0000-0000-000000000001', 'document_id', '7a200000-0000-0000-0000-000000000001',
     'field_name', 'a', 'response_a_id', '7a300000-0000-0000-0000-0000000000' || p_a,
-    'response_b_id', '7a300000-0000-0000-0000-0000000000' || p_b, 'reviewer_id', '7a000000-0000-0000-0000-000000000001');
+    'response_b_id', '7a300000-0000-0000-0000-0000000000' || p_b, 'reviewer_id', '7a000000-0000-0000-0000-000000000001',
+    'source', 'comparacao');
 $$;
 
 DO $$
@@ -312,7 +315,7 @@ BEGIN
   LOOP
     v_message := NULL;
     BEGIN
-      PERFORM public.record_response_equivalences(item.payload);
+      PERFORM public.record_value_equivalences(item.payload);
     EXCEPTION WHEN check_violation THEN
       v_message := SQLERRM;
     END;
@@ -320,43 +323,47 @@ BEGIN
       RAISE EXCEPTION 'FALHOU: par "=" x %: deveria recusar explicando a versao da pergunta (%)', item.label, v_message;
     END IF;
   END LOOP;
-  IF EXISTS (SELECT 1 FROM public.response_equivalences WHERE document_id = '7a200000-0000-0000-0000-000000000001') THEN
+  IF EXISTS (SELECT 1 FROM public.value_equivalences WHERE project_id = '7a100000-0000-0000-0000-000000000001') THEN
     RAISE EXCEPTION 'FALHOU: a recusa deixou par gravado';
   END IF;
 
   -- Aceita: resposta de rodada anterior na pergunta atual (o par do LLM
   -- Insights, markLlmEquivalent, com a resposta escolhida de outra rodada) e
   -- resposta sem hash.
-  PERFORM public.record_response_equivalences(jsonb_build_array(pg_temp.pair_row('01', '31')));
-  PERFORM public.record_response_equivalences(jsonb_build_array(pg_temp.pair_row('01', '33')));
-  IF (SELECT count(*) FROM public.response_equivalences WHERE document_id = '7a200000-0000-0000-0000-000000000001') <> 2 THEN
+  PERFORM public.record_value_equivalences(jsonb_build_array(pg_temp.pair_row('01', '31')));
+  PERFORM public.record_value_equivalences(jsonb_build_array(pg_temp.pair_row('01', '33')));
+  IF (SELECT count(*) FROM public.value_equivalences
+      WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = 'a'
+        AND field_hash = 'a00000000001') <> 2 THEN
     RAISE EXCEPTION 'FALHOU: par de resposta nao vigente ou sem hash na pergunta atual deveria ser gravado';
   END IF;
-  DELETE FROM public.response_equivalences WHERE document_id = '7a200000-0000-0000-0000-000000000001';
+  DELETE FROM public.value_equivalences WHERE project_id = '7a100000-0000-0000-0000-000000000001';
   RAISE NOTICE 'OK: par "=" recusa resposta de outra versao da pergunta e aceita a de outra rodada';
 END;
 $$;
 
--- Pares vigentes, um por (documento 1..5, campo): humano = LLM.
-SELECT public.record_response_equivalences(jsonb_agg(jsonb_build_object(
+-- "=" vigentes em todo (documento 1..5, campo): humano = LLM. Os valores sao
+-- os mesmos nos cinco documentos, entao viram uma equivalencia por campo.
+SELECT public.record_value_equivalences(jsonb_agg(jsonb_build_object(
   'project_id', '7a100000-0000-0000-0000-000000000001', 'document_id', ('7a200000-0000-0000-0000-00000000000' || n),
   'field_name', field_name,
   'response_a_id', ('7a300000-0000-0000-0000-00000000000' || n), 'response_b_id', ('7a300000-0000-0000-0000-00000000001' || n),
-  'reviewer_id', '7a000000-0000-0000-0000-000000000001')))
+  'reviewer_id', '7a000000-0000-0000-0000-000000000001', 'source', 'comparacao')))
 FROM generate_series(1, 5) AS n, unnest(ARRAY['a', 'q', 'e', 'r', 'x']) AS field_name;
 
 DO $$
 BEGIN
-  IF (SELECT count(*) FROM public.response_equivalences WHERE project_id = '7a100000-0000-0000-0000-000000000001') <> 25 THEN
-    RAISE EXCEPTION 'FALHOU: pares vigentes deveriam ter sido gravados';
+  IF (SELECT count(*) FROM public.value_equivalences WHERE project_id = '7a100000-0000-0000-0000-000000000001') <> 5 THEN
+    RAISE EXCEPTION 'FALHOU: uma equivalencia de valor por campo deveria ter sido gravada';
   END IF;
 END;
 $$;
 
-SELECT public.record_response_equivalences(jsonb_build_array(jsonb_build_object(
+SELECT public.record_value_equivalences(jsonb_build_array(jsonb_build_object(
   'project_id', '7a100000-0000-0000-0000-000000000001', 'document_id', '7a200000-0000-0000-0000-000000000008',
   'field_name', 'q', 'response_a_id', '7a300000-0000-0000-0000-000000000008',
-  'response_b_id', '7a300000-0000-0000-0000-000000000018', 'reviewer_id', '7a000000-0000-0000-0000-000000000001')));
+  'response_b_id', '7a300000-0000-0000-0000-000000000018', 'reviewer_id', '7a000000-0000-0000-0000-000000000001',
+  'source', 'comparacao')));
 
 -- (e) Os eventos. Resposta editada: o humano do documento 3 muda `e`.
 UPDATE public.responses SET answers = answers || '{"e":"humano editado"}'
@@ -407,16 +414,31 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: pergunta identica perdeu o veredito da auto-revisao';
   END IF;
 
-  -- Par "=" x evento no banco: a pergunta alterada nao arquiva o par (a regra
-  -- e de leitura); a resposta editada, sim, pelo gatilho de resposta.
+  -- Equivalencia "=" x evento: a resposta editada nao a derruba (ela e de
+  -- valor, nao de resposta); a pergunta alterada, o campo renomeado e o
+  -- removido a levam ao historico com o motivo.
   FOR item IN
-    SELECT * FROM (VALUES ('a', 5), ('q', 6), ('e', 4), ('r', 5), ('x', 5)) AS matrix(field_name, operational)
+    SELECT * FROM (VALUES
+      ('a', 1, NULL::TEXT), ('q', 0, 'question_changed'), ('e', 1, NULL::TEXT),
+      ('r', 0, 'field_removed'), ('x', 0, 'field_removed')
+    ) AS matrix(field_name, operational, reason)
   LOOP
-    IF (SELECT count(*) FROM public.response_equivalences
+    IF (SELECT count(*) FROM public.value_equivalences
         WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = item.field_name) <> item.operational THEN
-      RAISE EXCEPTION 'FALHOU: par "=" do campo %: esperava % operacional(is)', item.field_name, item.operational;
+      RAISE EXCEPTION 'FALHOU: equivalencia do campo %: esperava % operacional(is)', item.field_name, item.operational;
+    END IF;
+    IF item.reason IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.value_equivalence_history_entries
+      WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = item.field_name
+        AND superseded_reason = item.reason
+    ) THEN
+      RAISE EXCEPTION 'FALHOU: equivalencia do campo %: historico sem o motivo %', item.field_name, item.reason;
     END IF;
   END LOOP;
+  IF (SELECT count(*) FROM public.value_equivalence_history_entries
+      WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = 'q') <> 2 THEN
+    RAISE EXCEPTION 'FALHOU: as duas equivalencias de `q` deveriam ir ao historico';
+  END IF;
 
   -- Sem ciclo pendente, a fila do documento fecha no proprio save do schema:
   -- a auto-revisao do documento 4 conclui e a arbitragem do 5 sai.
@@ -429,18 +451,25 @@ BEGIN
     RAISE EXCEPTION 'FALHOU: a arbitragem aberta continuou sem ciclo a arbitrar';
   END IF;
 
-  -- O par "=" do documento 8 deixou de valer com a pergunta: sem ciclo, so a
-  -- fila o leva de volta ao reconciliador, que abre o ciclo se `q` divergir.
+  -- A equivalencia de `q` do documento 8 deixou de valer com a pergunta: sem
+  -- ciclo, so a fila o leva de volta ao reconciliador, que abre o ciclo se `q`
+  -- divergir.
   IF NOT EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
                  WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
     RAISE EXCEPTION 'FALHOU: documento com par "=" que deixou de valer nao voltou para a fila do reconciliador';
   END IF;
 
   -- So a pergunta alterada (campo que continua existindo) reabre ciclo: os
-  -- documentos 1..5, pelos ciclos, e o 8, pelo par, voltam para a fila do
-  -- reconciliador.
+  -- documentos 1..5, pelos ciclos, e todo documento com resposta em `q` e
+  -- geracao e codificacao completas (o 6 e o 8), pela equivalencia caida. A
+  -- chave normalizada do valor so existe no TS, entao o banco enfileira por
+  -- campo; o 7 nao responde `q` e fica de fora.
+  IF EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
+             WHERE document_id = '7a200000-0000-0000-0000-000000000007') THEN
+    RAISE EXCEPTION 'FALHOU: documento sem resposta no campo da equivalencia caida foi enfileirado';
+  END IF;
   IF (SELECT count(*) FROM public.auto_review_reconciliation_requests
-      WHERE project_id = '7a100000-0000-0000-0000-000000000001') <> 6 THEN
+      WHERE project_id = '7a100000-0000-0000-0000-000000000001') <> 7 THEN
     RAISE EXCEPTION 'FALHOU: pergunta alterada deveria enfileirar a reconciliacao dos documentos';
   END IF;
   RAISE NOTICE 'OK: matriz auto-revisao e par "=" x evento';
@@ -449,7 +478,11 @@ $$;
 
 -- A view. O documento 6 nao tem ciclo nem reconciliacao pendente: `r2` nao
 -- foi respondido pela geracao LLM (campo renomeado), entao nao e consenso,
--- e `a` e. O documento 1 espera a reconciliacao que o save pediu.
+-- e `a` e. O documento 1 espera a reconciliacao que o save pediu. O 6 entrou
+-- na fila so porque responde `q` (o enfileiramento por campo da equivalencia
+-- caida); a request sai para que a view mostre o estado reconciliado dele.
+DELETE FROM public.auto_review_reconciliation_requests
+WHERE document_id = '7a200000-0000-0000-0000-000000000006';
 DO $$
 DECLARE
   item RECORD;
@@ -490,8 +523,8 @@ SELECT public.reconcile_auto_review_cycles(jsonb_build_array(jsonb_build_object(
   'expected_human_updated_at', (SELECT updated_at FROM public.responses WHERE id = '7a300000-0000-0000-0000-000000000011'),
   'expected_llm_updated_at', (SELECT updated_at FROM public.responses WHERE id = '7a300000-0000-0000-0000-000000000001'),
   'expected_project_pydantic_hash', 'schema-v2',
-  'expected_equivalence_ids', (SELECT COALESCE(jsonb_agg(id::TEXT ORDER BY id), '[]') FROM public.response_equivalences
-                               WHERE document_id = '7a200000-0000-0000-0000-000000000001' AND field_name IN ('a', 'q', 'e', 'r2')))));
+  'expected_equivalence_ids', (SELECT COALESCE(jsonb_agg(id::TEXT ORDER BY id), '[]') FROM public.value_equivalences
+                               WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name IN ('a', 'q', 'e', 'r2')))));
 RESET request.jwt.claims;
 
 DO $$
@@ -590,8 +623,8 @@ SELECT public.reconcile_auto_review_cycles(jsonb_build_array(jsonb_build_object(
   'expected_human_updated_at', (SELECT updated_at FROM public.responses WHERE id = '7a300000-0000-0000-0000-000000000012'),
   'expected_llm_updated_at', (SELECT updated_at FROM public.responses WHERE id = '7a300000-0000-0000-0000-000000000002'),
   'expected_project_pydantic_hash', 'schema-v2',
-  'expected_equivalence_ids', (SELECT COALESCE(jsonb_agg(id::TEXT ORDER BY id), '[]') FROM public.response_equivalences
-                               WHERE document_id = '7a200000-0000-0000-0000-000000000002' AND field_name IN ('a', 'q', 'e', 'r2')))));
+  'expected_equivalence_ids', (SELECT COALESCE(jsonb_agg(id::TEXT ORDER BY id), '[]') FROM public.value_equivalences
+                               WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name IN ('a', 'q', 'e', 'r2')))));
 RESET request.jwt.claims;
 
 DO $$
@@ -654,19 +687,34 @@ SET pydantic_fields = jsonb_set(pydantic_fields, '{1}', pydantic_fields->1 || '{
     schema_revision = schema_revision + 1
 WHERE id = '7a100000-0000-0000-0000-000000000001';
 
--- O par "=" do documento 8 ja nao valia antes deste save, e foi enfileirado
--- pelo save que o derrubou: este nao o reenfileira. O backfill da migration,
--- sem schema anterior, enfileira todo par que nao vale.
+-- A equivalencia de `q` foi ao historico no save que a derrubou, que
+-- enfileirou o documento 8: este save nao a arquiva de novo. A de `a` escapou
+-- do gatilho no save "por fora" de (f) e ficou viva com o hash antigo; este
+-- save, o primeiro com gatilho depois dele, a arquiva e enfileira quem
+-- responde `a` (o documento 8 entre eles). Depois disso, uma chamada sem
+-- schema anterior nao enfileira nada, porque nao ha mais o que arquivar.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
-             WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
-    RAISE EXCEPTION 'FALHOU: save que nao mudou o par "=" ja caido reenfileirou o documento';
+  IF (SELECT count(*) FROM public.value_equivalence_history_entries
+      WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = 'q') <> 2 THEN
+    RAISE EXCEPTION 'FALHOU: save que nao mudou a equivalencia ja caida a arquivou de novo';
   END IF;
-  PERFORM public.archive_question_changed_field_reviews('7a100000-0000-0000-0000-000000000001', NULL);
+  IF EXISTS (SELECT 1 FROM public.value_equivalences
+             WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = 'a')
+     OR NOT EXISTS (SELECT 1 FROM public.value_equivalence_history_entries
+                    WHERE project_id = '7a100000-0000-0000-0000-000000000001' AND field_name = 'a'
+                      AND superseded_reason = 'question_changed') THEN
+    RAISE EXCEPTION 'FALHOU: equivalencia que escapou do gatilho deveria cair no save seguinte';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
                  WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
-    RAISE EXCEPTION 'FALHOU: o backfill deveria enfileirar o documento com par "=" que nao vale';
+    RAISE EXCEPTION 'FALHOU: a equivalencia de `a` arquivada deveria enfileirar quem responde `a`';
+  END IF;
+  DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
+  PERFORM public.archive_question_changed_field_reviews('7a100000-0000-0000-0000-000000000001', NULL);
+  IF EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests
+             WHERE document_id = '7a200000-0000-0000-0000-000000000008') THEN
+    RAISE EXCEPTION 'FALHOU: equivalencia ja arquivada reenfileirou o documento';
   END IF;
   DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
   RAISE NOTICE 'OK: par "=" caido entra na fila uma vez';
@@ -771,10 +819,10 @@ END;
 $$;
 RESET ROLE;
 
--- Campo removido num save e readicionado com outra definicao no seguinte: o
--- par "=" de `q` do documento 8 nao vale sob a definicao nova. O save que o
--- readiciona nao tem `q` no schema anterior, e sem o documento na fila a view
--- seguia dando 'consenso' com a resposta do LLM.
+-- Campo removido num save e readicionado com outra definicao no seguinte: a
+-- equivalencia de `q` do documento 8 esta no historico e nao vale sob a
+-- definicao nova. O save que o readiciona nao tem `q` no schema anterior, e
+-- sem o documento na fila a view seguia dando 'consenso' com a resposta do LLM.
 DELETE FROM public.auto_review_reconciliation_requests WHERE project_id = '7a100000-0000-0000-0000-000000000001';
 UPDATE public.projects
 SET pydantic_fields = pydantic_fields - 1,

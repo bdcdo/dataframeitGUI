@@ -14,6 +14,8 @@ import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
 import { drainAutoReviewReconciliationRequests } from "@/lib/auto-review-reconciler";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
+import { propagateValueEquivalenceChange } from "@/lib/value-equivalence-effects";
 import type {
   SelfVerdict,
   ArbitrationVerdict,
@@ -108,6 +110,26 @@ function buildNoArbitratorWarning(
   return `Não há árbitros elegíveis para ${contestedCount} campo(s) contestado(s). Peça ao coordenador para marcar membros como elegíveis em Configuração → Equipe.`;
 }
 
+// O veredito 'equivalente' grava uma equivalência de valor que vale no projeto
+// inteiro: os outros documentos com os mesmos valores deixam de divergir nesse
+// campo e são reconciliados depois da resposta.
+function scheduleEquivalencePropagation(
+  projectId: string,
+  verdicts: SelfVerdictInput[],
+  requestedById: ReadonlyMap<string, ReviewAnswerSnapshots>,
+): void {
+  const changes = verdicts.flatMap((verdict) => {
+    const review = verdict.verdict === "equivalente" ? requestedById.get(verdict.fieldReviewId) : undefined;
+    return review
+      ? [{ fieldName: review.field_name, values: [review.human_answer_snapshot, review.llm_answer_snapshot] }]
+      : [];
+  });
+  if (changes.length === 0) return;
+  // Uma propagação para o envio inteiro: uma drenagem e uma ressincronização,
+  // e não uma por campo concorrendo entre si.
+  after(() => propagateValueEquivalenceChange({ projectId, changes }));
+}
+
 function revalidateAutoReviewSubmission(projectId: string): void {
   revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
   revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
@@ -116,8 +138,9 @@ function revalidateAutoReviewSubmission(projectId: string): void {
 // Humano original conclui sua fase de auto-revisao. Para cada campo:
 //   - admite_erro  → gabarito do campo = LLM, fica resolvido
 //   - contesta_llm → cai na fila de arbitragem (sorteia arbitro neste mesmo call)
-//   - equivalente  → registra o par humano↔LLM em response_equivalences; campo
-//                    fica resolvido, sem arbitragem
+//   - equivalente  → registra a equivalência de valor humano = LLM em
+//                    value_equivalences (vale no projeto inteiro); campo fica
+//                    resolvido, sem arbitragem
 //   - ambiguo      → gera um project_comments para discussao; campo fica
 //                    resolvido, sem arbitragem
 //
@@ -182,6 +205,7 @@ export async function submitAutoReview(
     const result = (data ?? {}) as { arbitrated?: number; no_pool?: boolean };
     const warning = buildNoArbitratorWarning(result.no_pool, verdicts);
 
+    scheduleEquivalencePropagation(projectId, verdicts, requestedById);
     revalidateAutoReviewSubmission(projectId);
     return { success: true, arbitrated: result.arbitrated ?? 0, warning };
   } catch (e) {

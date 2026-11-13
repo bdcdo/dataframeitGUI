@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
-import type { EquivalencePair } from "@/lib/equivalence";
+import type { ValueEquivalence } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 
 let fieldIdSeq = 0;
@@ -17,8 +17,15 @@ function field(overrides: Partial<PydanticField>): PydanticField {
     options: null,
     description: "",
     target: "all",
+    hash: `h-${overrides.name ?? "x"}`,
     ...overrides,
   };
+}
+
+// Equivalência de valor do campo, na versão `h-<campo>` da pergunta salvo
+// quando `fieldHash` diz outra.
+function eq(fieldName: string, valueA: unknown, valueB: unknown, fieldHash = `h-${fieldName}`): ValueEquivalence {
+  return { id: `eq-${fieldName}-${String(valueA)}-${String(valueB)}`, field_name: fieldName, field_hash: fieldHash, value_a: valueA, value_b: valueB, reviewer_id: null };
 }
 
 describe("computeDivergentFieldNames", () => {
@@ -65,15 +72,8 @@ describe("computeDivergentFieldNames", () => {
       { id: "1", answers: { a: "alpha" } },
       { id: "2", answers: { a: "beta" } },
     ];
-    const pairs: EquivalencePair[] = [
-      {
-        response_a_id: "1",
-        response_b_id: "2",
-        response_a_answer_snapshot: "alpha",
-        response_b_answer_snapshot: "beta",
-      },
-    ];
-    const equivalencesByField = new Map<string, EquivalencePair[]>([
+    const pairs: ValueEquivalence[] = [eq("a", "alpha", "beta")];
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([
       ["a", pairs],
     ]);
     expect(
@@ -81,28 +81,53 @@ describe("computeDivergentFieldNames", () => {
     ).toEqual([]);
   });
 
-  // O par "=" é uma decisão sobre dois valores respondidos para UMA versão da
-  // pergunta: quando ela muda, o par deixa de fundir as respostas mesmo com os
-  // valores intactos (e volta a haver divergência).
-  it("par fundindo respostas não vale quando uma delas é de outra versão da pergunta", () => {
+  // A equivalência é uma decisão sobre dois valores para UMA versão da
+  // pergunta: vale só a do hash atual do campo, e só funde respostas dadas a
+  // essa versão.
+  it("equivalência não funde resposta dada a outra versão da pergunta", () => {
     const fields = [field({ name: "a", type: "text", hash: "novo00000000" })];
     const responses = [
       { id: "1", answers: { a: "alpha" }, answerFieldHashes: { a: "novo00000000" } },
       { id: "2", answers: { a: "beta" }, answerFieldHashes: { a: "velho0000000" } },
     ];
-    const pairs: EquivalencePair[] = [
-      {
-        response_a_id: "1",
-        response_b_id: "2",
-        response_a_answer_snapshot: "alpha",
-        response_b_answer_snapshot: "beta",
-      },
-    ];
-    const equivalencesByField = new Map<string, EquivalencePair[]>([["a", pairs]]);
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([["a", [eq("a", "alpha", "beta", "novo00000000")]]]);
     expect(computeDivergentFieldNames(fields, responses, equivalencesByField)).toEqual(["a"]);
 
     const current = responses.map((r) => ({ ...r, answerFieldHashes: { a: "novo00000000" } }));
     expect(computeDivergentFieldNames(fields, current, equivalencesByField)).toEqual([]);
+  });
+
+  it("equivalência de outra versão da pergunta não funde", () => {
+    const fields = [field({ name: "a", type: "text", hash: "novo00000000" })];
+    const responses = [
+      { id: "1", answers: { a: "alpha" } },
+      { id: "2", answers: { a: "beta" } },
+    ];
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([["a", [eq("a", "alpha", "beta", "velho0000000")]]]);
+    expect(computeDivergentFieldNames(fields, responses, equivalencesByField)).toEqual(["a"]);
+  });
+
+  // Vale por valor, não por resposta: a mesma equivalência funde as respostas
+  // de outro documento (ou de outra execução do LLM) com os mesmos valores,
+  // normalizados.
+  it("equivalência vale para quaisquer respostas com os mesmos valores", () => {
+    const fields = [field({ name: "a", type: "text" })];
+    const responses = [
+      { id: "llm-nova", answers: { a: "Não Informado " } },
+      { id: "h9", answers: { a: "nao identificavel" } },
+    ];
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([["a", [eq("a", "não informado", "Não identificável")]]]);
+    expect(computeDivergentFieldNames(fields, responses, equivalencesByField)).toEqual([]);
+  });
+
+  it("transitividade: A=B e B=C fundem A e C sem resposta B", () => {
+    const fields = [field({ name: "a", type: "text" })];
+    const responses = [
+      { id: "1", answers: { a: "A" } },
+      { id: "2", answers: { a: "C" } },
+    ];
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([["a", [eq("a", "A", "B"), eq("a", "B", "C")]]]);
+    expect(computeDivergentFieldNames(fields, responses, equivalencesByField)).toEqual([]);
   });
 
   it("free-text: pair fusing only some divergent answers leaves divergence", () => {
@@ -112,15 +137,8 @@ describe("computeDivergentFieldNames", () => {
       { id: "2", answers: { a: "beta" } },
       { id: "3", answers: { a: "gamma" } },
     ];
-    const pairs: EquivalencePair[] = [
-      {
-        response_a_id: "1",
-        response_b_id: "2",
-        response_a_answer_snapshot: "alpha",
-        response_b_answer_snapshot: "beta",
-      },
-    ];
-    const equivalencesByField = new Map<string, EquivalencePair[]>([
+    const pairs: ValueEquivalence[] = [eq("a", "alpha", "beta")];
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([
       ["a", pairs],
     ]);
     expect(
@@ -147,13 +165,8 @@ describe("computeDivergentFieldNames", () => {
       { id: "1", answers: { s: "NI" } },
       { id: "2", answers: { s: "N/A" } },
     ];
-    const equivalencesByField = new Map<string, EquivalencePair[]>([
-      ["s", [{
-        response_a_id: "1",
-        response_b_id: "2",
-        response_a_answer_snapshot: "NI",
-        response_b_answer_snapshot: "N/A",
-      }]],
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([
+      ["s", [eq("s", "NI", "N/A")]],
     ]);
     expect(
       computeDivergentFieldNames(fields, responses, equivalencesByField),
@@ -169,13 +182,8 @@ describe("computeDivergentFieldNames", () => {
       { id: "2", answers: { s: "N/A" } },
       { id: "3", answers: { s: "Sim" } },
     ];
-    const equivalencesByField = new Map<string, EquivalencePair[]>([
-      ["s", [{
-        response_a_id: "1",
-        response_b_id: "2",
-        response_a_answer_snapshot: "NI",
-        response_b_answer_snapshot: "N/A",
-      }]],
+    const equivalencesByField = new Map<string, ValueEquivalence[]>([
+      ["s", [eq("s", "NI", "N/A")]],
     ]);
     expect(
       computeDivergentFieldNames(fields, responses, equivalencesByField),

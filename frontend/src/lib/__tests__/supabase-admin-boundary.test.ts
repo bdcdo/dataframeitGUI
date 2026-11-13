@@ -53,9 +53,6 @@ const GENERATED_DIRECTORIES = new Set([
 ]);
 
 const EXPECTED_RUNTIME_IMPORTERS = [
-  // Sync documento-wide pós-unmark (#545): a RLS do chamador não alcança
-  // assignments de peers; o privilégio roda só depois de a RPC autorizar.
-  "actions/equivalences.ts",
   "actions/field-reviews.ts",
   "actions/members.ts",
   "app/(app)/projects/[id]/analyze/assignments/page.tsx",
@@ -64,6 +61,11 @@ const EXPECTED_RUNTIME_IMPORTERS = [
   "lib/auto-comparison.ts",
   "lib/auto-review-reconciler.ts",
   "lib/clerk-sync.ts",
+  // Propagação pós-commit da equivalência de valor: reconcilia e ressincroniza
+  // os documentos do projeto com os mesmos valores; a RLS de quem clicou não
+  // alcança assignments de peers nem a fila de reconciliação, e a mudança já
+  // foi autorizada pela RPC que a gravou.
+  "lib/value-equivalence-effects.ts",
 ];
 
 function sourceFiles(dir: string): string[] {

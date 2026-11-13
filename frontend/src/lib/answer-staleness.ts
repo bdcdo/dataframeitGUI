@@ -67,7 +67,8 @@ export function isFieldStale({
 }
 
 // Se a resposta ao campo foi dada à versão ATUAL da pergunta, para os
-// julgamentos presos a respostas (o par "=" da Comparação). Só o hash gravado
+// julgamentos presos a respostas (a equivalência "=" de valor só funde a
+// resposta dada à versão da pergunta dela). Só o hash gravado
 // na resposta prova a versão: diferente do atual, ou campo que saiu do schema
 // (removido ou renomeado), reprova. Sem hash do campo na resposta (mapa legado
 // `null`/`{}`, chave ausente ou `null`) não há como provar, e a ausência não
@@ -80,12 +81,11 @@ export function isFieldStale({
 // um julgamento já feito cai.
 //
 // A cópia SQL é `response_answers_current_question`, com a mesma matriz de
-// casos nos testes: com ela o banco recusa gravar o par de outra versão
-// (`record_response_equivalences`) e, no save do schema, leva ao reconciliador
-// o documento cujo par deixou de valer. O banco não arquiva o par quando a
-// pergunta muda (a resposta recodificada com outro valor já o arquiva pelo
-// gatilho de resposta), e todo leitor de par passa por
-// `filterCurrentEquivalencePairs`.
+// casos nos testes: com ela o banco recusa gravar a equivalência a partir de
+// resposta de outra versão (`record_value_equivalences`). A equivalência tem
+// o próprio `field_hash`, que o save do schema confere para levá-la ao
+// histórico; todo leitor passa por `valueEquivalenceEdges`, que aplica as
+// duas regras.
 export function answersCurrentQuestion(
   answerFieldHashes: AnswerFieldHashes | undefined,
   field: Pick<PydanticField, "name" | "hash"> | undefined,

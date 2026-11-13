@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildEquivalenceMap } from "@/lib/compare-divergence";
+import { groupValueEquivalencesByField } from "@/lib/equivalence";
 import {
   indexResponsesByDoc,
   extractRespondentNames,
@@ -34,6 +34,7 @@ function field(overrides: Partial<PydanticField>): PydanticField {
     options: null,
     description: "",
     target: "all",
+    hash: `h-${overrides.name ?? "x"}`,
     ...overrides,
   };
 }
@@ -83,29 +84,10 @@ function baseCtx(overrides: Partial<QualifyDocumentsContext> = {}): QualifyDocum
     projectVersionCtx: BASE_PROJECT_VERSION_CTX,
     sinceMs: null,
     fields: [field({ name: "a" })],
-    equivByDocField: new Map(),
+    equivalencesByField: new Map(),
     ...overrides,
   };
 }
-
-describe("buildEquivalenceMap", () => {
-  it("null/vazio retorna Map vazio", () => {
-    expect(buildEquivalenceMap(null).size).toBe(0);
-    expect(buildEquivalenceMap([]).size).toBe(0);
-  });
-
-  it("agrupa pares por (document_id, field_name)", () => {
-    const map = buildEquivalenceMap([
-      { id: "e1", document_id: "d1", field_name: "a", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
-      { id: "e2", document_id: "d1", field_name: "a", response_a_id: "r3", response_b_id: "r4", reviewer_id: null, response_a_answer_snapshot: null, response_b_answer_snapshot: null },
-      { id: "e3", document_id: "d1", field_name: "b", response_a_id: "r5", response_b_id: "r6", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
-      { id: "e4", document_id: "d2", field_name: "a", response_a_id: "r7", response_b_id: "r8", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
-    ]);
-    expect(map.get("d1")?.get("a")).toHaveLength(2);
-    expect(map.get("d1")?.get("b")).toHaveLength(1);
-    expect(map.get("d2")?.get("a")).toHaveLength(1);
-  });
-});
 
 describe("indexResponsesByDoc", () => {
   it("null retorna maps vazios", () => {
@@ -259,22 +241,13 @@ describe("qualifyDocumentsForCompare", () => {
       response({ id: "r1", answers: { a: "alpha" } }),
       response({ id: "r2", respondent_id: "u2", answers: { a: "beta" } }),
     );
-    const equivByDocField = buildEquivalenceMap([
-      {
-        id: "eq1",
-        document_id: "doc1",
-        field_name: "a",
-        response_a_id: "r1",
-        response_b_id: "r2",
-        reviewer_id: "rev",
-        response_a_answer_snapshot: "alpha",
-        response_b_answer_snapshot: "beta",
-      },
+    const equivalencesByField = groupValueEquivalencesByField([
+      { id: "eq1", field_name: "a", field_hash: "h-a", value_a: "alpha", value_b: "beta", reviewer_id: "rev" },
     ]);
     const result = qualifyDocumentsForCompare(
       responsesByDoc,
       doc1Meta(),
-      baseCtx({ equivByDocField }),
+      baseCtx({ equivalencesByField }),
     );
     expect(result.qualifiedDocIds).toEqual([]);
   });
@@ -537,15 +510,10 @@ describe("sortDocumentsByPendingDivergence", () => {
 });
 
 describe("serializeEquivalencesForClient", () => {
-  it("só serializa docs presentes em qualifiedDocIds", () => {
-    const equivByDocField = buildEquivalenceMap([
-      { id: "e1", document_id: "doc1", field_name: "a", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
-      { id: "e2", document_id: "doc2", field_name: "a", response_a_id: "r3", response_b_id: "r4", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
-    ]);
-    const serialized = serializeEquivalencesForClient(equivByDocField, ["doc1"]);
-    expect(Object.keys(serialized)).toEqual(["doc1"]);
-    expect(serialized.doc1.a).toEqual([
-      { id: "e1", response_a_id: "r1", response_b_id: "r2", reviewer_id: "u1", response_a_answer_snapshot: null, response_b_answer_snapshot: null },
-    ]);
+  it("serializa as equivalências do projeto por campo (Maps não cruzam o RSC)", () => {
+    const e1 = { id: "e1", field_name: "a", field_hash: "h-a", value_a: "x", value_b: "y", reviewer_id: "u1" };
+    const e2 = { id: "e2", field_name: "b", field_hash: "h-b", value_a: "z", value_b: "w", reviewer_id: null };
+    const serialized = serializeEquivalencesForClient(groupValueEquivalencesByField([e1, e2]));
+    expect(serialized).toEqual({ a: [e1], b: [e2] });
   });
 });

@@ -16,7 +16,11 @@
 // para o mesmo (documento, campo) — não há constraint cruzada impedindo — daí
 // a deduplicação em `pickWinner`.
 import { normalizeForComparison } from "@/lib/utils";
-import { answerGroupKeys, type EquivalencePair } from "@/lib/equivalence";
+import {
+  answerGroupKeys,
+  groupValueEquivalencesByField,
+  type ValueEquivalence,
+} from "@/lib/equivalence";
 import { isFieldApplicable } from "@/lib/compare-divergence";
 import {
   multiSelectionSets,
@@ -183,10 +187,7 @@ export interface LapsedDecision {
   resolvedAt: string;
 }
 
-export interface MetricsEquivalence extends EquivalencePair {
-  document_id: string;
-  field_name: string;
-}
+export type MetricsEquivalence = ValueEquivalence;
 
 export interface LlmErrorMetricsInput {
   fields: PydanticField[];
@@ -212,7 +213,7 @@ export interface LlmErrorMetricsInput {
   reviews: MetricsReview[];
   /** Já filtradas por projeto; vazio quando o projeto não usa auto-revisão. */
   finalAnswers: MetricsFinalAnswer[];
-  /** Já filtradas por `superseded_at IS NULL`, COM as colunas de snapshot. */
+  /** Equivalências de valor do projeto, COM `field_hash`. */
   equivalences: MetricsEquivalence[];
   errorResolutions: Map<string, ErrorResolutionRow>;
 }
@@ -332,8 +333,8 @@ interface MetricsContext {
   invalidReviewReasons: ReadonlyMap<string, ReviewInvalidReason>;
   /** Classes de equivalência por (documento, campo), memoizadas. */
   groupKeysFor: (docId: string, fieldName: string) => Map<string, string>;
-  /** Pares "=" do campo no documento, com as colunas de snapshot. */
-  equivalencesFor: (docId: string, fieldName: string) => readonly EquivalencePair[];
+  /** Equivalências de valor do campo (escopo do projeto). */
+  equivalencesFor: (fieldName: string) => readonly ValueEquivalence[];
   /** `isCodingComplete` da response, memoizado por id. */
   codingIsComplete: (response: MetricsResponse) => boolean;
 }
@@ -371,19 +372,8 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     }
   }
 
-  const equivByDocField = new Map<string, Map<string, MetricsEquivalence[]>>();
-  for (const pair of equivalences) {
-    let byField = equivByDocField.get(pair.document_id);
-    if (!byField) {
-      byField = new Map();
-      equivByDocField.set(pair.document_id, byField);
-    }
-    const bucket = byField.get(pair.field_name);
-    if (bucket) bucket.push(pair);
-    else byField.set(pair.field_name, [pair]);
-  }
-
-  const equivalencesFor = (docId: string, fieldName: string) => equivByDocField.get(docId)?.get(fieldName) ?? [];
+  const equivalencesByField = groupValueEquivalencesByField(equivalences);
+  const equivalencesFor = (fieldName: string) => equivalencesByField.get(fieldName) ?? [];
   // Memoizado: um documento com muitos campos revisados repetiria o union-find
   // por campo à toa.
   const groupKeyCache = new Map<string, Map<string, string>>();
@@ -396,7 +386,7 @@ function buildContext(input: LlmErrorMetricsInput): MetricsContext {
     // `is_latest`, e é justamente por essas que o fecho transitivo passa.
     const groupKeys = answerGroupKeys(
       responsesByDoc.get(docId) ?? [],
-      equivalencesFor(docId, fieldName),
+      equivalencesFor(fieldName),
       fieldMap.get(fieldName),
       fieldName,
     );
@@ -517,11 +507,11 @@ interface VerdictAgainstLlm {
 // O LLM errou este campo, na leitura da Comparação? Errou sse o valor dele
 // difere do VALOR do veredito, e não da resposta atual de quem a arbitragem
 // escolheu: o codificador pode ter editado a resposta depois da arbitragem, e
-// o Gabarito e o export leem o veredito. A exceção é o par "=" vigente: se ele
-// liga (direto ou por transitividade, pelo union-find de
-// `filterCurrentEquivalencePairs`, que já descarta par cujo snapshot não bate
-// com a resposta atual) a resposta do LLM a uma resposta cujo valor atual é o
-// do veredito, o revisor declarou as duas a mesma resposta.
+// o Gabarito e o export leem o veredito. A exceção é a equivalência "=" de
+// valor da versão atual da pergunta: se ela liga (direto ou por
+// transitividade, pelo union-find de `valueEquivalenceEdges`) a resposta do
+// LLM a uma resposta cujo valor atual é o do veredito, o revisor declarou os
+// dois valores a mesma resposta.
 //
 // Em `multi` a métrica se separa de `computeDivergentFieldNames` num ponto, de
 // propósito: aqui o par marcado pelo revisor vale, e lá não, porque a
@@ -574,8 +564,8 @@ export interface BothCorrectInput {
   documentResponses: readonly MetricsResponse[];
   /** As respostas humanas `is_latest` da rodada corrente. */
   currentHumans: readonly MetricsResponse[];
-  /** Pares "=" do campo no documento, com as colunas de snapshot. */
-  equivalences: readonly EquivalencePair[];
+  /** Equivalências de valor do campo (escopo do projeto). */
+  equivalences: readonly ValueEquivalence[];
 }
 
 /**
@@ -696,7 +686,7 @@ function buildComparisonCandidate(
     field, verdict: review.verdict, chosenResponseId: review.chosen_response_id, llmResponse,
     documentResponses: ctx.responsesByDoc.get(review.document_id) ?? [],
     currentHumans: currentHumansOf(review.document_id, ctx),
-    equivalences: ctx.equivalencesFor(review.document_id, review.field_name),
+    equivalences: ctx.equivalencesFor(review.field_name),
   }) : null;
   const shared: SharedEntryFields = {
     documentId: review.document_id,

@@ -25,7 +25,7 @@ import { readOnlyTitle } from "./compare-types";
 import { OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 
 export interface EquivalentVariant {
-  pairId: string; // response_equivalences.id
+  pairId: string; // value_equivalences.id
   reviewerId: string | null;
   respondentName: string;
   answerDisplay: string;
@@ -113,7 +113,10 @@ export function AnswerCard({
   canUnmarkPair,
 }: AnswerCardProps) {
   const voteTitle = readOnlyTitle(readOnly);
-  const unmarkTitle = readOnlyTitle(readOnly, "Desfazer equivalência");
+  const unmarkTitle = readOnlyTitle(
+    readOnly,
+    "Desfazer a equivalência em todo o projeto (nenhum veredito é apagado)",
+  );
 
   return (
     <div
@@ -534,14 +537,14 @@ function FusedVariantsPopover({
         <button
           type="button"
           className="relative z-[2] inline-flex items-center gap-1 rounded bg-brand/10 px-1.5 py-0.5 text-[10px] text-brand hover:bg-brand/15"
-          title="Variantes marcadas como equivalentes"
+          title="Valores marcados como equivalentes"
         >
           <Link2 className="size-3" />
           {variants.length} variante{variants.length === 1 ? "" : "s"}
         </button>
       </PopoverTrigger>
       <PopoverContent align="start" className="w-72 p-2">
-        <p className="px-1 pb-1.5 text-xs font-medium">Respostas equivalentes</p>
+        <p className="px-1 pb-1.5 text-xs font-medium">Valores equivalentes</p>
         <ul className="space-y-1">
           {variants.map((v) => {
             const showUnmark = !!onUnmarkPair && (canUnmarkPair?.(v) ?? true);
@@ -563,7 +566,7 @@ function FusedVariantsPopover({
                     disabled={readOnly}
                     className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     title={unmarkTitle}
-                    aria-label="Desfazer equivalência"
+                    aria-label="Desfazer equivalência em todo o projeto"
                   >
                     <X className="size-3" />
                   </button>

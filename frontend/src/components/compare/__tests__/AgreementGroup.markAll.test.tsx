@@ -161,11 +161,11 @@ describe("AgreementGroup — 'Todas são similares' (issue #247, ponto 5)", () =
       equivalences: [
         {
           id: "pair-1",
-          response_a_id: "ni-1",
-          response_b_id: "na-1",
+          field_name: "q",
+          field_hash: "q-hash",
+          value_a: "NI",
+          value_b: "N/A",
           reviewer_id: "u1",
-          response_a_answer_snapshot: "NI",
-          response_b_answer_snapshot: "N/A",
         },
       ],
     });
@@ -186,7 +186,7 @@ describe("AgreementGroup — 'Todas são similares' (issue #247, ponto 5)", () =
       screen.getByRole("button", { name: /1 variante/i }),
     );
     const unmark = await screen.findByRole("button", {
-      name: "Desfazer equivalência",
+      name: "Desfazer equivalência em todo o projeto",
     });
     expect((unmark as HTMLButtonElement).disabled).toBe(true);
 
@@ -235,5 +235,28 @@ describe("AgreementGroup — explicação da equivalência sob demanda (#610)", 
       '[data-slot="popover-content"]',
     ) as HTMLElement;
     expect(within(detail).getByText(/gabarito/i)).toBeTruthy();
+  });
+});
+
+describe("AgreementGroup — variantes de uma cadeia de equivalências", () => {
+  // A=B, B=C e C=D com só A e D no documento: o card funde A e D, e as três
+  // equivalências aparecem como variantes, inclusive B=C, cujo desfazer
+  // também separa o grupo.
+  it("lista também o elo do meio, que não tem valor no documento", async () => {
+    const eq = (id: string, a: string, b: string) => ({
+      id, field_name: "q", field_hash: "h", value_a: a, value_b: b, reviewer_id: "u1",
+    });
+    renderGroup({
+      responses: [
+        resp({ id: "r-a", respondent_name: "Ana", answer: "A" }),
+        resp({ id: "r-d", respondent_name: "Bia", answer: "D" }),
+      ],
+      equivalences: [eq("e1", "A", "B"), eq("e2", "B", "C"), eq("e3", "C", "D")],
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /3 variantes/ }));
+    expect(await screen.findByText("B = C")).toBeTruthy();
+    expect(screen.getByText("A = B")).toBeTruthy();
+    expect(screen.getByText("C = D")).toBeTruthy();
   });
 });

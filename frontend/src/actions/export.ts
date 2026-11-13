@@ -9,7 +9,7 @@ import { requireCoordinator } from "@/lib/auth";
 import type { PydanticField } from "@/lib/types";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
 import type { ErrorResolutionRow } from "@/lib/error-resolution";
-import type { EquivalenceRow } from "@/lib/compare-divergence";
+import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import { usesAutoReviewSource } from "@/lib/llm-error-metrics";
 import {
   assembleExport,
@@ -90,16 +90,9 @@ export async function getExportDataset(
       ["id"],
     ),
     fetchAllPaged<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId }), ["id"]),
-    // As colunas de snapshot são obrigatórias: `filterCurrentEquivalencePairs`
-    // é fail-closed e descarta todo par que venha sem elas.
-    fetchAllPaged<EquivalenceRow>(() =>
-      supabase
-        .from("response_equivalences")
-        .select("id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot")
-        .eq("project_id", projectId)
-        .is("superseded_at", null),
-      ["id"],
-    ),
+    // `field_hash` vem junto: equivalência de outra versão da pergunta não
+    // funde nada.
+    fetchProjectValueEquivalences(supabase, projectId),
     // Atribuições de comparação de todas as rodadas: a rodada atual vem na
     // leitura do projeto, que corre em paralelo, e o recorte é feito abaixo.
     // Status não filtra: aberta ou concluída, a divergência tem quem a arbitre.

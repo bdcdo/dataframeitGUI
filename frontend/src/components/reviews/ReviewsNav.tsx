@@ -12,6 +12,7 @@ const reviewsTabs: Array<{
   { label: "Meu Gabarito", href: "my-verdicts" },
   { label: "Erros LLM", href: "llm-insights" },
   { label: "Comentários", href: "comments" },
+  { label: "Equivalências", href: "equivalencias" },
 ];
 
 interface ReviewsNavProps {

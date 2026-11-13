@@ -11,10 +11,7 @@ import {
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { normalizeForComparison } from "@/lib/utils";
-import {
-  buildResponseGroupKeys,
-} from "@/lib/equivalence";
+import { cardGroupKeys } from "@/lib/equivalence";
 import {
   comparableMultiOptions,
   multiSelectionSets,
@@ -173,9 +170,7 @@ export function ComparisonPanel({
 
   const groupCount = useMemo(() => {
     const present = responses.filter((r) => r.answer !== undefined);
-    const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
-      normalizeForComparison(r.answer),
-    );
+    const groupKeys = cardGroupKeys(present, equivalences);
     const keys = new Set<string>();
     for (const r of present) keys.add(groupKeys.get(r.id) ?? r.id);
     return keys.size;

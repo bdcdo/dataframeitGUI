@@ -1,24 +1,81 @@
 "use server";
 
-import { createSupabaseServer } from "@/lib/supabase/server";
-import { createSupabaseAdmin } from "@/lib/supabase/admin";
-import { resolveProjectMemberActor } from "@/lib/auth";
+import { after } from "next/server";
 import { revalidatePath } from "next/cache";
+import { createSupabaseServer } from "@/lib/supabase/server";
+import { resolveProjectMemberActor } from "@/lib/auth";
+import { syncCompareAssignment } from "@/lib/compare-sync";
 import {
-  syncCompareAssignment,
-  syncCompareAssignmentsForDocument,
-} from "@/lib/compare-sync";
-import { canonicalPair } from "@/lib/equivalence";
+  propagateValueEquivalenceChange,
+  type ValueEquivalenceChange,
+} from "@/lib/value-equivalence-effects";
+import {
+  fetchFieldAnswers,
+  fetchProjectValueEquivalences,
+} from "@/lib/value-equivalence-query";
+import { affectedValueKeys } from "@/lib/equivalence";
+import {
+  equivalenceUsageByClass,
+  type UsageDocument,
+} from "@/lib/value-equivalence-usage";
 import { errorMessage } from "@/lib/utils";
 import { ZeroRowsError } from "@/lib/supabase/rls-guard";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
 import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 import { fetchFieldDefinition } from "@/lib/reviews/field-definition";
 
-// Marks two or more responses as equivalent for a (document, field) and at the
-// same time records the verdict pointing to `gabaritoId` — the response that
-// represents the canonical answer in the database. The action is idempotent:
-// duplicate pairs are ignored via the UNIQUE constraint.
+// A equivalência "=" é de VALOR (`value_equivalences`): marcar respostas como
+// equivalentes grava "no campo X, na versão atual da pergunta, estes valores
+// são a mesma resposta", e isso vale no projeto inteiro. As RPCs tiram os
+// valores das próprias respostas e o hash do schema atual; o cliente só diz
+// quais respostas o revisor fundiu.
+
+type EquivalenceSource = "comparacao" | "llm_insights";
+
+interface EquivalenceCell {
+  projectId: string;
+  documentId: string;
+  fieldName: string;
+  reviewerId: string;
+  source: EquivalenceSource;
+}
+
+// Uma linha por resposta além da primeira, todas ligadas a ela: basta para o
+// fecho transitivo, e o banco ignora o par de valores que já existe.
+function equivalenceRows(
+  anchorId: string,
+  responseIds: readonly string[],
+  cell: EquivalenceCell,
+) {
+  const others = [...new Set(responseIds)].filter((id) => id !== anchorId);
+  return others.map((otherId) => ({
+    project_id: cell.projectId,
+    document_id: cell.documentId,
+    field_name: cell.fieldName,
+    response_a_id: anchorId,
+    response_b_id: otherId,
+    reviewer_id: cell.reviewerId,
+    source: cell.source,
+  }));
+}
+
+// A equivalência vale no projeto inteiro: os outros documentos com os mesmos
+// valores são reconciliados e ressincronizados depois da resposta ao clique.
+function schedulePropagation(projectId: string, change: ValueEquivalenceChange) {
+  after(() => propagateValueEquivalenceChange({ projectId, changes: [change] }));
+}
+
+function revalidateEquivalenceViews(projectId: string) {
+  revalidatePath(`/projects/${projectId}/analyze/compare`);
+  revalidatePath(`/projects/${projectId}/analyze/assignments`);
+  revalidatePath(`/projects/${projectId}/reviews/llm-insights`);
+  revalidatePath(`/projects/${projectId}/reviews/equivalencias`);
+}
+
+// Marks two or more responses as equivalent for a field and at the same time
+// records the verdict pointing to `gabaritoId` — the response that represents
+// the canonical answer in the database. Idempotent: a value pair that already
+// exists is ignored by the RPC.
 export interface ConfirmEquivalentVerdictInput {
   projectId: string;
   documentId: string;
@@ -28,39 +85,6 @@ export interface ConfirmEquivalentVerdictInput {
   verdictDisplay: string;
   comment?: string;
   responseSnapshot?: ResponseSnapshotEntry[];
-}
-
-// Um par canônico (a < b) por combinação das respostas marcadas, sem repetir.
-function canonicalPairRows(
-  responseIds: readonly string[],
-  cell: { projectId: string; documentId: string; fieldName: string; reviewerId: string },
-) {
-  const seen = new Set<string>();
-  const rows: Array<{
-    project_id: string;
-    document_id: string;
-    field_name: string;
-    response_a_id: string;
-    response_b_id: string;
-    reviewer_id: string;
-  }> = [];
-  for (let i = 0; i < responseIds.length; i++) {
-    for (let j = i + 1; j < responseIds.length; j++) {
-      const [a, b] = canonicalPair(responseIds[i], responseIds[j]);
-      const key = `${a}|${b}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push({
-        project_id: cell.projectId,
-        document_id: cell.documentId,
-        field_name: cell.fieldName,
-        response_a_id: a,
-        response_b_id: b,
-        reviewer_id: cell.reviewerId,
-      });
-    }
-  }
-  return rows;
 }
 
 export async function confirmEquivalentVerdict({
@@ -88,18 +112,17 @@ export async function confirmEquivalentVerdict({
 
   // O veredito copia a resposta do gabarito: fora das opções atuais, nasceria
   // sem validade, como no voto em card de `submitVerdict`. A recusa vem antes
-  // de gravar o par, para não deixar equivalência sem o veredito que a motivou.
+  // de gravar a equivalência, para não deixá-la sem o veredito que a motivou.
   if (!copiedVerdictInDomain(verdictDisplay, await fetchFieldDefinition(supabase, projectId, fieldName))) {
     return { error: OUT_OF_DOMAIN_VOTE_MESSAGE };
   }
 
-  const rows = canonicalPairRows(responseIds, { projectId, documentId, fieldName, reviewerId });
+  const rows = equivalenceRows(gabaritoId, responseIds, {
+    projectId, documentId, fieldName, reviewerId, source: "comparacao",
+  });
 
   try {
-    const { error: equivErr } = await supabase.rpc(
-      "record_response_equivalences",
-      { p_rows: rows },
-    );
+    const { error: equivErr } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
     if (equivErr) throw new Error(equivErr.message);
 
     const { error: reviewErr } = await supabase.from("reviews").upsert(
@@ -122,9 +145,11 @@ export async function confirmEquivalentVerdict({
     return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
   }
 
-  // Pós-commit best-effort: as equivalências e o review já foram gravados. Uma
+  // Pós-commit best-effort: a equivalência e o review já foram gravados. Uma
   // falha do sync não deve virar { error } (o client refaria uma escrita já
-  // persistida). Loga e segue para a revalidação.
+  // persistida). O documento atual sincroniza já, para a fila de quem clicou
+  // refletir o voto; os demais documentos com os mesmos valores, depois da
+  // resposta.
   try {
     await syncCompareAssignment(supabase, projectId, documentId, reviewerId);
   } catch (e) {
@@ -132,17 +157,16 @@ export async function confirmEquivalentVerdict({
       `[confirmEquivalentVerdict] falha ao sincronizar o assignment: ${errorMessage(e)}`,
     );
   }
+  schedulePropagation(projectId, { fieldName, responseIds });
 
-  revalidatePath(`/projects/${projectId}/analyze/compare`);
-  revalidatePath(`/projects/${projectId}/analyze/assignments`);
+  revalidateEquivalenceViews(projectId);
   return {};
 }
 
-// Lightweight variant for the "Erros LLM" tab: registers that the LLM
-// response and the reviewer-chosen response are equivalent, without
-// touching the existing review row (the verdict already points to
-// `chosenResponseId` and remains valid). The page recomputes errors and
-// suppresses entries whose LLM↔chosen pair is in `response_equivalences`.
+// Lightweight variant for the LLM Insights tab: registers that the LLM value
+// and the reviewer-chosen value are equivalent, without touching the existing
+// review row (the verdict already points to `chosenResponseId` and remains
+// valid). The page recomputes errors with the project's value equivalences.
 export async function markLlmEquivalent(
   projectId: string,
   documentId: string,
@@ -159,49 +183,60 @@ export async function markLlmEquivalent(
   const reviewerId = actor.memberUserId;
 
   const supabase = await createSupabaseServer();
-  const [a, b] = canonicalPair(llmResponseId, chosenResponseId);
+  const rows = equivalenceRows(chosenResponseId, [llmResponseId], {
+    projectId, documentId, fieldName, reviewerId, source: "llm_insights",
+  });
 
   try {
-    const { error } = await supabase.rpc("record_response_equivalences", {
-      p_rows: [{
-        project_id: projectId,
-        document_id: documentId,
-        field_name: fieldName,
-        response_a_id: a,
-        response_b_id: b,
-        reviewer_id: reviewerId,
-      }],
-    });
+    const { error } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
     if (error) throw new Error(error.message);
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
   }
 
-  revalidatePath(`/projects/${projectId}/reviews/llm-insights`);
-  revalidatePath(`/projects/${projectId}/analyze/compare`);
-  revalidatePath(`/projects/${projectId}/analyze/assignments`);
+  schedulePropagation(projectId, { fieldName, responseIds: [llmResponseId, chosenResponseId] });
+  revalidateEquivalenceViews(projectId);
   return {};
 }
 
-// Removes a single equivalence pair. Dissolving the pair is a document-level
-// event (#545): in the same transaction the RPC clears the verdicts of BOTH
-// the calling identity and the pair's owner — whose chosen gabarito pointed at
-// the now-dissolved group — forcing a fresh vote. Verdicts of other reviewers
-// on the same (doc, field) are never touched.
+// Desfaz uma equivalência de valor no projeto inteiro. Não apaga veredito
+// nenhum (decisão de produto, 20261112120000): o voto num valor continua
+// válido depois da separação, e só o agrupamento muda daqui em diante. O
+// documento cujo campo volta a divergir sem veredito volta à fila pela
+// ressincronização.
+//
+// `documentId`, quando quem desfaz está num documento (a Comparação), faz o
+// assignment de quem clicou nesse documento refletir a mudança já; os demais
+// documentos e revisores vêm na propagação, depois da resposta.
 export async function unmarkEquivalencePair(
   projectId: string,
   equivalenceId: string,
+  documentId?: string,
 ): Promise<{ error?: string }> {
   const actor = await resolveProjectMemberActor(projectId);
   if (!actor.ok) return { error: actor.error };
 
   const supabase = await createSupabaseServer();
-  let syncDocumentId: string;
+  let fieldName: string;
+  let valueKeys: Set<string>;
 
   try {
-    // A RPC remove o par e o veredito da identidade de trabalho na mesma
-    // transação — o DELETE de `reviews` não vive mais aqui.
-    const { data, error } = await supabase.rpc("remove_response_equivalence", {
+    // A classe ANTES da remoção é onde a divergência pode reaparecer; depois
+    // dela, os valores já estão separados.
+    const equivalences = await fetchProjectValueEquivalences(supabase, projectId);
+    if (equivalences.error) throw new Error(equivalences.error.message);
+    const target = equivalences.data.find((row) => row.id === equivalenceId);
+    if (!target) {
+      throw new ZeroRowsError(
+        "value_equivalences",
+        "delete",
+        "Equivalência não encontrada ou sem permissão para removê-la.",
+      );
+    }
+    const field = await fetchFieldDefinition(supabase, projectId, target.field_name);
+    valueKeys = affectedValueKeys(equivalences.data, field, [target.value_a, target.value_b]);
+
+    const { data, error } = await supabase.rpc("remove_value_equivalence", {
       p_project_id: projectId,
       p_equivalence_id: equivalenceId,
     });
@@ -211,43 +246,57 @@ export async function unmarkEquivalencePair(
     // RPC não distingue, e nenhum dos dois é sucesso. Sem este guard a action
     // retornaria `{}` sobre nada removido e a revisora veria "desfeito" — o
     // sucesso falso do #178.
-    const row = data?.[0];
-    if (!row?.document_id || !row.field_name) {
+    const row = (data as Array<{ field_name: string | null }> | null)?.[0];
+    if (!row?.field_name) {
       throw new ZeroRowsError(
-        "response_equivalences",
+        "value_equivalences",
         "delete",
         "Equivalência não encontrada ou sem permissão para removê-la.",
       );
     }
-    syncDocumentId = row.document_id;
+    fieldName = row.field_name;
   } catch (e) {
     return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
   }
 
-  // Pós-commit best-effort: a equivalência e os reviews já foram apagados. Uma
-  // falha do sync não deve virar { error } — a revisora veria "falha ao
-  // desfazer" para uma operação já persistida e tentaria de novo, sobre uma
-  // linha que não existe mais. Loga e segue para a revalidação.
-  //
-  // O sync é documento-wide: equivalências são compartilhadas entre revisores,
-  // então dissolver o par muda a divergência para todos — não só para quem
-  // clicou ou para o dono do par. Usa o admin client porque a RLS do chamador
-  // não alcança assignments de peers ("Researchers update own assignments"
-  // cobre só o próprio) — e a autorização já foi provada pela RPC acima: só
-  // chega aqui quem pôde remover o par.
-  try {
-    await syncCompareAssignmentsForDocument(
-      createSupabaseAdmin(),
-      projectId,
-      syncDocumentId,
-    );
-  } catch (e) {
-    console.error(
-      `[unmarkEquivalencePair] falha ao sincronizar os assignments: ${errorMessage(e)}`,
-    );
+  if (documentId) {
+    try {
+      await syncCompareAssignment(supabase, projectId, documentId, actor.memberUserId);
+    } catch (e) {
+      console.error(
+        `[unmarkEquivalencePair] falha ao sincronizar o assignment: ${errorMessage(e)}`,
+      );
+    }
   }
-
-  revalidatePath(`/projects/${projectId}/analyze/compare`);
-  revalidatePath(`/projects/${projectId}/analyze/assignments`);
+  schedulePropagation(projectId, { fieldName, valueKeys });
+  revalidateEquivalenceViews(projectId);
   return {};
+}
+
+export type { UsageDocument as EquivalenceUsageDocument } from "@/lib/value-equivalence-usage";
+
+// "Onde se aplica", sob demanda por campo na aba Equivalências: por classe de
+// equivalência, os documentos em que ela funde respostas vigentes dadas à
+// versão atual da pergunta. Lê só o valor do campo, com o client do membro
+// (RLS de leitura do projeto).
+export async function loadEquivalenceUsage(
+  projectId: string,
+  fieldName: string,
+): Promise<{ usage?: Record<string, UsageDocument[]>; error?: string }> {
+  const actor = await resolveProjectMemberActor(projectId);
+  if (!actor.ok) return { error: actor.error };
+
+  const supabase = await createSupabaseServer();
+  try {
+    const [answers, equivalences, field] = await Promise.all([
+      fetchFieldAnswers(supabase, projectId, fieldName),
+      fetchProjectValueEquivalences(supabase, projectId),
+      fetchFieldDefinition(supabase, projectId, fieldName),
+    ]);
+    if (answers.error) throw new Error(answers.error.message);
+    if (equivalences.error) throw new Error(equivalences.error.message);
+    return { usage: equivalenceUsageByClass(answers.data, equivalences.data, field) };
+  } catch (e) {
+    return { error: errorMessage(e) || "Falha ao carregar onde a equivalência se aplica." };
+  }
 }

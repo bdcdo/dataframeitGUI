@@ -28,6 +28,12 @@ Escolher uma resposta na tela de comparação não grava o veredito: a escolha f
 
 A mudança veio de perda silenciosa observada em produção ([#417](https://github.com/bdcdo/dataframeitGUI/issues/417), [#430](https://github.com/bdcdo/dataframeitGUI/issues/430), corrigida no PR [#434](https://github.com/bdcdo/dataframeitGUI/pull/434)): com gravação implícita, uma navegação que acontecesse antes de a escrita concluir descartava o veredito sem que nada na tela indicasse a falha. O passo de confirmação existe para que o gesto de decidir e o de gravar sejam o mesmo evento, observável pelo usuário.
 
+## A equivalência "=" é de valor, e desfazê-la não apaga veredito
+
+Marcar respostas como equivalentes grava que, naquele campo e na versão atual da pergunta, os **valores** são a mesma resposta, no projeto inteiro. A equivalência ligava duas respostas até a migration `20261112120000_value_equivalences.sql`. Nesse modelo, uma execução nova do LLM apagava todas as equivalências do projeto, mesmo quando o LLM repetia os valores, e as mesmas fusões tinham de ser refeitas documento a documento. O hash do campo cobre enunciado, opções, tipo e revisão da pergunta, mas não o `help_text`, como nos demais julgamentos presos à versão.
+
+Desfazer uma equivalência **não apaga veredito nenhum**. É uma inversão deliberada da regra do [#545](https://github.com/bdcdo/dataframeitGUI/issues/545) para pares de resposta. Por valor, um clique alcança centenas de documentos (no Zolgensma, uma equivalência sozinha cobria ~313), e o voto num valor continua válido depois que ele se separa do outro. Desfazer só muda o agrupamento daqui em diante, e documento sem veredito que volta a divergir reaparece na fila. A aba "Equivalências", em Revisões, lista as equivalências por campo, mostra onde cada classe funde respostas e permite desfazer.
+
 ## Onde procurar o que este arquivo não descreve
 
 - **Mapeamento entre tipo de campo e controle de formulário** (incluindo campos de data, grupos de subcampos e a opção "Outro"): `frontend/src/components/coding/FieldRenderer.tsx` — é a fonte única, e reproduzi-lo em prosa apenas criaria uma cópia para divergir.

@@ -215,8 +215,8 @@ export type AssignedDoc = Omit<Document, "text"> & {
 export type AnswerFieldHashes = Record<string, string | null> | null;
 
 // Vereditos da auto-revisao. Todos resolvem o campo; só `contesta_llm` abre
-// arbitragem. `equivalente` registra o par humano↔LLM em response_equivalences;
-// `ambiguo` gera um project_comments para discussão.
+// arbitragem. `equivalente` registra a equivalência de valor humano = LLM em
+// value_equivalences; `ambiguo` gera um project_comments para discussão.
 export type SelfVerdict =
   | "admite_erro"
   | "contesta_llm"

@@ -1,7 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const computeBacklogRows = vi.hoisted(() => vi.fn());
-const buildEquivalenceMap = vi.hoisted(() => vi.fn(() => new Map()));
 const state = vi.hoisted(() => ({
   requests: [] as Array<Record<string, unknown>>,
   due: true,
@@ -20,11 +19,13 @@ const state = vi.hoisted(() => ({
   // documento — a diferença entre reconciliar a geração certa e reconciliar
   // outra com os `expected_*` da antiga.
   selects: [] as Array<{ table: string; filters: Array<[string, unknown]> }>,
+  // Equivalências de valor do PROJETO (`value_equivalences`): o worker as lê
+  // sem filtro de documento.
+  equivalences: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auto-review-backlog", () => ({ computeBacklogRows }));
-vi.mock("@/lib/compare-queue", () => ({ buildEquivalenceMap }));
 
 class Query {
   private filters: Array<[string, unknown]> = [];
@@ -38,6 +39,7 @@ class Query {
     return this;
   }
   order() { return this; }
+  range() { return this; }
   limit() { return this; }
   lte() { return this; }
   single() { return this; }
@@ -98,10 +100,10 @@ class Query {
     if (this.table === "responses") return this.responsesResult();
     const rowsByTable: Record<string, unknown> = {
       projects: {
-        pydantic_fields: [{ name: "q1", type: "text", target: "all" }],
+        pydantic_fields: [{ name: "q1", type: "text", target: "all", hash: "h" }],
         pydantic_hash: "schema-hash",
       },
-      response_equivalences: [],
+      value_equivalences: state.equivalences,
       field_reviews: [],
       field_review_cycle_history_entries: [{ self_reviewer_id: "user-1" }],
       member_email_links: [],
@@ -160,8 +162,8 @@ beforeEach(() => {
   state.failures = [];
   state.deletes = [];
   state.selects = [];
+  state.equivalences = [];
   admin.rpc.mockClear();
-  buildEquivalenceMap.mockClear();
   computeBacklogRows.mockReset();
   computeBacklogRows.mockReturnValue({
     regenerated: 1,
@@ -280,5 +282,68 @@ describe("drainAutoReviewReconciliationRequests", () => {
     const result = await drainAutoReviewReconciliationRequests();
 
     expect(result.processed).toBe(1);
+  });
+});
+
+describe("expectedEquivalenceIds", () => {
+  const eq = (id: string, field_name: string, a: string, b: string, field_hash = "h") => ({
+    id, field_name, field_hash, value_a: a, value_b: b, reviewer_id: null,
+  });
+  const fields = [
+    { name: "q1", type: "text", hash: "h" },
+    { name: "q2", type: "text", hash: "h" },
+  ] as never;
+
+  it("só as das classes dos valores do humano e do LLM, na versão atual, em ordem de id", async () => {
+    const { expectedEquivalenceIds } = await import("@/lib/auto-review-reconciler");
+    expect(expectedEquivalenceIds(
+      [
+        eq("c3", "q1", "NI", "N/A"),
+        // Mesma classe por transitividade: desfazê-la separa os valores.
+        eq("b2", "q1", "N/A", "não se aplica"),
+        // Outros valores do mesmo campo: não pertencem a este documento.
+        eq("a1", "q1", "sim", "yes"),
+        // Outra versão da pergunta e campo fora do schema.
+        eq("d4", "q2", "x", "y", "velho"),
+        eq("e5", "q9", "NI", "N/A"),
+      ],
+      fields,
+      { q1: "NI", q2: "x" },
+      { q1: "não se aplica", q2: "y" },
+    )).toEqual(["b2", "c3"]);
+  });
+});
+
+describe("drainAutoReviewReconciliationRequests: equivalências de valor", () => {
+  it("lê as do projeto sem filtro de documento e as manda como versão esperada", async () => {
+    state.equivalences = [
+      { id: "eq-b", field_name: "q1", field_hash: "h", value_a: "human", value_b: "llm", reviewer_id: null },
+      { id: "eq-a", field_name: "q1", field_hash: "h", value_a: "x", value_b: "y", reviewer_id: null },
+      { id: "eq-z", field_name: "fora", field_hash: "h", value_a: "x", value_b: "y", reviewer_id: null },
+    ];
+    const { drainAutoReviewReconciliationRequests } = await import("@/lib/auto-review-reconciler");
+    await drainAutoReviewReconciliationRequests();
+
+    const read = state.selects.find((select) => select.table === "value_equivalences");
+    expect(read?.filters).toEqual([["project_id", "project-1"]]);
+    const equivalencesByField = computeBacklogRows.mock.calls[0][3] as Map<string, unknown[]>;
+    expect(equivalencesByField.get("q1")).toHaveLength(2);
+    // Só a da classe dos valores do par (human = llm); eq-a é de outros valores.
+    expect(state.rpcCalls[0]).toEqual({
+      name: "reconcile_auto_review_cycles",
+      args: { p_groups: [expect.objectContaining({ expected_equivalence_ids: ["eq-b"] })] },
+    });
+  });
+
+  it("lê as equivalências do projeto uma vez por drenagem", async () => {
+    state.requests = [
+      { ...request },
+      { ...request, document_id: "doc-2", requested_at: "2026-07-16T12:31:00.000Z" },
+    ];
+    const { drainAutoReviewReconciliationRequests } = await import("@/lib/auto-review-reconciler");
+    await drainAutoReviewReconciliationRequests();
+
+    expect(state.rpcCalls.filter((call) => call.name === "reconcile_auto_review_cycles")).toHaveLength(2);
+    expect(state.selects.filter((select) => select.table === "value_equivalences")).toHaveLength(1);
   });
 });

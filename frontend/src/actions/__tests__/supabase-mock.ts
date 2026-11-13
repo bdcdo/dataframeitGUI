@@ -98,7 +98,7 @@ export function makeSupabaseMock(opts?: {
     },
     from: (table: string) => {
       const builder: Record<string, unknown> = {};
-      for (const m of ["select", "single", "maybeSingle", "order", "limit", "range"]) {
+      for (const m of ["select", "single", "maybeSingle", "order", "limit", "range", "returns"]) {
         builder[m] = () => builder;
       }
       for (const method of ["eq", "is", "in", "neq", "match"] as const) {

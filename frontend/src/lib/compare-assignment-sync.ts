@@ -14,7 +14,11 @@
 // client com a autoridade certa.
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { PydanticField } from "@/lib/types";
-import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-divergence";
+import {
+  groupValueEquivalencesByField,
+  type ValueEquivalencesByField,
+} from "@/lib/equivalence";
+import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import { comparisonSet, type ComparisonCandidate } from "@/lib/comparison-set";
 import {
   resolveCompareStatus,
@@ -38,8 +42,6 @@ export const COMPARE_PROJECT_SELECT =
   "pydantic_fields, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch";
 export const COMPARE_RESPONSE_SELECT =
   "id, document_id, respondent_type, respondent_id, is_latest, is_partial, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, answers, answer_field_hashes";
-export const COMPARE_EQUIVALENCE_SELECT =
-  "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot";
 
 export type CompareProjectRow = ProjectVersionRow & { pydantic_fields: PydanticField[] | null };
 
@@ -110,7 +112,7 @@ interface ReopenCandidate {
 // ordem em que o Postgres devolveu as linhas. "Ativa" usa o MESMO predicado do
 // índice parcial (status IS DISTINCT FROM 'concluido'), incluindo o status
 // nulo — a coluna é NULLABLE desde o 001_initial_schema.
-export function sortByReopenPriority<T extends ReopenCandidate>(rows: T[]): T[] {
+function sortByReopenPriority<T extends ReopenCandidate>(rows: T[]): T[] {
   const isConcluded = (r: T) => (r.status === "concluido" ? 1 : 0);
   return [...rows].sort((a, b) => {
     const byActive = isConcluded(a) - isConcluded(b);
@@ -147,8 +149,8 @@ export function compareAssignmentStatusFor(input: {
   responses: readonly ComparisonCandidate[];
   /** Reviews do revisor no documento. */
   reviews: readonly ValidatableReview[];
-  /** Equivalências vigentes do documento. */
-  equivalences: readonly EquivalenceRow[];
+  /** Equivalências de valor do projeto, por campo. */
+  equivalencesByField: ValueEquivalencesByField;
 }): CompareAssignmentStatus | null {
   const fields = input.project.pydantic_fields ?? [];
   const fieldByName = new Map(fields.map((f) => [f.name, f]));
@@ -162,7 +164,7 @@ export function compareAssignmentStatusFor(input: {
     responses: input.responses,
     minVersion,
     versionCtx,
-    equivalencesByField: buildEquivalenceMap(input.equivalences).get(input.documentId),
+    equivalencesByField: input.equivalencesByField,
   });
 
   // Sem ao menos 2 respostas que contam não há par a comparar, e a divergência
@@ -212,7 +214,7 @@ interface ProjectCompareState {
   assignments: AssignmentRow[];
   responses: ResponseRow[];
   reviews: ReviewRow[];
-  equivalences: EquivalenceRow[];
+  equivalencesByField: ValueEquivalencesByField;
 }
 
 interface PlannedChange {
@@ -230,36 +232,69 @@ interface PlannedChange {
 // documento na rodada corrente, derrubando a ressincronização do projeto.
 // Projeto sem `current_round_id` (a coluna aceita nulo) não tem rodada
 // corrente, e todo assignment dele, com `round_id` obrigatório, é histórico.
+// Lote do `.in("document_id", ...)`: uma lista longa de UUIDs vai na URL do
+// PostgREST, e cem ficam bem abaixo do limite.
+const DOCUMENT_CHUNK = 100;
+
+async function fetchForDocuments<T>(
+  documentIds: readonly string[] | null,
+  fetchAll: () => Promise<{ data: T[]; error: { message: string } | null }>,
+  fetchChunk: (ids: string[]) => Promise<{ data: T[]; error: { message: string } | null }>,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  if (documentIds === null) return fetchAll();
+  const chunks: string[][] = [];
+  for (let i = 0; i < documentIds.length; i += DOCUMENT_CHUNK) {
+    chunks.push(documentIds.slice(i, i + DOCUMENT_CHUNK));
+  }
+  const results = await Promise.all(chunks.map(fetchChunk));
+  const failed = results.find((result) => result.error);
+  if (failed) return failed;
+  return { data: results.flatMap((result) => result.data), error: null };
+}
+
 async function loadProjectCompareState(
   supabase: SupabaseServerClient,
   projectId: string,
+  onlyDocumentIds: readonly string[] | null,
 ): Promise<ProjectCompareState | null> {
   const { data: project, error } = await supabase
     .from("projects").select(`${COMPARE_PROJECT_SELECT}, current_round_id`).eq("id", projectId).single();
   if (error) throw new Error(`projects: ${error.message}`, { cause: error });
   if (!project?.current_round_id) return null;
 
+  const onlyDocuments = onlyDocumentIds === null ? null : new Set(onlyDocumentIds);
   const assignments = rowsOrThrow("assignments", await fetchAllPaged<AssignmentRow>(() => supabase
     .from("assignments").select("id, document_id, user_id, status, completed_at")
-    .eq("project_id", projectId).eq("type", "comparacao").eq("round_id", project.current_round_id), ["id"]));
+    .eq("project_id", projectId).eq("type", "comparacao").eq("round_id", project.current_round_id), ["id"]))
+    .filter((row) => onlyDocuments === null || onlyDocuments.has(row.document_id));
   if (assignments.length === 0) return null;
 
+  // Com recorte, só os documentos que têm comparação a recalcular.
+  const documentIds = onlyDocumentIds === null ? null : [...new Set(assignments.map((row) => row.document_id))];
+  const reviewColumns = "id, document_id, reviewer_id, field_name, verdict, field_hash, chosen_response_id";
   const [responses, reviews, equivalences] = await Promise.all([
-    fetchAllPaged<ResponseRow>(() => supabase
-      .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId), ["id"]),
-    fetchAllPaged<ReviewRow>(() => supabase
-      .from("reviews").select("id, document_id, reviewer_id, field_name, verdict, field_hash, chosen_response_id")
-      .eq("project_id", projectId), ["id"]),
-    fetchAllPaged<EquivalenceRow>(() => supabase
-      .from("response_equivalences").select(COMPARE_EQUIVALENCE_SELECT)
-      .eq("project_id", projectId).is("superseded_at", null), ["id"]),
+    fetchForDocuments<ResponseRow>(
+      documentIds,
+      () => fetchAllPaged<ResponseRow>(() => supabase
+        .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId), ["id"]),
+      (ids) => fetchAllPaged<ResponseRow>(() => supabase
+        .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId).in("document_id", ids), ["id"]),
+    ),
+    fetchForDocuments<ReviewRow>(
+      documentIds,
+      () => fetchAllPaged<ReviewRow>(() => supabase
+        .from("reviews").select(reviewColumns).eq("project_id", projectId), ["id"]),
+      (ids) => fetchAllPaged<ReviewRow>(() => supabase
+        .from("reviews").select(reviewColumns).eq("project_id", projectId).in("document_id", ids), ["id"]),
+    ),
+    fetchProjectValueEquivalences(supabase, projectId),
   ]);
   return {
     project: project as CompareProjectRow,
     assignments,
     responses: rowsOrThrow("responses", responses),
     reviews: rowsOrThrow("reviews", reviews),
-    equivalences: rowsOrThrow("response_equivalences", equivalences),
+    equivalencesByField: groupValueEquivalencesByField(rowsOrThrow("value_equivalences", equivalences)),
   };
 }
 
@@ -267,7 +302,6 @@ async function loadProjectCompareState(
 function planCompareResync(state: ProjectCompareState): PlannedChange[][] {
   const responsesByDoc = groupBy(state.responses, (r) => r.document_id);
   const reviewsByDocUser = groupBy(state.reviews, (r) => `${r.document_id}:${r.reviewer_id}`);
-  const equivalencesByDoc = groupBy(state.equivalences, (e) => e.document_id);
 
   const plan: PlannedChange[][] = [];
   for (const [documentId, docAssignments] of groupBy(state.assignments, (a) => a.document_id)) {
@@ -278,7 +312,7 @@ function planCompareResync(state: ProjectCompareState): PlannedChange[][] {
         documentId,
         responses: responsesByDoc.get(documentId) ?? [],
         reviews: reviewsByDocUser.get(`${documentId}:${row.user_id}`) ?? [],
-        equivalences: equivalencesByDoc.get(documentId) ?? [],
+        equivalencesByField: state.equivalencesByField,
       });
       if (next === null || next === row.status) continue;
       docPlan.push({ change: { assignmentId: row.id, documentId, userId: row.user_id, from: row.status, to: next }, row });
@@ -312,14 +346,16 @@ async function applyCompareResync(
  * projeto, com a mesma regra de `syncCompareAssignment`, e grava os que
  * mudaram. Os de rodadas antigas não são lidos nem gravados. Idempotente:
  * rodar duas vezes seguidas não muda nada na segunda. Com `dryRun`, só lê e
- * devolve o que mudaria.
+ * devolve o que mudaria. Com `documentIds`, só esses documentos (a
+ * propagação de uma equivalência de valor sabe quais mudaram).
  */
 export async function resyncProjectCompareAssignments(
   supabase: SupabaseServerClient,
   projectId: string,
-  options: { dryRun?: boolean } = {},
+  options: { dryRun?: boolean; documentIds?: readonly string[] } = {},
 ): Promise<CompareResyncReport> {
-  const state = await loadProjectCompareState(supabase, projectId);
+  if (options.documentIds?.length === 0) return { checked: 0, changes: [] };
+  const state = await loadProjectCompareState(supabase, projectId, options.documentIds ?? null);
   if (!state) return { checked: 0, changes: [] };
   const plan = planCompareResync(state);
   const changes = plan.flat().map(({ change }) => change);

@@ -19,6 +19,7 @@ function field(overrides: Partial<PydanticField> = {}): PydanticField {
     options: null,
     description: "",
     target: "all",
+    hash: `h-${overrides.name ?? "x"}`,
     ...overrides,
   };
 }
@@ -73,20 +74,23 @@ function finalAnswer(
   };
 }
 
+// Equivalência de VALOR no campo `x` (versão `h-x` da pergunta). Os ids das
+// respostas que o revisor fundiu só compõem o id: a equivalência vale para
+// quaisquer respostas com esses valores.
 function equiv(
   a: string,
   b: string,
-  snapA: unknown,
-  snapB: unknown,
+  valueA: unknown,
+  valueB: unknown,
   overrides: Partial<MetricsEquivalence> = {},
 ): MetricsEquivalence {
   return {
-    document_id: "doc1",
+    id: `eq-${a}-${b}`,
     field_name: "x",
-    response_a_id: a,
-    response_b_id: b,
-    response_a_answer_snapshot: snapA,
-    response_b_answer_snapshot: snapB,
+    field_hash: "h-x",
+    value_a: valueA,
+    value_b: valueB,
+    reviewer_id: null,
     ...overrides,
   };
 }
@@ -206,9 +210,9 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
     expect(errors).toHaveLength(0);
   });
 
-  it("ignora par cujo snapshot não corresponde mais à resposta atual", () => {
-    // A resposta humana foi revisada depois de o par ser criado: a decisão de
-    // equivalência era sobre outro valor e não vale mais.
+  it("ignora equivalência sobre outros valores", () => {
+    // A resposta humana foi revisada depois da equivalência: a decisão era
+    // sobre outro valor e não funde o valor novo.
     const { errors } = run({
       responses: [llmResp, humanResp],
       reviews: [review({ verdict: "N/A" })],
@@ -218,21 +222,28 @@ describe("computeLlmErrorMetrics — fonte Comparação", () => {
     expect(errors).toHaveLength(1);
   });
 
-  it("descarta par sem colunas de snapshot (fail-closed)", () => {
-    const semSnapshot = {
-      document_id: "doc1",
-      field_name: "x",
-      response_a_id: "rh",
-      response_b_id: "rllm",
-    } as unknown as MetricsEquivalence;
-
+  it("ignora equivalência de outra versão da pergunta", () => {
     const { errors } = run({
       responses: [llmResp, humanResp],
       reviews: [review({ verdict: "N/A" })],
-      equivalences: [semSnapshot],
+      equivalences: [equiv("rh", "rllm", "N/A", "NI", { field_hash: "h-x-antiga" })],
     });
 
     expect(errors).toHaveLength(1);
+  });
+
+  // O defeito que motivou a equivalência por valor: a execução nova do LLM
+  // derrubava o par marcado com a resposta antiga.
+  it("equivalência sobrevive a execução nova do LLM com o mesmo valor", () => {
+    const llmNovo = response({ id: "rllm-novo", respondent_type: "llm", answers: { x: "ni" } });
+    const llmAntigo = { ...llmResp, is_latest: false };
+    const { errors } = run({
+      responses: [llmAntigo, llmNovo, humanResp],
+      reviews: [review({ verdict: "N/A" })],
+      equivalences: [equiv("rh", "rllm", "N/A", "NI")],
+    });
+
+    expect(errors).toHaveLength(0);
   });
 
   it("cai no texto do veredito quando a resposta escolhida não está no conjunto", () => {

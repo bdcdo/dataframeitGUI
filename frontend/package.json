@@ -37,6 +37,7 @@
     "test:db:pydantic-fields-shape": "npm run test:db:psql -- supabase/tests/projects_pydantic_fields_shape.test.sql",
     "test:db:remove-member": "npm run test:db:psql -- supabase/tests/remove_project_member_self_identity.test.sql",
     "test:db:unmark-equivalence": "npm run test:db:psql -- supabase/tests/unmark_equivalence_atomic.test.sql",
+    "test:db:value-equivalences": "npm run test:db:psql -- supabase/tests/value_equivalences.test.sql",
     "test:db:arbitration-reopen": "npm run test:db:psql -- supabase/tests/arbitration_reopen.test.sql",
     "test:db:rls-audit": "npm run test:db:psql -- supabase/tests/rls_audit.test.sql",
     "test:db:llm-runs-round": "npm run test:db:psql -- supabase/tests/llm_runs_round.test.sql",

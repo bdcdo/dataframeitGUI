@@ -8,7 +8,7 @@
 // A página fica responsável só por buscar dados no Supabase, chamar estas
 // funções em sequência e montar as props de <ComparePage>.
 
-import type { EquivalenceByDocField, EquivalencePairRow } from "@/lib/compare-divergence";
+import type { ValueEquivalence, ValueEquivalencesByField } from "@/lib/equivalence";
 import { comparisonSet, type ComparisonSet } from "@/lib/comparison-set";
 import type { CompareFiltersValue } from "@/lib/compare-filters";
 import {
@@ -218,7 +218,7 @@ export interface QualifyDocumentsContext {
   projectVersionCtx: ProjectVersionContext;
   sinceMs: number | null;
   fields: PydanticField[];
-  equivByDocField: EquivalenceByDocField;
+  equivalencesByField: ValueEquivalencesByField;
 }
 
 export interface QualifiedDocumentsResult {
@@ -304,7 +304,7 @@ function qualifyDocument(
     responses: applyQueueLens(docResponses, ctx.sinceMs, ctx.filters.respondent),
     minVersion: ctx.minVersion,
     versionCtx: ctx.projectVersionCtx,
-    equivalencesByField: ctx.equivByDocField.get(docId),
+    equivalencesByField: ctx.equivalencesByField,
   });
   const assignedUsers = ctx.codingAssignedByDoc.get(docId) ?? new Set<string>();
   const metrics = computeCoverageMetrics(set, assignedUsers);
@@ -468,19 +468,14 @@ export function sortDocumentsByPendingDivergence(
 }
 
 // Serialize equivalences for the client component (Maps don't cross the RSC
-// boundary). Only ship pairs for documents in the qualified list.
+// boundary). Equivalence is project-wide per field, so the same lists serve
+// every document.
 export function serializeEquivalencesForClient(
-  equivByDocField: EquivalenceByDocField,
-  qualifiedDocIds: string[],
-): Record<string, Record<string, EquivalencePairRow[]>> {
-  const equivalencesByDocField: Record<string, Record<string, EquivalencePairRow[]>> = {};
-  for (const docId of qualifiedDocIds) {
-    const fieldMap = equivByDocField.get(docId);
-    if (!fieldMap) continue;
-    equivalencesByDocField[docId] = {};
-    for (const [fieldName, pairs] of fieldMap) {
-      equivalencesByDocField[docId][fieldName] = pairs;
-    }
+  equivalencesByField: ValueEquivalencesByField,
+): Record<string, ValueEquivalence[]> {
+  const serialized: Record<string, ValueEquivalence[]> = {};
+  for (const [fieldName, equivalences] of equivalencesByField) {
+    serialized[fieldName] = [...equivalences];
   }
-  return equivalencesByDocField;
+  return serialized;
 }

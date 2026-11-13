@@ -16,11 +16,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { normalizeForComparison } from "@/lib/utils";
 import { formatCardAnswer } from "@/lib/verdict-display";
 import { copiedVerdictInDomain, type DomainField } from "@/lib/review-validity";
 import {
-  buildResponseGroupKeys,
+  cardGroupKeys,
+  equivalenceValueKey,
+  valueClassKeys,
+  type ValueEquivalence,
 } from "@/lib/equivalence";
 import { HelpCircle, Link2 } from "lucide-react";
 
@@ -36,14 +38,11 @@ interface AgreementResponse {
   schemaVersion?: string | null;
 }
 
-export interface FieldEquivalencePair {
-  id: string;
-  response_a_id: string;
-  response_b_id: string;
-  reviewer_id: string | null;
-  response_a_answer_snapshot: unknown;
-  response_b_answer_snapshot: unknown;
-}
+/**
+ * Equivalência de valor do campo, já recortada pela versão atual da pergunta
+ * (`currentValueEquivalences`). Vale no projeto inteiro.
+ */
+export type FieldEquivalencePair = ValueEquivalence;
 
 function compareVersionsDesc(a: string, b: string): number {
   const [am, an, ap] = a.split(".").map((n) => Number.parseInt(n, 10));
@@ -136,9 +135,7 @@ function groupByEquivalenceKey(
   present: AgreementResponse[],
   equivalences: FieldEquivalencePair[],
 ): RenderedGroup[] {
-  const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
-    normalizeForComparison(r.answer),
-  );
+  const groupKeys = cardGroupKeys(present, equivalences);
   const map = new Map<string, RenderedGroup>();
   for (const r of present) {
     const key = groupKeys.get(r.id) ?? r.id;
@@ -159,25 +156,35 @@ function groupByEquivalenceKey(
 }
 
 /**
- * Os pares de equivalência cujas DUAS pontas caíram neste grupo — são eles que o
- * card exibe como "N variantes". Um par com uma ponta fora do grupo pertence a
- * outra fusão e não tem o que dizer aqui.
+ * As equivalências de valor que fundiram este grupo — o card as exibe como "N
+ * variantes". Entra toda equivalência da classe dos valores presentes no grupo
+ * (dados à versão atual da pergunta), inclusive os elos do meio de uma cadeia:
+ * em A=B=C=D com A e D no documento, B=C também aparece, porque desfazê-la
+ * também separa o grupo. Grupo fundido só pelo valor idêntico não tem variante.
  */
 function variantsWithinGroup(
   group: RenderedGroup,
   equivalences: FieldEquivalencePair[],
 ): EquivalentVariant[] {
-  const byId = new Map(group.responses.map((r) => [r.id, r] as const));
+  const keys = new Set(
+    group.responses
+      .filter((r) => r.answersCurrentQuestion)
+      .map((r) => equivalenceValueKey(r.answer)),
+  );
+  if (keys.size < 2) return [];
+  const classOf = valueClassKeys(equivalences);
+  const groupClasses = new Set([...keys].flatMap((key) => {
+    const classKey = classOf.get(key);
+    return classKey === undefined ? [] : [classKey];
+  }));
   const variants: EquivalentVariant[] = [];
-  for (const p of equivalences) {
-    const a = byId.get(p.response_a_id);
-    const b = byId.get(p.response_b_id);
-    if (!a || !b) continue;
+  for (const e of equivalences) {
+    if (!groupClasses.has(classOf.get(equivalenceValueKey(e.value_a)) ?? "")) continue;
     variants.push({
-      pairId: p.id,
-      reviewerId: p.reviewer_id,
-      respondentName: `${a.respondent_name} ↔ ${b.respondent_name}`,
-      answerDisplay: `${formatCardAnswer(a.answer)} · ${formatCardAnswer(b.answer)}`,
+      pairId: e.id,
+      reviewerId: e.reviewer_id,
+      respondentName: "Vale em todo o projeto, neste campo",
+      answerDisplay: `${formatCardAnswer(e.value_a)} = ${formatCardAnswer(e.value_b)}`,
     });
   }
   return variants;

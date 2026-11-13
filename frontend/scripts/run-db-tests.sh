@@ -72,6 +72,7 @@ GATE_SUITES=(
   responses_latest_human_concurrency
   response_round_serialization
   unmark_equivalence_atomic
+  value_equivalences
   auto_review_reconciliation_outbox
   arbitration_reopen
   rls_audit

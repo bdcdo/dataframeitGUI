@@ -223,8 +223,8 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
 // respostas: os pares "=" da Comparação e a view `final_answers` da
 // auto-revisão. Um erro ignorado ou uma coluna faltando não quebra nada à
 // vista; só deixa células do Gabarito em branco.
-describe("getExportDataset: pares \"=\" e auto-revisão", () => {
-  const campo = [{ name: "campo", type: "text", options: null, description: "" }];
+describe("getExportDataset: equivalências \"=\" e auto-revisão", () => {
+  const campo = [{ name: "campo", type: "text", options: null, description: "", hash: "campo-hash" }];
   const resposta = (id: string, type: string, value: string) => ({
     id, document_id: "d1", respondent_name: id, respondent_type: type, is_partial: false, answers: { campo: value },
   });
@@ -239,13 +239,12 @@ describe("getExportDataset: pares \"=\" e auto-revisão", () => {
     return r.verdicts.rows.find((row) => row[0] === "EXT-1")?.[r.verdicts.headers.indexOf("campo")] ?? "";
   };
 
-  it("o par \"=\" chega com os snapshots e funde as respostas dos pesquisadores", async () => {
+  it("a equivalência de valor chega com o hash do campo e funde as respostas dos pesquisadores", async () => {
     serverTableResults = {
       ...base(null, [resposta("h1", "humano", "NI"), resposta("h2", "humano", "Não informado"), resposta("l", "llm", "Sim")]),
-      response_equivalences: [{
+      value_equivalences: [{
         data: [{
-          id: "eq1", document_id: "d1", field_name: "campo", response_a_id: "h1", response_b_id: "h2", reviewer_id: null,
-          response_a_answer_snapshot: "NI", response_b_answer_snapshot: "Não informado",
+          id: "eq1", field_name: "campo", field_hash: "campo-hash", value_a: "NI", value_b: "Não informado", reviewer_id: null,
         }],
       }],
     };
@@ -253,10 +252,10 @@ describe("getExportDataset: pares \"=\" e auto-revisão", () => {
     expect(["NI", "Não informado"]).toContain(gabaritoCell(r));
   });
 
-  it("propaga o erro da leitura dos pares \"=\"", async () => {
+  it("propaga o erro da leitura das equivalências", async () => {
     serverTableResults = {
       ...base(null, []),
-      response_equivalences: [{ error: { message: "boom nos pares" } }],
+      value_equivalences: [{ error: { message: "boom nos pares" } }],
     };
     const r = await (await loadAction())("proj-1");
     expect(r).toEqual({ error: "boom nos pares" });

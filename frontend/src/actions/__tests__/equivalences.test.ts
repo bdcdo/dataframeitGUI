@@ -44,22 +44,26 @@ vi.mock("@/lib/supabase/server", () => ({
 // falha que o #499 tornou possível ao fazer o sync lançar.
 const {
   mockSyncCompareAssignment,
-  mockSyncCompareAssignmentsForDocument,
-  adminClientSentinel,
+  mockPropagate,
+  afterCallbacks,
 } = vi.hoisted(() => ({
   mockSyncCompareAssignment: vi.fn(async () => {}),
-  mockSyncCompareAssignmentsForDocument: vi.fn(async () => {}),
-  // Sentinel opaco: o teste assere que o sync documento-wide recebe ESTE
-  // client (o admin), não o do chamador — trocar o client passado quebraria
-  // a asserção de argumentos do caminho feliz.
-  adminClientSentinel: { __sentinel: "supabase-admin" },
+  mockPropagate: vi.fn(async () => {}),
+  afterCallbacks: [] as Array<() => unknown>,
 }));
 vi.mock("@/lib/compare-sync", () => ({
   syncCompareAssignment: mockSyncCompareAssignment,
-  syncCompareAssignmentsForDocument: mockSyncCompareAssignmentsForDocument,
 }));
-vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => adminClientSentinel,
+// A equivalência vale no projeto inteiro: reconciliar e ressincronizar os
+// outros documentos é trabalho de `after()`, depois da resposta ao clique. O
+// mock guarda o callback para o teste conferir o que foi agendado.
+vi.mock("next/server", () => ({
+  after: (callback: () => unknown) => {
+    afterCallbacks.push(callback);
+  },
+}));
+vi.mock("@/lib/value-equivalence-effects", () => ({
+  propagateValueEquivalenceChange: mockPropagate,
 }));
 
 beforeEach(() => {
@@ -68,7 +72,8 @@ beforeEach(() => {
   rpcResults = {};
   serverTableResults = undefined;
   mockSyncCompareAssignment.mockClear();
-  mockSyncCompareAssignmentsForDocument.mockClear();
+  mockPropagate.mockClear();
+  afterCallbacks.length = 0;
 });
 
 async function loadActions() {
@@ -81,15 +86,28 @@ function upsertsOn(table: string) {
 
 type Actions = Awaited<ReturnType<typeof loadActions>>;
 
+// A action lê, antes de desfazer, as equivalências do projeto (a alvo está
+// entre elas) e o campo, para calcular a classe de antes da remoção.
+const TARGET_EQUIVALENCE_ROW = {
+  id: "eq1", field_name: "q1", field_hash: "aaaaaaaaaaaa", value_a: "NI", value_b: "N/A", reviewer_id: "canonical-reviewer",
+};
+const Q1_FIELD = {
+  id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "", hash: "aaaaaaaaaaaa",
+};
+const TARGET_EQUIVALENCE: TableResults = {
+  value_equivalences: {
+    data: [TARGET_EQUIVALENCE_ROW, { ...TARGET_EQUIVALENCE_ROW, id: "eq2", value_a: "N/A", value_b: "não se aplica" }],
+  },
+  projects: { data: { pydantic_fields: [Q1_FIELD] } },
+};
+
 // As 3 actions de equivalences.ts falham do mesmo jeito (upsert/delete
 // retorna erro → `{ error }`, nunca lança); um caso por action evita repetir
 // o esqueleto "seta serverTableResults, chama a action, confere o retorno".
 describe.each([
   {
     action: "confirmEquivalentVerdict",
-    tableResults: {
-      response_equivalences: { error: null },
-    },
+    tableResults: undefined,
     call: (fns: Actions) =>
       fns.confirmEquivalentVerdict({
         projectId: "p1",
@@ -108,9 +126,7 @@ describe.each([
   },
   {
     action: "markLlmEquivalent",
-    tableResults: {
-      response_equivalences: { error: null },
-    },
+    tableResults: undefined,
     call: (fns: Actions) =>
       fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1"),
     expectedError: "llm pair boom",
@@ -119,7 +135,7 @@ describe.each([
   },
   {
     action: "unmarkEquivalencePair",
-    tableResults: undefined,
+    tableResults: TARGET_EQUIVALENCE,
     call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
     expectedError: "delete pair boom",
     extraChecks: undefined,
@@ -130,8 +146,8 @@ describe.each([
     serverTableResults = tableResults;
     if (rpcError) {
       const rpcName = action === "unmarkEquivalencePair"
-        ? "remove_response_equivalence"
-        : "record_response_equivalences";
+        ? "remove_value_equivalence"
+        : "record_value_equivalences";
       rpcResults[rpcName] = { error: { message: rpcError } };
     }
     const fns = await loadActions();
@@ -149,7 +165,7 @@ beforeAll(async () => {
 }, 30_000);
 
 describe("confirmEquivalentVerdict", () => {
-  it("upsert em reviews falha após response_equivalences já gravado → retorna { error }, não lança", async () => {
+  it("upsert em reviews falha após a equivalência já gravada → retorna { error }, não lança", async () => {
     serverTableResults = {
       reviews: { error: { message: "review upsert boom" } },
     };
@@ -172,7 +188,7 @@ describe("confirmEquivalentVerdict", () => {
     expect(upsertsOn("reviews")).toHaveLength(1);
   });
 
-  it("caminho feliz → retorna {} e grava o par canônico (a < b) e o chosen_response_id do gabarito", async () => {
+  it("caminho feliz → retorna {}, grava a equivalência a partir das respostas e o chosen_response_id do gabarito", async () => {
     serverTableResults = {
       reviews: { error: null },
     };
@@ -188,16 +204,29 @@ describe("confirmEquivalentVerdict", () => {
     });
 
     expect(result).toEqual({});
+    // Uma linha por resposta além do gabarito, ligada a ele: os VALORES saem
+    // das respostas no banco, e o hash, do schema atual — o cliente não os
+    // escolhe.
     expect(rpcCalls[0]).toEqual({
-      fn: "record_response_equivalences",
+      fn: "record_value_equivalences",
       args: { p_rows: [{
         project_id: "p1",
         document_id: "doc1",
         field_name: "q1",
-        response_a_id: "r1",
-        response_b_id: "r2",
+        response_a_id: "r2",
+        response_b_id: "r1",
         reviewer_id: "canonical-reviewer",
+        source: "comparacao",
       }] },
+    });
+    // O documento atual sincroniza já; os demais com os mesmos valores, em
+    // `after()`.
+    expect(mockSyncCompareAssignment).toHaveBeenCalledOnce();
+    expect(afterCallbacks).toHaveLength(1);
+    await afterCallbacks[0]();
+    expect(mockPropagate).toHaveBeenCalledExactlyOnceWith({
+      projectId: "p1",
+      changes: [{ fieldName: "q1", responseIds: ["r2", "r1"] }],
     });
     expect(upsertsOn("reviews")[0]?.payload).toMatchObject({
       project_id: "p1",
@@ -289,14 +318,27 @@ describe("markLlmEquivalent", () => {
     const result = await markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1");
 
     expect(result).toEqual({});
-    expect(rpcCalls).toHaveLength(1);
+    expect(rpcCalls).toEqual([{
+      fn: "record_value_equivalences",
+      args: { p_rows: [{
+        project_id: "p1",
+        document_id: "doc1",
+        field_name: "q1",
+        response_a_id: "human1",
+        response_b_id: "llm1",
+        reviewer_id: "canonical-reviewer",
+        source: "llm_insights",
+      }] },
+    }]);
+    expect(afterCallbacks).toHaveLength(1);
   });
 });
 
 describe("unmarkEquivalencePair", () => {
-  it("caminho feliz → retorna {} e delega o delete do review à RPC", async () => {
-    rpcResults.remove_response_equivalence = {
-      data: [{ document_id: "doc1", field_name: "q1" }],
+  it("caminho feliz → retorna {}, não apaga veredito e agenda a classe de ANTES da remoção", async () => {
+    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
+    rpcResults.remove_value_equivalence = {
+      data: [{ field_name: "q1" }],
       error: null,
     };
     const { unmarkEquivalencePair } = await loadActions();
@@ -306,33 +348,47 @@ describe("unmarkEquivalencePair", () => {
     expect(result).toEqual({});
     expect(rpcCalls).toEqual([
       {
-        fn: "remove_response_equivalence",
+        fn: "remove_value_equivalence",
         args: { p_project_id: "p1", p_equivalence_id: "eq1" },
       },
     ]);
-    // O par e o veredito saem na mesma transação da RPC. Um delete de
-    // `reviews` pelo client aqui significaria que a escrita voltou a ser
-    // parcial — a metade que podia falhar sozinha.
-    expect(
-      writeCalls.some((c) => c.op === "delete" && c.table === "reviews"),
-    ).toBe(false);
-    // Sync documento-wide com o ADMIN client: a RPC pode ter removido o
-    // veredito do dono do par (#545), então o recálculo cobre todos os
-    // revisores do documento — e a RLS do chamador não alcança assignments de
-    // peers, por isso o client precisa ser o admin.
-    expect(mockSyncCompareAssignmentsForDocument).toHaveBeenCalledExactlyOnceWith(
-      adminClientSentinel,
-      "p1",
-      "doc1",
-    );
+    // Desfazer não apaga veredito (decisão de produto da equivalência por
+    // valor): nem a action nem a RPC tocam em `reviews`.
+    expect(writeCalls.some((c) => c.table === "reviews")).toBe(false);
     expect(mockSyncCompareAssignment).not.toHaveBeenCalled();
+    // A classe antiga inteira (NI = N/A = não se aplica), e não só as duas
+    // pontas: é onde a divergência pode reaparecer.
+    expect(afterCallbacks).toHaveLength(1);
+    await afterCallbacks[0]();
+    expect(mockPropagate).toHaveBeenCalledOnce();
+    const call = (mockPropagate.mock.calls[0] as unknown as [{ changes: Array<{ valueKeys: Set<string>; fieldName: string }> }])[0].changes[0];
+    expect(call.fieldName).toBe("q1");
+    expect([...call.valueKeys].sort()).toEqual(
+      [JSON.stringify("n/a"), JSON.stringify("nao se aplica"), JSON.stringify("ni")].sort(),
+    );
+  });
+
+  // Na Comparação, quem desfaz está num documento: o assignment dele ali
+  // reflete a mudança já, sem esperar a propagação.
+  it("com documento, sincroniza já o assignment de quem desfez nele", async () => {
+    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
+    rpcResults.remove_value_equivalence = { data: [{ field_name: "q1" }], error: null };
+    const { unmarkEquivalencePair } = await loadActions();
+
+    const result = await unmarkEquivalencePair("p1", "eq1", "doc1");
+
+    expect(result).toEqual({});
+    expect(mockSyncCompareAssignment).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(), "p1", "doc1", "canonical-reviewer",
+    );
   });
 
   // Conjunto vazio é o que a RPC devolve tanto para linha inexistente quanto
   // para autoridade que não bate. Antes deste guard a action retornava `{}` e
   // a revisora via "desfeito" sobre nada removido (classe do #178).
   it("RPC filtra por autoridade → retorna { error }, não sucesso silencioso", async () => {
-    rpcResults.remove_response_equivalence = { data: [], error: null };
+    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
+    rpcResults.remove_value_equivalence = { data: [], error: null };
     const { unmarkEquivalencePair } = await loadActions();
 
     const result = await unmarkEquivalencePair("p1", "eq-alheia");
@@ -341,41 +397,61 @@ describe("unmarkEquivalencePair", () => {
       error: "Equivalência não encontrada ou sem permissão para removê-la.",
     });
     expect(writeCalls).toEqual([]);
-    expect(mockSyncCompareAssignmentsForDocument).not.toHaveBeenCalled();
+    expect(afterCallbacks).toHaveLength(0);
   });
 
-  it("RPC aborta a transação → retorna { error } e não sincroniza", async () => {
-    rpcResults.remove_response_equivalence = {
-      error: { message: "review delete boom" },
+  it("equivalência inexistente → { error } sem chamar a RPC", async () => {
+    serverTableResults = { value_equivalences: { data: [] } };
+    const { unmarkEquivalencePair } = await loadActions();
+
+    const result = await unmarkEquivalencePair("p1", "eq-sumiu");
+
+    expect(result).toEqual({
+      error: "Equivalência não encontrada ou sem permissão para removê-la.",
+    });
+    expect(rpcCalls).toEqual([]);
+  });
+
+  it("RPC aborta a transação → retorna { error } e não agenda propagação", async () => {
+    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
+    rpcResults.remove_value_equivalence = {
+      error: { message: "remove boom" },
     };
     const { unmarkEquivalencePair } = await loadActions();
 
     const result = await unmarkEquivalencePair("p1", "eq1");
 
-    expect(result).toEqual({ error: "review delete boom" });
-    expect(mockSyncCompareAssignmentsForDocument).not.toHaveBeenCalled();
+    expect(result).toEqual({ error: "remove boom" });
+    expect(afterCallbacks).toHaveLength(0);
+  });
+});
+
+describe("loadEquivalenceUsage", () => {
+  it("por classe, os documentos em que ela funde respostas da versão atual", async () => {
+    serverTableResults = {
+      responses: { data: [
+        { id: "r1", document_id: "d1", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, value: "NI", documents: { title: "Doc 1", external_id: null } },
+        { id: "r2", document_id: "d1", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, value: "N/A", documents: { title: "Doc 1", external_id: null } },
+        { id: "r3", document_id: "d2", answer_field_hashes: { q1: "bbbbbbbbbbbb" }, value: "NI", documents: { title: "Doc 2", external_id: null } },
+        { id: "r4", document_id: "d2", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, value: "N/A", documents: { title: "Doc 2", external_id: null } },
+      ] },
+      value_equivalences: { data: [TARGET_EQUIVALENCE_ROW] },
+      projects: { data: { pydantic_fields: [Q1_FIELD] } },
+    };
+    const { loadEquivalenceUsage } = await loadActions();
+
+    const result = await loadEquivalenceUsage("p1", "q1");
+
+    // d2 tem um dos lados respondido a outra versão da pergunta: não funde.
+    expect(result).toEqual({ usage: { [JSON.stringify("n/a")]: [{ id: "d1", title: "Doc 1" }] } });
   });
 
-  // O sync roda DEPOIS do commit da RPC e fora do try que devolve `{ error }`.
-  // Se voltar para dentro, uma falha de sync vira "falha ao desfazer" sobre uma
-  // escrita já persistida: a revisora tenta de novo sobre uma linha que não
-  // existe mais, e a revalidação nem roda.
-  it("falha do sync pós-commit → retorna {} e só loga", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    mockSyncCompareAssignmentsForDocument.mockRejectedValueOnce(
-      new Error("sync boom"),
-    );
-    rpcResults.remove_response_equivalence = {
-      data: [{ document_id: "doc1", field_name: "q1" }],
-      error: null,
-    };
-    const { unmarkEquivalencePair } = await loadActions();
+  it("nome de campo que não é identificador vira { error }, sem query", async () => {
+    serverTableResults = { value_equivalences: { data: [] }, projects: { data: { pydantic_fields: [] } } };
+    const { loadEquivalenceUsage } = await loadActions();
 
-    const result = await unmarkEquivalencePair("p1", "eq1");
+    const result = await loadEquivalenceUsage("p1", "q1,answers");
 
-    expect(result).toEqual({});
-    expect(errorSpy).toHaveBeenCalledOnce();
-    expect(errorSpy.mock.calls[0][0]).toContain("sync boom");
-    errorSpy.mockRestore();
+    expect(result.error).toMatch(/nome de campo inválido/);
   });
 });

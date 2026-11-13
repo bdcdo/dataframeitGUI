@@ -4,15 +4,6 @@
 
 import type { AnswerFieldHashes } from "@/lib/types";
 
-export interface EquivalencePairWire {
-  id: string;
-  response_a_id: string;
-  response_b_id: string;
-  reviewer_id: string | null;
-  response_a_answer_snapshot: unknown;
-  response_b_answer_snapshot: unknown;
-}
-
 export interface CompareResponse {
   id: string;
   respondent_type: "humano" | "llm";

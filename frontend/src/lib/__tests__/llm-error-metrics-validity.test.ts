@@ -63,14 +63,16 @@ function review(overrides: Partial<MetricsReview> & { round_id?: string } = {}):
   };
 }
 
-function equiv(a: string, b: string, snapA: unknown, snapB: unknown): MetricsEquivalence {
+// Equivalência de VALOR no campo `x`, na versão atual da pergunta (HASH). Os
+// ids das respostas só compõem o id.
+function equiv(a: string, b: string, valueA: unknown, valueB: unknown): MetricsEquivalence {
   return {
-    document_id: "doc1",
+    id: `eq-${a}-${b}`,
     field_name: "x",
-    response_a_id: a,
-    response_b_id: b,
-    response_a_answer_snapshot: snapA,
-    response_b_answer_snapshot: snapB,
+    field_hash: HASH,
+    value_a: valueA,
+    value_b: valueB,
+    reviewer_id: null,
   };
 }
 
@@ -114,7 +116,7 @@ describe("métrica: o LLM é medido contra o valor do veredito", () => {
     expect(errors[0].chosenValue).toBeUndefined();
   });
 
-  it("par = vigente com resposta cujo valor atual é o do veredito tira o erro", () => {
+  it("= vigente liga o valor do LLM a resposta cujo valor atual é o do veredito e tira o erro", () => {
     const { errors } = run({
       responses: [llm("A'"), response({ answers: { x: "A" } })],
       reviews: [review({ verdict: "A" })],
@@ -135,7 +137,7 @@ describe("métrica: o LLM é medido contra o valor do veredito", () => {
     expect(errors).toHaveLength(1);
   });
 
-  it("par = com resposta editada para longe do veredito não tira o erro", () => {
+  it("= sobre valores longe do veredito não tira o erro", () => {
     const { errors } = run({
       responses: [llm("B'"), response({ answers: { x: "B" } })],
       reviews: [review({ verdict: "A" })],
