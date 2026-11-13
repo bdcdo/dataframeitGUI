@@ -8,7 +8,7 @@
 // policies de SELECT de `field_reviews` e de
 // `field_review_cycle_history_entries` já dão ao coordenador todos os ciclos
 // do projeto, então não há service key aqui.
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
 import type { PydanticField } from "@/lib/types";
@@ -18,13 +18,6 @@ import {
   type AutoReviewVerdictDocument,
   type AutoReviewVerdictRow,
 } from "@/lib/export/auto-review-verdicts";
-
-export type GetAutoReviewVerdictsResult = AutoReviewVerdictData | { error: string };
-
-export interface AutoReviewVerdictsOptions {
-  /** Traz também os ciclos que não valem mais (o histórico). */
-  includeArchived?: boolean;
-}
 
 // As duas tabelas têm as mesmas colunas: o histórico nasce `AS TABLE
 // field_reviews` (20260717120000). O documento vem embutido, com `!inner` e o
@@ -45,10 +38,8 @@ function embeddedDocument(embed: CycleWithDocument["documents"]): EmbeddedDocume
   return Array.isArray(embed) ? embed[0] : embed;
 }
 
-type SupabaseServer = Awaited<ReturnType<typeof createSupabaseServer>>;
-
 function fetchCycles(
-  supabase: SupabaseServer,
+  supabase: SupabaseServerClient,
   table: "field_reviews" | "field_review_cycle_history_entries",
   projectId: string,
   currentOnly: boolean,
@@ -73,8 +64,9 @@ const NO_CYCLES = { data: [] as CycleWithDocument[], error: null };
 // só dos ids que aparecem nos ciclos.
 export async function getAutoReviewVerdicts(
   projectId: string,
-  options: AutoReviewVerdictsOptions = {},
-): Promise<GetAutoReviewVerdictsResult> {
+  /** `includeArchived`: traz também os ciclos que não valem mais (o histórico). */
+  options: { includeArchived?: boolean } = {},
+): Promise<AutoReviewVerdictData | { error: string }> {
   const gate = await requireCoordinator(
     projectId,
     "Apenas coordenadores podem exportar os vereditos da auto-revisão.",
@@ -131,6 +123,5 @@ export async function getAutoReviewVerdicts(
     documents: [...documents.values()],
     reviews,
     reviewers,
-    includeArchived,
   };
 }

@@ -125,7 +125,6 @@ describe("getAutoReviewVerdicts — leitura", () => {
     expect(selectCalls.every((c) => !c.columns.includes("*"))).toBe(true);
 
     expect(result.projectName).toBe("Zolg");
-    expect(result.includeArchived).toBe(false);
     expect(result.reviews).toHaveLength(3);
     expect(result.reviews[0]).not.toHaveProperty("documents");
     expect(result.documents).toEqual([{ id: "d1", external_id: "N-1", title: "Doc" }]);
@@ -151,7 +150,6 @@ describe("getAutoReviewVerdicts — leitura", () => {
     const getAutoReviewVerdicts = await loadAction();
     const result = await getAutoReviewVerdicts("p1", { includeArchived: true });
     if ("error" in result) throw new Error(result.error);
-    expect(result.includeArchived).toBe(true);
     expect(filterCalls.some((c) => c.column === "superseded_at")).toBe(false);
     expect(filterCalls).toEqual(
       expect.arrayContaining([
@@ -175,7 +173,8 @@ describe("getAutoReviewVerdicts — leitura", () => {
     const getAutoReviewVerdicts = await loadAction();
     const result = await getAutoReviewVerdicts("p1", { includeArchived: "sim" as unknown as boolean });
     if ("error" in result) throw new Error(result.error);
-    expect(result.includeArchived).toBe(false);
+    expect(selectCalls.some((c) => c.table === "field_review_cycle_history_entries")).toBe(false);
+    expect(filterCalls).toContainEqual({ table: "field_reviews", method: "is", column: "superseded_at", value: null });
   });
 
   it("perfil ilegível mantém o pesquisador com o id", async () => {

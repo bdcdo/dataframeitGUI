@@ -1,21 +1,9 @@
-import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { DocumentUpload } from "@/components/documents/DocumentUpload";
 import { DocumentsPageClient } from "@/components/documents/DocumentsPageClient";
 import { ExportCard } from "@/components/documents/ExportCard";
-import { AutoReviewVerdictsExport } from "@/components/documents/AutoReviewVerdictsExport";
-
-async function loadAutomationMode(
-  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
-  projectId: string,
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("projects")
-    .select("automation_mode")
-    .eq("id", projectId)
-    .single();
-  return data?.automation_mode ?? null;
-}
+import { AutoReviewVerdictsExportCard } from "@/components/documents/AutoReviewVerdictsExportCard";
+import { usesAutoReviewSource } from "@/lib/llm-error-metrics";
 
 export default async function ConfigDocumentsPage({
   params,
@@ -30,8 +18,6 @@ export default async function ConfigDocumentsPage({
     createSupabaseServer(),
   ]);
   const showExcluded = show === "excluded";
-  // Em voo junto das leituras abaixo; quem espera é o card, em Suspense.
-  const automationMode = loadAutomationMode(supabase, id);
 
   let query = supabase
     .from("documents")
@@ -44,9 +30,12 @@ export default async function ConfigDocumentsPage({
     ? query.not("excluded_at", "is", null)
     : query.is("excluded_at", null);
 
-  const { data: documents } = await query.order("created_at", {
-    ascending: true,
-  });
+  // O modo decide se o card dos vereditos da auto-revisão aparece.
+  const [{ data: documents }, { data: project }] = await Promise.all([
+    query.order("created_at", { ascending: true }),
+    supabase.from("projects").select("automation_mode").eq("id", id).single(),
+  ]);
+  const showAutoReviewExport = usesAutoReviewSource(project?.automation_mode ?? null);
 
   // Resolve excluded_by ids para nomes (so quando mostrando excluidos)
   const excludedByIds = showExcluded
@@ -88,9 +77,7 @@ export default async function ConfigDocumentsPage({
     <div className="mx-auto max-w-4xl space-y-6 p-6">
       <DocumentUpload projectId={id} />
       <ExportCard projectId={id} />
-      <Suspense fallback={null}>
-        <AutoReviewVerdictsExport projectId={id} automationMode={automationMode} />
-      </Suspense>
+      {showAutoReviewExport && <AutoReviewVerdictsExportCard projectId={id} />}
       <DocumentsPageClient
         documents={docsWithCounts}
         projectId={id}

@@ -17,7 +17,9 @@ import { toast } from "sonner";
 import { getAutoReviewVerdicts } from "@/actions/auto-review-export";
 import { formatDateForFilename } from "@/lib/date-format";
 import { downloadBlob } from "@/lib/download-blob";
+import { ExportOption } from "@/components/documents/ExportOption";
 import {
+  AUTO_REVIEW_COLUMN_WIDTHS,
   AUTO_REVIEW_VERDICTS,
   DEFAULT_AUTO_REVIEW_VERDICTS,
   SELF_VERDICT_SHORT_LABELS,
@@ -40,9 +42,9 @@ async function buildXlsxBlob(sheets: AutoReviewVerdictSheets): Promise<Blob> {
   const review = wb.addWorksheet("Para revisar", {
     views: [{ state: "frozen", xSplit: 1, ySplit: 1 }],
   });
-  review.columns = sheets.review.headers.map((header, i) => ({
+  review.columns = sheets.review.headers.map((header) => ({
     header,
-    width: sheets.reviewWidths[i],
+    width: AUTO_REVIEW_COLUMN_WIDTHS[header],
   }));
   review.addRows(sheets.review.rows);
   review.eachRow((row) => {
@@ -108,37 +110,6 @@ function VerdictFilter({
         ))}
       </div>
     </fieldset>
-  );
-}
-
-// Mudar a opção recarrega: os ciclos arquivados só vêm do banco quando pedidos.
-function ArchivedOption({
-  checked,
-  disabled,
-  onCheckedChange,
-}: {
-  checked: boolean;
-  disabled: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="auto-review-include-archived"
-          checked={checked}
-          disabled={disabled}
-          onCheckedChange={(v) => onCheckedChange(v === true)}
-        />
-        <Label htmlFor="auto-review-include-archived" className="text-sm">
-          Incluir ciclos que não valem mais
-        </Label>
-      </div>
-      <p className="pl-6 text-xs text-muted-foreground">
-        Ciclos arquivados (resposta ou pergunta alterada). O veredito deles foi
-        dado sobre outra versão; a coluna &quot;Situação&quot; diz o motivo.
-      </p>
-    </div>
   );
 }
 
@@ -263,7 +234,15 @@ export function AutoReviewVerdictsExportCard({ projectId }: { projectId: string 
       </CardHeader>
       <CardContent className="space-y-4">
         <VerdictFilter verdicts={verdicts} onChange={setVerdicts} />
-        <ArchivedOption checked={includeArchived} disabled={loading} onCheckedChange={changeArchived} />
+        {/* Mudar a opção recarrega: os ciclos arquivados só vêm do banco quando pedidos. */}
+        <ExportOption
+          id="auto-review-include-archived"
+          label="Incluir ciclos que não valem mais"
+          help={"Ciclos arquivados (resposta ou pergunta alterada). O veredito deles foi dado sobre outra versão; a coluna \"Situação\" diz o motivo."}
+          checked={includeArchived}
+          disabled={loading}
+          onCheckedChange={changeArchived}
+        />
 
         {data && sheets ? (
           <DownloadControls

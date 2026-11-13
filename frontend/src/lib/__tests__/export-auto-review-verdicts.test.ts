@@ -4,6 +4,7 @@ import {
   cycleStatus,
   reviewerDisplayName,
   DEFAULT_AUTO_REVIEW_VERDICTS,
+  AUTO_REVIEW_COLUMN_WIDTHS,
   type AutoReviewVerdictData,
   type AutoReviewVerdictRow,
 } from "@/lib/export/auto-review-verdicts";
@@ -35,7 +36,7 @@ function row(over: Partial<AutoReviewVerdictRow>): AutoReviewVerdictRow {
   };
 }
 
-function data(reviews: AutoReviewVerdictRow[], includeArchived = false): AutoReviewVerdictData {
+function data(reviews: AutoReviewVerdictRow[]): AutoReviewVerdictData {
   return {
     projectName: "P",
     fields,
@@ -49,7 +50,6 @@ function data(reviews: AutoReviewVerdictRow[], includeArchived = false): AutoRev
       { id: "u1", name: "Ana" },
       { id: "u2", name: "Bia" },
     ],
-    includeArchived,
   };
 }
 
@@ -180,20 +180,20 @@ describe("buildAutoReviewVerdictSheets — ciclos que não valem mais", () => {
   ];
 
   it("por padrão só os vigentes, sem a coluna Situação", () => {
-    const { review, reviewWidths } = buildAutoReviewVerdictSheets(data(reviews, true), defaults);
+    const { review } = buildAutoReviewVerdictSheets(data(reviews), defaults);
     expect(review.rows).toHaveLength(1);
     expect(review.headers).not.toContain("Situação");
-    expect(reviewWidths).toHaveLength(review.headers.length);
+    expect(review.headers.every((header) => AUTO_REVIEW_COLUMN_WIDTHS[header] > 0)).toBe(true);
   });
 
   it("com includeArchived entram todos, com a situação, o vigente antes do arquivado da mesma célula", () => {
-    const { review, reviewWidths } = buildAutoReviewVerdictSheets(data(reviews, true), {
+    const { review } = buildAutoReviewVerdictSheets(data(reviews), {
       ...defaults,
       includeArchived: true,
     });
     const status = review.headers.indexOf("Situação");
     expect(status).toBe(12);
-    expect(reviewWidths).toHaveLength(review.headers.length);
+    expect(review.headers.every((header) => AUTO_REVIEW_COLUMN_WIDTHS[header] > 0)).toBe(true);
     expect(review.rows.map((r) => `${r[2]}|${r[4]}|${r[status]}`)).toEqual([
       "N-2|q_a|Pergunta alterada",
       "N-10|q_a|Vigente",
@@ -210,7 +210,6 @@ describe("buildAutoReviewVerdictSheets — ciclos que não valem mais", () => {
           row({ id: "b", self_verdict: "contesta_llm", document_id: "d2", field_hash: "velho" }),
           row({ id: "c", self_verdict: "contesta_llm", document_id: "d3", final_verdict: "llm", superseded_at: "t", superseded_reason: "answer_changed" }),
         ],
-        true,
       ),
       { ...defaults, includeArchived: true },
     );
@@ -218,7 +217,7 @@ describe("buildAutoReviewVerdictSheets — ciclos que não valem mais", () => {
   });
 
   it("o Resumo conta células: só os vigentes nos vereditos, os demais em coluna própria", () => {
-    const { summary } = buildAutoReviewVerdictSheets(data(reviews, true), { ...defaults, includeArchived: true });
+    const { summary } = buildAutoReviewVerdictSheets(data(reviews), { ...defaults, includeArchived: true });
     expect(summary).toEqual({
       headers: ["Pergunta", "Ambíguo", "Contestou o LLM", "Aceitou o LLM", "Total", "Ciclos que não valem mais"],
       rows: [
@@ -228,11 +227,6 @@ describe("buildAutoReviewVerdictSheets — ciclos que não valem mais", () => {
     });
   });
 
-  it("a opção não tem efeito se os dados vieram sem os arquivados", () => {
-    const { review } = buildAutoReviewVerdictSheets(data(reviews, false), { ...defaults, includeArchived: true });
-    expect(review.headers).not.toContain("Situação");
-    expect(review.rows).toHaveLength(1);
-  });
 });
 
 describe("cycleStatus", () => {

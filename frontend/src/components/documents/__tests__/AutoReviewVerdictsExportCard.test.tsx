@@ -58,7 +58,6 @@ function makeData(over: Partial<AutoReviewVerdictData> = {}): AutoReviewVerdictD
       { id: "u1", name: "Ana" },
       { id: "u2", name: "Bia" },
     ],
-    includeArchived: false,
     ...over,
   };
 }

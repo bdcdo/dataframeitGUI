@@ -1,12 +1,8 @@
-// Planilha dos vereditos da auto-revisão: o "último filtro" do coordenador
-// antes da decisão final. Uma linha por ciclo de `field_reviews` com
-// veredito do pesquisador, mais a aba "Resumo" por pergunta. Sem I/O: a action
-// `getAutoReviewVerdicts` lê as linhas, e o card filtra e monta aqui, sem nova
-// ida ao banco a cada troca de filtro.
-//
-// Hoje o veredito se espalha por três telas (ambíguo vira comentário,
-// contestado vai à Arbitragem, erro admitido aparece no LLM Insights), e o
-// export geral não o traz. A especificação veio do script manual do Zolgensma
+// Planilha dos vereditos da auto-revisão, o "último filtro" do coordenador
+// antes da decisão final: uma linha por ciclo com veredito do pesquisador,
+// mais a aba "Resumo" por pergunta. Sem I/O: a action `getAutoReviewVerdicts`
+// lê os ciclos, e o card filtra e monta aqui, sem nova ida ao banco. A
+// especificação veio do script manual do Zolgensma
 // (`zolgensma-coleta/scripts/revisao.py`).
 //
 // Ciclo que não vale mais: o arquivado (`superseded_at`), que o banco move
@@ -63,23 +59,19 @@ export interface AutoReviewVerdictData {
   reviews: AutoReviewVerdictRow[];
   /** Pesquisadores com ao menos um ciclo, em ordem de nome. */
   reviewers: AutoReviewReviewer[];
-  /** Se `reviews` traz os ciclos arquivados. */
-  includeArchived: boolean;
 }
 
 export interface AutoReviewVerdictFilters {
   verdicts: readonly SelfVerdict[];
   /** `null` = todos os pesquisadores. */
   reviewerId: string | null;
-  /** Precisa de `AutoReviewVerdictData.includeArchived` para ter efeito. */
+  /** Os dados precisam ter sido lidos com a mesma opção (o card recarrega). */
   includeArchived: boolean;
 }
 
 export interface AutoReviewVerdictSheets {
   review: ExportSheet;
   summary: ExportSheet;
-  /** Largura (em caracteres) de cada coluna de `review`. */
-  reviewWidths: number[];
 }
 
 /** Ordem da planilha e dos controles: do mais ao menos urgente. */
@@ -152,27 +144,37 @@ function arbitrationLabel(review: AutoReviewVerdictRow, status: string): string 
   return pending ? "Aguardando arbitragem" : "";
 }
 
-const BASE_HEADERS = [
-  "Veredito do pesquisador",
-  "Pesquisador",
-  "ID do documento",
-  "Título",
-  "Pergunta",
-  "Enunciado",
-  "Resposta do pesquisador",
-  "Resposta do LLM",
-  "Justificativa do LLM",
-  "Justificativa do pesquisador",
-  "Decisão final (arbitragem)",
-  "Comentário do árbitro",
+// Colunas da aba de revisão e a largura de cada uma, em caracteres.
+const BASE_COLUMNS: Array<[string, number]> = [
+  ["Veredito do pesquisador", 24],
+  ["Pesquisador", 20],
+  ["ID do documento", 14],
+  ["Título", 30],
+  ["Pergunta", 26],
+  ["Enunciado", 50],
+  ["Resposta do pesquisador", 30],
+  ["Resposta do LLM", 30],
+  ["Justificativa do LLM", 50],
+  ["Justificativa do pesquisador", 40],
+  ["Decisão final (arbitragem)", 16],
+  ["Comentário do árbitro", 30],
 ];
-const BASE_WIDTHS = [24, 20, 14, 30, 26, 50, 30, 30, 50, 40, 16, 30];
-const STATUS_HEADER = "Situação";
-const STATUS_WIDTH = 28;
-const STALE = "stale";
+const STATUS_COLUMN: [string, number] = ["Situação", 28];
+const EDITABLE_COLUMNS: Array<[string, number]> = [
+  ["Nova decisão", 20],
+  ["Observação", 30],
+];
 const STALE_HEADER = "Ciclos que não valem mais";
-const EDITABLE_HEADERS = ["Nova decisão", "Observação"];
-const EDITABLE_WIDTHS = [20, 30];
+
+/** Largura de cada coluna da aba de revisão, pelo cabeçalho. */
+export const AUTO_REVIEW_COLUMN_WIDTHS: Record<string, number> = Object.fromEntries([
+  ...BASE_COLUMNS,
+  STATUS_COLUMN,
+  ...EDITABLE_COLUMNS,
+]);
+
+// Um só collator: com locale e opções, `localeCompare` monta um por chamada.
+const collator = new Intl.Collator("pt-BR", { numeric: true });
 
 /**
  * Monta as duas abas a partir das linhas e dos filtros. Documento fora da base
@@ -185,7 +187,9 @@ export function buildAutoReviewVerdictSheets(
   data: AutoReviewVerdictData,
   filters: AutoReviewVerdictFilters,
 ): AutoReviewVerdictSheets {
-  const includeArchived = filters.includeArchived && data.includeArchived;
+  const { includeArchived } = filters;
+  // A coluna ou célula que só existe com os ciclos que não valem mais.
+  const ifArchived = <T,>(item: T): T[] => (includeArchived ? [item] : []);
   const verdicts = new Set(filters.verdicts);
   const fieldByName = new Map(data.fields.map((field) => [field.name, field]));
   const fieldOrder = new Map(data.fields.map((field, index) => [field.name, index]));
@@ -193,35 +197,34 @@ export function buildAutoReviewVerdictSheets(
   const reviewerName = new Map(data.reviewers.map((reviewer) => [reviewer.id, reviewer.name]));
   const verdictRank = new Map(AUTO_REVIEW_VERDICTS.map((verdict, index) => [verdict, index]));
   const documentKey = (doc: AutoReviewVerdictDocument) => doc.external_id || doc.id;
+  // Ordem da pergunta no formulário; pergunta fora dele vai ao fim, por nome.
+  const compareField = (a: string, b: string) =>
+    (fieldOrder.get(a) ?? data.fields.length) - (fieldOrder.get(b) ?? data.fields.length) ||
+    collator.compare(a, b);
 
   const rows = data.reviews.flatMap((review) => {
     const doc = documentById.get(review.document_id);
     if (!doc || !verdicts.has(review.self_verdict)) return [];
     if (filters.reviewerId !== null && review.self_reviewer_id !== filters.reviewerId) return [];
     const status = cycleStatus(review, fieldByName.get(review.field_name));
-    if (!includeArchived && status !== CYCLE_STATUS_CURRENT) return [];
-    return [{ review, doc, status }];
+    const current = status === CYCLE_STATUS_CURRENT;
+    if (!includeArchived && !current) return [];
+    return [{ review, doc, status, current }];
   });
 
-  const unknownField = data.fields.length;
   rows.sort(
     (a, b) =>
       verdictRank.get(a.review.self_verdict)! - verdictRank.get(b.review.self_verdict)! ||
-      (fieldOrder.get(a.review.field_name) ?? unknownField) -
-        (fieldOrder.get(b.review.field_name) ?? unknownField) ||
-      a.review.field_name.localeCompare(b.review.field_name) ||
-      documentKey(a.doc).localeCompare(documentKey(b.doc), "pt-BR", { numeric: true }) ||
-      Number(b.status === CYCLE_STATUS_CURRENT) - Number(a.status === CYCLE_STATUS_CURRENT) ||
+      compareField(a.review.field_name, b.review.field_name) ||
+      collator.compare(documentKey(a.doc), documentKey(b.doc)) ||
+      Number(b.current) - Number(a.current) ||
       b.review.cycle_no - a.review.cycle_no ||
-      a.review.id.localeCompare(b.review.id),
+      collator.compare(a.review.id, b.review.id),
   );
 
+  const columns = [...BASE_COLUMNS, ...ifArchived(STATUS_COLUMN), ...EDITABLE_COLUMNS];
   const review: ExportSheet = {
-    headers: [
-      ...BASE_HEADERS,
-      ...(includeArchived ? [STATUS_HEADER] : []),
-      ...EDITABLE_HEADERS,
-    ],
+    headers: columns.map(([header]) => header),
     rows: rows.map(({ review: row, doc, status }) => [
       SELF_VERDICT_LABELS[row.self_verdict],
       reviewerName.get(row.self_reviewer_id) ?? row.self_reviewer_id,
@@ -235,7 +238,7 @@ export function buildAutoReviewVerdictSheets(
       row.self_justification ?? "",
       arbitrationLabel(row, status),
       row.arbitrator_comment ?? "",
-      ...(includeArchived ? [status] : []),
+      ...ifArchived(status),
       "",
       "",
     ]),
@@ -245,38 +248,29 @@ export function buildAutoReviewVerdictSheets(
   // Nas colunas de veredito entram só os ciclos vigentes (um por célula); os
   // que não valem mais têm coluna própria.
   const summaryVerdicts = AUTO_REVIEW_VERDICTS.filter((verdict) => verdicts.has(verdict));
-  const counts = new Map<string, Map<SelfVerdict | typeof STALE, number>>();
-  for (const { review: row, status } of rows) {
-    const key = status === CYCLE_STATUS_CURRENT ? row.self_verdict : STALE;
-    const byVerdict = counts.get(row.field_name) ?? new Map<SelfVerdict | typeof STALE, number>();
-    byVerdict.set(key, (byVerdict.get(key) ?? 0) + 1);
-    counts.set(row.field_name, byVerdict);
+  const counts = new Map<string, { byVerdict: Map<SelfVerdict, number>; stale: number }>();
+  for (const { review: row, current } of rows) {
+    const count = counts.get(row.field_name) ?? { byVerdict: new Map(), stale: 0 };
+    if (current) count.byVerdict.set(row.self_verdict, (count.byVerdict.get(row.self_verdict) ?? 0) + 1);
+    else count.stale += 1;
+    counts.set(row.field_name, count);
   }
-  const summaryFields = [...counts.keys()].sort(
-    (a, b) =>
-      (fieldOrder.get(a) ?? unknownField) - (fieldOrder.get(b) ?? unknownField) || a.localeCompare(b),
-  );
   const summary: ExportSheet = {
     headers: [
       "Pergunta",
       ...summaryVerdicts.map((verdict) => SELF_VERDICT_SHORT_LABELS[verdict]),
       "Total",
-      ...(includeArchived ? [STALE_HEADER] : []),
+      ...ifArchived(STALE_HEADER),
     ],
-    rows: summaryFields.map((fieldName) => {
-      const byVerdict = counts.get(fieldName)!;
+    rows: [...counts.keys()].sort(compareField).map((fieldName) => {
+      const { byVerdict, stale } = counts.get(fieldName)!;
       const cells = summaryVerdicts.map((verdict) => byVerdict.get(verdict) ?? 0);
       const total = cells.reduce((sum, n) => sum + n, 0);
-      const stale = includeArchived ? [String(byVerdict.get(STALE) ?? 0)] : [];
-      return [fieldName, ...cells.map(String), String(total), ...stale];
+      return [fieldName, ...cells.map(String), String(total), ...ifArchived(String(stale))];
     }),
   };
 
-  return {
-    review,
-    summary,
-    reviewWidths: [...BASE_WIDTHS, ...(includeArchived ? [STATUS_WIDTH] : []), ...EDITABLE_WIDTHS],
-  };
+  return { review, summary };
 }
 
 /** Nome do pesquisador: nome completo, ou o usuário do e-mail, ou o id. */
