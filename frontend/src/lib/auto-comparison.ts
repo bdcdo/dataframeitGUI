@@ -1,6 +1,5 @@
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import { buildLoadMap } from "@/lib/load-balancing";
-import { buildEquivalenceMap, type EquivalenceRow } from "@/lib/compare-divergence";
 import {
   comparisonSet,
   minimumHumansToTrigger,
@@ -14,7 +13,12 @@ import {
   type ProjectVersionRow,
   type VersionedResponse,
 } from "@/lib/compare-version";
-import type { EquivalencePair } from "@/lib/equivalence";
+import {
+  groupValueEquivalencesByField,
+  type ValueEquivalence,
+  type ValueEquivalencesByField,
+} from "@/lib/equivalence";
+import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 // Both factories return the same data-client shape. Coordinator flows pass an
@@ -123,10 +127,6 @@ function toCandidate(
     answer_field_hashes: r.answer_field_hashes,
   };
 }
-
-// Colunas de `response_equivalences` que `buildEquivalenceMap` espera.
-const EQUIVALENCE_COLS =
-  "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot";
 
 export async function loadOpenComparisonLoad(
   admin: SupabaseDataClient,
@@ -263,7 +263,7 @@ interface ComparisonAnalysisInput {
   project: ComparisonProjectSettings;
   humanResponses: ResponseRow[];
   llmResponse: ResponseRow | null | undefined;
-  equivalencesByField?: Map<string, EquivalencePair[]>;
+  equivalencesByField?: ValueEquivalencesByField;
   mode: ComparisonMode;
 }
 
@@ -343,12 +343,9 @@ async function loadAutoComparisonContext(
       .eq("respondent_type", "llm")
       .eq("is_latest", true)
       .maybeSingle(),
-    admin
-      .from("response_equivalences")
-      .select(EQUIVALENCE_COLS)
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .is("superseded_at", null),
+    // Equivalência é de valor e vale no projeto inteiro: nada de filtro por
+    // documento.
+    fetchProjectValueEquivalences(admin, projectId),
     admin
       .from("assignments")
       .select("id")
@@ -364,7 +361,7 @@ async function loadAutoComparisonContext(
     document: queryData(documentResult),
     humanResponses: (queryData(humanResponsesResult) ?? []) as ResponseRow[],
     llmResponse: queryData(llmResponseResult) as ResponseRow | null,
-    equivalences: queryData(equivalencesResult) as EquivalenceRow[] | null,
+    equivalences: queryData(equivalencesResult) as ValueEquivalence[],
     activeAssignments: queryData(activeAssignmentsResult) ?? [],
   };
 }
@@ -412,7 +409,7 @@ export async function createAutoComparisonIfDiverges(
     project: context.project,
     humanResponses: context.humanResponses,
     llmResponse: context.llmResponse,
-    equivalencesByField: buildEquivalenceMap(context.equivalences).get(documentId),
+    equivalencesByField: groupValueEquivalencesByField(context.equivalences),
     mode,
   });
   if (verdict.kind === "insufficient") {
@@ -605,24 +602,19 @@ async function loadBacklogComparisonData(
         .eq("respondent_type", "llm")
         .eq("is_latest", true)
         .in("document_id", documentIds),
-      admin
-        .from("response_equivalences")
-        .select(EQUIVALENCE_COLS)
-        .eq("project_id", projectId)
-        .in("document_id", documentIds)
-        .is("superseded_at", null),
+      fetchProjectValueEquivalences(admin, projectId),
     ]);
 
   const humans = (queryData(humanResponsesResult) ??
     []) as DocumentResponseRow[];
   const llms = (queryData(llmResponsesResult) ?? []) as DocumentResponseRow[];
-  const equivalences = (queryData(equivalencesResult) ?? []) as EquivalenceRow[];
+  const equivalences = queryData(equivalencesResult);
   return {
     humansByDocument: groupHumanResponsesByDocument(humans),
     llmByDocument: new Map(
       llms.map((response) => [response.document_id, response]),
     ),
-    equivalencesByDocument: buildEquivalenceMap(equivalences),
+    equivalencesByField: groupValueEquivalencesByField(equivalences),
   };
 }
 
@@ -650,8 +642,7 @@ export async function scanComparisonBacklog(
       project: candidates.project,
       humanResponses: comparisonData.humansByDocument.get(documentId) ?? [],
       llmResponse: comparisonData.llmByDocument.get(documentId),
-      equivalencesByField:
-        comparisonData.equivalencesByDocument.get(documentId),
+      equivalencesByField: comparisonData.equivalencesByField,
       mode,
     });
     if (verdict.kind !== "divergent") continue;

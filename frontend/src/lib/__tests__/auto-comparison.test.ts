@@ -249,7 +249,7 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
       makeHumanResponse("userB", "B"),
     ];
     tableData.project_members = [makeProjectMember("userC")];
-    queryErrors["response_equivalences:select"] = {
+    queryErrors["value_equivalences:select"] = {
       message: "falha ao carregar equivalências",
     };
 
@@ -310,7 +310,7 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
 
   it("equivalência registrada funde a divergência → não atribui", async () => {
     tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
-    tableData.response_equivalences = [
+    tableData.value_equivalences = [
       makeEquivalenceRow("q1", { id: "r-userA", answer: "A" }, { id: "r-userB", answer: "B" }),
     ];
     tableData.project_members = [makeProjectMember("userC")];
@@ -546,7 +546,7 @@ describe("scanComparisonBacklog — equivalências", () => {
   it("doc cuja divergência foi fundida por equivalência fica fora do backlog", async () => {
     const { scanComparisonBacklog } = await loadLib();
     tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
-    tableData.response_equivalences = [
+    tableData.value_equivalences = [
       makeEquivalenceRow("q1", { id: "r-userA", answer: "A" }, { id: "r-userB", answer: "B" }),
     ];
     const backlog = await scanComparisonBacklog(makeClient() as never, "p1", "compare_humans");

@@ -79,6 +79,14 @@ function makeClient() {
 }
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+// `after()` só existe dentro de uma request do Next: aqui ele guarda a tarefa
+// para o teste conferir o que foi agendado e roda-la quando quiser.
+const { afterTasks, propagateValueEquivalenceChange } = vi.hoisted(() => ({
+  afterTasks: [] as Array<() => unknown>,
+  propagateValueEquivalenceChange: vi.fn(async () => {}),
+}));
+vi.mock("next/server", () => ({ after: (task: () => unknown) => { afterTasks.push(task); } }));
+vi.mock("@/lib/value-equivalence-effects", () => ({ propagateValueEquivalenceChange }));
 vi.mock("@/lib/auth", () => ({
   resolveProjectMemberActor: async () => ({
     ok: true,
@@ -102,6 +110,8 @@ vi.mock("@/lib/supabase/admin", () => ({
 }));
 
 beforeEach(() => {
+  afterTasks.length = 0;
+  propagateValueEquivalenceChange.mockClear();
   writeCalls = [];
   rpcCalls = [];
   rpcErrors = {};
@@ -260,7 +270,72 @@ describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", ()
 });
 
 describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
-  it("equivalente → registra o par canonico pela RPC idempotente", async () => {
+  // A equivalência de valor vale no projeto inteiro: depois da resposta, os
+  // outros documentos com os mesmos valores são reconciliados. Só o
+  // 'equivalente' agenda, com o campo e os dois valores julgados.
+  it("equivalente agenda a propagação com o campo e os dois snapshots; os demais vereditos não", async () => {
+    const submitAutoReview = await loadSubmit();
+    tableData.field_reviews = [
+      { id: "fr1", field_name: "q1", human_response_id: "hr1", llm_response_id: "lr1",
+        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" },
+      { id: "fr2", field_name: "q2", human_response_id: "hr1", llm_response_id: "lr1",
+        human_answer_snapshot: "a", llm_answer_snapshot: "b" },
+    ];
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
+      { fieldReviewId: "fr2", fieldName: "q2", verdict: "admite_erro" },
+    ]);
+    expect(r.success).toBe(true);
+    expect(propagateValueEquivalenceChange).not.toHaveBeenCalled();
+    expect(afterTasks).toHaveLength(1);
+    await afterTasks[0]();
+    expect(propagateValueEquivalenceChange).toHaveBeenCalledExactlyOnceWith({
+      projectId: "p1",
+      changes: [{ fieldName: "q1", values: ["NI", "Não informado"] }],
+    });
+  });
+
+  // Vários 'equivalente' no mesmo envio: uma propagação só, com uma mudança
+  // por campo — e não uma drenagem por campo concorrendo entre si.
+  it("vários equivalente no mesmo envio agendam uma propagação só", async () => {
+    const submitAutoReview = await loadSubmit();
+    tableData.field_reviews = [
+      { id: "fr1", field_name: "q1", human_response_id: "hr1", llm_response_id: "lr1",
+        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" },
+      { id: "fr2", field_name: "q2", human_response_id: "hr1", llm_response_id: "lr1",
+        human_answer_snapshot: "a", llm_answer_snapshot: "A." },
+    ];
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
+      { fieldReviewId: "fr2", fieldName: "q2", verdict: "equivalente" },
+    ]);
+    expect(r.success).toBe(true);
+    expect(afterTasks).toHaveLength(1);
+    await afterTasks[0]();
+    expect(propagateValueEquivalenceChange).toHaveBeenCalledExactlyOnceWith({
+      projectId: "p1",
+      changes: [
+        { fieldName: "q1", values: ["NI", "Não informado"] },
+        { fieldName: "q2", values: ["a", "A."] },
+      ],
+    });
+  });
+
+  it("submit que falha na RPC não agenda propagação", async () => {
+    const submitAutoReview = await loadSubmit();
+    rpcErrors.submit_auto_review_verdicts = "boom";
+    tableData.field_reviews = [
+      { id: "fr1", field_name: "q1", human_response_id: "hr1", llm_response_id: "lr1",
+        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" },
+    ];
+    const r = await submitAutoReview("p1", "doc1", [
+      { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
+    ]);
+    expect(r.success).toBe(false);
+    expect(afterTasks).toHaveLength(0);
+  });
+
+  it("equivalente → registra a equivalência pela RPC idempotente", async () => {
     const submitAutoReview = await loadSubmit();
     tableData.field_reviews = [
       {

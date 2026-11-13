@@ -88,7 +88,7 @@ function resolveFieldMeta(fieldMap: Map<string, PydanticField>, fieldName: strin
   };
 }
 
-function nameFromEmail(email: string | null | undefined): string {
+export function nameFromEmail(email: string | null | undefined): string {
   return email?.split("@")[0] || "Anônimo";
 }
 

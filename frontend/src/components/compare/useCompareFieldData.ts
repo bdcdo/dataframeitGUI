@@ -1,17 +1,16 @@
 "use client";
 
 import { useMemo } from "react";
-import { normalizeForComparison } from "@/lib/utils";
 import {
-  buildResponseGroupKeys,
-  filterCurrentEquivalencePairs,
+  cardGroupKeys,
+  currentValueEquivalences,
+  type ValueEquivalence,
 } from "@/lib/equivalence";
 import { answersCurrentQuestion, buildFieldHashMap, isFieldStale } from "@/lib/answer-staleness";
 import type { PydanticField } from "@/lib/types";
 import type {
   CompareDocument,
   CompareResponse,
-  EquivalencePairWire,
   FieldResponse,
 } from "./compare-types";
 
@@ -22,16 +21,15 @@ interface UseCompareFieldDataParams {
   responses: Record<string, CompareResponse[]>;
   fields: PydanticField[];
   projectPydanticHash: string | null;
-  equivalencesByDocField: Record<
-    string,
-    Record<string, EquivalencePairWire[]>
-  >;
+  /** Equivalências de valor do projeto, por campo. */
+  equivalencesByField: Record<string, ValueEquivalence[]>;
 }
 
 export interface CompareFieldData {
   fieldResponses: FieldResponse[];
   answerGroups: FieldResponse[][];
-  currentFieldEquivalences: EquivalencePairWire[];
+  /** Equivalências do campo na versão atual da pergunta. */
+  currentFieldEquivalences: ValueEquivalence[];
   allowEquivalence: boolean;
 }
 
@@ -47,7 +45,7 @@ export function useCompareFieldData({
   responses,
   fields,
   projectPydanticHash,
-  equivalencesByDocField,
+  equivalencesByField,
 }: UseCompareFieldDataParams): CompareFieldData {
   const docResponses = useMemo(
     () => (currentDoc ? responses[currentDoc.id] || [] : []),
@@ -95,22 +93,12 @@ export function useCompareFieldData({
     [docResponses, currentFieldName, currentField, currentFieldHashes, projectPydanticHash],
   );
 
-  const fieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
-    if (!currentDoc || !currentFieldName) return [];
-    return equivalencesByDocField[currentDoc.id]?.[currentFieldName] ?? [];
-  }, [equivalencesByDocField, currentDoc, currentFieldName]);
-
-  const currentFieldEquivalences = useMemo<EquivalencePairWire[]>(() => {
-    const present = fieldResponses.filter(
-      (response) => response.answer !== undefined,
-    );
-    return filterCurrentEquivalencePairs(
-      present,
-      fieldEquivalences,
-      (response) => response.answer,
-      (response) => response.answersCurrentQuestion,
-    );
-  }, [fieldResponses, fieldEquivalences]);
+  // Só as da versão atual da pergunta: equivalência de outra versão não funde
+  // nada e não aparece como variante desfazível.
+  const currentFieldEquivalences = useMemo<ValueEquivalence[]>(
+    () => currentValueEquivalences(equivalencesByField[currentFieldName], currentField),
+    [equivalencesByField, currentFieldName, currentField],
+  );
 
   // Equivalência (fundir respostas distintas como iguais) vale para qualquer
   // campo NÃO-multi: texto, data e single (com ou sem opções). Todos renderizam
@@ -123,11 +111,7 @@ export function useCompareFieldData({
 
   const answerGroups = useMemo(() => {
     const present = fieldResponses.filter((r) => r.answer !== undefined);
-    const groupKeys = buildResponseGroupKeys(
-      present,
-      currentFieldEquivalences,
-      (r) => normalizeForComparison(r.answer),
-    );
+    const groupKeys = cardGroupKeys(present, currentFieldEquivalences);
     const map = new Map<string, FieldResponse[]>();
     for (const r of present) {
       const key = groupKeys.get(r.id) ?? r.id;

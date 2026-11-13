@@ -288,7 +288,7 @@ describe("handleUnmarkPair", () => {
       await result.current.handleUnmarkPair("pair1");
     });
 
-    expect(toastSuccess).toHaveBeenCalledWith("Equivalência removida.");
+    expect(toastSuccess).toHaveBeenCalledWith("Equivalência desfeita em todo o projeto. Nenhum veredito foi apagado.");
   });
 });
 

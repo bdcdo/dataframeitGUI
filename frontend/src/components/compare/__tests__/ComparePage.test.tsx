@@ -339,7 +339,7 @@ function makeProps(existingReviews: ReviewsByDoc = {}) {
     availableVersions: ["1.0.0"],
     latestMajorLabel: null,
     currentProjectVersion: "1.0.0",
-    equivalencesByDocField: {},
+    equivalencesByField: {},
     currentUserId: "u1",
     canManageAnyPair: false,
     isCoordinator: false,

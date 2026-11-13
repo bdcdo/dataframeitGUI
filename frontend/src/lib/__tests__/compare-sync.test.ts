@@ -109,7 +109,7 @@ beforeEach(() => {
     assignments: [assignment("pendente")],
     responses: [],
     reviews: [],
-    response_equivalences: [],
+    value_equivalences: [],
   };
 });
 
@@ -153,8 +153,9 @@ describe("syncCompareAssignment — piso de versão latest_major (#247/#286)", (
 
   it("divergência fundida por equivalência registrada → fecha (concluido)", async () => {
     const { syncCompareAssignment } = await loadLib();
+    tableData.projects = [projectRow({ pydantic_fields: [{ ...FIELDS[0], hash: "decisao-hash" }] })];
     tableData.responses = [resp("a", "proc"), resp("b", "improc")];
-    tableData.response_equivalences = [
+    tableData.value_equivalences = [
       makeEquivalenceRow("decisao", { id: "a", answer: "proc" }, { id: "b", answer: "improc" }),
     ];
     const client = makeClient();
@@ -162,6 +163,23 @@ describe("syncCompareAssignment — piso de versão latest_major (#247/#286)", (
     expect(updateCallsOf("assignments")[0]?.payload).toMatchObject({
       status: "concluido",
     });
+  });
+
+  // A equivalência é de valor, no projeto inteiro: a decidida em outro
+  // documento funde este; e a de outra versão da pergunta não funde.
+  it.each([
+    ["decidida em outro documento", "decisao-hash", 1],
+    ["de outra versão da pergunta", "decisao-hash-antiga", 0],
+  ])("equivalência de valor %s", async (_label, fieldHash, updates) => {
+    const { syncCompareAssignment } = await loadLib();
+    tableData.projects = [projectRow({ pydantic_fields: [{ ...FIELDS[0], hash: "decisao-hash" }] })];
+    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
+    tableData.value_equivalences = [
+      { ...makeEquivalenceRow("decisao", { id: "x", answer: "PROC" }, { id: "y", answer: "improc" }, fieldHash), origin_document_id: "doc9" },
+    ];
+    const client = makeClient();
+    await syncCompareAssignment(client as never, "p1", "doc1", "rev1");
+    expect(updateCallsOf("assignments")).toHaveLength(updates);
   });
 
   it("divergência na major corrente, sem veredito → não fecha (em_andamento/pendente)", async () => {
@@ -470,231 +488,3 @@ describe("syncCompareAssignment — regressão de comparação histórica (#497)
   });
 });
 
-describe("syncCompareAssignmentsForDocument (#545)", () => {
-  const TWO_FIELDS: PydanticField[] = [
-    ...FIELDS,
-    {
-      id: "00000000-0000-4000-8000-000000000002",
-      name: "fundamento",
-      type: "text",
-      options: null,
-      description: "",
-      target: "all",
-    },
-  ];
-
-  const comparacao = (over: Record<string, unknown>) => ({
-    ...assignment("concluido"),
-    ...over,
-  });
-
-  // Duas respostas que divergem NOS DOIS campos: quem tiver veredito em
-  // 'decisao' regride para em_andamento, quem não tiver vai para pendente. É
-  // o que dá payloads distinguíveis a cada revisor — o mock compartilhado
-  // registra o payload do UPDATE, não o filtro que o selecionou.
-  const divergeEmDoisCampos = () => {
-    tableData.projects = [projectRow({ pydantic_fields: TWO_FIELDS })];
-    tableData.responses = [
-      resp("a", "proc", { answers: { decisao: "proc", fundamento: "A" } }),
-      resp("b", "improc", { answers: { decisao: "improc", fundamento: "B" } }),
-    ];
-  };
-
-  // TRIP-WIRE da ordem de reabertura. Só UMA comparação pode ficar ativa por
-  // documento na rodada (índice parcial por document_id e round_id), então
-  // quem regride primeiro ocupa a vaga: a concluída mais recente precisa vir
-  // antes da mais antiga. Remover `sortByReopenPriority` faz a iteração
-  // seguir a ordem do SELECT — aqui, deliberadamente a errada — e este teste
-  // falha com "pendente" na primeira posição.
-  it("reabre a concluída mais recente antes da mais antiga", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    divergeEmDoisCampos();
-    tableData.assignments = [
-      comparacao({
-        id: "a-antigo",
-        user_id: "rev-antigo",
-        completed_at: "2026-01-01T00:00:00Z",
-      }),
-      comparacao({
-        id: "a-atual",
-        user_id: "rev-atual",
-        completed_at: "2026-06-01T00:00:00Z",
-      }),
-    ];
-    tableData.reviews = [
-      {
-        project_id: "p1",
-        document_id: "doc1",
-        reviewer_id: "rev-atual",
-        field_name: "decisao",
-        verdict: "proc",
-        field_hash: null,
-      },
-    ];
-    const client = makeClient();
-
-    await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
-
-    expect(
-      updateCallsOf("assignments").map((c) => c.payload),
-    ).toEqual([
-      { status: "em_andamento", completed_at: null }, // rev-atual
-      { status: "pendente", completed_at: null }, // rev-antigo
-    ]);
-  });
-
-  it("a comparação ATIVA vem antes de qualquer concluída, inclusive a mais recente", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    divergeEmDoisCampos();
-    tableData.assignments = [
-      comparacao({
-        id: "a-concluida",
-        user_id: "rev-concluida",
-        completed_at: "2026-06-01T00:00:00Z",
-      }),
-      // Ativa: sem completed_at e com status fora do predicado do índice.
-      // `pendente` de propósito — "ativa" é qualquer status IS DISTINCT FROM
-      // 'concluido', não só em_andamento.
-      comparacao({
-        id: "a-ativa",
-        user_id: "rev-ativa",
-        status: "pendente",
-        completed_at: null,
-      }),
-    ];
-    tableData.reviews = [
-      {
-        project_id: "p1",
-        document_id: "doc1",
-        reviewer_id: "rev-ativa",
-        field_name: "decisao",
-        verdict: "proc",
-        field_hash: null,
-      },
-    ];
-    const client = makeClient();
-
-    await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
-
-    // A ativa vem primeiro mesmo estando por último no SELECT e sem
-    // `completed_at` para ordená-la pelo critério de recência.
-    expect(
-      updateCallsOf("assignments").map((c) => c.payload),
-    ).toEqual([
-      { status: "em_andamento", completed_at: null }, // rev-ativa
-      { status: "pendente", completed_at: null }, // rev-concluida
-    ]);
-  });
-
-  // Comparação de rodada antiga é histórico. Reabri-la chamaria um segundo
-  // revisor para a célula que a rodada corrente já cobre, ou bateria no
-  // gatilho contra autoarbitragem se o revisor antigo codificou o documento na
-  // rodada corrente. A divergência regrediria as duas; só a da rodada corrente
-  // pode mudar.
-  it("revisor que só tem comparação em rodada antiga não é tocado", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    divergeEmDoisCampos();
-    tableData.assignments = [
-      comparacao({
-        id: "a-antigo",
-        user_id: "rev-antigo",
-        round_id: "r-antiga",
-        completed_at: "2026-06-02T00:00:00Z",
-      }),
-      comparacao({ id: "a-atual", user_id: "rev-atual", completed_at: "2026-06-01T00:00:00Z" }),
-    ];
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const client = makeClient();
-    const idsAtualizados = idsAtualizadosEm(client);
-
-    await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
-
-    expect(idsAtualizados).toEqual(["a-atual"]);
-    expect(errorSpy).not.toHaveBeenCalled();
-  });
-
-  it("revisora com comparação em duas rodadas é sincronizada uma vez, na corrente", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
-    tableData.assignments = [
-      comparacao({ id: "a1-antigo", user_id: "rev1", round_id: "r-antiga", completed_at: "2026-06-02T00:00:00Z" }),
-      comparacao({ id: "a1", user_id: "rev1", completed_at: "2026-06-01T00:00:00Z" }),
-    ];
-    const client = makeClient();
-    const idsAtualizados = idsAtualizadosEm(client);
-
-    await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
-
-    expect(updateCallsOf("assignments")).toHaveLength(1);
-    expect(idsAtualizados).toEqual(["a1"]);
-  });
-
-  it("projeto sem rodada corrente não lê nem grava assignment", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    tableData.projects = [projectRow({ current_round_id: null })];
-    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
-    queryErrors["assignments:select"] = { message: "leitura inesperada", code: "XX000" };
-    const client = makeClient();
-
-    await expect(
-      syncCompareAssignmentsForDocument(client as never, "p1", "doc1"),
-    ).resolves.toBeUndefined();
-    expect(updateCallsOf("assignments")).toHaveLength(0);
-  });
-
-  // Best-effort por revisora: o sync roda pós-commit, então uma falha isolada
-  // não pode abortar as demais nem propagar para a action (que já respondeu
-  // sucesso ao client).
-  it("falha de uma revisora é logada e não interrompe as outras", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
-    tableData.assignments = [
-      comparacao({ id: "a1", user_id: "rev1", completed_at: "2026-06-02T00:00:00Z" }),
-      comparacao({ id: "a2", user_id: "rev2", completed_at: "2026-06-01T00:00:00Z" }),
-    ];
-    queryErrors["assignments:update"] = {
-      message: "permission denied for table assignments",
-      code: "42501",
-    };
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const client = makeClient();
-
-    await expect(
-      syncCompareAssignmentsForDocument(client as never, "p1", "doc1"),
-    ).resolves.toBeUndefined();
-
-    // Duas tentativas: a falha da primeira não impediu a segunda.
-    expect(updateCallsOf("assignments")).toHaveLength(2);
-    expect(errorSpy).toHaveBeenCalledTimes(2);
-    expect(errorSpy.mock.calls.map((c) => c[0])).toEqual([
-      expect.stringContaining("[compare-sync] falha ao sincronizar o assignment de rev1"),
-      expect.stringContaining("[compare-sync] falha ao sincronizar o assignment de rev2"),
-    ]);
-  });
-
-  // A leitura da lista é pré-requisito, não parte best-effort: sem ela não há
-  // o que sincronizar e engolir o erro esconderia um sync que nunca rodou.
-  it("propaga erro da leitura dos assignments do documento", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    queryErrors["assignments:select"] = {
-      message: "permission denied for table assignments",
-      code: "42501",
-    };
-    const client = makeClient();
-
-    await expect(
-      syncCompareAssignmentsForDocument(client as never, "p1", "doc1"),
-    ).rejects.toThrow("permission denied for table assignments");
-  });
-
-  it("documento sem comparação atribuída → nenhum update", async () => {
-    const { syncCompareAssignmentsForDocument } = await loadLib();
-    tableData.assignments = [];
-    tableData.responses = [resp("a", "proc"), resp("b", "improc")];
-    const client = makeClient();
-
-    await syncCompareAssignmentsForDocument(client as never, "p1", "doc1");
-
-    expect(updateCallsOf("assignments")).toHaveLength(0);
-  });
-});

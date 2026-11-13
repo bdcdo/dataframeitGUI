@@ -746,37 +746,35 @@ const invariants: Invariant[] = [
     },
   },
   {
-    name: "equivalencia-do-mesmo-documento-e-canonica",
+    name: "equivalencia-de-valor-na-versao-atual-da-pergunta",
     motivation:
-      "espelho de 'review-chosen-response-do-mesmo-documento' para a família da causa (e): par de equivalência cujas responses não pertencem ao documento do par é identidade trocada; par fora da ordem canônica (a < b) escapa do UNIQUE e permite duplicata invertida. Hoje o banco torna os dois estados inconstruíveis (CHECK response_equivalences_check + trigger snapshot_response_equivalence_answers, sem isenção para postgres) — como na invariante do índice de comparação, FAIL aqui = guarda dropada por migration futura ou dado anterior às guardas. As direções par↔veredito NÃO são invariantes: auto-revisão e markLlmEquivalent criam par sem review, e review é voto independente de par — a atomicidade do desfazer é garantida pela RPC do #542 e seu teste SQL, não por estado",
+      "a equivalência \"=\" é de VALOR dentro da versão da pergunta (value_equivalences, 20261112120000): ela vale enquanto o hash gravado for o hash atual do campo, e o save do schema (archive_question_changed_field_reviews) leva ao histórico toda equivalência cujo campo saiu do schema ou mudou de hash. Equivalência operacional com campo inexistente ou hash diferente = save que escapou do gatilho (ex.: escrita com session_replication_role = replica) ou guarda dropada por migration futura. A leitura em TS já a ignora (currentValueEquivalences), então o FAIL não muda tela — mas o banco ficou incoerente e o próximo save a arquivará e reenfileirará documentos",
     run: async () => {
-      const [pairs, responses] = await Promise.all([
-        fetchAll<{
-          id: string;
-          document_id: string;
-          response_a_id: string;
-          response_b_id: string;
-        }>(
-          "response_equivalences",
-          "id, document_id, response_a_id, response_b_id",
-          (q) => q.is("superseded_at", null),
+      const [equivalences, projects] = await Promise.all([
+        fetchAll<{ id: string; project_id: string; field_name: string; field_hash: string }>(
+          "value_equivalences",
+          "id, project_id, field_name, field_hash",
         ),
-        fetchAll<{ id: string; document_id: string }>("responses", "id, document_id"),
+        fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>("projects", "id, pydantic_fields"),
       ]);
-      const docOf = new Map(responses.map((r) => [r.id, r.document_id]));
+      const hashOf = new Map<string, string | undefined>();
+      for (const project of projects) {
+        for (const field of project.pydantic_fields ?? []) {
+          hashOf.set(`${project.id}:${field.name}`, field.hash);
+        }
+      }
       const violations: Violation[] = [];
-      for (const p of pairs) {
-        const docA = docOf.get(p.response_a_id);
-        const docB = docOf.get(p.response_b_id);
-        if (docA !== p.document_id || docB !== p.document_id) {
+      for (const equivalence of equivalences) {
+        const key = `${equivalence.project_id}:${equivalence.field_name}`;
+        if (!hashOf.has(key)) {
           violations.push({
-            key: p.id,
-            detail: `par do doc ${p.document_id} referencia responses dos docs ${docA ?? "INEXISTENTE"} e ${docB ?? "INEXISTENTE"}`,
+            key: equivalence.id,
+            detail: `campo '${equivalence.field_name}' não está no schema do projeto ${equivalence.project_id}`,
           });
-        } else if (p.response_a_id >= p.response_b_id) {
+        } else if (hashOf.get(key) !== equivalence.field_hash) {
           violations.push({
-            key: p.id,
-            detail: `par fora da ordem canônica (a=${p.response_a_id} >= b=${p.response_b_id})`,
+            key: equivalence.id,
+            detail: `campo '${equivalence.field_name}' tem hash ${hashOf.get(key) ?? "AUSENTE"}, a equivalência é de ${equivalence.field_hash}`,
           });
         }
       }

@@ -4,11 +4,11 @@ import { requirePageAuthUser } from "@/lib/page-auth";
 import { coordinatorGate } from "@/lib/project-access";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import {
   computeLlmErrorMetrics,
   isMeasurableField,
   usesAutoReviewSource,
-  type MetricsEquivalence,
   type MetricsFinalAnswer,
   type MetricsResponse,
   type MetricsReview,
@@ -91,19 +91,9 @@ function fetchMetricsSources(
         supabase.rpc("read_error_resolutions", { p_project_id: id }),
       ["id"],
     ),
-    // As colunas de snapshot são obrigatórias: `filterCurrentEquivalencePairs`
-    // é fail-closed e descarta todo par que venha sem elas.
-    fetchAllPaged<MetricsEquivalence>(
-      () =>
-        supabase
-          .from("response_equivalences")
-          .select(
-            "document_id, field_name, response_a_id, response_b_id, response_a_answer_snapshot, response_b_answer_snapshot",
-          )
-          .eq("project_id", id)
-          .is("superseded_at", null),
-      ["id"],
-    ),
+    // `field_hash` vem junto: equivalência de outra versão da pergunta não
+    // funde nada.
+    fetchProjectValueEquivalences(supabase, id),
     // Fonte de veredito do fluxo de auto-revisão. A RPC desse fluxo grava em
     // `field_reviews` e nunca em `reviews`, então sem esta query os projetos
     // em `automation_mode = 'auto_review_llm'` não teriam taxa nenhuma.

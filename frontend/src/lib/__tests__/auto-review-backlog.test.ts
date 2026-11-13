@@ -8,9 +8,8 @@ import type { PydanticField } from "@/lib/types";
 
 // Testes das funções puras extraídas de regenerateAutoReviewBacklog (issue
 // #392) — sem I/O, então não precisam do mock de Supabase. O agrupamento de
-// equivalências em si (buildEquivalenceMap) já é testado em
-// lib/__tests__/compare-queue.test.ts — reaproveitado aqui em vez de
-// reimplementado (revisão do PR #404).
+// equivalências em si (`groupValueEquivalencesByField`) é testado em
+// lib/__tests__/equivalence.test.ts.
 
 const field: PydanticField = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -18,6 +17,7 @@ const field: PydanticField = {
   type: "text",
   options: null,
   description: "Campo de teste",
+  hash: "campo1-hash",
 };
 
 describe("computeBacklogRows", () => {
@@ -82,25 +82,17 @@ describe("computeBacklogRows", () => {
     expect(result.regenerated).toBe(0);
   });
 
-  it("equivalência registrada funde humano e LLM, eliminando a divergência", () => {
+  it("equivalência de valor registrada funde humano e LLM, eliminando a divergência", () => {
     const llmByDocId = new Map([["doc1", llm({})]]);
     const equivByDoc = new Map([
-      [
-        "doc1",
-        new Map([
-          [
-            "campo1",
-            [{
-              id: "eq1",
-              response_a_id: "human1",
-              response_b_id: "llm1",
-              response_a_answer_snapshot: "sim",
-              response_b_answer_snapshot: "nao",
-              reviewer_id: null,
-            }],
-          ],
-        ]),
-      ],
+      ["campo1", [{
+        id: "eq1",
+        field_name: "campo1",
+        field_hash: "campo1-hash",
+        value_a: "nao",
+        value_b: "sim",
+        reviewer_id: null,
+      }]],
     ]);
 
     const result = computeBacklogRows(
@@ -113,5 +105,20 @@ describe("computeBacklogRows", () => {
 
     expect(result.regenerated).toBe(0);
     expect(result.fieldReviewRows).toEqual([]);
+  });
+});
+
+describe("computeBacklogRows: equivalência de outra versão da pergunta", () => {
+  it("não funde: o campo continua divergente", () => {
+    const result = computeBacklogRows(
+      "proj1",
+      [{ id: "human1", document_id: "doc1", respondent_id: "user1", answers: { campo1: "sim" }, answer_field_hashes: null }],
+      new Map([["doc1", { id: "llm1", document_id: "doc1", answers: { campo1: "nao" }, answer_field_hashes: null }]]),
+      new Map([["campo1", [{
+        id: "eq1", field_name: "campo1", field_hash: "hash-antigo", value_a: "nao", value_b: "sim", reviewer_id: null,
+      }]]]),
+      [field],
+    );
+    expect(result.fieldReviewRows.map((row) => row.field_name)).toEqual(["campo1"]);
   });
 });

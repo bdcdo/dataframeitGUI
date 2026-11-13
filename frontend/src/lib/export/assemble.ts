@@ -17,12 +17,13 @@ import {
   multiSelectionSets,
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
-import { answerGroupKeys, type EquivalencePair } from "@/lib/equivalence";
 import {
-  buildEquivalenceMap,
-  isFieldApplicable,
-  type EquivalenceRow,
-} from "@/lib/compare-divergence";
+  answerGroupKeys,
+  groupValueEquivalencesByField,
+  type ValueEquivalence,
+  type ValueEquivalencesByField,
+} from "@/lib/equivalence";
+import { isFieldApplicable } from "@/lib/compare-divergence";
 import { isFieldVisible } from "@/lib/conditional";
 import type { AutoReviewProvenance } from "@/lib/llm-error-metrics";
 import { formatExportValue, formatVerdict } from "./format";
@@ -95,8 +96,8 @@ export interface AssembleInput {
   responses: ExportResponse[];
   reviews: ExportReview[];
   errorResolutions?: ErrorResolutionRow[];
-  /** Pares "=" vigentes (`superseded_at IS NULL`), COM as colunas de snapshot. */
-  equivalences?: EquivalenceRow[];
+  /** Equivalências de valor do projeto (`value_equivalences`), COM `field_hash`. */
+  equivalences?: ValueEquivalence[];
   /** Vazio quando o projeto não usa auto-revisão. */
   finalAnswers?: ExportFinalAnswer[];
   /**
@@ -336,18 +337,19 @@ interface DocResponses {
 // Se um conjunto de respostas cai num grupo só. `multi` segue a regra de
 // `computeDivergentFieldNames`: conjuntos de opções, sem pares "=", que a
 // Comparação não oferece nesse tipo. Os demais tipos usam as classes de
-// `answerGroupKeys` (pares "=" vigentes mais a mesma resposta normalizada).
+// `answerGroupKeys` (equivalências de valor da versão atual da pergunta mais a
+// mesma resposta normalizada).
 function groupAgreement(
   field: PydanticField,
   applicable: DocResponses,
-  pairs: readonly EquivalencePair[],
+  equivalences: readonly ValueEquivalence[],
 ): (responses: ExportResponse[]) => boolean {
   if (field.type === "multi" && field.options?.length) {
     const options = field.options;
     return (responses) =>
       multiSelectionsAgree(options, multiSelectionSets(responses.map((r) => r.answers?.[field.name])));
   }
-  const keys = answerGroupKeys(applicable.all, pairs, field, field.name);
+  const keys = answerGroupKeys(applicable.all, equivalences, field, field.name);
   return (responses) => new Set(responses.map((r) => keys.get(r.id))).size === 1;
 }
 
@@ -417,7 +419,7 @@ interface CellContext {
   reviewedCells: ReadonlySet<string>;
   /** Células que a decisão "Em discussão" do LLM Insights deixou em branco. */
   discussed: ReadonlySet<string>;
-  pairsByDoc: ReturnType<typeof buildEquivalenceMap>;
+  equivalencesByField: ValueEquivalencesByField;
   fillFromLlm: boolean;
   comparedDocumentIds: ReadonlySet<string> | undefined;
 }
@@ -536,8 +538,7 @@ function resolveCell(
   // Vem depois da condição na linha: o LLM não preenche campo que ela diz não
   // se aplicar.
   if (uncoded) return uncodedCell(field, applicable, ctx.fillFromLlm);
-  const pairs = ctx.pairsByDoc.get(docId)?.get(field.name) ?? [];
-  const agree = groupAgreement(field, applicable, pairs);
+  const agree = groupAgreement(field, applicable, ctx.equivalencesByField.get(field.name) ?? []);
   const consensus = cellConsensus(field, applicable, agree, doc.all.length, ctx.minResponses);
   if (consensus !== null) return { value: consensus };
   const signals = pendingSignals(field, doc, applicable, agree, ctx.minResponses);
@@ -619,7 +620,7 @@ function buildCellContext(input: AssembleInput, baseReviews: ExportReview[], fil
     autoReview: new Map((input.finalAnswers ?? []).map((row) => [cellKey(row.document_id, row.field_name), row])),
     reviewedCells: new Set(baseReviews.map((r) => cellKey(r.document_id, r.field_name))),
     discussed: new Set(discussed.map((row) => cellKey(row.document_id, row.field_name))),
-    pairsByDoc: buildEquivalenceMap(input.equivalences ?? []),
+    equivalencesByField: groupValueEquivalencesByField(input.equivalences),
     fillFromLlm,
     comparedDocumentIds: input.comparedDocumentIds,
   };

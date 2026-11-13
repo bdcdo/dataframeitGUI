@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { ProgressDots } from "../coding/ProgressDots";
-import type { FieldEquivalencePair } from "./AgreementGroup";
 import {
   CompareFieldReview,
   type ComparisonResponse,
@@ -11,10 +10,7 @@ import {
 import { KeyboardHints } from "./KeyboardHints";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { normalizeForComparison } from "@/lib/utils";
-import {
-  buildResponseGroupKeys,
-} from "@/lib/equivalence";
+import { cardGroupKeys, type ValueEquivalence } from "@/lib/equivalence";
 import {
   comparableMultiOptions,
   multiSelectionSets,
@@ -68,7 +64,7 @@ interface ComparisonPanelProps {
   commentCount: number;
   suggestionCount: number;
   equivalence: EquivalenceConfig;
-  equivalences: FieldEquivalencePair[];
+  equivalences: ValueEquivalence[];
   onConfirmEquivalent: (
     origin: VerdictOrigin,
     responseIds: string[],
@@ -173,9 +169,7 @@ export function ComparisonPanel({
 
   const groupCount = useMemo(() => {
     const present = responses.filter((r) => r.answer !== undefined);
-    const groupKeys = buildResponseGroupKeys(present, equivalences, (r) =>
-      normalizeForComparison(r.answer),
-    );
+    const groupKeys = cardGroupKeys(present, equivalences);
     const keys = new Set<string>();
     for (const r of present) keys.add(groupKeys.get(r.id) ?? r.id);
     return keys.size;

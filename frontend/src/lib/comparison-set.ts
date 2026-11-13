@@ -36,7 +36,7 @@ import {
   type SchemaVersion,
   type VersionedResponse,
 } from "@/lib/compare-version";
-import type { EquivalencePair } from "@/lib/equivalence";
+import type { ValueEquivalencesByField } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { respondentKey } from "@/components/compare/compare-types";
 
@@ -57,7 +57,7 @@ export interface ComparisonSetInput<R extends ComparisonCandidate> {
   responses: readonly R[];
   minVersion: SchemaVersion | null;
   versionCtx: ProjectVersionContext;
-  equivalencesByField?: Map<string, EquivalencePair[]>;
+  equivalencesByField?: ValueEquivalencesByField;
 }
 
 export interface TriggerRule {
@@ -110,7 +110,7 @@ function insufficientReason(
 function divergence(
   fields: PydanticField[],
   responses: readonly ComparisonCandidate[],
-  equivalencesByField: Map<string, EquivalencePair[]> | undefined,
+  equivalencesByField: ValueEquivalencesByField | undefined,
 ): string[] {
   return computeDivergentFieldNames(
     fields,

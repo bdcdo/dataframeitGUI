@@ -5,7 +5,7 @@ import {
   type ComparisonCandidate,
   type TriggerRule,
 } from "@/lib/comparison-set";
-import { buildEquivalenceMap } from "@/lib/compare-divergence";
+import { groupValueEquivalencesByField, type ValueEquivalence } from "@/lib/equivalence";
 import { versionGate } from "@/lib/compare-version";
 import type { PydanticField } from "@/lib/types";
 
@@ -18,7 +18,7 @@ const project = {
 };
 const { minVersion, ctx: versionCtx } = versionGate(project);
 
-const q1: PydanticField = { id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "", required: true };
+const q1: PydanticField = { id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "", required: true, hash: "q1-hash" };
 const q2: PydanticField = { id: "00000000-0000-4000-8000-000000000002", name: "q2", type: "text", options: null, description: "", required: true };
 
 function human(id: string, answers: Record<string, unknown>, over: Partial<ComparisonCandidate> = {}): ComparisonCandidate {
@@ -42,13 +42,13 @@ function llm(answers: Record<string, unknown>, over: Partial<ComparisonCandidate
   return { ...human("llm", answers, over), id: "r-llm", respondent_id: null, respondent_type: "llm", ...over };
 }
 
-function setOf(responses: ComparisonCandidate[], fields: PydanticField[] = [q1], equivalences?: Parameters<typeof buildEquivalenceMap>[0]) {
+function setOf(responses: ComparisonCandidate[], fields: PydanticField[] = [q1], equivalences?: ValueEquivalence[]) {
   return comparisonSet({
     fields,
     responses,
     minVersion,
     versionCtx,
-    equivalencesByField: equivalences ? buildEquivalenceMap(equivalences).get("doc1") : undefined,
+    equivalencesByField: equivalences ? groupValueEquivalencesByField(equivalences) : undefined,
   });
 }
 
@@ -120,15 +120,13 @@ describe("comparisonSet: disparo e resolução", () => {
   it("equivalência registrada funde a divergência no disparo e na resolução", () => {
     const ana = human("ana", { q1: "não informado" });
     const beto = human("beto", { q1: "NI" });
-    const equivalence = {
+    const equivalence: ValueEquivalence = {
       id: "eq1",
-      document_id: "doc1",
       field_name: "q1",
-      response_a_id: ana.id,
-      response_b_id: beto.id,
+      field_hash: "q1-hash",
+      value_a: "não informado",
+      value_b: "NI",
       reviewer_id: "rev",
-      response_a_answer_snapshot: "não informado",
-      response_b_answer_snapshot: "NI",
     };
 
     expect(setOf([ana, beto]).toResolve).toEqual(["q1"]);

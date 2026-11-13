@@ -33,7 +33,8 @@ import {
   sortDocumentsByPendingDivergence,
   serializeEquivalencesForClient,
 } from "@/lib/compare-queue";
-import { buildEquivalenceMap } from "@/lib/compare-divergence";
+import { groupValueEquivalencesByField } from "@/lib/equivalence";
+import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import type { PydanticField } from "@/lib/types";
 import {
   COMPARE_SPLIT_COOKIE,
@@ -93,17 +94,9 @@ export default async function ComparePageRoute({
       .from("assignments")
       .select("document_id, user_id, type, status")
       .eq("project_id", id),
-    supabase
-      .from("response_equivalences")
-      // Project-scoped fetch (RLS filters anyway). For very large projects
-      // it might be worth gating by `qualifiedDocIds` in a 2-phase fetch,
-      // but volume should stay low — pairs are only created on free-text
-      // divergences. Revisit if it becomes a bottleneck.
-      .select(
-        "id, document_id, field_name, response_a_id, response_b_id, reviewer_id, response_a_answer_snapshot, response_b_answer_snapshot",
-      )
-      .eq("project_id", id)
-      .is("superseded_at", null),
+    // Equivalências de valor: escopo do projeto, uma linha por par de valores
+    // (centenas por projeto), então não há o que recortar por documento.
+    fetchProjectValueEquivalences(supabase, id),
     getProjectAccessContext(id, user),
   ]);
   const access = requireResolvedProjectAccess(rawAccess);
@@ -114,9 +107,9 @@ export default async function ComparePageRoute({
   const { ownMemberUserId, queueUserId, isImpersonating } =
     resolveProjectQueueIdentity(access, sp.viewAsUser);
 
-  // Build (docId, fieldName) -> EquivalencePair[] map. Used both for divergence
-  // detection on the server and for fusing answer cards on the client.
-  const equivByDocField = buildEquivalenceMap(allEquivalences);
+  // fieldName -> equivalências de valor do projeto. Serve à divergência no
+  // servidor e à fusão dos cards no cliente.
+  const equivalencesByField = groupValueEquivalencesByField(allEquivalences);
 
   // Fail-CLOSED (ao contrario de comments/llm-insights): showAllQueue decide
   // quais documentos aparecem na fila — quem não pediu "todos" ve so os
@@ -208,7 +201,7 @@ export default async function ComparePageRoute({
       projectVersionCtx,
       sinceMs,
       fields,
-      equivByDocField,
+      equivalencesByField,
     });
 
   // Fetch text + reviews + comment counts
@@ -275,9 +268,8 @@ export default async function ComparePageRoute({
     coverageByDoc,
   );
 
-  // Serialize equivalences for the client component (Maps don't cross the
-  // RSC boundary). Only ship pairs for documents in the qualified list.
-  const equivalencesByDocField = serializeEquivalencesForClient(equivByDocField, qualifiedDocIds);
+  // Maps don't cross the RSC boundary.
+  const serializedEquivalences = serializeEquivalencesForClient(equivalencesByField, fields);
 
   return (
     <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">Carregando…</div>}>
@@ -299,7 +291,7 @@ export default async function ComparePageRoute({
         availableVersions={availableVersions}
         latestMajorLabel={latestMajorLabel}
         currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
-        equivalencesByDocField={equivalencesByDocField}
+        equivalencesByField={serializedEquivalences}
         currentUserId={ownMemberUserId}
         canManageAnyPair={isCoordinator}
         isCoordinator={isCoordinator}

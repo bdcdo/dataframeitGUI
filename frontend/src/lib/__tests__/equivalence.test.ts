@@ -1,11 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
+  affectedValueKeys,
+  answerGroupKeys,
   buildResponseGroupKeys,
-  canonicalPair,
-  filterCurrentEquivalencePairs,
+  currentValueEquivalences,
+  groupValueEquivalencesByField,
+  valueClassKeys,
+  valueEquivalenceEdges,
   type EquivalenceEdge,
+  type ValueEquivalence,
 } from "@/lib/equivalence";
-import { answersCurrentQuestion } from "@/lib/answer-staleness";
 
 interface Resp {
   id: string;
@@ -22,17 +26,6 @@ function classes(map: Map<string, string>): string[][] {
     a[0].localeCompare(b[0]),
   );
 }
-
-describe("canonicalPair", () => {
-  it("orders ids lexicographically (a < b)", () => {
-    expect(canonicalPair("b", "a")).toEqual(["a", "b"]);
-    expect(canonicalPair("a", "b")).toEqual(["a", "b"]);
-  });
-
-  it("preserves equal ids (degenerate, but doesn't crash)", () => {
-    expect(canonicalPair("a", "a")).toEqual(["a", "a"]);
-  });
-});
 
 describe("buildResponseGroupKeys", () => {
   const getAnswer = (r: Resp) => r.answer;
@@ -133,138 +126,185 @@ describe("buildResponseGroupKeys", () => {
   });
 });
 
-describe("filterCurrentEquivalencePairs", () => {
-  const responses: Resp[] = [
-    { id: "a", answer: "current-a" },
-    { id: "b", answer: "current-b" },
+const HASH = "aaaaaaaaaaaa";
+
+function equivalence(
+  valueA: unknown,
+  valueB: unknown,
+  over: Partial<ValueEquivalence> = {},
+): ValueEquivalence {
+  return {
+    id: `eq-${String(valueA)}-${String(valueB)}`,
+    field_name: "q",
+    field_hash: HASH,
+    value_a: valueA,
+    value_b: valueB,
+    reviewer_id: "rev",
+    ...over,
+  };
+}
+
+describe("currentValueEquivalences", () => {
+  const eqs = [
+    equivalence("NI", "N/A"),
+    equivalence("x", "y", { field_hash: "bbbbbbbbbbbb" }),
+    equivalence("p", "q", { field_name: "outro" }),
   ];
 
-  it("mantém a decisão enquanto os dois valores correspondem aos snapshots", () => {
-    const pairs = [{
-      response_a_id: "a",
-      response_b_id: "b",
-      response_a_answer_snapshot: "current-a",
-      response_b_answer_snapshot: "current-b",
-    }];
-    expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
-    ).toEqual(pairs);
+  it("só as do campo na versão atual da pergunta", () => {
+    expect(currentValueEquivalences(eqs, { name: "q", hash: HASH }).map((e) => e.id)).toEqual(["eq-NI-N/A"]);
   });
 
-  it("descarta a decisão assim que um endpoint muda", () => {
-    const pairs = [{
-      response_a_id: "a",
-      response_b_id: "b",
-      response_a_answer_snapshot: "old-a",
-      response_b_answer_snapshot: "current-b",
-    }];
-    expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
-    ).toEqual([]);
-  });
-
-  it("descarta decisão sem snapshots verificáveis", () => {
-    const pairs = [
-      { response_a_id: "a", response_b_id: "b" },
-    ] as unknown as Parameters<typeof filterCurrentEquivalencePairs>[1];
-    expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
-    ).toEqual([]);
-  });
-
-  it("usa a mesma normalização da comparação de respostas", () => {
-    const pairs = [{
-      response_a_id: "a",
-      response_b_id: "b",
-      response_a_answer_snapshot: "  CURRENT-A  ",
-      response_b_answer_snapshot: "current-b",
-    }];
-    expect(
-      filterCurrentEquivalencePairs(responses, pairs, (response) => response.answer, () => true),
-    ).toEqual(pairs);
-  });
-
-  // O par diz que dois VALORES são a mesma resposta para UMA pergunta. Quando
-  // a pergunta muda, uma das respostas passa a ser resposta a outra versão, e
-  // o par cai mesmo com os valores intactos.
-  it("descarta o par quando uma das respostas é de outra versão da pergunta", () => {
-    const pairs = [{
-      response_a_id: "a",
-      response_b_id: "b",
-      response_a_answer_snapshot: "current-a",
-      response_b_answer_snapshot: "current-b",
-    }];
-    for (const outdatedId of ["a", "b"]) {
-      expect(
-        filterCurrentEquivalencePairs(
-          responses,
-          pairs,
-          (response) => response.answer,
-          (response) => response.id !== outdatedId,
-        ),
-      ).toEqual([]);
-    }
+  it("campo fora do schema ou sem hash não prova a versão: nenhuma vale", () => {
+    expect(currentValueEquivalences(eqs, undefined)).toEqual([]);
+    expect(currentValueEquivalences(eqs, { name: "q", hash: undefined })).toEqual([]);
   });
 });
 
-// Par "=" x evento, com a regra real de `answersCurrentQuestion`. A matriz das
-// outras duas colunas (auto-revisão e decisão do LLM Insights) está em
-// `supabase/tests/judgments_follow_question.test.sql`, onde os eventos são
-// escritas no banco.
-describe("par \"=\" x evento sobre a pergunta", () => {
+describe("valueClassKeys", () => {
+  it("fecho transitivo entre valores e normalização da Comparação", () => {
+    const classes = valueClassKeys([
+      equivalence("Não informado", "NI"),
+      equivalence("ni", "N/A"),
+      equivalence("sim", "yes"),
+    ]);
+    const naoInformado = classes.get(JSON.stringify("nao informado"));
+    expect(naoInformado).toBeDefined();
+    // "NI" e "ni" são a mesma chave normalizada, e a cadeia funde N/A.
+    expect(classes.get(JSON.stringify("ni"))).toBe(naoInformado);
+    expect(classes.get(JSON.stringify("n/a"))).toBe(naoInformado);
+    expect(classes.get(JSON.stringify("sim"))).not.toBe(naoInformado);
+  });
+});
+
+describe("groupValueEquivalencesByField", () => {
+  it("agrupa por campo e tolera null", () => {
+    const byField = groupValueEquivalencesByField([
+      equivalence("a", "b"),
+      equivalence("c", "d", { field_name: "outro" }),
+      equivalence("e", "f"),
+    ]);
+    expect(byField.get("q")?.map((e) => e.id)).toEqual(["eq-a-b", "eq-e-f"]);
+    expect(byField.get("outro")?.length).toBe(1);
+    expect(groupValueEquivalencesByField(null).size).toBe(0);
+  });
+});
+
+describe("valueEquivalenceEdges", () => {
+  interface Item {
+    id: string;
+    answer: unknown;
+    current: boolean;
+  }
+  const field = { name: "q", hash: HASH };
+  const edges = (items: Item[], eqs: ValueEquivalence[]) =>
+    valueEquivalenceEdges(items, eqs, field, (i) => i.answer, (i) => i.current);
+
+  it("funde respostas cujos valores caem na mesma classe", () => {
+    const items: Item[] = [
+      { id: "h1", answer: "NI", current: true },
+      { id: "llm", answer: "N/A", current: true },
+      { id: "h2", answer: "outra", current: true },
+    ];
+    const keys = buildResponseGroupKeys(items, edges(items, [equivalence("NI", "N/A")]), (i) =>
+      JSON.stringify(i.answer),
+    );
+    expect(classes(keys)).toEqual([["h1", "llm"], ["h2"]]);
+  });
+
+  // A equivalência é do projeto: A=C (decidido num documento) e C=B (noutro)
+  // fundem A e B num documento que não tem C.
+  it("transitividade entre documentos: funde valores sem a ponte presente", () => {
+    const items: Item[] = [
+      { id: "h1", answer: "A", current: true },
+      { id: "llm", answer: "B", current: true },
+    ];
+    expect(edges(items, [equivalence("A", "C"), equivalence("C", "B")])).toEqual([
+      { response_a_id: "h1", response_b_id: "llm" },
+    ]);
+  });
+
+  it("resposta dada a outra versão da pergunta não é fundida por equivalência", () => {
+    const items: Item[] = [
+      { id: "h1", answer: "NI", current: false },
+      { id: "llm", answer: "N/A", current: true },
+    ];
+    expect(edges(items, [equivalence("NI", "N/A")])).toEqual([]);
+  });
+
+  it("resposta ausente não entra", () => {
+    const items: Item[] = [
+      { id: "h1", answer: undefined, current: true },
+      { id: "llm", answer: "N/A", current: true },
+    ];
+    expect(edges(items, [equivalence("NI", "N/A")])).toEqual([]);
+  });
+});
+
+// Equivalência "=" x evento, com a regra real de `answersCurrentQuestion`. A
+// matriz no banco (arquivamento no save do schema) está em
+// `supabase/tests/judgments_follow_question.test.sql` e
+// `value_equivalences.test.sql`.
+describe("equivalência \"=\" x evento", () => {
   interface Coded {
     id: string;
     answers: Record<string, unknown>;
-    hashes: Record<string, string>;
+    answer_field_hashes: Record<string, string>;
   }
-  const HASH = "aaaaaaaaaaaa";
-  const pair = {
-    response_a_id: "h1",
-    response_b_id: "llm",
-    response_a_answer_snapshot: "NI",
-    response_b_answer_snapshot: "N/A",
-  };
+  const eq = equivalence("NI", "N/A");
   const before: Coded[] = [
-    { id: "h1", answers: { q: "NI" }, hashes: { q: HASH } },
-    { id: "llm", answers: { q: "N/A" }, hashes: { q: HASH } },
+    { id: "h1", answers: { q: "NI" }, answer_field_hashes: { q: HASH } },
+    { id: "llm", answers: { q: "N/A" }, answer_field_hashes: { q: HASH } },
   ];
-  const keeps = (fields: Array<{ name: string; hash: string }>, responses: Coded[]) => {
-    const field = fields.find((candidate) => candidate.name === "q");
-    return filterCurrentEquivalencePairs(
-      responses,
-      [pair],
-      (response) => response.answers.q,
-      (response) => answersCurrentQuestion(response.hashes, field),
-    ).length === 1;
+  const fuses = (fields: Array<{ name: string; hash: string }>, responses: Coded[]) => {
+    const field = fields.find((candidate) => candidate.name === "q") as
+      | (Parameters<typeof answerGroupKeys>[2] & object)
+      | undefined;
+    const keys = answerGroupKeys(responses, [eq], field, "q");
+    return new Set(responses.map((r) => keys.get(r.id))).size === 1;
   };
 
   it.each([
+    { evento: "rodada nova com a pergunta idêntica", fields: [{ name: "q", hash: HASH }], responses: before, vale: true },
     {
-      evento: "rodada nova com a pergunta idêntica",
+      evento: "execução nova do LLM com o mesmo valor",
       fields: [{ name: "q", hash: HASH }],
-      responses: before,
+      responses: [before[0], { ...before[1], id: "llm-v2" }],
       vale: true,
     },
     {
-      evento: "pergunta alterada",
-      fields: [{ name: "q", hash: "bbbbbbbbbbbb" }],
-      responses: before,
-      vale: false,
+      evento: "recodificação que reproduz o valor (só caixa e espaços)",
+      fields: [{ name: "q", hash: HASH }],
+      responses: [{ ...before[0], answers: { q: "  ni " } }, before[1]],
+      vale: true,
     },
+    { evento: "pergunta alterada", fields: [{ name: "q", hash: "bbbbbbbbbbbb" }], responses: before, vale: false },
     {
-      evento: "resposta editada",
+      evento: "resposta editada para outro valor",
       fields: [{ name: "q", hash: HASH }],
       responses: [{ ...before[0], answers: { q: "Não informado" } }, before[1]],
       vale: false,
     },
-    {
-      evento: "campo renomeado",
-      fields: [{ name: "q2", hash: "cccccccccccc" }],
-      responses: before,
-      vale: false,
-    },
+    { evento: "campo renomeado", fields: [{ name: "q2", hash: "cccccccccccc" }], responses: before, vale: false },
     { evento: "campo removido", fields: [], responses: before, vale: false },
-  ])("$evento: o par vale = $vale", ({ fields, responses, vale }) => {
-    expect(keeps(fields, responses)).toBe(vale);
+  ])("$evento: funde = $vale", ({ fields, responses, vale }) => {
+    expect(fuses(fields, responses)).toBe(vale);
+  });
+});
+
+describe("affectedValueKeys", () => {
+  const field = { name: "q", hash: HASH };
+  const eqs = [equivalence("NI", "N/A"), equivalence("N/A", "não se aplica"), equivalence("sim", "yes")];
+
+  it("as sementes mais toda a classe de cada uma", () => {
+    expect([...affectedValueKeys(eqs, field, ["NI"])].sort()).toEqual(
+      [JSON.stringify("n/a"), JSON.stringify("nao se aplica"), JSON.stringify("ni")].sort(),
+    );
+  });
+
+  it("valor sem equivalência entra sozinho; equivalência de outra versão não expande", () => {
+    expect([...affectedValueKeys(eqs, { name: "q", hash: "outra" }, ["NI", "talvez"])].sort()).toEqual(
+      [JSON.stringify("ni"), JSON.stringify("talvez")].sort(),
+    );
   });
 });

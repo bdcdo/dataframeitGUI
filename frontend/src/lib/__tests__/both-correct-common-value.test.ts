@@ -1,3 +1,4 @@
+import type { ValueEquivalence } from "@/lib/equivalence";
 // "Ambos corretos" grava o valor comum quando o veredito ficou para trás
 // (#758). A fila calcula o valor (`bothCorrectCommonValue`) e o envia com a
 // decisão; `set_error_resolution` só confere o que o contexto prova (fonte,
@@ -9,7 +10,6 @@ import {
   answersAgree,
   bothCorrectCommonValue,
   verdictMatchesAnswer,
-  type MetricsEquivalence,
   type MetricsResponse,
 } from "@/lib/llm-error-metrics";
 import type { PydanticField } from "@/lib/types";
@@ -42,16 +42,18 @@ function response(id: keyof typeof answers, overrides: Partial<MetricsResponse> 
   };
 }
 
-function pair(fieldName: string, a: string, b: string, snapA: unknown, snapB: unknown): MetricsEquivalence {
-  return { document_id: "doc1", field_name: fieldName, response_a_id: a, response_b_id: b, response_a_answer_snapshot: snapA, response_b_answer_snapshot: snapB };
+// Equivalência de valor do campo, na versão `h-<campo>` da pergunta (a das
+// fixtures) salvo quando `fieldHash` diz outra.
+function pair(fieldName: string, valueA: unknown, valueB: unknown, fieldHash = `h-${fieldName}`): ValueEquivalence {
+  return { id: `eq-${fieldName}`, field_name: fieldName, field_hash: fieldHash, value_a: valueA, value_b: valueB, reviewer_id: null };
 }
 
 const documentResponses = (["L", "H1", "H2", "HV"] as const).map((id) => response(id));
 const equivalences = [
-  pair("t", "H1", "H2", "adalimumabé ", "ADA"),
-  pair("t2", "L", "HV", "Dipirona", "Metamizol"),
-  // Snapshot de H1 que não é mais a resposta dele: o par não vale.
-  pair("t3", "L", "H1", "Soro", "outra coisa"),
+  pair("t", "adalimumabé ", "ADA"),
+  pair("t2", "Dipirona", "Metamizol"),
+  // Equivalência de outra versão da pergunta: não funde.
+  pair("t3", "Soro", "soro fisiologico", "h-t3-antiga"),
 ];
 
 const scenarios: Array<[string, PydanticField, string, unknown]> = [
@@ -65,7 +67,7 @@ const scenarios: Array<[string, PydanticField, string, unknown]> = [
   ["cm: condicional múltipla, [] no LLM e sem a chave nos pesquisadores", field("cm", { type: "multi", condition: CONDITION }), '{"A":true}', { value: [] }],
   ["t: acento, caixa e par = vigente", field("t", { type: "text", options: null }), "Outro remédio", { value: "Adalimumabe" }],
   ["t2: par = liga o LLM a resposta que casa com o veredito", field("t2", { type: "text", options: null }), "Metamizol", null],
-  ["t3: par = com snapshot velho não junta os pesquisadores ao LLM", field("t3", { type: "text", options: null }), "Glicose", null],
+  ["t3: = de outra versão da pergunta não junta os pesquisadores ao LLM", field("t3", { type: "text", options: null }), "Glicose", null],
 ];
 
 function commonValue(f: PydanticField, verdict: string, overrides: { chosenResponseId?: string | null } = {}) {

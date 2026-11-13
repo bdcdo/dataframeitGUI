@@ -16,6 +16,7 @@ import { useCompareKeyboard } from "./useCompareKeyboard";
 import { useUrlState } from "@/hooks/useUrlState";
 import { staleVerdictOf, type ReviewsByDoc, type StaleReviewsByDoc } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
+import type { ValueEquivalence } from "@/lib/equivalence";
 import type { SplitLayout } from "@/lib/compare-split-layout";
 import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
 import {
@@ -23,7 +24,6 @@ import {
   verdictOriginMatches,
   type CompareDocument,
   type CompareResponse,
-  type EquivalencePairWire,
   type PendingVerdict,
   type VerdictOrigin,
 } from "./compare-types";
@@ -59,10 +59,8 @@ interface ComparePageProps {
   availableVersions: string[];
   latestMajorLabel: string | null;
   currentProjectVersion: string;
-  equivalencesByDocField: Record<
-    string,
-    Record<string, EquivalencePairWire[]>
-  >;
+  /** Equivalências de valor do projeto, por campo. */
+  equivalencesByField: Record<string, ValueEquivalence[]>;
   currentUserId: string;
   canManageAnyPair: boolean;
   // Distinto de canManageAnyPair (permissão de ação sobre pares de
@@ -113,7 +111,7 @@ export function ComparePage({
   availableVersions,
   latestMajorLabel,
   currentProjectVersion,
-  equivalencesByDocField,
+  equivalencesByField,
   currentUserId,
   canManageAnyPair,
   isCoordinator,
@@ -186,7 +184,7 @@ export function ComparePage({
     responses,
     fields,
     projectPydanticHash,
-    equivalencesByDocField,
+    equivalencesByField,
   });
 
   const currentVerdict =

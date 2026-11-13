@@ -5,7 +5,7 @@
 
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isCodingComplete } from "@/lib/coding-completeness";
-import type { EquivalenceByDocField } from "@/lib/compare-divergence";
+import type { ValueEquivalencesByField } from "@/lib/equivalence";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 
 export interface HumanResponseRow {
@@ -38,7 +38,7 @@ export function computeBacklogRows(
   projectId: string,
   humanResponses: HumanResponseRow[],
   llmByDocId: Map<string, LlmResponseRow>,
-  equivByDoc: EquivalenceByDocField,
+  equivalencesByField: ValueEquivalencesByField,
   fields: PydanticField[],
 ): { fieldReviewRows: FieldReviewRow[]; regenerated: number } {
   const fieldReviewRows: FieldReviewRow[] = [];
@@ -77,7 +77,7 @@ export function computeBacklogRows(
           answerFieldHashes: llm.answer_field_hashes,
         },
       ],
-      equivByDoc.get(human.document_id),
+      equivalencesByField,
     );
     if (divergent.length === 0) continue;
 

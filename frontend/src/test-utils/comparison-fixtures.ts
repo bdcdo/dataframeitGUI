@@ -16,6 +16,7 @@ const DEFAULT_FIELDS: PydanticField[] = [
     options: null,
     description: "",
     required: true,
+    hash: "q1-hash",
   },
 ];
 
@@ -64,26 +65,27 @@ export function makeHumanResponse(
   };
 }
 
-// Equivalência registrada pela revisora entre duas respostas de um campo. Os
-// snapshots precisam casar com as respostas atuais, senão
-// `filterCurrentEquivalencePairs` descarta o par; `superseded_at: null` casa
-// com o filtro `.is("superseded_at", null)` das queries.
+// Equivalência de VALOR registrada pela revisora num campo (`value_equivalences`).
+// Vale no projeto inteiro, na versão da pergunta com `fieldHash`; o default
+// casa com o hash do campo em `DEFAULT_FIELDS` (`<campo>-hash`), senão a
+// leitura (`currentValueEquivalences`) a ignora. Os ids das respostas só
+// compõem o id da linha, para os testes manterem os nomes de antes.
 export function makeEquivalenceRow(
   fieldName: string,
   a: { id: string; answer: unknown },
   b: { id: string; answer: unknown },
+  fieldHash = `${fieldName}-hash`,
 ) {
   return {
     id: `eq-${a.id}-${b.id}`,
     project_id: "p1",
-    document_id: "doc1",
     field_name: fieldName,
-    response_a_id: a.id,
-    response_b_id: b.id,
+    field_hash: fieldHash,
+    value_a: a.answer,
+    value_b: b.answer,
     reviewer_id: "rev1",
-    response_a_answer_snapshot: a.answer,
-    response_b_answer_snapshot: b.answer,
-    superseded_at: null,
+    source: "comparacao",
+    origin_document_id: "doc1",
   };
 }
 
@@ -108,7 +110,7 @@ export function makeEmptyComparisonTableData(
     project_members: [],
     assignments: [],
     responses: [],
-    response_equivalences: [],
+    value_equivalences: [],
     documents: documentIds.map(makeActiveComparisonDocument),
   };
 }

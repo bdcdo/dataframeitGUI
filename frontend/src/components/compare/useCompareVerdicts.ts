@@ -316,7 +316,7 @@ export function useCompareVerdicts({
     ) => {
       // O mesmo gate do veredito regular: o botão "Confirmar N respostas como
       // equivalentes" também vive na subárvore de cards e, num painel fantasma,
-      // gravaria a equivalência (em `response_equivalences`, não só em
+      // gravaria a equivalência (em `value_equivalences`, não só em
       // `reviews`) contra o campo errado.
       const gate = compareWriteGate(
         readOnly,
@@ -364,7 +364,7 @@ export function useCompareVerdicts({
       recordReview(docId, fieldName, info);
 
       toast.success(
-        `${responseIds.length} respostas marcadas como equivalentes.`,
+        `${responseIds.length} respostas marcadas como equivalentes. Os valores passam a valer como a mesma resposta em todo o projeto.`,
       );
 
       const nextDocReviews = { ...localReviews[docId], [fieldName]: info };
@@ -408,15 +408,15 @@ export function useCompareVerdicts({
     async (pairId: string) => {
       if (readOnly) return;
       const saved = await actionSucceeded(
-        unmarkEquivalencePair(projectId, pairId),
+        unmarkEquivalencePair(projectId, pairId, currentDoc?.id),
         "Failed to unmark equivalence pair",
         { projectId, pairId },
         "Não foi possível remover a equivalência. Tente novamente.",
       );
       if (!saved) return;
-      toast.success("Equivalência removida.");
+      toast.success("Equivalência desfeita em todo o projeto. Nenhum veredito foi apagado.");
     },
-    [readOnly, projectId],
+    [readOnly, projectId, currentDoc],
   );
 
   return {

@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 //
-// O par "=" que a Comparação usa para fundir cards passa pela mesma regra de
-// `filterCurrentEquivalencePairs`: valores iguais aos do momento da marcação E
-// respostas dadas à versão atual da pergunta.
+// A equivalência "=" de valor que a Comparação usa para fundir cards vale na
+// versão da pergunta em que foi decidida (`field_hash` igual ao hash atual do
+// campo) e só funde respostas dadas a essa versão. Não depende de qual
+// resposta a originou: sobrevive a recodificação com o mesmo valor.
 import { describe, it, expect, afterEach } from "vitest";
 import { renderHook, cleanup } from "@testing-library/react";
 import { useCompareFieldData } from "../useCompareFieldData";
-import type { CompareResponse, EquivalencePairWire } from "../compare-types";
+import type { CompareResponse } from "../compare-types";
+import type { ValueEquivalence } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 
 afterEach(cleanup);
@@ -43,30 +45,30 @@ function response(id: string, answer: string, hash: string): CompareResponse {
   };
 }
 
-const pair: EquivalencePairWire = {
+const pair: ValueEquivalence = {
   id: "eq1",
-  response_a_id: "r1",
-  response_b_id: "r2",
+  field_name: "q",
+  field_hash: HASH,
+  value_a: "alpha",
+  value_b: "beta",
   reviewer_id: null,
-  response_a_answer_snapshot: "alpha",
-  response_b_answer_snapshot: "beta",
 };
 
-function render(hashB: string) {
+function render(hashB: string, equivalences: ValueEquivalence[] = [pair], idB = "r2") {
   return renderHook(() =>
     useCompareFieldData({
       currentDoc: { id: "doc1", title: "Doc", external_id: null, text: "" } as never,
       currentFieldName: "q",
       currentField: field,
-      responses: { doc1: [response("r1", "alpha", HASH), response("r2", "beta", hashB)] },
+      responses: { doc1: [response("r1", "alpha", HASH), response(idB, "beta", hashB)] },
       fields: [field],
       projectPydanticHash: null,
-      equivalencesByDocField: { doc1: { q: [pair] } },
+      equivalencesByField: { q: equivalences },
     }),
   ).result.current;
 }
 
-describe("useCompareFieldData: par = e versão da pergunta", () => {
+describe("useCompareFieldData: equivalência de valor e versão da pergunta", () => {
   it("funde os cards quando as duas respostas são da pergunta atual", () => {
     const data = render(HASH);
     expect(data.currentFieldEquivalences).toEqual([pair]);
@@ -75,8 +77,21 @@ describe("useCompareFieldData: par = e versão da pergunta", () => {
 
   it("não funde quando uma das respostas é de outra versão da pergunta", () => {
     const data = render(OLD_HASH);
+    // A equivalência continua valendo na versão atual; a resposta antiga é
+    // que não entra na fusão.
+    expect(data.currentFieldEquivalences).toEqual([pair]);
+    expect(data.answerGroups).toHaveLength(2);
+  });
+
+  it("equivalência de outra versão da pergunta não vale nem funde", () => {
+    const data = render(HASH, [{ ...pair, field_hash: OLD_HASH }]);
     expect(data.currentFieldEquivalences).toEqual([]);
     expect(data.answerGroups).toHaveLength(2);
+  });
+
+  it("sobrevive a outra resposta (recodificação ou LLM novo) com o mesmo valor", () => {
+    const data = render(HASH, [pair], "r2-nova-execucao");
+    expect(data.answerGroups).toHaveLength(1);
   });
 
   // O card usa esta marca para oferecer o "=" (a RPC recusa o par com resposta
@@ -96,7 +111,7 @@ describe("useCompareFieldData: par = e versão da pergunta", () => {
           },
           fields: [field],
           projectPydanticHash: null,
-          equivalencesByDocField: {},
+          equivalencesByField: {},
         }),
       ).result.current.fieldResponses.map((r) => r.answersCurrentQuestion);
 
