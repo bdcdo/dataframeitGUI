@@ -88,6 +88,13 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
     else entry.comp = a;
     cellMap.set(key, entry);
   }
+  // Um revisor ativo por documento (assignments_one_active_comparacao_per_doc):
+  // documento já em comparação não oferece a autocomparação.
+  const docsInComparison = new Set(
+    optimisticAssignments
+      .filter((a) => a.type === "comparacao" && a.status !== "concluido")
+      .map((a) => a.document_id),
+  );
 
   // Par em que o passo seguinte daria a comparação a quem codificou o
   // documento: a action não grava e pede a confirmação do coordenador.
@@ -143,7 +150,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const isNonRemovable = status === "concluido" || status === "em_andamento";
                   // Codificação entregue ainda aceita a comparação da própria
                   // codificação, mediante confirmação (`planAssignmentCycle`).
-                  const canAddSelfComparison = cod?.status === "concluido" && !comp;
+                  const canAddSelfComparison =
+                    cod?.status === "concluido" && !comp && !docsInComparison.has(doc.id);
                   const isLocked = readOnly || isPending || (isNonRemovable && !canAddSelfComparison);
 
                   // Cor base pelo status

@@ -49,6 +49,25 @@ AS $$
 DECLARE
   v_actor UUID := public.clerk_uid();
 BEGIN
+  -- A liberação vale para o par (documento, pessoa) que o coordenador viu,
+  -- não para a linha: mover a linha para outro documento, outra pessoa ou
+  -- outro projeto a descarta, e enforce_comparison_assignment_actor (que
+  -- dispara depois deste) reavalia o par novo sem exceção. Sem isto, a
+  -- policy de UPDATE da própria linha deixaria o pesquisador levar a
+  -- liberação de D1 para um D2 que ele também codificou.
+  IF TG_OP = 'UPDATE'
+     AND OLD.self_comparison_approved_by IS NOT NULL
+     AND (
+       NEW.project_id IS DISTINCT FROM OLD.project_id
+       OR NEW.document_id IS DISTINCT FROM OLD.document_id
+       OR NEW.user_id IS DISTINCT FROM OLD.user_id
+     )
+  THEN
+    NEW.self_comparison_approved_by := NULL;
+    NEW.self_comparison_approved_at := NULL;
+    RETURN NEW;
+  END IF;
+
   IF TG_OP = 'UPDATE'
      AND NEW.self_comparison_approved_by IS NOT DISTINCT FROM OLD.self_comparison_approved_by
      AND NEW.self_comparison_approved_at IS NOT DISTINCT FROM OLD.self_comparison_approved_at
@@ -120,6 +139,9 @@ DROP TRIGGER IF EXISTS assignments_guard_self_comparison_approval
   ON public.assignments;
 CREATE TRIGGER assignments_guard_self_comparison_approval
   BEFORE INSERT OR UPDATE OF
+    project_id,
+    document_id,
+    user_id,
     self_comparison_approved_by,
     self_comparison_approved_at
   ON public.assignments

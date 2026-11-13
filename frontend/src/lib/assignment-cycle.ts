@@ -34,3 +34,39 @@ export function planAssignmentCycle(rows: CycleRow[]): CycleStep {
   return { kind: "delete", ids: [coding?.id, comparison?.id].filter((id): id is string => Boolean(id)) };
 }
 
+
+export type SelfComparisonDecision =
+  | { outcome: "apply"; step: CycleStep; approve: boolean }
+  | { outcome: "confirm" }
+  | { outcome: "rejected"; error: string };
+
+export const SELF_COMPARISON_STALE_MESSAGE =
+  "A atribuição mudou desde a confirmação. Confira a tabela e tente de novo.";
+export const SELF_COMPARISON_NOT_CODER_MESSAGE =
+  "Este pesquisador não tem codificação corrente neste documento.";
+
+/**
+ * Decide o passo diante da autoria do par. Dar comparação a quem codificou
+ * (`coder`) exige a confirmação do coordenador (`allowed`). A confirmação vale
+ * só para o passo que o coordenador viu: se, ao confirmar, o passo já não dá a
+ * comparação a quem codificou (outra aba avançou o par, a codificação sumiu),
+ * nada é gravado — em vez de aplicar em silêncio outra transição.
+ */
+export function decideSelfComparison(
+  step: CycleStep,
+  coder: boolean,
+  allowed: boolean,
+): SelfComparisonDecision {
+  const givesComparison = step.kind === "promote" || step.kind === "selfComparisonBesideDone";
+  const selfComparison = givesComparison && coder;
+  if (allowed) {
+    return selfComparison
+      ? { outcome: "apply", step, approve: true }
+      : { outcome: "rejected", error: SELF_COMPARISON_STALE_MESSAGE };
+  }
+  if (selfComparison) return { outcome: "confirm" };
+  if (step.kind === "selfComparisonBesideDone") {
+    return { outcome: "rejected", error: SELF_COMPARISON_NOT_CODER_MESSAGE };
+  }
+  return { outcome: "apply", step, approve: false };
+}

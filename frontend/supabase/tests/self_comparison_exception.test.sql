@@ -243,6 +243,37 @@ EXCEPTION
 END;
 $$;
 
+-- ========== 8. A liberação não acompanha a linha para outro par ==========
+-- M codificou também D2; a comparação liberada de D1 não pode virar uma
+-- comparação "liberada" de D2 trocando o documento da linha.
+DELETE FROM public.assignments WHERE id = '5c400000-0000-0000-0000-000000000002';
+INSERT INTO public.responses
+  (project_id, document_id, respondent_id, respondent_type, answers)
+VALUES ('5c100000-0000-0000-0000-000000000001', '5c200000-0000-0000-0000-000000000002',
+        '5c000000-0000-0000-0000-00000000000a', 'humano', '{"q1":"a"}');
+
+SELECT set_config('request.jwt.claims',
+  '{"sub":"5c000000-0000-0000-0000-00000000000a","supabase_uid":"5c000000-0000-0000-0000-00000000000a"}',
+  true);
+SET LOCAL ROLE authenticated;
+
+DO $$
+BEGIN
+  UPDATE public.assignments
+  SET document_id = '5c200000-0000-0000-0000-000000000002'
+  WHERE id = '5c400000-0000-0000-0000-000000000001';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'FALHOU 8: RLS escondeu a linha; o cenário não exercitou o gatilho';
+  END IF;
+  RAISE EXCEPTION 'FALHOU 8: a liberação de D1 foi levada para D2';
+EXCEPTION
+  WHEN check_violation THEN
+    RAISE NOTICE 'OK 8: trocar o documento descarta a liberação e a regra volta a valer';
+END;
+$$;
+
+RESET ROLE;
+
 \echo 'self_comparison_exception: OK'
 
 ROLLBACK;
