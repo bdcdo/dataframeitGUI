@@ -4,7 +4,7 @@ import { useOptimistic, useState, useTransition } from "react";
 import { cycleAssignment } from "@/actions/assignments";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog";
+import { SelfComparisonDialog, type SelfComparisonRequest } from "./SelfComparisonDialog";
 import {
   Tooltip,
   TooltipContent,
@@ -27,8 +27,6 @@ type CellState = {
 };
 
 type OptimisticAction = { docId: string; userId: string };
-
-type SelfComparisonRequest = { docId: string; userId: string; docLabel: string; researcherName: string };
 
 /**
  * Calcula a próxima lista de assignments após um ciclo na célula (docId, userId).
@@ -94,7 +92,6 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
   // Par em que o passo seguinte daria a comparação a quem codificou o
   // documento: a action não grava e pede a confirmação do coordenador.
   const [selfComparison, setSelfComparison] = useState<SelfComparisonRequest | null>(null);
-  const [isConfirming, startConfirm] = useTransition();
 
   const handleCycle = (request: SelfComparisonRequest) => {
     startTransition(async () => {
@@ -102,21 +99,6 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
       const result = await cycleAssignment(projectId, request.docId, request.userId);
       if (result.needsSelfComparisonConfirmation) setSelfComparison(request);
       else if (result.error) toast.error(result.error);
-    });
-  };
-
-  const confirmSelfComparison = () => {
-    if (!selfComparison) return;
-    startConfirm(async () => {
-      const result = await cycleAssignment(projectId, selfComparison.docId, selfComparison.userId, {
-        allowSelfComparison: true,
-      });
-      if (result.error) {
-        toast.error(result.error);
-        return;
-      }
-      setSelfComparison(null);
-      toast.success("Autocomparação liberada.");
     });
   };
 
@@ -284,19 +266,10 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
           </tfoot>
         </table>
       </div>
-      <ConfirmActionDialog
-        open={selfComparison !== null}
+      <SelfComparisonDialog
+        projectId={projectId}
+        request={selfComparison}
         onClose={() => setSelfComparison(null)}
-        title="Liberar autocomparação?"
-        description={
-          selfComparison
-            ? `${selfComparison.researcherName} codificou o documento ${selfComparison.docLabel}. Por padrão, quem codificou não compara o próprio documento. Liberando, essa pessoa compara a própria codificação com as demais respostas (por exemplo, a do LLM). A liberação fica registrada com seu nome, e o export marca o documento como autocomparação.`
-            : ""
-        }
-        confirmLabel="Liberar autocomparação"
-        isPending={isConfirming}
-        pendingLabel="Liberando..."
-        onConfirm={confirmSelfComparison}
       />
     </TooltipProvider>
   );
