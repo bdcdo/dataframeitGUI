@@ -1,16 +1,16 @@
 // Autocomparação em lote, pela linha de comando
-// (`scripts/self-comparison/assign.ts`). Faz o mesmo que o coordenador faz
-// clicando na tabela de atribuições e confirmando, para vários documentos de
-// uma vez: cria a comparação, liberada pelo coordenador, de documentos que o
-// próprio pesquisador codificou. Quem valida a liberação é o banco
+// (`scripts/self-comparison/assign.ts`): cria a comparação, liberada pelo
+// coordenador, de documentos que o próprio pesquisador codificou. É mais
+// estrita que o ciclo da tabela de atribuições, de propósito: em lote não há
+// quem olhe cada célula, então rascunho não conta como codificação e
+// codificação ainda aberta na rodada fica de fora em vez de ser promovida. Quem valida a liberação é o banco
 // (guard_self_comparison_approval, 20261113120000): o aprovador precisa ser
 // coordenador ou criador do projeto.
 
 import { scanComparisonBacklog } from "@/lib/auto-comparison";
-import type { ComparisonMode } from "@/lib/comparison-set";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 
-export type SelfComparisonSource = { kind: "backlog" } | { kind: "documents"; ids: string[] };
+type SelfComparisonSource = { kind: "backlog" } | { kind: "documents"; ids: string[] };
 
 export interface SelfComparisonArgs {
   projectId: string;
@@ -20,7 +20,7 @@ export interface SelfComparisonArgs {
   dryRun: boolean;
 }
 
-export const SELF_COMPARISON_USAGE =
+const SELF_COMPARISON_USAGE =
   "uso: npm run assign:self-comparison -- --project <id> --user <id> --approved-by <id> " +
   "(--backlog | --documents <id,id,...>) [--dry-run]";
 
@@ -51,21 +51,20 @@ export function parseSelfComparisonArgs(argv: readonly string[]): SelfComparison
   const approverId = values.get("--approved-by");
   const documents = values.get("--documents");
   if (!projectId || !userId || !approverId || backlog === (documents !== undefined)) return null;
-  const source: SelfComparisonSource = backlog
-    ? { kind: "backlog" }
-    : { kind: "documents", ids: documents!.split(",").map((id) => id.trim()).filter(Boolean) };
-  if (source.kind === "documents" && source.ids.length === 0) return null;
-  return { projectId, userId, approverId, source, dryRun };
+  if (backlog) return { projectId, userId, approverId, source: { kind: "backlog" }, dryRun };
+  const ids = (documents ?? "").split(",").map((id) => id.trim()).filter(Boolean);
+  if (ids.length === 0) return null;
+  return { projectId, userId, approverId, source: { kind: "documents", ids }, dryRun };
 }
 
-export type SkipReason =
+type SkipReason =
   | "documento fora da base"
   | "não codificou"
   | "codificação em aberto na rodada"
   | "comparação ativa na rodada"
   | "já tem comparação nesta rodada";
 
-export interface SelfComparisonPlan {
+interface SelfComparisonPlan {
   assign: string[];
   skipped: { documentId: string; reason: SkipReason }[];
 }
@@ -86,17 +85,18 @@ export function planSelfComparisons(input: {
   activeComparisonThisRound: ReadonlySet<string>;
   userComparisonThisRound: ReadonlySet<string>;
 }): SelfComparisonPlan {
-  const checks: [ReadonlySet<string>, boolean, SkipReason][] = [
-    [input.inBase, false, "documento fora da base"],
-    [input.codedByUser, false, "não codificou"],
-    [input.openCodingThisRound, true, "codificação em aberto na rodada"],
-    [input.activeComparisonThisRound, true, "comparação ativa na rodada"],
-    [input.userComparisonThisRound, true, "já tem comparação nesta rodada"],
-  ];
+  const skipReason = (id: string): SkipReason | null => {
+    if (!input.inBase.has(id)) return "documento fora da base";
+    if (!input.codedByUser.has(id)) return "não codificou";
+    if (input.openCodingThisRound.has(id)) return "codificação em aberto na rodada";
+    if (input.activeComparisonThisRound.has(id)) return "comparação ativa na rodada";
+    if (input.userComparisonThisRound.has(id)) return "já tem comparação nesta rodada";
+    return null;
+  };
   const plan: SelfComparisonPlan = { assign: [], skipped: [] };
   for (const documentId of new Set(input.documentIds)) {
-    const failed = checks.find(([set, skipWhenPresent]) => set.has(documentId) === skipWhenPresent);
-    if (failed) plan.skipped.push({ documentId, reason: failed[2] });
+    const reason = skipReason(documentId);
+    if (reason) plan.skipped.push({ documentId, reason });
     else plan.assign.push(documentId);
   }
   return plan;
@@ -121,8 +121,18 @@ async function backlogDocumentsCodedBy(
   if (mode !== "compare_humans" && mode !== "compare_llm") {
     throw new Error(`o projeto está em '${mode}', sem backlog de comparação; use --documents`);
   }
-  const backlog = await scanComparisonBacklog(client, projectId, mode as ComparisonMode);
+  const backlog = await scanComparisonBacklog(client, projectId, mode);
   return backlog.filter((entry) => entry.coderIds.has(userId)).map((entry) => entry.documentId);
+}
+
+/** As linhas que o script imprime: o total e cada documento, com a razão. */
+export function formatSelfComparisonPlan(plan: SelfComparisonPlan, dryRun: boolean): string[] {
+  const [verb, suffix] = dryRun ? ["atribuiria", ", nada gravado"] : ["atribuiu", ""];
+  return [
+    `${verb} ${plan.assign.length} autocomparação(ões)${suffix}`,
+    ...plan.assign.map((id) => `  + ${id}`),
+    ...plan.skipped.map(({ documentId, reason }) => `  - ${documentId}: ${reason}`),
+  ];
 }
 
 /** Planeja e, fora do `dryRun`, grava as autocomparações num único INSERT. */
@@ -201,4 +211,33 @@ export async function assignSelfComparisons(
   }
   if (error) throw new Error(`assignments: ${error.message}`);
   return plan;
+}
+
+/**
+ * O `main` do script: 2 para uso inválido ou ambiente sem credenciais, 1 para
+ * falha, 0 para sucesso. Cliente e saída entram por parâmetro para o teste.
+ */
+export async function runSelfComparisonCli(
+  argv: readonly string[],
+  makeClient: () => SupabaseServerClient | null,
+  out: { log: (line: string) => void; error: (line: string) => void; missingEnv: string },
+): Promise<number> {
+  const args = parseSelfComparisonArgs(argv);
+  if (!args) {
+    out.error(SELF_COMPARISON_USAGE);
+    return 2;
+  }
+  const client = makeClient();
+  if (!client) {
+    out.error(out.missingEnv);
+    return 2;
+  }
+  try {
+    const plan = await assignSelfComparisons(client, args);
+    for (const line of formatSelfComparisonPlan(plan, args.dryRun)) out.log(line);
+    return 0;
+  } catch (e) {
+    out.error(e instanceof Error ? e.message : String(e));
+    return 1;
+  }
 }

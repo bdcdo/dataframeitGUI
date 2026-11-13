@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assignSelfComparisons,
   parseSelfComparisonArgs,
+  formatSelfComparisonPlan,
   planSelfComparisons,
+  runSelfComparisonCli,
   type SelfComparisonArgs,
 } from "@/lib/self-comparison-assign";
 import { makeSupabaseMock, type TableResults, type WriteCall } from "@/actions/__tests__/supabase-mock";
@@ -51,6 +53,18 @@ describe("planSelfComparisons", () => {
         { documentId: "feito", reason: "já tem comparação nesta rodada" },
       ],
     });
+  });
+});
+
+describe("formatSelfComparisonPlan", () => {
+  it("diz o que atribuiu (ou atribuiria) e por que pulou cada documento", () => {
+    const plan = { assign: ["d1"], skipped: [{ documentId: "d2", reason: "não codificou" as const }] };
+    expect(formatSelfComparisonPlan(plan, true)).toEqual([
+      "atribuiria 1 autocomparação(ões), nada gravado",
+      "  + d1",
+      "  - d2: não codificou",
+    ]);
+    expect(formatSelfComparisonPlan(plan, false)[0]).toBe("atribuiu 1 autocomparação(ões)");
   });
 });
 
@@ -126,5 +140,39 @@ describe("assignSelfComparisons", () => {
       { error: { code: "23505", message: "duplicate key value violates unique constraint" } },
     ];
     await expect(run(results, args())).rejects.toThrow(/Nada foi gravado; rode de novo/);
+  });
+});
+
+describe("runSelfComparisonCli", () => {
+  const capture = () => {
+    const lines: string[] = [];
+    return { lines, out: { log: (l: string) => lines.push(l), error: (l: string) => lines.push(`ERRO ${l}`), missingEnv: "sem env" } };
+  };
+  const client = (results: TableResults) => () => makeSupabaseMock({ tableResults: results }) as unknown as SupabaseServerClient;
+
+  it("uso inválido e ambiente sem credenciais saem com 2", async () => {
+    const a = capture();
+    expect(await runSelfComparisonCli(["--backlog"], client({}), a.out)).toBe(2);
+    expect(a.lines[0]).toMatch(/^ERRO uso:/);
+    const b = capture();
+    expect(await runSelfComparisonCli([...BASE, "--backlog"], () => null, b.out)).toBe(2);
+    expect(b.lines).toEqual(["ERRO sem env"]);
+  });
+
+  it("imprime o plano com 0, e falha do banco sai com 1", async () => {
+    const ok = capture();
+    const results: TableResults = {
+      projects: { data: { automation_mode: "compare_llm", current_round_id: "r1" } },
+      documents: { data: [{ id: "d1" }] },
+      responses: { data: [{ document_id: "d1" }] },
+      assignments: { data: [] },
+    };
+    expect(await runSelfComparisonCli([...BASE, "--documents", "d1", "--dry-run"], client(results), ok.out)).toBe(0);
+    expect(ok.lines).toEqual(["atribuiria 1 autocomparação(ões), nada gravado", "  + d1"]);
+
+    const fail = capture();
+    const broken: TableResults = { projects: { error: { message: "boom" } } };
+    expect(await runSelfComparisonCli([...BASE, "--documents", "d1"], client(broken), fail.out)).toBe(1);
+    expect(fail.lines).toEqual(["ERRO projects: boom"]);
   });
 });
