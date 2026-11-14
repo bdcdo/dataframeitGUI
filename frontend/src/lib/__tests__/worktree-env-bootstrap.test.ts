@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -39,7 +40,11 @@ describe("bootstrap de ambiente para worktrees", () => {
   let bootstrap: string;
 
   beforeEach(() => {
-    temporaryRoot = mkdtempSync(join(tmpdir(), "dataframeit-worktree-env-"));
+    // realpath: no macOS o tmpdir é `/var/...`, symlink para `/private/var/...`,
+    // e o bootstrap grava o alvo canônico do symlink.
+    temporaryRoot = realpathSync(
+      mkdtempSync(join(tmpdir(), "dataframeit-worktree-env-")),
+    );
     repository = join(temporaryRoot, "repository");
     fixtureFrontend = join(repository, "frontend");
     sourceFrontend = join(temporaryRoot, "source-frontend");

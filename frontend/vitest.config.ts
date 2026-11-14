@@ -10,6 +10,10 @@ export default defineConfig({
     // que cabe nos 5 s de timeout com a suíte disputando a CPU
     // (src/test-utils/cpu-budget.ts).
     setupFiles: ["src/test-utils/git-env.setup.ts", "src/test-utils/cpu-budget.setup.ts"],
+    // Node 25+ liga o `localStorage` nativo (vale `undefined` sem
+    // `--localstorage-file`), e o ambiente jsdom não sobrescreve global que já
+    // existe. No Node do `.nvmrc` a flag é inócua.
+    execArgv: ["--no-experimental-webstorage"],
   },
   resolve: {
     alias: {

@@ -3,7 +3,6 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
-  readlinkSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -15,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acquireFixtureLock,
   createFixtureLockHolder,
+  currentPidNamespace,
   DEFAULT_FIXTURE_LOCK_WAIT_MS,
   defaultFixtureLockDir,
   fixtureLockPath,
@@ -26,7 +26,7 @@ import {
 } from "../../../e2e/fixture-lock";
 
 const MODULE_PATH = resolve(__dirname, "../../../e2e/fixture-lock.ts");
-const PID_NAMESPACE = readlinkSync("/proc/self/ns/pid");
+const PID_NAMESPACE = currentPidNamespace();
 
 let dir: string;
 

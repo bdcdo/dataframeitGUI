@@ -117,7 +117,7 @@ export function fixtureLockPath(dir: string, key: string): string {
   return join(dir, `${key.replace(/[^A-Za-z0-9_-]/g, "_")}.lock`);
 }
 
-function currentPidNamespace(): string | undefined {
+export function currentPidNamespace(): string | undefined {
   try {
     return readlinkSync("/proc/self/ns/pid");
   } catch {
