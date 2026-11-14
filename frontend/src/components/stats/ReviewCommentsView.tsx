@@ -17,6 +17,7 @@ import { CommentsSplitView } from "./CommentsSplitView";
 import { EditFieldDialog, type PendingSuggestion } from "./EditFieldDialog";
 import { SuggestFieldDialog } from "./SuggestFieldDialog";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
+import { FieldFilterSelect } from "@/components/shared/FieldFilterSelect";
 import {
   resolveReviewComment,
   reopenReviewComment,
@@ -270,19 +271,12 @@ export function ReviewCommentsView({
           onChange={(e) => setSearchQuery(e.target.value)}
           className="w-56"
         />
-        <Select value={fieldFilter} onValueChange={setFieldFilter}>
-          <SelectTrigger className="w-44">
-            <SelectValue placeholder="Campo" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os campos</SelectItem>
-            {fields.map((f) => (
-              <SelectItem key={f.name} value={f.name}>
-                {f.description || f.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FieldFilterSelect
+          value={fieldFilter}
+          onChange={setFieldFilter}
+          fields={fields}
+          className="w-44"
+        />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-32">
             <SelectValue />

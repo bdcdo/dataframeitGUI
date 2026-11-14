@@ -9,9 +9,8 @@ export function CurrentHumanAnswers({ answers }: { answers: readonly CurrentHuma
     <p className="text-xs font-medium">Pesquisadores agora:</p>
     {answers && answers.length > 0 ? (
       <ul className="text-sm">
-        {answers.map((answer, index) => (
-          // Nome não é único (dois "Pesquisador" sem nome): o índice desempata.
-          <li key={`${answer.name}-${index}`}>
+        {answers.map((answer) => (
+          <li key={answer.responseId}>
             <span className="font-medium">{answer.name}:</span> {answer.answer || "(vazio)"}
           </li>
         ))}

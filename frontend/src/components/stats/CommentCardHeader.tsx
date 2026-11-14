@@ -84,30 +84,36 @@ export function CommentCardHeader({
         </Badge>
       </div>
 
-      {/* Metadados do campo (contexto para avaliacao do schema) */}
-      {(comment.fieldType || comment.fieldHelpText || (comment.fieldOptions && comment.fieldOptions.length > 0)) && (
-        <div className="space-y-1 rounded-md bg-muted/30 px-3 py-2">
-          {comment.fieldType && (
-            <Badge className={cn("text-[10px] px-1 py-0", TYPE_COLORS[comment.fieldType])}>
-              {TYPE_LABELS[comment.fieldType]}
+      <FieldMetadata comment={comment} />
+    </>
+  );
+}
+
+// Metadados do campo (contexto para avaliacao do schema); some quando o campo
+// nao tem nenhum.
+function FieldMetadata({ comment }: { comment: ReviewComment }) {
+  const { fieldType, fieldHelpText } = comment;
+  const options = comment.fieldOptions ?? [];
+  if (!fieldType && !fieldHelpText && options.length === 0) return null;
+  return (
+    <div className="space-y-1 rounded-md bg-muted/30 px-3 py-2">
+      {fieldType && (
+        <Badge className={cn("text-[10px] px-1 py-0", TYPE_COLORS[fieldType])}>
+          {TYPE_LABELS[fieldType]}
+        </Badge>
+      )}
+      {fieldHelpText && (
+        <p className="text-xs italic text-muted-foreground">{fieldHelpText}</p>
+      )}
+      {options.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {options.map((opt) => (
+            <Badge key={opt} variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
+              {opt}
             </Badge>
-          )}
-          {comment.fieldHelpText && (
-            <p className="text-xs italic text-muted-foreground">
-              {comment.fieldHelpText}
-            </p>
-          )}
-          {comment.fieldOptions && comment.fieldOptions.length > 0 && (
-            <div className="flex flex-wrap gap-1">
-              {comment.fieldOptions.map((opt) => (
-                <Badge key={opt} variant="outline" className="text-[10px] px-1.5 py-0 font-normal">
-                  {opt}
-                </Badge>
-              ))}
-            </div>
-          )}
+          ))}
         </div>
       )}
-    </>
+    </div>
   );
 }

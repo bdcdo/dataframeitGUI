@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { Maximize2 } from "lucide-react";
-import { CompareFieldFilter } from "./CompareFieldFilter";
+import { FieldFilterSelect } from "@/components/shared/FieldFilterSelect";
 import { CompareFilters } from "./CompareFilters";
 import { DocPager } from "@/components/shared/DocPager";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
@@ -85,7 +85,13 @@ export function CompareNav({
           latestMajorLabel={latestMajorLabel}
           guardNavigation={guardNavigation}
         />
-        <CompareFieldFilter value={filter} onChange={onFilterChange} fields={fields} />
+        <FieldFilterSelect
+          value={filter}
+          onChange={onFilterChange}
+          fields={fields}
+          className="h-8 w-[200px] text-xs"
+          placeholder="Filtrar campos"
+        />
         <DocPager index={docIndex} total={totalDocs} onNavigate={onDocNavigate} />
         {projectId && documentId && (
           <RunLlmButton

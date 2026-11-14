@@ -93,6 +93,8 @@ export interface LlmError {
 }
 
 export interface CurrentHumanAnswer {
+  /** Id da resposta: chave estável na lista (dois "Pesquisador" sem nome empatam no nome). */
+  responseId: string;
   name: string;
   answer: string;
 }
@@ -626,7 +628,7 @@ function currentHumansOf(docId: string, ctx: MetricsContext): MetricsResponse[] 
 // veredito anterior.
 function currentHumanAnswersOf(docId: string, fieldName: string, ctx: MetricsContext): CurrentHumanAnswer[] {
   return currentHumansOf(docId, ctx)
-    .map((response) => ({ name: response.respondent_name || "Pesquisador", answer: formatAnswer(response.answers?.[fieldName]) }))
+    .map((response) => ({ responseId: response.id, name: response.respondent_name || "Pesquisador", answer: formatAnswer(response.answers?.[fieldName]) }))
     .sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 }
 

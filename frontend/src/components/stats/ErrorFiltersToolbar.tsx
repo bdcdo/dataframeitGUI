@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { FieldFilterSelect } from "@/components/shared/FieldFilterSelect";
 import type {
   DatePreset,
   LlmErrorFilteringControls,
@@ -52,19 +53,12 @@ export function ErrorFiltersToolbar({
         onChange={(e) => setErrorSearchQuery(e.target.value)}
         className="w-56"
       />
-      <Select value={errorFieldFilter} onValueChange={setErrorFieldFilter}>
-        <SelectTrigger className="w-44">
-          <SelectValue placeholder="Campo" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">Todos os campos</SelectItem>
-          {fields.map((f) => (
-            <SelectItem key={f.name} value={f.name}>
-              {f.description || f.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <FieldFilterSelect
+        value={errorFieldFilter}
+        onChange={setErrorFieldFilter}
+        fields={fields}
+        className="w-44"
+      />
       <Select value={errorStatusFilter} onValueChange={setErrorStatusFilter}>
         <SelectTrigger className="w-40" aria-label="Status dos casos">
           <SelectValue />

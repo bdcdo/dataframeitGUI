@@ -30,6 +30,20 @@ const SUBFIELD_RULE_LABELS: Record<string, string> = {
   at_least_one: "Pelo menos um",
 };
 
+const yesNo = (v: unknown) => (v ? "Sim" : "Não");
+
+// Propriedades de valor curto e enumerável: o diff é um par de pílulas
+// antes → depois, e só o formatador muda.
+const PILL_FORMATTERS: Partial<
+  Record<FieldPropertyDiff["property"], (v: unknown) => string>
+> = {
+  type: formatType,
+  target: formatTarget,
+  required: yesNo,
+  allow_other: yesNo,
+  subfield_rule: (v) => SUBFIELD_RULE_LABELS[v as string] ?? "—",
+};
+
 // Entradas de escopo de projeto — `(ordem)` e `(projeto)` — não descrevem o
 // estado de campo nenhum: seus before/after são `{order: [...]}` e
 // `{major, minor, patch}`. `diffPydanticField` não reconhece nenhuma dessas
@@ -76,24 +90,6 @@ export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDi
     return <ProjectScopedChange entry={entry} />;
   }
 
-  const beforeName =
-    (entry.beforeValue?.name as string | undefined) ?? entry.fieldName;
-  const afterName =
-    (entry.afterValue?.name as string | undefined) ?? entry.fieldName;
-
-  const displayName =
-    kind === "renamed" ? (
-      <span className="font-mono text-xs">
-        <span className="text-muted-foreground line-through">{beforeName}</span>
-        <ArrowRight className="mx-1 inline size-3 text-muted-foreground" />
-        <span className="font-medium text-foreground">{afterName}</span>
-      </span>
-    ) : (
-      <span className="font-mono text-xs font-medium text-foreground">
-        {kind === "added" ? afterName : beforeName}
-      </span>
-    );
-
   const bodyVisible = expanded && (diffs.length > 0 || kind === "added" || kind === "removed");
 
   return (
@@ -104,7 +100,7 @@ export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDi
         className="flex w-full items-center gap-2 rounded-md p-1 text-left hover:bg-muted/40"
       >
         <KindIcon kind={kind} />
-        {displayName}
+        <FieldChangeName entry={entry} kind={kind} />
         <div className="flex flex-1 flex-wrap items-center gap-1">
           {diffs.map((d) => (
             <Badge
@@ -148,6 +144,34 @@ export function FieldChangeDiff({ entry, defaultExpanded = true }: FieldChangeDi
         </div>
       )}
     </div>
+  );
+}
+
+function FieldChangeName({
+  entry,
+  kind,
+}: {
+  entry: SchemaChangeEntry;
+  kind: FieldChangeKind;
+}) {
+  const beforeName =
+    (entry.beforeValue?.name as string | undefined) ?? entry.fieldName;
+  const afterName =
+    (entry.afterValue?.name as string | undefined) ?? entry.fieldName;
+
+  if (kind === "renamed") {
+    return (
+      <span className="font-mono text-xs">
+        <span className="text-muted-foreground line-through">{beforeName}</span>
+        <ArrowRight className="mx-1 inline size-3 text-muted-foreground" />
+        <span className="font-medium text-foreground">{afterName}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="font-mono text-xs font-medium text-foreground">
+      {kind === "added" ? afterName : beforeName}
+    </span>
   );
 }
 
@@ -247,37 +271,11 @@ function PropertyDiff({ diff }: { diff: FieldPropertyDiff }) {
       </DiffSection>
     );
   }
-  if (diff.property === "type") {
+  const formatPill = PILL_FORMATTERS[diff.property];
+  if (formatPill) {
     return (
       <DiffSection label={label}>
-        <PillDiff before={formatType(diff.before)} after={formatType(diff.after)} />
-      </DiffSection>
-    );
-  }
-  if (diff.property === "target") {
-    return (
-      <DiffSection label={label}>
-        <PillDiff before={formatTarget(diff.before)} after={formatTarget(diff.after)} />
-      </DiffSection>
-    );
-  }
-  if (diff.property === "required" || diff.property === "allow_other") {
-    return (
-      <DiffSection label={label}>
-        <PillDiff
-          before={diff.before ? "Sim" : "Não"}
-          after={diff.after ? "Sim" : "Não"}
-        />
-      </DiffSection>
-    );
-  }
-  if (diff.property === "subfield_rule") {
-    return (
-      <DiffSection label={label}>
-        <PillDiff
-          before={SUBFIELD_RULE_LABELS[diff.before as string] ?? "—"}
-          after={SUBFIELD_RULE_LABELS[diff.after as string] ?? "—"}
-        />
+        <PillDiff before={formatPill(diff.before)} after={formatPill(diff.after)} />
       </DiffSection>
     );
   }

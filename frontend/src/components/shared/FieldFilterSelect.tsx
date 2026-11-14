@@ -8,17 +8,28 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-interface CompareFieldFilterProps {
+interface FieldFilterSelectProps {
   value: string;
   onChange: (value: string) => void;
   fields: { name: string; description: string }[];
+  /** Classes do gatilho: cada tela tem a sua largura e densidade. */
+  className?: string;
+  placeholder?: string;
 }
 
-export function CompareFieldFilter({ value, onChange, fields }: CompareFieldFilterProps) {
+// Filtro "Todos os campos" / um campo do schema, comum à Comparação, ao LLM
+// Insights e aos Comentários. O valor "all" é o sem filtro.
+export function FieldFilterSelect({
+  value,
+  onChange,
+  fields,
+  className,
+  placeholder = "Campo",
+}: FieldFilterSelectProps) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-[200px] text-xs">
-        <SelectValue placeholder="Filtrar campos" />
+      <SelectTrigger className={className}>
+        <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="all">Todos os campos</SelectItem>

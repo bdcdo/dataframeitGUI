@@ -223,7 +223,7 @@ describe("decisão individual em Insights", () => {
   // confirmação o envia para o RPC conferir.
   it("Ambos corretos com o valor comum mostra o valor e o envia", async () => {
     mocks.prepare.mockResolvedValue({ context: row.context });
-    show({ ...errorCase(), currentHumanAnswers: [{ name: "Ana", answer: "LLM" }], bothCorrectValue: { value: "LLM" } });
+    show({ ...errorCase(), currentHumanAnswers: [{ responseId: "r1", name: "Ana", answer: "LLM" }], bothCorrectValue: { value: "LLM" } });
     await userEvent.click(screen.getByRole("button", { name: "Ambos corretos" }));
     const dialog = await screen.findByRole("dialog");
     // O contexto é pedido com a decisão e o valor comum: com eles o servidor

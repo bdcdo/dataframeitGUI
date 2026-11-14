@@ -363,7 +363,10 @@ describe("fila: respostas atuais dos pesquisadores no card", () => {
 
   it("caso vivo: cada pesquisador corrente com a resposta formatada, em ordem de nome", () => {
     const { errors } = run({ responses: people, reviews: [review({ verdict: "A", chosen_response_id: "old" })] });
-    expect(errors[0].currentHumanAnswers).toEqual([{ name: "Ana", answer: "b " }, { name: "Beto", answer: "B" }]);
+    expect(errors[0].currentHumanAnswers).toEqual([
+      { responseId: "rh2", name: "Ana", answer: "b " },
+      { responseId: "rh", name: "Beto", answer: "B" },
+    ]);
   });
 
   it("decisão ressuscitada também mostra as respostas atuais", () => {
@@ -372,7 +375,7 @@ describe("fila: respostas atuais dos pesquisadores no card", () => {
       reviews: [review({ id: "valid", verdict: "A" })],
       errorResolutions: new Map([["doc1:x", decision("both_correct", "valid")]]),
     });
-    expect(errors[0].currentHumanAnswers).toEqual([{ name: "Beto", answer: "A" }]);
+    expect(errors[0].currentHumanAnswers).toEqual([{ responseId: "rh", name: "Beto", answer: "A" }]);
   });
 });
 

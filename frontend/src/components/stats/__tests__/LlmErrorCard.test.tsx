@@ -158,13 +158,24 @@ describe("LlmErrorCard: respostas atuais dos pesquisadores", () => {
   }
 
   it("lista cada pesquisador com a resposta atual, ao lado do veredito anterior", () => {
-    renderWith([{ name: "Ana", answer: "Sim" }, { name: "Beto", answer: "" }]);
+    renderWith([{ responseId: "r1", name: "Ana", answer: "Sim" }, { responseId: "r2", name: "Beto", answer: "" }]);
     const block = screen.getByText("Pesquisadores agora:").parentElement!;
     expect(block.textContent).toContain("Ana");
     expect(block.textContent).toContain("Sim");
     expect(block.textContent).toContain("Beto");
     expect(block.textContent).toContain("(vazio)");
     expect(screen.getByText("Veredito anterior:")).toBeTruthy();
+  });
+
+  // Dois pesquisadores sem nome viram ambos "Pesquisador": a chave da lista é
+  // o id da resposta, não o nome (react-doctor no-array-index-as-key).
+  it("lista os dois quando o nome empata", () => {
+    renderWith([
+      { responseId: "r1", name: "Pesquisador", answer: "Sim" },
+      { responseId: "r2", name: "Pesquisador", answer: "Não" },
+    ]);
+    const items = screen.getByText("Pesquisadores agora:").parentElement!.querySelectorAll("li");
+    expect([...items].map((li) => li.textContent)).toEqual(["Pesquisador: Sim", "Pesquisador: Não"]);
   });
 
   it("sem resposta humana corrente, diz isso em vez de sumir", () => {

@@ -5,6 +5,8 @@ import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { FieldChangeDiff } from "../FieldChangeDiff";
 import { ORDER_LOG_FIELD_NAME, PROJECT_LOG_FIELD_NAME } from "@/lib/schema-utils";
 import type { SchemaChangeEntry } from "@/lib/types";
+import { propertyLabel } from "@/lib/schema-change-format";
+import { TYPE_LABELS } from "@/lib/field-labels";
 
 function entry(over: Partial<SchemaChangeEntry>): SchemaChangeEntry {
   return {
@@ -148,5 +150,78 @@ describe("FieldChangeDiff — obrigatoriedade de subcampo", () => {
     );
 
     expect(screen.getByText(/\+ Doença \*/)).toBeTruthy();
+  });
+});
+
+// Corpo de uma propriedade: o rótulo (caixa alta) e o par antes → depois.
+function propertySection(property: Parameters<typeof propertyLabel>[0]): string {
+  const label = screen
+    .getAllByText(propertyLabel(property))
+    .find((el) => el.className.includes("uppercase"));
+  return label!.parentElement!.textContent!.slice(propertyLabel(property).length);
+}
+
+describe("FieldChangeDiff — propriedades de valor curto (pílulas)", () => {
+  const base = { name: "q1", type: "single", description: "Campo", options: ["A", "B"] };
+
+  it.each([
+    ["type", { type: "single" }, { type: "multi" }, `${TYPE_LABELS.single}${TYPE_LABELS.multi}`],
+    ["target", { target: "all" }, { target: "llm_only" }, "TodosSó LLM"],
+    ["required", { required: false }, { required: true }, "NãoSim"],
+    ["allow_other", { allow_other: true }, { allow_other: false }, "SimNão"],
+    ["subfield_rule", { subfield_rule: "all" }, { subfield_rule: "at_least_one" }, "Todos obrigatóriosPelo menos um"],
+  ] as const)("%s mostra antes → depois formatados", (property, before, after, text) => {
+    render(
+      <FieldChangeDiff
+        entry={entry({ beforeValue: { ...base, ...before }, afterValue: { ...base, ...after } })}
+      />,
+    );
+    expect(propertySection(property)).toBe(text);
+  });
+
+  it("texto curto (descrição) cai no diff em linha", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({ beforeValue: base, afterValue: { ...base, description: "Novo" } })}
+      />,
+    );
+    expect(propertySection("description")).toBe("Campo→Novo");
+  });
+});
+
+describe("FieldChangeDiff — nome no cabeçalho", () => {
+  it("renomeado mostra o nome antigo riscado e o novo", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          beforeValue: { name: "q1", type: "text", description: "Campo" },
+          afterValue: { name: "q2", type: "text", description: "Campo" },
+        })}
+      />,
+    );
+    expect(screen.getByLabelText("Campo renomeado")).toBeTruthy();
+    const old = screen
+      .getAllByText("q1")
+      .find((el) => el.className.includes("line-through"));
+    expect(old).toBeTruthy();
+    expect(old!.parentElement!.textContent).toBe("q1q2");
+  });
+
+  it("adicionado mostra o nome novo; removido, o antigo", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({ fieldName: "x", beforeValue: {}, afterValue: { name: "novo", type: "text", description: "d" } })}
+      />,
+    );
+    expect(screen.getByLabelText("Campo novo")).toBeTruthy();
+    expect(screen.getAllByText("novo").length).toBeGreaterThan(0);
+    cleanup();
+    render(
+      <FieldChangeDiff
+        entry={entry({ fieldName: "x", beforeValue: { name: "velho", type: "text", description: "d" }, afterValue: {} })}
+      />,
+    );
+    expect(screen.getByLabelText("Campo removido")).toBeTruthy();
+    expect(screen.getAllByText("velho").length).toBeGreaterThan(0);
   });
 });

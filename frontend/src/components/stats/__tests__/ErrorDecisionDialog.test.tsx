@@ -210,7 +210,7 @@ describe("ErrorDecisionDialog — Ambos corretos", () => {
   it("com o valor comum, diz que ele vai ao gabarito no lugar do veredito", async () => {
     const onConfirm = vi.fn();
     render(<ErrorDecisionDialog
-      pending={{ error: errorCase("Sim", { currentHumanAnswers: [{ name: "Ana", answer: "Não" }, { name: "Beto", answer: "não" }], bothCorrectValue: { value: "Não" } }),
+      pending={{ error: errorCase("Sim", { currentHumanAnswers: [{ responseId: "r1", name: "Ana", answer: "Não" }, { responseId: "r2", name: "Beto", answer: "não" }], bothCorrectValue: { value: "Não" } }),
         decision: "both_correct", context: { ...base.context!, field_definition: yesNo as ErrorResolutionContext["field_definition"], llm_value: { present: true, value: "Não" } } }}
       isPending={false} onClose={() => {}} onConfirm={onConfirm} />);
     const dialog = screen.getByRole("dialog");

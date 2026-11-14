@@ -25,6 +25,7 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { AddNoteButton } from "@/components/shared/AddNoteButton";
+import { FieldFilterSelect } from "@/components/shared/FieldFilterSelect";
 import { JustificationToggle } from "@/components/shared/JustificationToggle";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewedDocument } from "@/lib/reviews/types";
@@ -173,19 +174,12 @@ export function GabaritoByDocument({
           }}
           className="w-56"
         />
-        <Select value={fieldFilter} onValueChange={handleFilterChange(setFieldFilter)}>
-          <SelectTrigger className="w-44">
-            <SelectValue placeholder="Campo" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os campos</SelectItem>
-            {fields.map((f) => (
-              <SelectItem key={f.name} value={f.name}>
-                {f.description || f.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FieldFilterSelect
+          value={fieldFilter}
+          onChange={handleFilterChange(setFieldFilter)}
+          fields={fields}
+          className="w-44"
+        />
         <Select
           value={respondentFilter}
           onValueChange={handleFilterChange(setRespondentFilter)}
