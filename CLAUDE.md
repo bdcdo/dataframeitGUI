@@ -79,12 +79,39 @@ Deploy e automatico a partir de merge no branch `main`. Frontend: Fly.io (app `g
 
 **Sempre trabalhar em git worktree separado**, nunca no diretorio principal: o usuario pode estar trabalhando em outra branch ali, e um `git checkout` de qualquer dos lados deixa os edits do outro no historico da branch errada. Criar no inicio da tarefa com `git worktree add ../worktrees/<descricao-curta> -b <branch-name>`, fazer la todos os edits, commits, push e `gh pr create`, e, apos o merge, remover da raiz do repositorio com `git worktree remove ../worktrees/<descricao-curta>`. Excecao: tarefas read-only puras (responder duvida, ler codigo) podem ser feitas no diretorio principal.
 
+## Estrutura do repo
+
+- `frontend/` — Next.js: `src/app` (rotas), `src/actions` (Server Actions), `src/components`, `src/lib` (lógica pura, com testes em `__tests__`), `src/hooks`; `e2e/` (Playwright), `supabase/migrations` e `supabase/tests` (suítes SQL), `scripts/` (gates e utilitários)
+- `backend/` — FastAPI: `routes/`, `services/` (LLM runner, compilador Pydantic, auth), `tests/` (pytest)
+- `docs/` — decisões (UI, banco, ferramentas de qualidade, verificação)
+- `.github/workflows/` — deploys no Fly, contratos do Fly, testes de banco, secret scan (não há job de lint e testes unitários no CI: eles rodam nos hooks locais)
+
 ## Como rodar
 
+Comandos conferidos rodando em 2026-11-14 (Node 24, uv 0.13; backend em Python 3.11 e 3.12).
+
 ```bash
-# Backend (nao esta em script de manifest)
-cd backend && uv run uvicorn main:app --reload
+# Instalar (a partir da raiz)
+(cd frontend && npm ci)            # Node >= 24.10
+(cd backend && uv sync --locked)   # Python >= 3.11 (produção usa 3.12)
+
+# Frontend (em frontend/)
+npm run lint        # eslint; hoje 0 erros e alguns warnings
+npm run typecheck   # tsc --noEmit
+npm test            # vitest run, suíte inteira; não precisa de .env
+
+# Backend (em backend/)
+uv run ruff check . && uv run ruff format --check .
+uv run mypy .
+uv run pytest -q
+
+# Servidor do backend (nao esta em script de manifest)
+uv run uvicorn main:app --reload
 ```
+
+O `test:e2e` (Clerk) e o `test:db` (Supabase local via Docker) precisam de ambiente próprio; o `test:db` também roda no `database-tests.yml`.
+
+**Commits e PRs**: mensagem no formato `tipo(escopo): descrição em português` (`feat`, `fix`, `perf`, `ci`, `test`, `refactor`, `chore`, `build`), branch com o mesmo prefixo (`feat/...`, `fix/...`), os PRs recentes entram por squash, com o número do PR no título.
 
 Demais comandos: scripts em `frontend/package.json` (`dev`, `lint`, `typecheck`, `lint:types`, `react-doctor`, `fallow`, `scan`, `test:e2e`, `invariants`, `test:db:*`). Duas ressalvas que o script nao conta: o `scan` precisa de `npm run dev` rodando, e o `test:e2e` roda permissivo na mao mas como gate fail-closed no pre-push.
 
