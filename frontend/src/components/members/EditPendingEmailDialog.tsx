@@ -51,7 +51,8 @@ export function EditPendingEmailDialog({
         toast.success("E-mail corrigido.");
       }
       onOpenChange(false);
-    } catch {
+    } catch (error) {
+      console.error("[EditPendingEmailDialog] erro ao corrigir e-mail", error);
       toast.error("Não foi possível corrigir o e-mail. Tente novamente.");
     } finally {
       setSaving(false);

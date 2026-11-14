@@ -23,16 +23,17 @@ export function AddMemberDialog({ projectId }: AddMemberDialogProps) {
       const result = await addMember(projectId, email, role);
       if (result?.error) {
         toast.error(result.error);
-      } else if (result?.pending) {
-        toast.success("Membro pré-registrado. Ele entrará no projeto ao criar conta com este e-mail.");
-        setEmail("");
-        setOpen(false);
-      } else {
-        toast.success("Membro adicionado!");
-        setEmail("");
-        setOpen(false);
+        return;
       }
-    } catch {
+      toast.success(
+        result?.pending
+          ? "Membro pré-registrado. Ele entrará no projeto ao criar conta com este e-mail."
+          : "Membro adicionado!",
+      );
+      setEmail("");
+      setOpen(false);
+    } catch (error) {
+      console.error("[AddMemberDialog] erro ao adicionar membro", error);
       toast.error("Não foi possível adicionar o membro. Tente novamente.");
     } finally {
       setLoading(false);

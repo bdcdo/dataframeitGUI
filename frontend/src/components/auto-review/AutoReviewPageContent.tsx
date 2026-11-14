@@ -98,7 +98,8 @@ export function AutoReviewPageContent({
     let result: Awaited<ReturnType<typeof submitAutoReview>>;
     try {
       result = await submitAutoReview(projectId, doc.docId, payload);
-    } catch {
+    } catch (error) {
+      console.error("[AutoReviewPageContent] erro ao enviar revisão", error);
       toast.error("Não foi possível enviar a revisão. Tente novamente.");
       return;
     } finally {

@@ -25,9 +25,14 @@ beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A rejeição é logada antes do toast; silencia a saída no teste.
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const member = {
   user_id: "member-1",
@@ -76,6 +81,7 @@ describe("EditPendingEmailDialog", () => {
         "Não foi possível corrigir o e-mail. Tente novamente.",
       ),
     );
+    expect(console.error).toHaveBeenCalled();
     const button = screen.getByRole("button", { name: "Salvar" });
     expect((button as HTMLButtonElement).disabled).toBe(false);
     expect(onOpenChange).not.toHaveBeenCalled();

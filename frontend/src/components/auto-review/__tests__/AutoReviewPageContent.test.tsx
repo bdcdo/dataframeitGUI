@@ -49,9 +49,14 @@ beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A rejeição é logada antes do toast; silencia a saída no teste.
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 const doc: AutoReviewDoc = {
   docId: "doc-1",
@@ -119,6 +124,7 @@ describe("AutoReviewPageContent — envio", () => {
         "Não foi possível enviar a revisão. Tente novamente.",
       ),
     );
+    expect(console.error).toHaveBeenCalled();
     const button = screen.getByRole("button", { name: "Enviar" });
     expect((button as HTMLButtonElement).disabled).toBe(false);
     // As escolhas ficam para o pesquisador tentar de novo.

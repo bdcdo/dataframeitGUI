@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { renderHook, act, cleanup } from "@testing-library/react";
 
 const {
@@ -408,6 +408,14 @@ describe("useArbitrationDoc — guardas e estado exposto", () => {
 // (react-doctor `no-loading-flag-reset-outside-finally`, 0.9.22). E o usuário
 // precisa ver que o envio falhou, em vez de o botão só destravar em silêncio.
 describe("useArbitrationDoc — action que rejeita", () => {
+  // A rejeição é logada antes do toast; silencia a saída no teste.
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("handleBlindSubmit avisa o erro, devolve submitting a false e não avança", async () => {
     submitBlindVerdicts.mockRejectedValue(new Error("rede"));
     const { result } = setup(makeDoc("d1", [field("f1", "q1", null)]));
@@ -418,6 +426,7 @@ describe("useArbitrationDoc — action que rejeita", () => {
     expect(toastError).toHaveBeenCalledWith(
       "Não foi possível registrar o veredito cego. Tente novamente.",
     );
+    expect(console.error).toHaveBeenCalled();
     expect(result.current.submitting).toBe(false);
     expect(refresh).not.toHaveBeenCalled();
     expect(result.current.blindChoices).toEqual({ f1: "a" });
@@ -437,6 +446,7 @@ describe("useArbitrationDoc — action que rejeita", () => {
     expect(toastError).toHaveBeenCalledWith(
       "Não foi possível enviar o veredito final. Tente novamente.",
     );
+    expect(console.error).toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(result.current.submitting).toBe(false);
     expect(onNavigate).not.toHaveBeenCalled();

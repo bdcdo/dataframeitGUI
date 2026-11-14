@@ -22,9 +22,14 @@ beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // A rejeição é logada antes do toast; silencia a saída no teste.
+  vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 async function submitMember() {
   const user = userEvent.setup();
@@ -50,6 +55,33 @@ describe("AddMemberDialog", () => {
     );
   });
 
+  it("pré-registra quem ainda não tem conta e fecha o diálogo", async () => {
+    mocks.addMember.mockResolvedValue({ pending: true });
+
+    await submitMember();
+
+    await waitFor(() =>
+      expect(mocks.toastSuccess).toHaveBeenCalledWith(
+        "Membro pré-registrado. Ele entrará no projeto ao criar conta com este e-mail.",
+      ),
+    );
+    await waitFor(() => expect(screen.queryByPlaceholderText("Email")).toBeNull());
+  });
+
+  it("mostra o erro retornado pela action e mantém o diálogo", async () => {
+    mocks.addMember.mockResolvedValue({ error: "Usuário já é membro deste projeto." });
+
+    await submitMember();
+
+    await waitFor(() =>
+      expect(mocks.toastError).toHaveBeenCalledWith("Usuário já é membro deste projeto."),
+    );
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    expect((screen.getByPlaceholderText("Email") as HTMLInputElement).value).toBe(
+      "ana@example.com",
+    );
+  });
+
   it("libera o botão e informa erro quando a action rejeita", async () => {
     mocks.addMember.mockRejectedValue(new Error("network failure"));
 
@@ -60,8 +92,13 @@ describe("AddMemberDialog", () => {
         "Não foi possível adicionar o membro. Tente novamente.",
       ),
     );
+    expect(console.error).toHaveBeenCalled();
     const button = screen.getByRole("button", { name: "Adicionar" });
     expect((button as HTMLButtonElement).disabled).toBe(false);
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    // O diálogo segue aberto com o e-mail digitado, para tentar de novo.
+    expect((screen.getByPlaceholderText("Email") as HTMLInputElement).value).toBe(
+      "ana@example.com",
+    );
   });
 });
