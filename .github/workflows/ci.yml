@@ -1,0 +1,69 @@
+name: CI
+
+# Lint, typecheck e testes unitários do frontend e do backend. Os mesmos
+# comandos rodam nos hooks locais (.pre-commit-config.yaml), mas `--no-verify`,
+# a edição pela web e uma máquina sem `pre-commit install` os pulam; aqui eles
+# rodam no servidor. Sem deploy e sem segredos: e2e (Clerk) e test:db (Supabase
+# local) ficam fora — o test:db tem workflow próprio (database-tests.yml).
+#
+# Sem filtro de `paths`, pelo mesmo motivo do fly-contracts.yml: um check que
+# não dispara fica "Expected" para sempre se um dia virar obrigatório (#649).
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-e-testes:
+    name: Lint e testes
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Backend primeiro: é o lado rápido (~1 min) e falha cedo.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # Mesma versão da imagem de produção (backend/Dockerfile).
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: Backend — instalar
+        working-directory: backend
+        run: uv sync --locked
+      - name: Backend — ruff
+        working-directory: backend
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Backend — mypy
+        working-directory: backend
+        run: uv run mypy .
+      - name: Backend — pytest
+        working-directory: backend
+        run: uv run pytest -q
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.10.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Frontend — instalar
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend — eslint
+        working-directory: frontend
+        run: npm run lint
+      - name: Frontend — typecheck
+        working-directory: frontend
+        run: npm run typecheck
+      - name: Frontend — vitest
+        working-directory: frontend
+        run: npm test
