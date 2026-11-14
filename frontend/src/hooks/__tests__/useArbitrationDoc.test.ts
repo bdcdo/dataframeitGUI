@@ -405,24 +405,41 @@ describe("useArbitrationDoc — guardas e estado exposto", () => {
 
 // Uma action que rejeita (rede, erro do servidor) não pode deixar `submitting`
 // preso em true: o botão de envio ficaria desabilitado até recarregar a página
-// (react-doctor `no-loading-flag-reset-outside-finally`, 0.9.22).
+// (react-doctor `no-loading-flag-reset-outside-finally`, 0.9.22). E o usuário
+// precisa ver que o envio falhou, em vez de o botão só destravar em silêncio.
 describe("useArbitrationDoc — action que rejeita", () => {
-  it("handleBlindSubmit devolve submitting a false", async () => {
+  it("handleBlindSubmit avisa o erro, devolve submitting a false e não avança", async () => {
     submitBlindVerdicts.mockRejectedValue(new Error("rede"));
     const { result } = setup(makeDoc("d1", [field("f1", "q1", null)]));
     act(() => result.current.onChooseBlind("f1", "a"));
     await act(async () => {
-      await expect(result.current.handleBlindSubmit()).rejects.toThrow("rede");
+      await result.current.handleBlindSubmit();
     });
+    expect(toastError).toHaveBeenCalledWith(
+      "Não foi possível registrar o veredito cego. Tente novamente.",
+    );
     expect(result.current.submitting).toBe(false);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(result.current.blindChoices).toEqual({ f1: "a" });
   });
 
-  it("handleFinalSubmit devolve submitting a false", async () => {
+  it("handleFinalSubmit avisa o erro, devolve submitting a false e não avança", async () => {
     submitFinalVerdicts.mockRejectedValue(new Error("rede"));
-    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]));
-    await act(async () => {
-      await expect(result.current.handleFinalSubmit()).rejects.toThrow("rede");
+    const onNavigate = vi.fn();
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]), {
+      docsLength: 2,
+      onNavigate,
     });
+    act(() => result.current.onComment("f1", "c"));
+    await act(async () => {
+      await result.current.handleFinalSubmit();
+    });
+    expect(toastError).toHaveBeenCalledWith(
+      "Não foi possível enviar o veredito final. Tente novamente.",
+    );
+    expect(toastSuccess).not.toHaveBeenCalled();
     expect(result.current.submitting).toBe(false);
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(result.current.comments).toEqual({ f1: "c" });
   });
 });

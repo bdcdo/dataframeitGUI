@@ -155,6 +155,8 @@ export function useArbitrationDoc({
       setBlindOverrideDocId(null);
       // refresh() repuxa o payload com `reveal` populado; a fase deriva sozinha.
       refresh();
+    } catch {
+      toast.error("Não foi possível registrar o veredito cego. Tente novamente.");
     } finally {
       setSubmitting(false);
     }
@@ -183,9 +185,15 @@ export function useArbitrationDoc({
           : undefined,
       arbitratorComment: comments[f.fieldReviewId] || undefined,
     }));
-    const r = await submitFinalVerdicts(projectId, doc.docId, payload).finally(
-      () => setSubmitting(false),
-    );
+    let r: Awaited<ReturnType<typeof submitFinalVerdicts>>;
+    try {
+      r = await submitFinalVerdicts(projectId, doc.docId, payload);
+    } catch {
+      toast.error("Não foi possível enviar o veredito final. Tente novamente.");
+      return;
+    } finally {
+      setSubmitting(false);
+    }
     if (!r.success) {
       toast.error(r.error ?? "Falha ao enviar veredito final");
       return;

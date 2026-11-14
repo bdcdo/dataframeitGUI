@@ -33,23 +33,29 @@ export function EditPendingEmailDialog({
 
   const handleSave = async () => {
     setSaving(true);
-    const result = await updatePendingMemberEmail(
-      projectId,
-      member.user_id,
-      email,
-    ).finally(() => setSaving(false));
-    if (result.error) {
-      toast.error(result.error);
-      return;
-    }
-    if (result.otherProjectsCount && result.otherProjectsCount > 0) {
-      toast.success(
-        `E-mail corrigido. A correção também vale para ${result.otherProjectsCount} outro(s) projeto(s) em que este membro está pré-registrado.`,
+    try {
+      const result = await updatePendingMemberEmail(
+        projectId,
+        member.user_id,
+        email,
       );
-    } else {
-      toast.success("E-mail corrigido.");
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+      if (result.otherProjectsCount && result.otherProjectsCount > 0) {
+        toast.success(
+          `E-mail corrigido. A correção também vale para ${result.otherProjectsCount} outro(s) projeto(s) em que este membro está pré-registrado.`,
+        );
+      } else {
+        toast.success("E-mail corrigido.");
+      }
+      onOpenChange(false);
+    } catch {
+      toast.error("Não foi possível corrigir o e-mail. Tente novamente.");
+    } finally {
+      setSaving(false);
     }
-    onOpenChange(false);
   };
 
   return (

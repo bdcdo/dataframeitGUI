@@ -95,9 +95,15 @@ export function AutoReviewPageContent({
         justification: justifications[key],
       };
     });
-    const result = await submitAutoReview(projectId, doc.docId, payload).finally(
-      () => setSubmitting(false),
-    );
+    let result: Awaited<ReturnType<typeof submitAutoReview>>;
+    try {
+      result = await submitAutoReview(projectId, doc.docId, payload);
+    } catch {
+      toast.error("Não foi possível enviar a revisão. Tente novamente.");
+      return;
+    } finally {
+      setSubmitting(false);
+    }
     if (!result.success) {
       toast.error(result.error ?? "Falha ao enviar");
       return;
