@@ -19,7 +19,9 @@ export function AddMemberDialog({ projectId }: AddMemberDialogProps) {
 
   const handleAdd = async () => {
     setLoading(true);
-    const result = await addMember(projectId, email, role);
+    const result = await addMember(projectId, email, role).finally(() =>
+      setLoading(false),
+    );
     if (result?.error) {
       toast.error(result.error);
     } else if (result?.pending) {
@@ -31,7 +33,6 @@ export function AddMemberDialog({ projectId }: AddMemberDialogProps) {
       setEmail("");
       setOpen(false);
     }
-    setLoading(false);
   };
 
   return (

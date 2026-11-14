@@ -135,6 +135,16 @@
         "rules": [
           "react-doctor/no-giant-component"
         ]
+      },
+      {
+        "files": [
+          "scripts/e2e-fixtures/**",
+          "scripts/invariants/**"
+        ],
+        "rules": [
+          "react-doctor/async-await-in-loop",
+          "react-doctor/server-sequential-independent-await"
+        ]
       }
     ]
   },

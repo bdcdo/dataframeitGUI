@@ -33,8 +33,11 @@ export function EditPendingEmailDialog({
 
   const handleSave = async () => {
     setSaving(true);
-    const result = await updatePendingMemberEmail(projectId, member.user_id, email);
-    setSaving(false);
+    const result = await updatePendingMemberEmail(
+      projectId,
+      member.user_id,
+      email,
+    ).finally(() => setSaving(false));
     if (result.error) {
       toast.error(result.error);
       return;

@@ -31,6 +31,7 @@ export function FullscreenNav({
           size="icon"
           className="size-7 shrink-0"
           onClick={onExit}
+          title="Sair da tela cheia"
         >
           <X className="size-4" />
         </Button>
@@ -49,6 +50,7 @@ export function FullscreenNav({
             className="size-7"
             onClick={() => onNavigate(currentIndex - 1)}
             disabled={currentIndex === 0}
+            title="Documento anterior"
           >
             <ChevronLeft className="size-4" />
           </Button>
@@ -61,6 +63,7 @@ export function FullscreenNav({
             className="size-7"
             onClick={() => onNavigate(currentIndex + 1)}
             disabled={currentIndex === total - 1}
+            title="Próximo documento"
           >
             <ChevronRight className="size-4" />
           </Button>

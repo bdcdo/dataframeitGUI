@@ -446,8 +446,12 @@ export async function getDocumentsForBrowse(projectId: string): Promise<BrowseDo
   const userRespondedSet = new Set<string>();
 
   responses?.forEach((r) => {
-    if (!countMap.has(r.document_id)) countMap.set(r.document_id, new Set());
-    countMap.get(r.document_id)!.add(r.respondent_id);
+    let respondents = countMap.get(r.document_id);
+    if (!respondents) {
+      respondents = new Set();
+      countMap.set(r.document_id, respondents);
+    }
+    respondents.add(r.respondent_id);
     if (r.respondent_id === memberUserId) userRespondedSet.add(r.document_id);
   });
 

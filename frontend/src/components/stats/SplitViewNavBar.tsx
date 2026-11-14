@@ -36,6 +36,7 @@ export function SplitViewNavBar({
           className="size-7"
           disabled={docIndex === 0}
           onClick={onPrev}
+          title="Documento anterior"
         >
           <ChevronLeft className="size-4" />
         </Button>
@@ -48,6 +49,7 @@ export function SplitViewNavBar({
           className="size-7"
           disabled={docIndex === docCount - 1}
           onClick={onNext}
+          title="Próximo documento"
         >
           <ChevronRight className="size-4" />
         </Button>

@@ -358,8 +358,9 @@ function prefillMulti(field: PydanticField, value: unknown): string[] | undefine
   const kept = new Set(value.map((item) => currentOption(field, item)).filter((item): item is string => item !== undefined));
   // No máximo um "Outro": o controle só exibe o primeiro, e um segundo iria
   // ao gabarito sem nunca ter aparecido na tela.
+  const options = new Set(field.options);
   const chosen = [...(field.options ?? []).filter((option) => kept.has(option)),
-    ...[...kept].filter((item) => !field.options?.includes(item)).slice(0, 1)];
+    ...[...kept].filter((item) => !options.has(item)).slice(0, 1)];
   return chosen.length > 0 ? chosen : undefined;
 }
 

@@ -1,7 +1,6 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -9,7 +8,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { DocPager } from "@/components/shared/DocPager";
 import type { AutoReviewQueueOwner } from "./AutoReviewPage";
 
 interface AutoReviewPageHeaderProps {
@@ -66,31 +65,7 @@ export function AutoReviewPageHeader({
         <Badge variant="secondary" className="text-xs">
           {docsCount} doc{docsCount === 1 ? "" : "s"}
         </Badge>
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => onNavigate(docIndex - 1)}
-            disabled={docIndex === 0}
-            title="Documento anterior"
-          >
-            <ChevronLeft className="size-4" />
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {docIndex + 1}/{docsCount}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => onNavigate(docIndex + 1)}
-            disabled={docIndex === docsCount - 1}
-            title="Próximo documento"
-          >
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
+        <DocPager index={docIndex} total={docsCount} onNavigate={onNavigate} />
       </div>
     </div>
   );

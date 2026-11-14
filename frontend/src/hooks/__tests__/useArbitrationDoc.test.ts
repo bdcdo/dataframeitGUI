@@ -402,3 +402,27 @@ describe("useArbitrationDoc — guardas e estado exposto", () => {
     expect(result.current.submitting).toBe(false);
   });
 });
+
+// Uma action que rejeita (rede, erro do servidor) não pode deixar `submitting`
+// preso em true: o botão de envio ficaria desabilitado até recarregar a página
+// (react-doctor `no-loading-flag-reset-outside-finally`, 0.9.22).
+describe("useArbitrationDoc — action que rejeita", () => {
+  it("handleBlindSubmit devolve submitting a false", async () => {
+    submitBlindVerdicts.mockRejectedValue(new Error("rede"));
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", null)]));
+    act(() => result.current.onChooseBlind("f1", "a"));
+    await act(async () => {
+      await expect(result.current.handleBlindSubmit()).rejects.toThrow("rede");
+    });
+    expect(result.current.submitting).toBe(false);
+  });
+
+  it("handleFinalSubmit devolve submitting a false", async () => {
+    submitFinalVerdicts.mockRejectedValue(new Error("rede"));
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]));
+    await act(async () => {
+      await expect(result.current.handleFinalSubmit()).rejects.toThrow("rede");
+    });
+    expect(result.current.submitting).toBe(false);
+  });
+});

@@ -275,6 +275,7 @@ function AssignedDocSection({
           className="size-6 disabled:opacity-50"
           onClick={() => doc.onNavigate(doc.index - 1)}
           disabled={doc.index === 0}
+          title="Documento anterior"
         >
           <ChevronLeft className="size-4" />
         </Button>
@@ -287,6 +288,7 @@ function AssignedDocSection({
           className="size-6 disabled:opacity-50"
           onClick={() => doc.onNavigate(doc.index + 1)}
           disabled={doc.index === doc.total - 1}
+          title="Próximo documento"
         >
           <ChevronRight className="size-4" />
         </Button>
@@ -295,6 +297,7 @@ function AssignedDocSection({
           size="icon"
           className="size-6 ml-1"
           onClick={onToggleFullscreen}
+          title="Tela cheia"
         >
           <Maximize2 className="size-3.5" />
         </Button>
@@ -320,6 +323,7 @@ function BrowseDocSection({
         className="size-6 shrink-0"
         onClick={doc.onBack}
         disabled={doc.submitting}
+        title="Voltar à lista"
       >
         <ArrowLeft className="size-4" />
       </Button>
@@ -343,6 +347,7 @@ function BrowseDocSection({
           className="size-6"
           onClick={doc.onRandom}
           disabled={doc.submitting}
+          title="Documento aleatório"
         >
           <Shuffle className="size-4" />
         </Button>
@@ -351,6 +356,7 @@ function BrowseDocSection({
           size="icon"
           className="size-6"
           onClick={onToggleFullscreen}
+          title="Tela cheia"
         >
           <Maximize2 className="size-3.5" />
         </Button>

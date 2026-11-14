@@ -177,7 +177,9 @@ export function useAssignedCoding({
   // como se fosse edição (o que apagaria um rascunho ainda não retomado).
   const docId = currentDoc?.id;
   useEffect(() => {
+    // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
     if (!docId || !isDirty(docId)) return;
+    // react-doctor-disable-next-line react-doctor/no-pass-data-to-parent
     recordDraft(docId, { answers: docAnswers, notes: docNotes });
   }, [docId, docAnswers, docNotes, isDirty, recordDraft]);
 

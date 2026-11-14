@@ -46,6 +46,7 @@ export function CopyLinkButton({ url, className }: CopyLinkButtonProps) {
       size="icon"
       className={`size-6 ${className ?? ""}`}
       onClick={handleCopy}
+      title="Copiar link"
     >
       {copied ? (
         <Check className="size-3.5 text-green-600" />

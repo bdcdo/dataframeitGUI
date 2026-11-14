@@ -569,19 +569,17 @@ export type LotteryParams =
   | (LotteryParamsBase & { type: "comparacao"; researchersPerDoc?: never });
 
 const lotteryFiltersSchema = z
-  .object({
+  .strictObject({
     maxHumanCodings: z.number().int().nonnegative().optional(),
     assignmentFilter: z.enum(["any", "noActiveOfType", "neverAssigned"]).optional(),
     batchFilter: z
-      .object({
+      .strictObject({
         exclude: z.array(z.string().min(1)).optional(),
         only: z.string().min(1).optional(),
       })
-      .strict()
       .optional(),
     manualDocIds: z.array(z.string().min(1)).optional(),
   })
-  .strict()
   .superRefine((filters, ctx) => {
     if (filters.batchFilter?.only && filters.batchFilter.exclude?.length) {
       ctx.addIssue({
@@ -592,48 +590,40 @@ const lotteryFiltersSchema = z
   });
 
 const lotteryTargetSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("current"),
-      expectedRoundId: z.string().min(1),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("new"),
-      expectedRoundId: z.string().min(1),
-      roundLabel: z.string().trim().min(1),
-      confirmActiveWork: z.boolean(),
-      confirmPendingScopeWork: z.boolean(),
-    })
-    .strict(),
+  z.strictObject({
+    kind: z.literal("current"),
+    expectedRoundId: z.string().min(1),
+  }),
+  z.strictObject({
+    kind: z.literal("new"),
+    expectedRoundId: z.string().min(1),
+    roundLabel: z.string().trim().min(1),
+    confirmActiveWork: z.boolean(),
+    confirmPendingScopeWork: z.boolean(),
+  }),
 ]);
 
-const lotteryParamsBaseSchema = z
-  .object({
-    projectId: z.string().min(1),
-    mode: z.enum(["append", "replace"]),
-    balancing: z.enum(["round", "history"]),
-    seed: z.number().int().min(0).max(2 ** 31 - 1).optional(),
-    docsPerResearcher: z.number().int().positive().optional(),
-    docSubsetSize: z.number().int().positive().optional(),
-    label: z.string().optional(),
-    filters: lotteryFiltersSchema.optional(),
-    participantIds: z.array(z.string().min(1)).min(1),
-    participantSettings: z
-      .record(
-        z.string(),
-        z
-          .object({
-            weight: z.number().positive().optional(),
-            cap: z.number().int().positive().nullable().optional(),
-          })
-          .strict(),
-      )
-      .optional(),
-    target: lotteryTargetSchema.optional(),
-  })
-  .strict();
+const lotteryParamsBaseSchema = z.strictObject({
+  projectId: z.string().min(1),
+  mode: z.enum(["append", "replace"]),
+  balancing: z.enum(["round", "history"]),
+  seed: z.number().int().min(0).max(2 ** 31 - 1).optional(),
+  docsPerResearcher: z.number().int().positive().optional(),
+  docSubsetSize: z.number().int().positive().optional(),
+  label: z.string().optional(),
+  filters: lotteryFiltersSchema.optional(),
+  participantIds: z.array(z.string().min(1)).min(1),
+  participantSettings: z
+    .record(
+      z.string(),
+      z.strictObject({
+        weight: z.number().positive().optional(),
+        cap: z.number().int().positive().nullable().optional(),
+      }),
+    )
+    .optional(),
+  target: lotteryTargetSchema.optional(),
+});
 
 const lotteryParamsSchema = z.discriminatedUnion("type", [
   lotteryParamsBaseSchema.extend({

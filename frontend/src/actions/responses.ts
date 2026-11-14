@@ -618,7 +618,9 @@ export async function saveResponse(
 
       // Sinal de frequência: se isto aparecer com regularidade nos logs, a
       // corrida deixou de ser rara e o caso passa a justificar uma RPC
-      // transacional no lugar do par UPDATE/INSERT.
+      // transacional no lugar do par UPDATE/INSERT. Fica síncrono: roda entre
+      // tentativas, não no fim da resposta, e `after()` o separaria do retry.
+      // react-doctor-disable-next-line react-doctor/server-after-nonblocking
       console.warn(
         `[saveResponse] conflito de resposta corrente (tentativa ${attempt}/${SAVE_ATTEMPTS})`,
         { projectId, documentId, respondentId: effectiveId },

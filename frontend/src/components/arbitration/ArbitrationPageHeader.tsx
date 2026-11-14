@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { DocPager } from "@/components/shared/DocPager";
 
 interface ArbitrationPageHeaderProps {
   phase: "blind" | "reveal";
@@ -39,31 +39,7 @@ export function ArbitrationPageHeader({
         <Badge variant="secondary" className="text-xs">
           {docsLength} doc{docsLength === 1 ? "" : "s"}
         </Badge>
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => onNavigate(docIndex - 1)}
-            disabled={docIndex === 0}
-            title="Documento anterior"
-          >
-            <ChevronLeft className="size-4" />
-          </Button>
-          <span className="text-xs text-muted-foreground">
-            {docIndex + 1}/{docsLength}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => onNavigate(docIndex + 1)}
-            disabled={docIndex === docsLength - 1}
-            title="Próximo documento"
-          >
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
+        <DocPager index={docIndex} total={docsLength} onNavigate={onNavigate} />
         {phase === "reveal" ? (
           <Button
             variant="outline"

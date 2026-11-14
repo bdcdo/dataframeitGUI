@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+import { hydrateFromServerHtml } from "@/test-utils/hydration";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -14,8 +15,8 @@ beforeAll(() => warmUpJsdom(), 30_000);
 beforeEach(() => window.localStorage.clear());
 afterEach(cleanup);
 
-function renderFooter() {
-  render(
+function footer() {
+  return (
     <AutoReviewFooter
       readOnly={false}
       readyCount={1}
@@ -23,8 +24,12 @@ function renderFooter() {
       submitting={false}
       canSubmit={true}
       onSubmit={vi.fn()}
-    />,
+    />
   );
+}
+
+function renderFooter() {
+  render(footer());
   return screen.getByRole("button", { name: /atalhos/i });
 }
 
@@ -61,5 +66,32 @@ describe("AutoReviewFooter — persistência do painel de atalhos", () => {
     renderFooter();
 
     expect(screen.queryByText(/eu acertei/i)).not.toBeNull();
+  });
+});
+
+/**
+ * O servidor não tem `localStorage` e renderiza o painel fechado. Se o primeiro
+ * render do cliente lesse o storage (lazy initializer com `typeof window`),
+ * quem nunca dispensou os atalhos hidratava com o painel aberto sobre o HTML
+ * fechado (react-doctor `no-hydration-branch-on-browser-global`, 0.9.22).
+ */
+describe("AutoReviewFooter — hidratação", () => {
+  it("hidrata sem divergência e abre os atalhos depois, sem dispensa salva", async () => {
+    const { container, hydrationErrors } = await hydrateFromServerHtml(footer(), {
+      serverWithoutWindow: true,
+    });
+
+    expect(hydrationErrors).toEqual([]);
+    expect(container.textContent).toContain("Eu acertei");
+  });
+
+  it("hidrata sem divergência e segue fechado com a dispensa salva", async () => {
+    window.localStorage.setItem(HINTS_DISMISSED_KEY, "1");
+    const { container, hydrationErrors } = await hydrateFromServerHtml(footer(), {
+      serverWithoutWindow: true,
+    });
+
+    expect(hydrationErrors).toEqual([]);
+    expect(container.textContent).not.toContain("Eu acertei");
   });
 });

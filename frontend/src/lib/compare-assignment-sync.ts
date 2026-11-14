@@ -49,6 +49,9 @@ interface UpdateCompareAssignmentStatusParams {
   supabase: SupabaseServerClient;
   projectId: string;
   documentId: string;
+  // Falso positivo: `userId` só entra no log abaixo; o UPDATE filtra por
+  // `assignments.id` e grava apenas `status` e `completed_at`.
+  // react-doctor-disable-next-line react-doctor/supabase-client-owned-authz-field
   userId: string;
   assignment: { id: string; status: string | null };
   next: CompareAssignmentStatus;

@@ -56,6 +56,9 @@ export function usePromptPreview(
             e instanceof Error ? e.message : "Erro ao carregar preview",
           );
       } finally {
+        // O reset já está no finally. Só a execução cancelada não mexe na
+        // flag: a seguinte, disparada pela mesma mudança, é dona dela.
+        // react-doctor-disable-next-line react-doctor/no-loading-flag-reset-outside-finally
         if (!cancelled) setPreviewLoading(false);
       }
     };

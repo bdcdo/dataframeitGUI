@@ -71,6 +71,7 @@ export function OptionsEditor({
             size="icon"
             className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
             onClick={() => void removeOption(i)}
+            title={`Remover opção ${i + 1}`}
           >
             <X className="size-3.5" />
           </Button>

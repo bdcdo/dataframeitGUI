@@ -422,8 +422,12 @@ export function buildReviewsAndReviewedCounts(
       return;
     }
     (existingReviews[r.document_id] ??= {})[r.field_name] = info;
-    if (!myReviewsByDoc.has(r.document_id)) myReviewsByDoc.set(r.document_id, new Set());
-    myReviewsByDoc.get(r.document_id)!.add(r.field_name);
+    let reviewedFields = myReviewsByDoc.get(r.document_id);
+    if (!reviewedFields) {
+      reviewedFields = new Set();
+      myReviewsByDoc.set(r.document_id, reviewedFields);
+    }
+    reviewedFields.add(r.field_name);
   });
 
   const reviewedCountByDoc: Record<string, number> = {};

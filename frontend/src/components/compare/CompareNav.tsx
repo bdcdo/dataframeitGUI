@@ -3,9 +3,10 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
-import { ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import { CompareFieldFilter } from "./CompareFieldFilter";
 import { CompareFilters } from "./CompareFilters";
+import { DocPager } from "@/components/shared/DocPager";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
 import type { PydanticField } from "@/lib/types";
 
@@ -85,15 +86,7 @@ export function CompareNav({
           guardNavigation={guardNavigation}
         />
         <CompareFieldFilter value={filter} onChange={onFilterChange} fields={fields} />
-        <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" className="size-6" onClick={() => onDocNavigate(docIndex - 1)} disabled={docIndex === 0}>
-            <ChevronLeft className="size-4" />
-          </Button>
-          <span className="text-xs text-muted-foreground">{docIndex + 1}/{totalDocs}</span>
-          <Button variant="ghost" size="icon" className="size-6" onClick={() => onDocNavigate(docIndex + 1)} disabled={docIndex === totalDocs - 1}>
-            <ChevronRight className="size-4" />
-          </Button>
-        </div>
+        <DocPager index={docIndex} total={totalDocs} onNavigate={onDocNavigate} />
         {projectId && documentId && (
           <RunLlmButton
             projectId={projectId}

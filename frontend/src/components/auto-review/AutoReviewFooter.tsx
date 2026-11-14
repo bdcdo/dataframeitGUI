@@ -1,11 +1,46 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { Keyboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const HINTS_DISMISSED_KEY = "autoReview:hintsDismissed";
+
+const SHORTCUT_HINTS = [
+  ["1", "Eu acertei"],
+  ["2", "LLM acertou"],
+  ["3", "Equivalentes"],
+  ["4", "Ambíguo"],
+  ["P", "Campo anterior"],
+  ["N", "Campo próximo"],
+] as const;
+
+// A dispensa só muda pelo clique deste componente, que já guarda o estado
+// local; não há escritor externo a ouvir.
+const subscribeNothing = () => () => {};
+const readHintsDismissed = () =>
+  window.localStorage.getItem(HINTS_DISMISSED_KEY) !== null;
+// O servidor não tem localStorage: renderiza fechado, e a hidratação usa o
+// mesmo valor antes de ler o storage.
+const serverHintsDismissed = () => true;
+
+function submitStatus(readyCount: number, incompleteCount: number): string {
+  if (readyCount > 0) {
+    const plural = readyCount === 1 ? "" : "s";
+    return `${readyCount} campo${plural} pronto${plural} para enviar`;
+  }
+  return incompleteCount > 0
+    ? "Preencha a justificativa para enviar"
+    : "Decida um campo para enviar";
+}
+
+function submitTitle(submitting: boolean, readyCount: number): string {
+  if (submitting) return "Enviando…";
+  return readyCount > 0
+    ? "Enviar os campos decididos"
+    : "Decida ao menos um campo para enviar";
+}
 
 // Rodapé do AutoReviewFieldPanel: botão de atalhos (com o painel de hints
 // colapsável, persistido em localStorage) e o status/botão de envio.
@@ -24,12 +59,15 @@ export function AutoReviewFooter({
   canSubmit: boolean;
   onSubmit: () => void;
 }) {
-  // Hints começam abertos até o usuário fechar uma vez (persistido em localStorage).
-  // Lazy initializer roda só uma vez no mount, lê do localStorage sem flicker.
-  const [hintsOpen, setHintsOpen] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(HINTS_DISMISSED_KEY) === null;
-  });
+  // Hints começam abertos até o usuário fechar uma vez (persistido em
+  // localStorage). Depois do primeiro clique vale o estado local.
+  const hintsDismissed = useSyncExternalStore(
+    subscribeNothing,
+    readHintsDismissed,
+    serverHintsDismissed,
+  );
+  const [toggledOpen, setToggledOpen] = useState<boolean | null>(null);
+  const hintsOpen = toggledOpen ?? !hintsDismissed;
 
   // O `setItem` fica no handler, não dentro do updater: React pode rodar o
   // updater mais de uma vez e o efeito colateral repetiria. Ler `hintsOpen` do
@@ -37,10 +75,8 @@ export function AutoReviewFooter({
   // fonte de escrita que pudesse ser perdida no batching.
   function toggleHints() {
     const next = !hintsOpen;
-    setHintsOpen(next);
-    if (typeof window !== "undefined" && !next) {
-      window.localStorage.setItem(HINTS_DISMISSED_KEY, "1");
-    }
+    setToggledOpen(next);
+    if (!next) window.localStorage.setItem(HINTS_DISMISSED_KEY, "1");
   }
 
   return (
@@ -65,23 +101,13 @@ export function AutoReviewFooter({
                   : "text-muted-foreground",
               )}
             >
-              {readyCount > 0
-                ? `${readyCount} campo${readyCount === 1 ? "" : "s"} pronto${readyCount === 1 ? "" : "s"} para enviar`
-                : incompleteCount > 0
-                  ? "Preencha a justificativa para enviar"
-                  : "Decida um campo para enviar"}
+              {submitStatus(readyCount, incompleteCount)}
             </span>
             <Button
               size="sm"
               onClick={onSubmit}
               disabled={!canSubmit}
-              title={
-                submitting
-                  ? "Enviando…"
-                  : readyCount > 0
-                    ? "Enviar os campos decididos"
-                    : "Decida ao menos um campo para enviar"
-              }
+              title={submitTitle(submitting, readyCount)}
             >
               {submitting ? "Enviando…" : "Enviar"}
             </Button>
@@ -90,42 +116,14 @@ export function AutoReviewFooter({
       </div>
       {hintsOpen ? (
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-              1
-            </kbd>{" "}
-            Eu acertei
-          </span>
-          <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-              2
-            </kbd>{" "}
-            LLM acertou
-          </span>
-          <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-              3
-            </kbd>{" "}
-            Equivalentes
-          </span>
-          <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-              4
-            </kbd>{" "}
-            Ambíguo
-          </span>
-          <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-              P
-            </kbd>{" "}
-            Campo anterior
-          </span>
-          <span>
-            <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-              N
-            </kbd>{" "}
-            Campo próximo
-          </span>
+          {SHORTCUT_HINTS.map(([key, label]) => (
+            <span key={key}>
+              <kbd className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                {key}
+              </kbd>{" "}
+              {label}
+            </span>
+          ))}
         </div>
       ) : null}
     </div>
