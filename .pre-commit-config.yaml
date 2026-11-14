@@ -122,11 +122,11 @@ repos:
 
       # react-doctor como gate local de qualidade React (estilo flake8/mypy).
       #
-      # Por que --scope changed e nao --staged: o --staged escaneia o arquivo
+      # Por que --scope lines e nao --staged: o --staged escaneia o arquivo
       # staged inteiro (file-scoped), o que quebraria o grandfathering — tocar uma
       # linha de um arquivo com error legado em OUTRA linha barraria o commit. Ja
-      # --scope changed --base HEAD reporta so issues nas linhas alteradas vs HEAD
-      # (line-scoped, reproduzido na 0.5.8; ver docs/LINT_CONFIG.md); como o
+      # --scope lines --base HEAD reporta so issues nas linhas alteradas vs HEAD
+      # (line-scoped; ver docs/LINT_CONFIG.md); como o
       # pre-commit faz auto-stash dos unstaged, o
       # working tree fica == staged, entao enxerga o que vai ser commitado.
       #

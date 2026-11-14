@@ -25,10 +25,10 @@ if [ "$pinned" != "$installed" ]; then
   exit 1
 fi
 
-# --scope changed --base HEAD: line-scoped, so bloqueia as LINHAS alteradas vs
-# HEAD (o debito legado fica grandfathered). --blocking warning: agora que a
-# contagem esta zerada (errors e warnings), o gate barra qualquer diagnostico
-# novo -- error ou warning -- nas linhas tocadas. O pre-commit faz auto-stash
-# dos unstaged, entao o working tree == staged e o diff enxerga o que vai ser
-# commitado.
-exec "$BIN" . --scope changed --base HEAD --blocking warning
+# --scope lines --base HEAD: line-scoped, so bloqueia as LINHAS alteradas vs
+# HEAD (o debito legado fica grandfathered). Nao --scope changed, que deixou de
+# ser line-scoped (ver docs/LINT_CONFIG.md). --blocking warning: o gate barra
+# qualquer diagnostico -- error ou warning -- nas linhas tocadas. O pre-commit
+# faz auto-stash dos unstaged, entao o working tree == staged e o diff enxerga o
+# que vai ser commitado.
+exec "$BIN" . --scope lines --base HEAD --blocking warning
