@@ -8,10 +8,15 @@ on:
       - "frontend/package.json"
       - "frontend/package-lock.json"
       - "frontend/scripts/run-sql-test.sh"
+      - "frontend/scripts/run-backend-integration.sh"
       - "frontend/supabase/migrations/**"
       # Glob, não a lista nominal: enquanto o filtro citava um arquivo só, as
       # suítes novas entravam no repo sem gate nenhum e ninguém percebia.
       - "frontend/supabase/tests/**"
+      # Contrato payload×schema dos writes de llm_runs (#674): uma chave nova
+      # no payload do runner, sem migration nenhuma, foi o caso do #673.
+      - "backend/services/llm_runner.py"
+      - "backend/tests/integration/**"
   workflow_dispatch:
 
 permissions:
@@ -77,6 +82,13 @@ jobs:
         run: npm run test:db:both-correct-value
       - name: Reconhecimento preso ao veredito reconhecido
         run: npm run test:db:verdict-ack-pinned
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          # Mesmo uv do backend/Dockerfile.
+          version: "0.9.18"
+      - name: Contrato payload×schema dos writes de llm_runs
+        run: npm run test:db:llm-runs-contract
 
       # As fixtures destes precisam estar commitadas (duas conexões dblink veem
       # o mesmo estado), então eles sujam o banco e ficam por último.

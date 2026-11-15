@@ -367,12 +367,15 @@ repos:
       # backend-pytest). As orfas schema_revision_* (#571/#572) estao em
       # KNOWN_RED no runner e sao reportadas sem bloquear ate serem consertadas.
       # Escopo por `files`: so roda quando o push toca migrations, suites .sql
-      # ou os scripts do runner.
+      # ou os scripts do runner — e tambem o llm_runner e os testes de
+      # integracao do backend, porque o runner roda o contrato payload x schema
+      # dos writes de llm_runs (#674): uma chave nova no payload, sem migration
+      # nenhuma, e exatamente o caso do round_id (#673).
       - id: db-tests
         name: test:db (suites de contrato SQL, pre-push)
         entry: bash -c 'cd frontend && exec bash scripts/run-db-tests.sh'
         language: system
-        files: ^frontend/(supabase/(migrations|tests)/.*\.sql|scripts/run-(db-tests|sql-test)\.sh|package\.json)$
+        files: ^(frontend/(supabase/(migrations|tests)/.*\.sql|scripts/run-(db-tests|sql-test|backend-integration)\.sh|package\.json)|backend/(services/llm_runner\.py|tests/integration/.*\.py))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

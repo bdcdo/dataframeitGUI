@@ -233,6 +233,13 @@ class _RaisingQuery(_FakeQuery):
 
 
 class _FakeTable:
+    """Tabela em memória: aceita qualquer chave de payload.
+
+    Por isso não prova que as colunas escritas existem no schema (foi assim
+    que `llm_runs.round_id` passou verde sem coluna, #673). Esse contrato vive
+    em tests/integration/test_llm_runs_persistence.py, contra o Supabase local.
+    """
+
     def __init__(self, select_data=None, select_error=None, max_rows=1000):
         self.select_data = select_data
         self.select_error = select_error
