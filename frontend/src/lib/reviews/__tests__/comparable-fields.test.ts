@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { fetchReviewBaseData } from "@/lib/reviews/queries";
+import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import type { PydanticField } from "@/lib/types";
 import type { PydanticFieldTarget } from "@/lib/pydantic-field";
 import { makeSupabaseMock } from "@/actions/__tests__/supabase-mock";
@@ -44,7 +45,16 @@ async function comparableNames(fields: PydanticField[]): Promise<string[]> {
   return ctx.comparableFields.map((f) => f.name);
 }
 
-describe("fetchReviewBaseData: comparableFields (issue #500)", () => {
+// Os dois lados da Comparacao (gabarito e fila de divergencia) decidem o mesmo
+// conjunto de campos; com o default trocado, nenhum dos dois pode ficar com a
+// copia antiga da regra.
+const divergentNames = (fields: PydanticField[]) =>
+  computeDivergentFieldNames(fields, [
+    { id: "1", answers: Object.fromEntries(fields.map((f) => [f.name, "a"])) },
+    { id: "2", answers: Object.fromEntries(fields.map((f) => [f.name, "b"])) },
+  ]);
+
+describe("comparableFields e computeDivergentFieldNames (issue #500)", () => {
   it("campo legado sem `target` continua comparável; só `all` entra", async () => {
     expect(
       await comparableNames([
@@ -58,7 +68,11 @@ describe("fetchReviewBaseData: comparableFields (issue #500)", () => {
   });
 
   it("o default de `target` vem de `resolveTarget`, não do call site", async () => {
+    const fields = [field("legado"), field("todos", "all")];
+    expect(divergentNames(fields)).toEqual(["legado", "todos"]);
+
     targetDefault.value = "human_only";
-    expect(await comparableNames([field("legado"), field("todos", "all")])).toEqual(["todos"]);
+    expect(await comparableNames(fields)).toEqual(["todos"]);
+    expect(divergentNames(fields)).toEqual(["todos"]);
   });
 });

@@ -6,6 +6,7 @@ import {
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+import { resolveTarget } from "@/lib/pydantic-field";
 
 interface ResponseLike {
   id: string;
@@ -51,12 +52,9 @@ export function computeDivergentFieldNames(
   const divergent: string[] = [];
 
   for (const field of fields) {
-    if (
-      field.target === "llm_only" ||
-      field.target === "human_only" ||
-      field.target === "none"
-    )
-      continue;
+    // Mesma regra de `comparableFields` (reviews/queries.ts): so `all` entra na
+    // Comparacao, e o default de `target` vem do resolvedor (regra (c2)).
+    if (resolveTarget(field.target) !== "all") continue;
 
     const applicable = responses.filter((r) =>
       isFieldApplicable(field, r.answers, r.answerFieldHashes),
