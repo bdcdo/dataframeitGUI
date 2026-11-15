@@ -244,27 +244,10 @@ async function assignArbitrator(
   documentId: string,
   excludeUserId: string,
   fieldReviewIds: string[],
-  precomputedCoderIds?: Set<string>,
+  // Codificadores humanos do documento, pré-buscados em batch pelo único
+  // chamador (retryPendingArbitrations), cuja query cobre os filtros.
+  coderIds: Set<string>,
 ): Promise<{ count: number; noPool: boolean }> {
-  // Codificadores humanos deste documento — quem já tem resposta registrada
-  // para o doc (recurso de comparação N+). Quando o caller pré-buscou em
-  // batch (retryPendingArbitrations), reusa o set para evitar N queries.
-  let coderIds: Set<string>;
-  if (precomputedCoderIds) {
-    coderIds = precomputedCoderIds;
-  } else {
-    const { data: coders } = await admin
-      .from("responses")
-      .select("respondent_id")
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      .eq("respondent_type", "humano");
-    coderIds = new Set<string>();
-    for (const c of coders ?? []) {
-      if (c.respondent_id) coderIds.add(c.respondent_id as string);
-    }
-  }
-
   // Elegíveis (can_arbitrate) menos o auto-revisor original — esse nunca
   // arbitra, sob nenhuma circunstância, porque julgaria a própria resposta.
   const { data: eligibleMembers } = await admin
