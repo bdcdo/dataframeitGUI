@@ -36,6 +36,7 @@ import {
   type ErrorResolutionContext,
 } from "@/lib/error-resolution";
 import { draftBackedComparisonViolations } from "@/lib/draft-backed-comparison";
+import { concludedCodingDraftViolations } from "@/lib/concluded-coding-draft";
 import { verdictMatchesAnswer } from "@/lib/llm-error-metrics";
 // Mesma primitiva de igualdade que o produto usa para decidir divergência
 // (`lib/compare-divergence.ts`, `lib/equivalence.ts`): se as duas réguas
@@ -417,41 +418,33 @@ const invariants: Invariant[] = [
   {
     name: "codificacao-concluida-response-so-rascunho",
     motivation:
-      "vão entre as duas invariantes pareadas acima (#552): assignment 'concluido' em doc ATIVO cuja response humana is_latest do par nunca foi submetida (is_partial=true). 'concluida-tem-response' só vê ausência de response; 'completa-marcada-pendente' só olha response submetida (is_partial=false) — nenhuma cobre o rascunho promovido a concluído. Estado que o guard do #538 fechou na criação e do qual keepCodingAssignmentInProgress não regride; FAIL aqui = canal de escrita futuro reintroduziu o vão",
+      "vão entre as duas invariantes pareadas acima (#552): assignment 'concluido' em doc ATIVO cuja response humana is_latest do par nunca foi submetida (is_partial=true). 'concluida-tem-response' só vê ausência de response; 'completa-marcada-pendente' só olha response submetida (is_partial=false) — nenhuma cobre o rascunho promovido a concluído. Estado que o guard do #538 fechou na criação e do qual keepCodingAssignmentInProgress não regride; FAIL aqui = canal de escrita futuro reintroduziu o vão. Desde o #608, is_partial=true também marca envio incompleto, e o feito DEPOIS da conclusão (responses.updated_at > completed_at) mantém o concluído de propósito (#626) e fica isento",
     run: async () => {
       const active = await activeDocIds();
       const [assignments, responses] = await Promise.all([
-        fetchAll<{ id: string; document_id: string; user_id: string }>(
+        fetchAll<{ id: string; document_id: string; user_id: string; completed_at: string | null }>(
           "assignments",
-          "id, document_id, user_id",
+          "id, document_id, user_id, completed_at",
           (q) => q.eq("type", "codificacao").eq("status", "concluido"),
         ),
-        fetchAll<{ document_id: string; respondent_id: string | null; is_partial: boolean | null }>(
+        fetchAll<{
+          document_id: string;
+          respondent_id: string | null;
+          is_partial: boolean | null;
+          updated_at: string | null;
+        }>(
           "responses",
-          "document_id, respondent_id, is_partial",
+          "document_id, respondent_id, is_partial, updated_at",
           (q) => q.eq("respondent_type", "humano").eq("is_latest", true),
         ),
       ]);
-      // is_partial da response is_latest do par (única por (doc, respondente),
-      // garantida por 'responses-is-latest-unica'). Quatro estados possíveis, só
-      // um é violação: `undefined` = sem is_latest humana no par → caso de
-      // 'concluida-tem-response', não deste; `false` = submetida → saudável;
-      // `null` = row legada sem o sinal (a coluna é nullable, ver responses.ts) →
-      // cai no ramo saudável por design, conservador para não falso-positivar sem
-      // prova de rascunho. Só `=== true` (rascunho, nunca enviado) é violação.
-      const partialOf = new Map(
-        responses.map((r) => [`${r.document_id}|${r.respondent_id}`, r.is_partial]),
-      );
-      return assignments
-        .filter(
-          (a) =>
-            active.has(a.document_id) &&
-            partialOf.get(`${a.document_id}|${a.user_id}`) === true,
-        )
-        .map((a) => ({
-          key: a.id,
-          detail: `assignment concluído cuja response is_latest é rascunho, nunca submetida (doc ${a.document_id}, user ${a.user_id})`,
-        }));
+      // A regra (e o envio incompleto pós-conclusão que ela isenta desde o
+      // #608) mora em lib/concluded-coding-draft, testada sem banco.
+      return concludedCodingDraftViolations({
+        assignments,
+        activeDocIds: active,
+        humanLatest: responses,
+      });
     },
   },
   {
