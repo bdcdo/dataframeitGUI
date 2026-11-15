@@ -36,7 +36,7 @@ import {
   type SubmitOutcome,
 } from "./edit-field-save";
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
-import { resolveTarget } from "@/lib/pydantic-field";
+import { resolveSubfieldRule, resolveTarget } from "@/lib/pydantic-field";
 
 export type { PendingSuggestion };
 
@@ -97,7 +97,7 @@ function FieldTypeEditors({
           options={form.options}
           onChange={(patch) => {
             form.setSubfields(patch.subfields);
-            form.setSubfieldRule(patch.subfield_rule ?? "all");
+            form.setSubfieldRule(resolveSubfieldRule(patch.subfield_rule));
             form.setOptions(patch.options ?? []);
           }}
           onBeforeRemoveOption={onBeforeRemoveOption}

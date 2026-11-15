@@ -9,7 +9,10 @@ import { cn } from "@/lib/utils";
 import { OptionsEditor } from "./OptionsEditor";
 import { useStableListIds } from "@/hooks/useStableListIds";
 import type { SubfieldDef } from "@/lib/types";
-import { resolveSubfieldRequired } from "@/lib/pydantic-field";
+import {
+  resolveSubfieldRequired,
+  resolveSubfieldRule,
+} from "@/lib/pydantic-field";
 
 // Estado completo (não um patch parcial): toda emissão inclui os 3 campos,
 // com os que não mudaram preenchidos com o valor atual. O FieldCard repassa
@@ -97,7 +100,7 @@ export function SubfieldsEditor({
                   size="sm"
                   className={cn(
                     "text-xs h-6",
-                    (subfieldRule || "all") === value &&
+                    resolveSubfieldRule(subfieldRule) === value &&
                       "bg-brand/10 text-brand border-brand/40"
                   )}
                   onClick={() => emit({ subfield_rule: value })}
