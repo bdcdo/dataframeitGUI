@@ -6,15 +6,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.." # frontend/
 
-BIN=./node_modules/.bin/react-doctor
-if [ ! -x "$BIN" ]; then
-  echo "react-doctor ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2
-  exit 1
-fi
-
-# Guarda de versao: o hook invoca o binario PINADO direto (nao npx), e falha
-# fechado quando o node_modules diverge do pino (porque em
+# Binario pinado presente e na versao do pino, ou falha fechado (porque em
 # scripts/gates/lib/assert-pinned-version.sh, compartilhado com o fallow).
+BIN=./node_modules/.bin/react-doctor
 bash scripts/gates/lib/assert-pinned-version.sh react-doctor
 
 # --scope lines --base HEAD: line-scoped, so bloqueia as LINHAS alteradas vs

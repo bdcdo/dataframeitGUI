@@ -17,10 +17,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 const realFrontend = fileURLToPath(new URL("../../../", import.meta.url));
 const LIB = "scripts/gates/lib/assert-pinned-version.sh";
 
-const GATES = [
-  { pkg: "react-doctor", script: "scripts/react-doctor-gate.sh", calls: [". --scope lines --base HEAD --blocking warning"] },
-  { pkg: "fallow", script: "scripts/fallow-audit-gate.sh", calls: ["config", "audit --base origin/main"] },
-] as const;
+const REACT_DOCTOR = { pkg: "react-doctor", script: "scripts/react-doctor-gate.sh", calls: [". --scope lines --base HEAD --blocking warning"] };
+const FALLOW = { pkg: "fallow", script: "scripts/fallow-audit-gate.sh", calls: ["config", "audit --base origin/main"] };
+type Gate = typeof FALLOW;
 
 // O `config` do fallow escreve a config resolvida no stdout e os avisos no
 // stderr, que é onde sai o `unknown rule`.
@@ -44,11 +43,15 @@ function write(file: string, content: string, mode?: number) {
   if (mode) fs.chmodSync(target, mode);
 }
 
-function setup(gate: (typeof GATES)[number], { pinned, installed }: { pinned: string; installed: string | null }) {
+function copyScripts(gate: Gate, pinned: string) {
   for (const file of [gate.script, LIB]) write(file, fs.readFileSync(path.join(realFrontend, file), "utf8"));
   write("package.json", JSON.stringify({ devDependencies: { [gate.pkg]: pinned } }));
+}
+
+function setup(gate: Gate, { pinned, installed, bin = true }: { pinned: string; installed: string | null; bin?: boolean }) {
+  copyScripts(gate, pinned);
   if (installed) write(`node_modules/${gate.pkg}/package.json`, JSON.stringify({ version: installed }));
-  write(`node_modules/.bin/${gate.pkg}`, FAKE_BIN, 0o755);
+  if (bin) write(`node_modules/.bin/${gate.pkg}`, FAKE_BIN, 0o755);
 }
 
 function run(script: string, env: Record<string, string> = {}) {
@@ -71,7 +74,14 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe.each(GATES)("$script: guarda de versão", (gate) => {
+describe.each([REACT_DOCTOR, FALLOW])("$script: guarda de versão", (gate) => {
+  it("binário ausente falha fechado", () => {
+    setup(gate, { pinned: "1.0.0", installed: "1.0.0", bin: false });
+    const result = run(gate.script);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${gate.pkg} ausente em frontend/node_modules`);
+  });
+
   it("instalado != pinado falha fechado sem rodar a ferramenta", () => {
     setup(gate, { pinned: "1.0.0", installed: "1.0.1" });
     const result = run(gate.script);
@@ -105,32 +115,32 @@ describe.each(GATES)("$script: guarda de versão", (gate) => {
   });
 });
 
-describe("scripts/fallow-audit-gate.sh: aviso sobre a config", () => {
-  const gate = GATES[1];
-
+describe("scripts/fallow-audit-FALLOW.sh: aviso sobre a config", () => {
   it("`unknown rule` no stderr do `fallow config` barra antes do audit", () => {
-    setup(gate, { pinned: "1.0.0", installed: "1.0.0" });
+    setup(FALLOW, { pinned: "1.0.0", installed: "1.0.0" });
     const warning = "WARN unknown rule 'regra-que-sumiu' in rules of .fallowrc.jsonc; the rule will be ignored.\n";
-    const result = run(gate.script, { FAKE_CONFIG_STDERR: warning });
+    const result = run(FALLOW.script, { FAKE_CONFIG_STDERR: warning });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unknown rule 'regra-que-sumiu'");
     expect(result.calls).toEqual(["config"]);
   });
 
   it("`fallow config` com erro barra antes do audit", () => {
-    setup(gate, { pinned: "1.0.0", installed: "1.0.0" });
-    const result = run(gate.script, { FAKE_CONFIG_STDERR: "config invalida\n", FAKE_CONFIG_EXIT: "2" });
+    setup(FALLOW, { pinned: "1.0.0", installed: "1.0.0" });
+    const result = run(FALLOW.script, { FAKE_CONFIG_STDERR: "config invalida\n", FAKE_CONFIG_EXIT: "2" });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("config invalida");
     expect(result.calls).toEqual(["config"]);
   });
 
   // O binário falso acima imita o aviso; aqui o fallow instalado de verdade, com
-  // uma config sabotada, prova o texto do aviso e que ele sai no stderr.
+  // uma config sabotada, prova o texto do aviso e que ele sai no stderr. O
+  // fallow e o node que o embrulha levam de 1 a 2 s de parede só, e o timeout
+  // padrão de 5 s não cobre a suíte disputando a CPU.
+  const REAL_FALLOW_TIMEOUT_MS = 30_000;
   function setupRealFallow(configs: Record<string, object>) {
     const version = (JSON.parse(fs.readFileSync(path.join(realFrontend, "node_modules/fallow/package.json"), "utf8")) as { version: string }).version;
-    for (const file of [gate.script, LIB]) write(file, fs.readFileSync(path.join(realFrontend, file), "utf8"));
-    write("package.json", JSON.stringify({ devDependencies: { fallow: version } }));
+    copyScripts(FALLOW, version);
     for (const [file, content] of Object.entries(configs)) write(file, JSON.stringify(content));
     fs.mkdirSync(path.join(frontend, "node_modules/.bin"), { recursive: true });
     fs.symlinkSync(path.join(realFrontend, "node_modules/fallow"), path.join(frontend, "node_modules/fallow"));
@@ -139,19 +149,19 @@ describe("scripts/fallow-audit-gate.sh: aviso sobre a config", () => {
 
   it("com o fallow instalado, uma regra inexistente derruba o gate", () => {
     setupRealFallow({ ".fallowrc.jsonc": { rules: { "misplaced-directive": "error", "regra-inexistente": "error" } } });
-    const result = run(gate.script);
+    const result = run(FALLOW.script);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unknown rule 'regra-inexistente'");
     expect(result.stderr).not.toContain("misplaced-directive");
-  });
+  }, REAL_FALLOW_TIMEOUT_MS);
 
   it("com o fallow instalado, um .fallowrc.json que sombreia o .fallowrc.jsonc derruba o gate", () => {
     setupRealFallow({
       ".fallowrc.jsonc": { rules: { "misplaced-directive": "error" } },
       ".fallowrc.json": { rules: { "misplaced-directive": "warn" } },
     });
-    const result = run(gate.script);
+    const result = run(FALLOW.script);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("ignoring '.fallowrc.jsonc'");
-  });
+  }, REAL_FALLOW_TIMEOUT_MS);
 });
