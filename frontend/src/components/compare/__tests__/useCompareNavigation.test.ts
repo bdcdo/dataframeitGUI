@@ -123,3 +123,14 @@ describe("useCompareNavigation — pin do doc exibido", () => {
     expect(toastInfo).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useCompareNavigation — doc sem campo na fila", () => {
+  // A guarda de escrita recusa `no-field` por `currentFieldName.length === 0`:
+  // o nome precisa ser `""`, e não `undefined`, para ela recusar em vez de lançar.
+  it("entrega `currentFieldName` vazio, sem campo atual", () => {
+    const { result } = renderNav([doc("A")]);
+
+    expect(result.current.currentFieldName).toBe("");
+    expect(result.current.currentField).toBeUndefined();
+  });
+});

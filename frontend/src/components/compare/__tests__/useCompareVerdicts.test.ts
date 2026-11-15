@@ -71,7 +71,7 @@ function expectOptimisticWrite(
   expect(goNextField).toHaveBeenCalledTimes(1);
 }
 
-function setup(readOnly = false) {
+function setup(readOnly = false, currentFieldName = "q1") {
   const recordReview = vi.fn();
   const goNextField = vi.fn();
   const { result } = renderHook(() =>
@@ -79,7 +79,7 @@ function setup(readOnly = false) {
       readOnly,
       projectId: "p1",
       currentDoc: DOC,
-      currentFieldName: "q1",
+      currentFieldName,
       allDocDivergent: ["q1", "q2"],
       localReviews: {},
       fieldResponses: [] as FieldResponse[],
@@ -120,6 +120,33 @@ describe("modo somente leitura", () => {
     expect(toastError).toHaveBeenCalledWith(
       "Modo somente leitura: nenhuma decisão é registrada.",
       expect.objectContaining({ id: "compare-write-blocked-read-only" }),
+    );
+  });
+});
+
+// Sem campo na fila, a navegação entrega `currentFieldName === ""`.
+describe("sem campo atual", () => {
+  it("recusa as duas escritas com o aviso de campo ausente", async () => {
+    const { result, recordReview, goNextField } = setup(false, "");
+
+    await act(async () => {
+      await result.current.handleVerdict(ORIGIN, "concordo", "r1");
+      await result.current.handleConfirmEquivalent(
+        ORIGIN,
+        ["r1", "r2"],
+        "r1",
+        "fundida",
+      );
+    });
+
+    expect(mockSubmitVerdict).not.toHaveBeenCalled();
+    expect(mockConfirmEquivalent).not.toHaveBeenCalled();
+    expect(recordReview).not.toHaveBeenCalled();
+    expect(goNextField).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(2);
+    expect(toastError).toHaveBeenCalledWith(
+      "Nenhum campo selecionado — recarregue a página.",
+      expect.objectContaining({ id: "compare-write-blocked-no-field" }),
     );
   });
 });

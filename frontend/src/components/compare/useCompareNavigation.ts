@@ -148,7 +148,10 @@ export function useCompareNavigation({
   // — o segundo defeito provado da #613 (caso real: confirmar equivalência em
   // q4 fez o índice apontar de q8 para q14).
   const fieldIndex = pinnedIndex(docFields, pinnedFieldName);
-  const currentFieldName = docFields[fieldIndex];
+  // `""` quando o doc não tem campo na fila: sem o `??`, o índice fora da lista
+  // dava `undefined` sob o tipo `string`, e a guarda `no-field` de
+  // `useCompareVerdicts` lançava ao ler `.length` em vez de recusar.
+  const currentFieldName = docFields[fieldIndex] ?? "";
 
   // Re-pinagem quando o nome fixado não resolve: pin `null` (primeiro render) ou
   // o campo saiu da lista. Ajuste condicional de estado durante o render (padrão
@@ -169,8 +172,8 @@ export function useCompareNavigation({
   const currentField = fields.find((f) => f.name === currentFieldName);
   // Invariante: havendo campo, ele é divergente — `docFields ⊆ allDocDivergent`,
   // que o servidor já entrega filtrado (`computeDivergentFieldNames`), e doc
-  // sem campo divergente sai antes de montar o painel. Por isso não há flag
-  // "campo divergente" (seria só "há campo") nem ramo "concordante" na UI (#616).
+  // sem campo divergente sai antes de montar o painel. Por isso não há ramo
+  // "concordante" na UI nem razão "não divergente" na guarda de escrita (#616).
 
   // Avisa quando a COMPOSIÇÃO da fila de campos muda sob a revisora. Tanto a
   // decisão (com as três supressões que impedem o aviso de virar ruído) quanto o

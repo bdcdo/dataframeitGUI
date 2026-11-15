@@ -158,7 +158,6 @@ function compareWriteGate(
   if (readOnly) return { ok: false, reason: "read-only" };
   if (currentDoc === undefined) return { ok: false, reason: "no-doc" };
   if (currentFieldName.length === 0) return { ok: false, reason: "no-field" };
-  // Com campo, ele é sempre divergente (ver `useCompareNavigation`, #616).
   if (
     !verdictOriginMatches(origin, {
       documentId: currentDoc.id,
