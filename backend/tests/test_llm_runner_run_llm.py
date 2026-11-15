@@ -100,11 +100,19 @@ class _FakeQuery:
     Pelo mesmo motivo, toda resposta é cortada em `max_rows`, como o PostgREST
     faz em silêncio (1000 no Supabase), e sem `.order()` as linhas voltam na
     ordem da lista, que faz o papel da ordem física da tabela (issue #693).
+
+    Um select de lista devolve só as colunas pedidas, para que um teste veja
+    quais colunas a leitura baixa, e entende o count embutido do PostgREST
+    (`"id, responses(count)"`): conta as linhas da tabela embutida cuja chave
+    `<tabela no singular>_id` aponta para a linha, filtradas pelos filtros
+    `responses.<coluna>`, que não restringem a tabela de cima.
     """
 
-    def __init__(self, data, on_execute=None, max_rows=1000):
+    def __init__(self, data, on_execute=None, max_rows=1000, columns=None, table=None):
         self._data = data
         self._max_rows = max_rows
+        self._columns = columns
+        self._table = table
         self._filters: list[tuple[str, str, Any]] = []
         self._single = False
         self._on_execute = on_execute
@@ -143,8 +151,41 @@ class _FakeQuery:
         self._single = True
         return self
 
-    def _matches(self, row: dict) -> bool:
-        for op, column, value in self._filters:
+    def _own_filters(self) -> list[tuple[str, str, Any]]:
+        return [f for f in self._filters if "." not in f[1]]
+
+    def _embedded_filters(self, name: str) -> list[tuple[str, str, Any]]:
+        prefix = f"{name}."
+        return [
+            (op, column.removeprefix(prefix), value)
+            for op, column, value in self._filters
+            if column.startswith(prefix)
+        ]
+
+    def _project(self, row: dict) -> dict:
+        out: dict = {}
+        for token in (t.strip() for t in self._columns.split(",")):
+            if token == "*":
+                out.update(row)
+            elif token.endswith("(count)"):
+                assert self._table is not None
+                name = token.removesuffix("(count)")
+                fk = f"{self._table.name.removesuffix('s')}_id"
+                filters = self._embedded_filters(name)
+                children = self._table.tables[name].select_data
+                count = sum(
+                    1
+                    for child in children
+                    if child.get(fk) == row["id"] and self._matches(child, filters)
+                )
+                out[name] = [{"count": count}]
+            elif token in row:
+                out[token] = row[token]
+        return out
+
+    @staticmethod
+    def _matches(row: dict, filters) -> bool:
+        for op, column, value in filters:
             if op == "eq" and row.get(column) != value:
                 return False
             if op == "in" and row.get(column) not in value:
@@ -163,10 +204,15 @@ class _FakeQuery:
         if self._on_execute is not None:
             self._on_execute(list(self._filters))
         if isinstance(self._data, list):
-            rows = [r for r in self._data if self._matches(r)]
+            own = self._own_filters()
+            rows = [r for r in self._data if self._matches(r, own)]
             if self._order is not None:
                 rows.sort(key=lambda r: r[self._order])
             rows = rows[: min(self._limit or self._max_rows, self._max_rows)]
+            if self._columns is not None:
+                rows = [self._project(r) for r in rows]
+            if self._table is not None:
+                self._table.reads.append((self._columns, rows))
             if self._single:
                 return SimpleNamespace(data=rows[0] if rows else None)
             return SimpleNamespace(data=rows)
@@ -186,14 +232,21 @@ class _FakeTable:
         self.insert_calls: list[dict] = []
         self.update_calls: list[dict] = []
         self.name = ""
+        # Preenchidos por _FakeSupabase: as tabelas vizinhas, para o count
+        # embutido, e cada leitura feita, como (colunas pedidas, linhas
+        # devolvidas).
+        self.tables: dict[str, _FakeTable] = {}
+        self.reads: list[tuple[str, list[dict]]] = []
         self.operation_log: list[
             tuple[str, str, dict, list[tuple[str, str, object]]]
         ] = []
 
-    def select(self, *a, **k):
+    def select(self, columns="*", *a, **k):
         if self.select_error is not None:
             return _RaisingQuery(self.select_error)
-        return _FakeQuery(self.select_data, max_rows=self.max_rows)
+        return _FakeQuery(
+            self.select_data, max_rows=self.max_rows, columns=columns, table=self
+        )
 
     def insert(self, payload):
         def record(filters):
@@ -232,6 +285,7 @@ class _FakeSupabase:
         ] = []
         for name, table in tables.items():
             table.name = name
+            table.tables = tables
             table.operation_log = self.operation_log
 
     def table(self, name):

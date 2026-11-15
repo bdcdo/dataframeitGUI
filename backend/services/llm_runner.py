@@ -12,7 +12,6 @@ import re
 import threading
 import time
 import traceback
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -792,46 +791,58 @@ def _select_all(build_query: Callable[[], Any]) -> list:
         rows.extend(page)
 
 
-def _filter_docs(
-    sb,
-    docs: list[dict],
-    project_id: str,
+# Ids por requisição quando a leitura se restringe a uma lista de ids. O filtro
+# `in` vai inteiro na query string, e uma seleção de milhares de ids estouraria
+# o limite de tamanho de requisição dos proxies na frente do PostgREST (8 KB é
+# comum). 100 UUIDs ocupam cerca de 4 KB.
+_ID_BATCH_SIZE = 100
+
+
+def _select_all_by_ids(
+    build_query: Callable[[], Any],
+    ids: list[str],
+    batch_size: int = _ID_BATCH_SIZE,
+) -> list:
+    """`_select_all` restrita a `ids`, com o filtro `in` fatiado em lotes.
+
+    Os lotes saem dos ids ordenados, e cada lote volta em ordem de `id`, então
+    o resultado inteiro fica em ordem de `id`, como o de `_select_all`.
+    """
+    unique_ids = sorted(set(ids))
+    rows: list = []
+    for start in range(0, len(unique_ids), batch_size):
+        batch = unique_ids[start : start + batch_size]
+        rows.extend(_select_all(lambda batch=batch: build_query().in_("id", batch)))
+    return rows
+
+
+def _llm_response_count(candidate: dict) -> int:
+    # Forma do count embutido do PostgREST: `"responses": [{"count": n}]`.
+    return candidate["responses"][0]["count"]
+
+
+def _choose_document_ids(
+    candidates: list[dict],
     filter_mode: str,
     max_response_count: int | None,
     sample_size: int | None,
     sample_seed: str,
-) -> list[dict]:
-    """Apply filtering to the document list based on filter_mode."""
-    if filter_mode == "all":
-        return docs
-
-    if filter_mode in ("pending", "max_responses"):
-        # Fetch current LLM responses to count per document
-        existing = _select_all(
-            lambda: (
-                sb.table("responses")
-                .select("id, document_id")
-                .eq("project_id", project_id)
-                .eq("respondent_type", "llm")
-                .eq("is_latest", True)
-            )
-        )
-        counts = Counter(r["document_id"] for r in existing)
-
-        if filter_mode == "pending":
-            docs = [d for d in docs if counts.get(d["id"], 0) == 0]
-        elif filter_mode == "max_responses" and max_response_count is not None:
-            docs = [d for d in docs if counts.get(d["id"], 0) <= max_response_count]
-
-    if filter_mode == "random_sample" and sample_size is not None:
-        if len(docs) > sample_size:
+) -> list[str]:
+    """Os ids dos candidatos que a run processa, conforme o filter_mode."""
+    if filter_mode == "pending":
+        candidates = [c for c in candidates if _llm_response_count(c) == 0]
+    elif filter_mode == "max_responses" and max_response_count is not None:
+        candidates = [
+            c for c in candidates if _llm_response_count(c) <= max_response_count
+        ]
+    elif filter_mode == "random_sample" and sample_size is not None:
+        if len(candidates) > sample_size:
             # Semente = job_id, que fica gravado em llm_runs: a amostra de uma
             # run é reproduzível a partir do registro dela, e runs diferentes
-            # continuam sorteando amostras diferentes. Depende de `docs` vir em
-            # ordem estável, o que `_select_all` garante.
-            docs = random.Random(sample_seed).sample(docs, sample_size)
-
-    return docs
+            # continuam sorteando amostras diferentes. Depende de `candidates`
+            # vir em ordem estável, o que `_select_all` garante.
+            candidates = random.Random(sample_seed).sample(candidates, sample_size)
+    return [c["id"] for c in candidates]
 
 
 def _pop_threshold(llm_kwargs: dict, key: str, default: float) -> float:
@@ -941,36 +952,71 @@ def _load_documents_for_run(
     sample_size: int | None,
     sample_seed: str,
 ) -> list[dict]:
+    """Os documentos que a run processa, com o `text` só dos escolhidos.
+
+    Fora do modo "all", a leitura tem 2 fases: primeiro só os ids (com a
+    contagem de respostas LLM, nos modos que filtram por ela), para escolher
+    a amostra ou os pendentes; depois o `text` só dos escolhidos. Uma amostra
+    de 10 num projeto de 20 mil documentos não baixa os 20 mil textos.
+    """
+
     # O escopo de um documento são os dois filtros juntos, e não só o soft
     # delete: `excluded_at` é a exclusão já aprovada pelo coordenador, e
     # `exclusion_pending_at` é o pedido do pesquisador ainda em revisão,
     # derivado por trigger de project_comments
     # (20260702190000_documents_exclusion_pending). Toda leitura de documents
-    # para processamento aplica os dois. A tela LLM -> Configurar conta pelos
-    # dois campos, e um filtro a menos aqui faz a run processar mais
-    # documentos do que a tela anunciou.
-    def build_query():
-        query = (
+    # para processamento aplica os dois, inclusive a segunda fase: um
+    # documento excluído entre as fases sai da run. A tela LLM -> Configurar
+    # conta pelos dois campos, e um filtro a menos aqui faz a run processar
+    # mais documentos do que a tela anunciou.
+    def in_scope(columns: str):
+        return (
             sb.table("documents")
-            .select("id, text, title, external_id")
+            .select(columns)
             .eq("project_id", project_id)
             .is_("excluded_at", "null")
             .is_("exclusion_pending_at", "null")
         )
-        if document_ids:
-            query = query.in_("id", document_ids)
-        return query
 
-    docs = _select_all(build_query)
-    return _filter_docs(
-        sb,
-        docs,
-        project_id,
+    def read(build_query, ids: list[str] | None) -> list:
+        if ids:
+            return _select_all_by_ids(build_query, ids)
+        return _select_all(build_query)
+
+    def full_documents():
+        return in_scope("id, text, title, external_id")
+
+    if filter_mode == "all":
+        return read(full_documents, document_ids)
+
+    counts_responses = filter_mode in ("pending", "max_responses")
+
+    def candidates_query():
+        if not counts_responses:
+            return in_scope("id")
+        # Conta no banco, pelo count embutido do PostgREST, as respostas LLM
+        # vigentes de cada documento. Os filtros `responses.*` restringem as
+        # linhas contadas, e não os documentos.
+        return (
+            in_scope("id, responses(count)")
+            .eq("responses.project_id", project_id)
+            .eq("responses.respondent_type", "llm")
+            .eq("responses.is_latest", True)
+        )
+
+    chosen_ids = _choose_document_ids(
+        read(candidates_query, document_ids),
         filter_mode,
         max_response_count,
         sample_size,
         sample_seed,
     )
+    # Direto em `_select_all_by_ids`, e não em `read`: uma escolha vazia não
+    # pode virar "sem restrição de ids".
+    by_id = {d["id"]: d for d in _select_all_by_ids(full_documents, chosen_ids)}
+    # A ordem é a da escolha: a da amostra sorteada, ou a de `id` nos demais
+    # modos.
+    return [by_id[i] for i in chosen_ids if i in by_id]
 
 
 def _expected_llm_fields(model_class) -> set[str]:
