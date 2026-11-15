@@ -16,7 +16,7 @@ export function frontendEslint(configFile: string): ESLint {
  * Lint de fixture filtrado por uma regra. Fixture que não parseia, cujo
  * caminho o ESLint ignora ou que nenhum bloco da config cobre reprova em vez
  * de devolver lista vazia, que passaria por "a regra aceitou". Os três casos
- * chegam como mensagem sem `ruleId`, como o aviso de eslint-disable sem uso,
+ * chegam como mensagem sem `ruleId`, como o aviso de diretiva de lint sem uso,
  * que também reprova: fixture não precisa dele.
  */
 export function ruleLinter(
