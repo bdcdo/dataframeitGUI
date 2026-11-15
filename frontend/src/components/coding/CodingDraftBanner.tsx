@@ -79,11 +79,9 @@ function DraftOfferMessage({
 }
 
 // Quanto a região live espera, vazia, depois do mount antes de aceitar a
-// primeira oferta. A oferta chega no primeiro effect após o mount (é ali que o
-// documento é aberto), e uma região criada e preenchida no mesmo frame é, para o
-// leitor de tela, uma região que nasceu populada — o caso do #635 de volta.
-// O atraso só vale para a primeira oferta: depois disso a região já está
-// registrada e as seguintes entram na hora. A faixa visível não espera.
+// primeira oferta, que chega no primeiro effect após o mount: criada e
+// preenchida no mesmo frame, ela "nasce populada" (#635). Só a primeira oferta
+// espera; a faixa visível, nunca.
 export const LIVE_REGION_SETTLE_MS = 250;
 
 interface CodingDraftBannerProps {
@@ -94,10 +92,6 @@ interface CodingDraftBannerProps {
   /** Instante de referência da idade do rascunho. Injetável para o teste não
    *  depender do relógio real; omitido, é capturado no mount. */
   now?: number;
-  /** Esconde a oferta sem desmontar a região live — em fullscreen, onde a faixa
-   *  não se aplica. Desmontar a faixa ali fazia a região nascer populada ao
-   *  sair do fullscreen com oferta pendente. */
-  suppressed?: boolean;
 }
 
 export function CodingDraftBanner({
@@ -106,7 +100,6 @@ export function CodingDraftBanner({
   onRestore,
   onDiscard,
   now,
-  suppressed = false,
 }: CodingDraftBannerProps) {
   // `Date.now()` no corpo do componente é impuro no render. A idade exibida é
   // uma ordem de grandeza ("há 2 horas"), não um cronômetro: capturar o instante
@@ -121,9 +114,7 @@ export function CodingDraftBanner({
   }, []);
 
   const offer =
-    !suppressed && (recovery.kind === "resumable" || recovery.kind === "diverged")
-      ? recovery
-      : null;
+    recovery.kind === "resumable" || recovery.kind === "diverged" ? recovery : null;
   const announced = regionSettled ? offer : null;
 
   return (

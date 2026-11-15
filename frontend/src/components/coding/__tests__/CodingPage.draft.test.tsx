@@ -169,14 +169,14 @@ function plantDraft(draftAnswers: Record<string, unknown>, base = {}) {
 
 const storedDraft = () => parseCodingDraft(window.localStorage.getItem(KEY));
 
-// O campo de resposta não tem `label` associado no `FieldRenderer`; é o
-// primeiro textbox do painel (o segundo é a caixa de notas).
 // A região live da oferta (#635): a cópia da faixa que o leitor de tela lê. A
 // visível é `aria-hidden`, e há outras regiões `status` na tela (o indicador
 // de não enviado), daí o filtro.
 const offerRegion = () =>
   screen.getAllByRole("status").find((el) => el.classList.contains("sr-only"));
 
+// O campo de resposta não tem `label` associado no `FieldRenderer`; é o
+// primeiro textbox do painel (o segundo é a caixa de notas).
 const answerInput = () => screen.getAllByRole("textbox")[0];
 
 const typeAnswer = async (user: ReturnType<typeof userEvent.setup>, text: string) => {

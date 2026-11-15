@@ -47,21 +47,22 @@ const resumable: CodingDraftRecovery = {
 
 const NONE: CodingDraftRecovery = { kind: "none" };
 
-type Props = { recovery: CodingDraftRecovery; suppressed?: boolean };
-
-function mount(initial: Props) {
+function mount(initial: CodingDraftRecovery) {
   const base = { fields: FIELDS, onRestore: () => {}, onDiscard: () => {}, now: Date.now() };
-  const { rerender } = render(<CodingDraftBanner {...base} {...initial} />);
-  return (next: Props) => rerender(<CodingDraftBanner {...base} {...next} />);
+  const { rerender } = render(<CodingDraftBanner recovery={initial} {...base} />);
+  return (next: CodingDraftRecovery) =>
+    rerender(<CodingDraftBanner recovery={next} {...base} />);
 }
 
 function settle() {
-  act(() => vi.advanceTimersByTime(LIVE_REGION_SETTLE_MS));
+  act(() => {
+    vi.advanceTimersByTime(LIVE_REGION_SETTLE_MS);
+  });
 }
 
 // A região live, já assentada, com a oferta dentro.
 function show(recovery: CodingDraftRecovery) {
-  mount({ recovery });
+  mount(recovery);
   settle();
   return screen.getByRole("status");
 }
@@ -109,15 +110,15 @@ describe("CodingDraftBanner — a chegada da oferta é anunciada", () => {
   // Mutação vermelha: voltar a devolver `null` sem oferta. A região deixa de
   // existir antes da chegada e este teste cai.
   it("a região já está montada, vazia, quando ainda não há oferta", () => {
-    mount({ recovery: NONE });
+    mount(NONE);
     expect(screen.getByRole("status").textContent).toBe("");
   });
 
   it("na transição none → resumable, a região que se preenche é a que já existia", () => {
-    const update = mount({ recovery: NONE });
+    const update = mount(NONE);
     const before = screen.getByRole("status");
     settle();
-    update({ recovery: resumable });
+    update(resumable);
     const after = screen.getByRole("status");
     expect(after).toBe(before);
     expect(after.textContent).toMatch(/alterações não enviadas/);
@@ -127,7 +128,7 @@ describe("CodingDraftBanner — a chegada da oferta é anunciada", () => {
   // mesmo frame em que ela nasce é, para o leitor, nascer populada. Mutação
   // vermelha: anunciar `offer` em vez de `announced`.
   it("a primeira oferta só entra na região depois de ela assentar; a faixa visível não espera", () => {
-    mount({ recovery: resumable });
+    mount(resumable);
     const live = screen.getByRole("status");
     expect(live.textContent).toBe("");
     expect(screen.getByRole("button", { name: "Retomar rascunho" })).toBeTruthy();
@@ -135,37 +136,23 @@ describe("CodingDraftBanner — a chegada da oferta é anunciada", () => {
     expect(live.textContent).toMatch(/alterações não enviadas/);
   });
 
-  // Em fullscreen a faixa não se aplica, mas não pode desmontar: desmontada
-  // (como era), a região nascia populada na saída do fullscreen. O
-  // `CodingPage` a suprime em vez de desmontá-la.
-  it("suprimida, a oferta some da tela e da região, e volta no mesmo nó", () => {
-    const update = mount({ recovery: diverged, suppressed: true });
-    settle();
-    const live = screen.getByRole("status");
-    expect(live.textContent).toBe("");
-    expect(screen.queryByRole("button")).toBeNull();
-    update({ recovery: diverged, suppressed: false });
-    expect(screen.getByRole("status")).toBe(live);
-    expect(live.textContent).toMatch(/foi salvo depois/);
-  });
-
   // A frase vive duas vezes no DOM, mas só uma vez na árvore de acessibilidade:
   // a cópia visível é `aria-hidden`, senão o leitor a leria duas vezes. E a
   // cópia visível não é uma segunda região live.
   it("a cópia visível não é região live nem é lida pelo leitor", () => {
-    show(diverged);
+    const live = show(diverged);
     expect(screen.getAllByRole("status")).toHaveLength(1);
     const copies = screen.getAllByText(/foi salvo depois/);
     expect(copies).toHaveLength(2);
-    const visible = copies.find((el) => !screen.getByRole("status").contains(el));
+    const visible = copies.find((el) => !live.contains(el));
     expect(visible?.closest("[aria-hidden='true']")).not.toBeNull();
   });
 
   it("descartada a oferta, a região esvazia e continua montada", () => {
-    const update = mount({ recovery: diverged });
+    const update = mount(diverged);
     settle();
     const live = screen.getByRole("status");
-    update({ recovery: NONE });
+    update(NONE);
     expect(screen.getByRole("status")).toBe(live);
     expect(live.textContent).toBe("");
     expect(screen.queryByRole("button")).toBeNull();
