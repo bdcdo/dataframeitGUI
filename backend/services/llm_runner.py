@@ -785,8 +785,9 @@ _SCOPE_READ_MIN_FRACTION = 0.9
 def _scope_read_is_cheaper(n_scope: int, n_chosen: int, min_fraction: float) -> bool:
     """Se ler o escopo inteiro custa menos que pedir os escolhidos em lotes.
 
-    O escopo custa as páginas com linhas mais a vazia que encerra a leitura; os
-    lotes, um pedido cada. Num escopo pequeno, um lote só sai mais barato
+    Conta como `_read_pages` pede: o escopo custa as páginas com linhas mais a
+    vazia que encerra a leitura; os lotes, um pedido cada (o lote completo
+    dispensa a página vazia). Num escopo pequeno, um lote só sai mais barato
     mesmo com quase tudo escolhido.
     """
     scope_requests = math.ceil(n_scope / _SELECT_PAGE_SIZE) + 1
@@ -995,10 +996,8 @@ def _load_documents_for_run(
     contagem de respostas LLM, nos modos que filtram por ela), para escolher
     a amostra ou os pendentes; depois o `text` só dos escolhidos. Uma amostra
     de 10 num projeto de 20 mil documentos não baixa os 20 mil textos.
-
-    Quando os escolhidos são ao menos `scope_read_min_fraction` do escopo e
-    lê-lo custa menos requisições que os lotes de ids, a segunda fase lê o
-    escopo paginado e descarta o resto (ver `_SCOPE_READ_MIN_FRACTION`).
+    Com quase todo o escopo escolhido, a segunda fase lê o escopo paginado e
+    descarta o resto (ver `_SCOPE_READ_MIN_FRACTION`).
     """
 
     # O escopo de um documento são os dois filtros juntos, e não só o soft
