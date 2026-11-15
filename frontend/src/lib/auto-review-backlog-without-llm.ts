@@ -16,6 +16,10 @@ type DataClient = Pick<SupabaseServerClient, "from">;
 // completa, e o projeto em `auto_review_llm` ou o documento já com auto-revisão
 // (vigente ou em histórico). Fora do modo de auto-revisão, documento sem
 // histórico de auto-revisão não entraria nem com LLM, então não conta.
+//
+// Um desvio deliberado da RPC: documento excluído (ou com exclusão pendente)
+// não conta. A RPC não os filtra, mas o runner LLM os pula, e a ressalva manda
+// rodar o LLM — contá-los deixaria um aviso que nenhuma ação apaga.
 export function docsWithoutLlm(
   humanDocIds: Iterable<string>,
   llmDocIds: Iterable<string>,
@@ -24,13 +28,10 @@ export function docsWithoutLlm(
   return new Set([...humanDocIds].filter((id) => !llm.has(id)));
 }
 
-// `reviewedDocIds` só é lido fora do modo de auto-revisão.
-export function countEligibleWithoutLlm(
-  automationMode: string | null,
+export function countReviewed(
   withoutLlm: ReadonlySet<string>,
   reviewedDocIds: Iterable<string>,
 ): number {
-  if (automationMode === "auto_review_llm") return withoutLlm.size;
   const reviewed = new Set(reviewedDocIds);
   return [...withoutLlm].filter((id) => reviewed.has(id)).length;
 }
@@ -39,20 +40,40 @@ interface DocRow {
   document_id: string;
 }
 
-function fetchCurrentResponseDocs(
+function currentResponses(
   client: DataClient,
   projectId: string,
   respondentType: "humano" | "llm",
+  columns: string,
 ) {
+  return client
+    .from("responses")
+    .select(columns)
+    .eq("project_id", projectId)
+    .eq("respondent_type", respondentType)
+    .eq("is_latest", true)
+    .eq("is_partial", false);
+}
+
+// O filtro de exclusão só vai no lado humano: é ele que define os candidatos.
+function fetchHumanDocs(client: DataClient, projectId: string) {
   return fetchAllPaged<DocRow>(
     () =>
-      client
-        .from("responses")
-        .select("id, document_id")
-        .eq("project_id", projectId)
-        .eq("respondent_type", respondentType)
-        .eq("is_latest", true)
-        .eq("is_partial", false) as never,
+      currentResponses(
+        client,
+        projectId,
+        "humano",
+        "id, document_id, documents!inner(excluded_at, exclusion_pending_at)",
+      )
+        .is("documents.excluded_at", null)
+        .is("documents.exclusion_pending_at", null) as never,
+    ["id"],
+  );
+}
+
+function fetchLlmDocs(client: DataClient, projectId: string) {
+  return fetchAllPaged<DocRow>(
+    () => currentResponses(client, projectId, "llm", "id, document_id") as never,
     ["id"],
   );
 }
@@ -80,8 +101,8 @@ export async function fetchDocsWithoutLlmCount(
 ): Promise<{ count: number; error: null } | { count: null; error: { message: string } }> {
   const [projectResult, humanResult, llmResult] = await Promise.all([
     client.from("projects").select("automation_mode").eq("id", projectId).single(),
-    fetchCurrentResponseDocs(client, projectId, "humano"),
-    fetchCurrentResponseDocs(client, projectId, "llm"),
+    fetchHumanDocs(client, projectId),
+    fetchLlmDocs(client, projectId),
   ]);
   const firstError = projectResult.error ?? humanResult.error ?? llmResult.error;
   if (firstError) return { count: null, error: firstError };
@@ -102,7 +123,7 @@ export async function fetchDocsWithoutLlmCount(
   const reviewError = reviewsResult.error ?? historyResult.error;
   if (reviewError) return { count: null, error: reviewError };
   return {
-    count: countEligibleWithoutLlm(automationMode, withoutLlm, [
+    count: countReviewed(withoutLlm, [
       ...docIds(reviewsResult.data),
       ...docIds(historyResult.data),
     ]),

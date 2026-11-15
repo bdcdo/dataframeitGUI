@@ -606,15 +606,16 @@ export async function regenerateAutoReviewBacklog(
     );
     if (enqueueError) return { success: false, error: enqueueError.message };
 
-    // A contagem usa o mesmo cliente admin da RPC (SECURITY DEFINER) para
-    // enxergar o mesmo universo de documentos que ela; o gate de coordenador
-    // acima já restringe quem lê, e só um número sai daqui.
+    // A contagem lê com o cliente do usuário: a RLS de responses, field_reviews
+    // e do histórico já deixa coordenador e master verem o projeto inteiro, e
+    // a service key fica restrita à RPC e ao dreno.
+    const supabase = await createSupabaseServer();
     const [drainResult, withoutLlmResult] = await Promise.all([
       drainAutoReviewReconciliationRequests({
         projectId,
         maxRequests: 2_000,
       }),
-      fetchDocsWithoutLlmCount(admin, projectId),
+      fetchDocsWithoutLlmCount(supabase, projectId),
     ]);
     if (drainResult.failed > 0) {
       return {

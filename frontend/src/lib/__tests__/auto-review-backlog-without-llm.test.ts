@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  countEligibleWithoutLlm,
+  countReviewed,
   docsWithoutLlm,
   fetchDocsWithoutLlmCount,
 } from "@/lib/auto-review-backlog-without-llm";
@@ -11,10 +11,13 @@ import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 // enqueue_auto_review_reconciliation_for_project trocando a exigência do LLM
 // pela sua ausência.
 
+// O mock filter-aware compara r["documents.excluded_at"] literalmente (ver
+// test-utils/comparison-fixtures.ts).
 function human(id: string, documentId: string, extra: Record<string, unknown> = {}) {
   return {
     id, project_id: "p1", document_id: documentId, respondent_type: "humano",
-    is_latest: true, is_partial: false, ...extra,
+    is_latest: true, is_partial: false,
+    "documents.excluded_at": null, "documents.exclusion_pending_at": null, ...extra,
   };
 }
 function llm(id: string, documentId: string, extra: Record<string, unknown> = {}) {
@@ -34,13 +37,9 @@ describe("docsWithoutLlm", () => {
   });
 });
 
-describe("countEligibleWithoutLlm", () => {
-  it("no modo de auto-revisão conta todo documento sem LLM", () => {
-    expect(countEligibleWithoutLlm("auto_review_llm", new Set(["d1", "d2"]), [])).toBe(2);
-  });
-
-  it("fora do modo de auto-revisão só conta quem já teve auto-revisão", () => {
-    expect(countEligibleWithoutLlm("compare_llm", new Set(["d1", "d2"]), ["d2", "d2", "d9"])).toBe(1);
+describe("countReviewed", () => {
+  it("conta só os candidatos que já tiveram auto-revisão", () => {
+    expect(countReviewed(new Set(["d1", "d2"]), ["d2", "d2", "d9"])).toBe(1);
   });
 });
 
@@ -63,6 +62,21 @@ describe("fetchDocsWithoutLlmCount", () => {
       "p1",
     );
     expect(result).toEqual({ count: 2, error: null });
+  });
+
+  it("documento excluído ou com exclusão pendente não conta: o runner LLM o pula", async () => {
+    const result = await fetchDocsWithoutLlmCount(
+      client({
+        projects: [{ id: "p1", automation_mode: "auto_review_llm" }],
+        responses: [
+          human("h1", "d1"),
+          human("h2", "d2", { "documents.excluded_at": "2026-11-01T00:00:00Z" }),
+          human("h3", "d3", { "documents.exclusion_pending_at": "2026-11-01T00:00:00Z" }),
+        ],
+      }),
+      "p1",
+    );
+    expect(result).toEqual({ count: 1, error: null });
   });
 
   it("LLM parcial não é geração corrente", async () => {
