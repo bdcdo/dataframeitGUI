@@ -82,6 +82,9 @@ describe("researcher field order — erro do banco", () => {
     harness.supabase.tableResults!.researcher_field_orders = { error: pgError };
 
     expect(await run(await import("@/actions/field-order"))).toEqual(expected);
+    // Uma linha só: o serverErrorCopy loga, e um console.error próprio da
+    // action duplicaria o evento.
+    expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith(
       expect.stringMatching(/^\[field-order\] .* falhou$/),
       pgError,

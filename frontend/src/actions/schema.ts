@@ -376,14 +376,17 @@ export async function recoverFieldsFromStoredCode(
     return { fields };
   } catch (e) {
     // O 4xx do backend já vem com copy pt-BR acionável (projeto sem código,
-    // acesso negado). Falha de rede ou 5xx ("fetch failed", "Internal Server
-    // Error") é diagnóstico: vai para o log, e o toast recebe copy pt-BR.
+    // acesso negado). O 5xx o fetchFastAPI já levou ao log, com status e
+    // detail; falha de rede ("fetch failed") é diagnóstico que ainda não foi.
+    // Os dois dão a copy pt-BR do fluxo.
     if (e instanceof ApiError && e.status < 500) return { error: e.message };
+    const generic = "Não foi possível recuperar os campos do código armazenado. Tente novamente.";
+    if (e instanceof ApiError) return { error: generic };
     return {
       error: serverErrorCopy(
         "[schema] recuperação dos campos falhou",
         { message: errorMessage(e) },
-        { generic: "Não foi possível recuperar os campos do código armazenado. Tente novamente." },
+        { generic },
       ),
     };
   }

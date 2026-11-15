@@ -19,7 +19,6 @@ export async function getResearcherFieldOrder(
     .maybeSingle();
 
   if (error) {
-    console.error("[getResearcherFieldOrder]", error);
     return { order: null, error: serverErrorCopy("[field-order] leitura da ordem falhou", error, { generic: "Não foi possível carregar a ordem dos campos." }) };
   }
   if (!data) return { order: null };
@@ -53,7 +52,6 @@ export async function saveResearcherFieldOrder(
   );
 
   if (error) {
-    console.error("[saveResearcherFieldOrder]", error);
     return { success: false, error: serverErrorCopy("[field-order] gravação da ordem falhou", error, { generic: "Não foi possível salvar a ordem dos campos. Tente novamente." }) };
   }
   return { success: true };
