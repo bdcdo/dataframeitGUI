@@ -259,7 +259,10 @@ def _build_field_dict(
     field_name: str, field_info, *, generate_missing_ids: bool = False
 ) -> dict:
     """Reconstitui o dict de metadata de `PydanticField` para um campo compilado."""
-    annotation = field_info.annotation
+    # Desembrulhado uma vez aqui: o `Optional` de campo condicional não carrega
+    # nada (obrigatoriedade e visibilidade vêm do `json_schema_extra`), e cada
+    # leitor da anotação abaixo teria de lembrar de tirá-lo (#525).
+    annotation = _unwrap_optional(field_info.annotation)
     parsed_type, parsed_options = _parse_annotation(annotation)
     extra = extract_json_schema_extra(field_info)
 
@@ -791,9 +794,8 @@ def _unwrap_optional(annotation: type) -> type:
     """`Optional[X]` -> `X`; qualquer outra anotação volta como está.
 
     Campo com condição de visibilidade sai do gerador como `Optional[...]`
-    (`fieldAnnotation` em schema-utils.ts), inclusive o composto, cujo
-    `Optional[_<nome>_fields]` precisa ser desembrulhado para que os subcampos
-    voltem no round-trip (#525).
+    (`fieldAnnotation` em schema-utils.ts), inclusive o composto
+    `Optional[_<nome>_fields]`.
     """
     if get_origin(annotation) is typing.Union:
         non_none = [a for a in get_args(annotation) if a is not type(None)]
@@ -823,11 +825,6 @@ def _parse_annotation(annotation: type) -> tuple[str, list[str] | None]:
     if annotation is str:
         return "text", None
 
-    # Optional[X] -> unwrap
-    inner = _unwrap_optional(annotation)
-    if inner is not annotation:
-        return _parse_annotation(inner)
-
     # Nested BaseModel -> composite text field
     from pydantic import BaseModel
 
@@ -845,7 +842,6 @@ def _extract_subfields(annotation: type) -> list[dict] | None:
     """Extract subfield definitions from a nested BaseModel annotation."""
     from pydantic import BaseModel
 
-    annotation = _unwrap_optional(annotation)
     if not (
         isinstance(annotation, type)
         and issubclass(annotation, BaseModel)

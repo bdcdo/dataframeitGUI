@@ -1,14 +1,7 @@
 """Round-trip do schema como propriedade (#525), lado do compilador.
 
-`schema_roundtrip_cases.json` traz schemas sorteados pelo fast-check, o código
-que o `generatePydanticCode` real emite para eles e os campos que este
-compilador devolveu desse código. O teste do frontend
-(`schema-roundtrip.property.test.ts`) prova que esses campos são o schema
-original pela normalização canônica do app (`snapshotOf`); este prende o
-compilador: uma propriedade que ele deixe de ler muda a saída e reprova aqui.
-
-Mudança intencional no compilador pede regenerar o arquivo (comando no teste do
-frontend), e a regeneração passa de novo pela equivalência de lá.
+Prende a saída de `compile_pydantic` para os casos gravados; o contrato e o
+comando de regeneração estão em `schema-roundtrip.property.test.ts`.
 """
 
 import json

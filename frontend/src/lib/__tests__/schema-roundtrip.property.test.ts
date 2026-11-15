@@ -151,37 +151,24 @@ describe("round-trip generatePydanticCode → compile_pydantic (casos gravados)"
 // trata como diferentes não podem virar o mesmo código. É o que reprova na
 // hora a propriedade que o gerador deixa de emitir — o compilador não teria
 // como recuperar o que não está no texto.
-const TRIGGER = buildField({
+const TRIGGER: PydanticField = {
   id: "00000000-0000-4000-8000-000000000525",
   name: "gatilho",
   type: "single",
-  choiceOptions: ["Sim", "Não"],
-  dateOptions: undefined,
+  options: ["Sim", "Não"],
   description: "Gatilho",
-  help_text: undefined,
-  target: undefined,
-  required: undefined,
-  allow_other: undefined,
-  subfields: undefined,
-  subfield_rule: undefined,
-  condition: undefined,
-  justification_prompt: undefined,
-  question_revision: undefined,
-});
-// Toda escolha do gerador de casos; o `satisfies` faz o typecheck reprovar
-// quando `FieldSpec` ganha uma chave que a propriedade não mutaria.
-const SPEC_KEYS = Object.keys({
-  id: true, name: true, type: true, choiceOptions: true, dateOptions: true,
-  description: true, help_text: true, target: true, required: true,
-  allow_other: true, subfields: true, subfield_rule: true, condition: true,
-  justification_prompt: true, question_revision: true,
-} satisfies Record<keyof FieldSpec, true>) as Array<keyof FieldSpec>;
+};
 
 describe("generatePydanticCode (propriedade)", () => {
   it("campos que o snapshot distingue geram códigos distintos", () => {
     const spec = fieldSpec([TRIGGER]).filter((s) => s.name !== TRIGGER.name);
     fc.assert(
-      fc.property(spec, spec, fc.constantFrom(...SPEC_KEYS), (a, b, key) => {
+      // A chave mutada sai do próprio spec sorteado (`fc.record` emite toda
+      // chave, mesmo as `undefined`), então chave nova em `FieldSpec` entra
+      // sozinha na mutação.
+      fc.property(spec, spec, fc.nat(), (a, b, index) => {
+        const keys = Object.keys(a) as Array<keyof FieldSpec>;
+        const key = keys[index % keys.length];
         const before = buildField(a);
         const after = buildField({ ...a, [key]: b[key] });
         fc.pre(stableStringify(canonical(before)) !== stableStringify(canonical(after)));

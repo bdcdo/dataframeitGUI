@@ -188,8 +188,8 @@ export function schemaArbitrary(maxFields = 4): fc.Arbitrary<PydanticField[]> {
   const extend = (fields: PydanticField[]): fc.Arbitrary<PydanticField[]> => {
     if (fields.length >= maxFields) return fc.constant(fields);
     const next = savedField(fields).filter(
-        (f) => !fields.some((other) => other.name === f.name || other.id === f.id),
-      );
+      (f) => !fields.some((other) => other.name === f.name || other.id === f.id),
+    );
     return fc.oneof(
       fc.constant(fields),
       next.chain((field) => extend([...fields, field])),
