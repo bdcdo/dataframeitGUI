@@ -237,12 +237,25 @@ function RegenerateBacklogPanel({ projectId, onRegenerated }: { projectId: strin
       // "Aguardando a resposta LLM" saiu na #670: documento sem geração LLM
       // deixou de entrar no backlog, então não há mais pedido em espera para
       // contar — o que sobrava ali era a fila insatisfazível se anunciando como
-      // se fosse trabalho em andamento.
+      // se fosse trabalho em andamento. O que fica no lugar é a ressalva dos
+      // documentos deixados de fora por falta de geração LLM (#690): sem ela,
+      // um round reiniciado lia "0 documento(s) reenfileirado(s)" como sucesso.
       const parts = [
         `${result.queued ?? 0} documento(s) reenfileirado(s)`,
         `${result.processed ?? 0} pedido(s) processado(s)`,
       ];
-      toast.success(`Backlog regenerado. ${parts.join(", ")}.`);
+      const summary = `Backlog regenerado. ${parts.join(", ")}.`;
+      if (result.withoutLlm === null) {
+        toast.warning(
+          `${summary} Não foi possível contar os documentos que ficaram fora por não ter geração LLM.`,
+        );
+      } else if ((result.withoutLlm ?? 0) > 0) {
+        toast.warning(
+          `${summary} ${result.withoutLlm} documento(s) com codificação humana ficaram fora por não ter geração LLM corrente; rode o LLM neles para entrarem na auto-revisão.`,
+        );
+      } else {
+        toast.success(summary);
+      }
       onRegenerated();
     } catch (err) {
       toast.error(

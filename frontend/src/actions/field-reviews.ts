@@ -13,6 +13,7 @@ import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
 import { drainAutoReviewReconciliationRequests } from "@/lib/auto-review-reconciler";
+import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm";
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { propagateValueEquivalenceChange } from "@/lib/value-equivalence-effects";
@@ -586,6 +587,10 @@ export async function regenerateAutoReviewBacklog(
   error?: string;
   queued?: number;
   processed?: number;
+  // Documentos elegíveis que ficaram fora por não ter geração LLM corrente
+  // (#690). `null` quando a contagem falhou: o reparo em si deu certo, então a
+  // falha vira ressalva no toast, não erro da ação.
+  withoutLlm?: number | null;
 }> {
   try {
     const gate = await requireCoordinator(
@@ -601,15 +606,28 @@ export async function regenerateAutoReviewBacklog(
     );
     if (enqueueError) return { success: false, error: enqueueError.message };
 
-    const drainResult = await drainAutoReviewReconciliationRequests({
-      projectId,
-      maxRequests: 2_000,
-    });
+    // A contagem usa o mesmo cliente admin da RPC (SECURITY DEFINER) para
+    // enxergar o mesmo universo de documentos que ela; o gate de coordenador
+    // acima já restringe quem lê, e só um número sai daqui.
+    const [drainResult, withoutLlmResult] = await Promise.all([
+      drainAutoReviewReconciliationRequests({
+        projectId,
+        maxRequests: 2_000,
+      }),
+      fetchDocsWithoutLlmCount(admin, projectId),
+    ]);
     if (drainResult.failed > 0) {
       return {
         success: false,
         error: `${drainResult.failed} pedido(s) de reconciliação falharam e permaneceram na fila para nova tentativa.`,
       };
+    }
+
+    if (withoutLlmResult.error) {
+      console.error(
+        "regenerateAutoReviewBacklog: contagem de documentos sem geração LLM falhou",
+        withoutLlmResult.error.message,
+      );
     }
 
     revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
@@ -618,6 +636,7 @@ export async function regenerateAutoReviewBacklog(
       success: true,
       queued: typeof queued === "number" ? queued : 0,
       processed: drainResult.processed,
+      withoutLlm: withoutLlmResult.count,
     };
   } catch (e) {
     return { success: false, error: errorMessage(e) || "Erro" };

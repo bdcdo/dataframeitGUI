@@ -8,12 +8,12 @@ import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import type { LlmError } from "@/lib/llm-error-metrics";
 import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
 
-const mocks = vi.hoisted(() => ({ prepare: vi.fn(), resolve: vi.fn(), reopen: vi.fn(), refresh: vi.fn(), error: vi.fn(), success: vi.fn() }));
+const mocks = vi.hoisted(() => ({ prepare: vi.fn(), resolve: vi.fn(), reopen: vi.fn(), refresh: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn(), regenerate: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock("@/actions/stats", () => ({ prepareErrorResolution: mocks.prepare, resolveError: mocks.resolve, reopenError: mocks.reopen }));
-vi.mock("@/actions/field-reviews", () => ({ regenerateAutoReviewBacklog: vi.fn() }));
+vi.mock("@/actions/field-reviews", () => ({ regenerateAutoReviewBacklog: mocks.regenerate }));
 vi.mock("@/actions/equivalences", () => ({ markLlmEquivalent: vi.fn() }));
-vi.mock("sonner", () => ({ toast: { error: mocks.error, success: mocks.success } }));
+vi.mock("sonner", () => ({ toast: { error: mocks.error, success: mocks.success, warning: mocks.warning } }));
 
 const row = resolutionFixture();
 function errorCase(): LlmError {
@@ -297,5 +297,44 @@ describe("decisões que perderam a validade", () => {
   it("sem decisões perdidas, nenhuma linha", () => {
     show();
     expect(screen.queryByText(/perderam a validade|perdeu a validade/)).toBeNull();
+  });
+});
+
+// #690: a regeneração deixa de fora, por construção, documento sem geração LLM
+// corrente. Num round reiniciado isso é todo documento, e "0 reenfileirado(s)"
+// sozinho se lia como sucesso.
+describe("regenerar backlog", () => {
+  async function regenerate() {
+    render(<LlmInsightsView projectId="p1" errors={[]} fields={[{ name: "x", description: "Pergunta" }]}
+      reviewedEntries={[]} canResolve isCoordinator summary={{ totalLlmDocs: 1 }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Regenerar backlog" }));
+    await waitFor(() => expect(mocks.regenerate).toHaveBeenCalledWith("p1"));
+  }
+
+  it("ressalva os documentos que ficaram fora por não ter geração LLM", async () => {
+    mocks.regenerate.mockResolvedValue({ success: true, queued: 0, processed: 0, withoutLlm: 3 });
+    await regenerate();
+    await waitFor(() => expect(mocks.warning).toHaveBeenCalledWith(
+      "Backlog regenerado. 0 documento(s) reenfileirado(s), 0 pedido(s) processado(s). 3 documento(s) com codificação humana ficaram fora por não ter geração LLM corrente; rode o LLM neles para entrarem na auto-revisão.",
+    ));
+    expect(mocks.success).not.toHaveBeenCalled();
+  });
+
+  it("contagem indisponível vira ressalva, não silêncio", async () => {
+    mocks.regenerate.mockResolvedValue({ success: true, queued: 2, processed: 2, withoutLlm: null });
+    await regenerate();
+    await waitFor(() => expect(mocks.warning).toHaveBeenCalledWith(
+      "Backlog regenerado. 2 documento(s) reenfileirado(s), 2 pedido(s) processado(s). Não foi possível contar os documentos que ficaram fora por não ter geração LLM.",
+    ));
+    expect(mocks.success).not.toHaveBeenCalled();
+  });
+
+  it("sem documento de fora, sucesso sem ressalva", async () => {
+    mocks.regenerate.mockResolvedValue({ success: true, queued: 2, processed: 2, withoutLlm: 0 });
+    await regenerate();
+    await waitFor(() => expect(mocks.success).toHaveBeenCalledWith(
+      "Backlog regenerado. 2 documento(s) reenfileirado(s), 2 pedido(s) processado(s).",
+    ));
+    expect(mocks.warning).not.toHaveBeenCalled();
   });
 });

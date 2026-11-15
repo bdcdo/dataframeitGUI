@@ -20,6 +20,7 @@ import { authModuleMock } from "@/test-utils/auth-mock";
 type Step = WriteCall | RpcCall;
 let timeline: Step[];
 let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, { message: string } | null>;
 
 const hoisted = vi.hoisted(() => ({
   isCoord: vi.fn<() => Promise<boolean>>(async () => true),
@@ -37,6 +38,7 @@ function makeClient() {
     tableData,
     writeCalls: timeline as WriteCall[],
     rpcCalls: timeline as RpcCall[],
+    queryErrors,
   });
 }
 
@@ -52,6 +54,7 @@ vi.mock("@/lib/auto-review-reconciler", () => ({
 
 beforeEach(() => {
   timeline = [];
+  queryErrors = {};
   hoisted.isCoord.mockResolvedValue(true);
   hoisted.adminFactory.mockClear();
   hoisted.drain.mockClear();
@@ -59,6 +62,7 @@ beforeEach(() => {
     projects: [
       {
         id: "p1",
+        automation_mode: "auto_review_llm",
         pydantic_fields: [
           { name: "q1", type: "single", options: ["a", "b"], target: "all" },
         ],
@@ -83,6 +87,7 @@ beforeEach(() => {
         document_id: "d1",
         respondent_type: "llm",
         is_latest: true,
+        is_partial: false,
         answers: { q1: "b" },
         answer_field_hashes: null,
       },
@@ -122,5 +127,30 @@ describe("regenerateAutoReviewBacklog — reconcile da fila", () => {
     expect(hoisted.drain).toHaveBeenCalledWith({ projectId: "p1", maxRequests: 2_000 });
     expect(timeline.some((step) => (step as WriteCall).table === "assignments")).toBe(false);
     expect(timeline.some((step) => (step as WriteCall).table === "field_reviews")).toBe(false);
+    expect(r.withoutLlm).toBe(0);
+  });
+
+  // #690: round reiniciado arquiva a geração LLM, a RPC casa zero documentos, e
+  // o resultado precisa dizer quantos ficaram fora em vez de só "0".
+  it("devolve quantos documentos ficaram fora por não ter geração LLM corrente", async () => {
+    tableData.responses = tableData.responses.map((row) =>
+      (row as { respondent_type: string }).respondent_type === "llm"
+        ? { ...(row as object), is_latest: false }
+        : row,
+    );
+    const regenerate = await loadRegenerate();
+
+    const r = await regenerate("p1");
+
+    expect(r).toMatchObject({ success: true, withoutLlm: 1 });
+  });
+
+  it("falha da contagem não derruba o reparo: vira null", async () => {
+    queryErrors = { "responses:select": { message: "boom" } };
+    const regenerate = await loadRegenerate();
+
+    const r = await regenerate("p1");
+
+    expect(r).toMatchObject({ success: true, withoutLlm: null });
   });
 });
