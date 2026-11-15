@@ -82,3 +82,51 @@ describe("CodingDraftBanner — o que a região live anuncia", () => {
     expect(screen.getByRole("button", { name: "Descartar" })).toBeTruthy();
   });
 });
+
+// O leitor de tela anuncia o que MUDA numa região live que já existia; uma
+// região inserida já populada costuma ser lida como conteúdo estático (#635).
+// Afirmar só que a região contém a frase não discrimina nada — isso já valia
+// quando a faixa devolvia `null` sem oferta. O que separa os dois mundos é a
+// região existir, vazia, ANTES de a oferta chegar, e ser o MESMO nó depois.
+describe("CodingDraftBanner — a chegada da oferta é anunciada", () => {
+  const NONE: CodingDraftRecovery = { kind: "none" };
+
+  function mount(recovery: CodingDraftRecovery) {
+    const props = { fields: FIELDS, onRestore: () => {}, onDiscard: () => {}, now: Date.now() };
+    const { rerender } = render(<CodingDraftBanner recovery={recovery} {...props} />);
+    return (next: CodingDraftRecovery) =>
+      rerender(<CodingDraftBanner recovery={next} {...props} />);
+  }
+
+  // Mutação vermelha: voltar a devolver `null` sem oferta. A região deixa de
+  // existir antes da chegada e este teste cai.
+  it("a região já está montada, vazia, quando ainda não há oferta", () => {
+    mount(NONE);
+    expect(screen.getByRole("status").textContent).toBe("");
+  });
+
+  it("na transição none → resumable, a região que se preenche é a que já existia", () => {
+    const update = mount(NONE);
+    const before = screen.getByRole("status");
+    update(resumable);
+    const after = screen.getByRole("status");
+    expect(after).toBe(before);
+    expect(after.textContent).toMatch(/alterações não enviadas/);
+  });
+
+  // O texto visível da faixa não é uma segunda região: duas regiões com a
+  // mesma frase seriam dois anúncios.
+  it("a faixa visível não é região live", () => {
+    show(diverged);
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
+
+  it("descartada a oferta, a região esvazia e continua montada", () => {
+    const update = mount(diverged);
+    const live = screen.getByRole("status");
+    update(NONE);
+    expect(screen.getByRole("status")).toBe(live);
+    expect(live.textContent).toBe("");
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+});

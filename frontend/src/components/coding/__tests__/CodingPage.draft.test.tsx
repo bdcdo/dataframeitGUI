@@ -277,8 +277,9 @@ describe("recuperação — oferecer, nunca aplicar em silêncio", () => {
 
     await waitFor(() => expect(answerInput()).toBeTruthy());
     expect(answerInput()).toHaveProperty("value", "do servidor");
-    // Mas a existência do rascunho é anunciada.
-    expect(screen.getByText(/alterações não enviadas neste documento/i)).toBeTruthy();
+    // Mas a existência do rascunho é anunciada — duas cópias da frase: a faixa
+    // visível e a região live `sr-only` que já estava montada (#635).
+    expect(screen.getAllByText(/alterações não enviadas neste documento/i)).toHaveLength(2);
   });
 
   it("`Retomar` aplica o rascunho e acende o indicador de não enviado", async () => {
@@ -322,14 +323,15 @@ describe("recuperação — oferecer, nunca aplicar em silêncio", () => {
     plantDraft({ q1: "do rascunho" }, { q1: "antigo" });
     renderPage({ [DOC]: { q1: "servidor-novo" } });
 
-    expect(await screen.findByText(/foi salvo depois/i)).toBeTruthy();
+    // Faixa visível + região live `sr-only` (#635).
+    expect(await screen.findAllByText(/foi salvo depois/i)).toHaveLength(2);
     // Nomeia a pergunta pelo RÓTULO, não pelo nome interno do campo (`q1`). A
     // busca é escopada ao `<strong>` da faixa porque o mesmo texto também é o
     // enunciado da pergunta no formulário.
-    const emphasized = screen.getByText(
+    const emphasized = screen.getAllByText(
       (_, el) => el?.tagName === "STRONG" && el.textContent === "Qual o medicamento?",
     );
-    expect(emphasized).toBeTruthy();
+    expect(emphasized).toHaveLength(2);
   });
 });
 
