@@ -75,11 +75,9 @@ updates:
       - "dependencies"
       - "ci"
 
-  # Hooks de .pre-commit-config.yaml. Sem esta entrada, o `rev` do
-  # ruff-pre-commit ficava parado enquanto o ecossistema `uv` subia o `ruff` do
-  # dependency-group dev — a mesma ferramenta rodando em duas versoes conforme
-  # o caminho (hook de commit vs. `uv run ruff`). Cobre tambem gitleaks e
-  # actionlint, hoje pinados a mao.
+  # Hooks de .pre-commit-config.yaml com `rev` (pre-commit-hooks, gitleaks,
+  # actionlint). O ruff nao entra aqui: o hook dele roda `uv run ruff`, entao
+  # quem o sobe e o ecossistema `uv` acima, pelo backend/uv.lock (#554).
   - package-ecosystem: "pre-commit"
     directory: "/"
     schedule:

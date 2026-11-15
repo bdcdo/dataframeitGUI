@@ -1,7 +1,7 @@
 """Pinos da toolchain do backend declarados em mais de um lugar precisam convergir.
 
-- ``rev`` do ``ruff-pre-commit`` == ``ruff`` em ``uv.lock`` (porquê: comentário
-  do hook em ``.pre-commit-config.yaml``; #554).
+- o ruff do pre-commit é o de ``uv.lock`` (``uv run``), sem ``rev`` próprio
+  (porquê: comentário do hook em ``.pre-commit-config.yaml``; #554).
 - ``.python-version`` == Python do ``Dockerfile`` == ``python_version`` do
   mypy. Sem o pino, o ``uv`` local pegava o Python mais novo instalado (3.15),
   para o qual o lock não tem wheel do tiktoken.
@@ -17,49 +17,109 @@ BACKEND = Path(__file__).resolve().parent.parent
 REPO = BACKEND.parent
 
 
-def _ruff_pin_mismatch(config: str, lock_text: str) -> str | None:
-    """Mensagem de falha se o ``rev`` do hook diverge do ruff travado; senão None."""
+def _hook_entry(config: str, hook_id: str) -> str:
+    """``entry`` do hook ``hook_id`` (antes do próximo hook ou repo), ou ""."""
     match = re.search(
-        r"repo:\s*https://github\.com/astral-sh/ruff-pre-commit\s*\n\s*rev:\s*[\"']?([^\"'\s]+)",
+        rf"^\s*- id: {re.escape(hook_id)}\s*\n(?:(?!\s*- ).*\n)*?\s*entry:\s*(.*)",
         config,
+        re.MULTILINE,
     )
-    assert match, "hook ruff-pre-commit não encontrado em .pre-commit-config.yaml"
-    rev = match.group(1)
-    hook_version = rev.removeprefix("v")
-
-    lock = tomllib.loads(lock_text)
-    locked = [p["version"] for p in lock["package"] if p["name"] == "ruff"]
-    assert len(locked) == 1, f"esperava um ruff em uv.lock, achei {locked}"
-    if hook_version == locked[0]:
-        return None
-    return (
-        f"rev do ruff-pre-commit em .pre-commit-config.yaml ({rev}) diverge do "
-        f"ruff em backend/uv.lock ({locked[0]}). Alinhe os dois: se o lock está "
-        f"certo, troque o `rev` para v{locked[0]}; se o bump foi o do hook, rode "
-        f"`cd backend && uv lock --upgrade-package ruff=={hook_version}`."
-    )
+    return match.group(1) if match else ""
 
 
-def test_ruff_hook_rev_matches_locked_ruff() -> None:
-    mismatch = _ruff_pin_mismatch(
+def _ruff_hook_problems(config: str, pyproject: str, lock_text: str) -> list[str]:
+    """O que impede o ruff do pre-commit de ser o mesmo travado em ``uv.lock``."""
+    problems = []
+    if re.search(r"^\s*- repo:\s*\S*ruff-pre-commit", config, re.MULTILINE):
+        problems.append(
+            "hook oficial astral-sh/ruff-pre-commit em .pre-commit-config.yaml: "
+            "o `rev` dele é um segundo pino do ruff, que diverge de backend/uv.lock "
+            "a cada release (#554). Use o hook local `uv run --project backend ruff`."
+        )
+    for hook_id in ("ruff-check", "ruff-format"):
+        command = hook_id.replace("-", " ")
+        entry = _hook_entry(config, hook_id)
+        # Qualquer forma de rodar pelo projeto backend serve (`--project
+        # backend`, `cd backend && uv run ...`); o que não serve é um ruff
+        # resolvido fora do uv.lock.
+        if "backend" not in entry or not re.search(
+            rf"\buv run (\S+ )*{command}\b", entry
+        ):
+            problems.append(
+                f"hook `{hook_id}` em .pre-commit-config.yaml não roda via "
+                f"`uv run --project backend {command}` (ruff de backend/uv.lock)."
+            )
+
+    # `uv run ruff` cai no ruff do PATH se o venv não o tiver: o pino só vale
+    # com o ruff no grupo dev e travado no lock.
+    dev = tomllib.loads(pyproject).get("dependency-groups", {}).get("dev", [])
+    if not any(re.match(r"ruff\b", str(dep)) for dep in dev):
+        problems.append(
+            "ruff ausente do dependency-group dev em backend/pyproject.toml."
+        )
+    locked = [
+        p["version"]
+        for p in tomllib.loads(lock_text).get("package", [])
+        if p["name"] == "ruff"
+    ]
+    if len(locked) != 1:
+        problems.append(f"esperava um ruff em backend/uv.lock, achei {locked}.")
+    return problems
+
+
+def test_ruff_hook_runs_locked_ruff() -> None:
+    problems = _ruff_hook_problems(
         (REPO / ".pre-commit-config.yaml").read_text(),
+        (BACKEND / "pyproject.toml").read_text(),
         (BACKEND / "uv.lock").read_text(),
     )
-    assert mismatch is None, mismatch
+    assert not problems, "\n".join(problems)
 
 
-def test_ruff_pin_mismatch_names_both_files_and_versions() -> None:
-    # Prova do vermelho do #554 pelo mesmo caminho do teste real: com o `rev`
-    # sabotado, a falha nomeia as duas versões e os dois arquivos.
-    config = (
-        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n    rev: v0.17.2\n"
+def test_ruff_hook_problems_flags_second_pin() -> None:
+    # Prova do vermelho: a config de antes (hook oficial com `rev`) reprova,
+    # nomeando o arquivo; e um ruff fora do grupo dev e do lock também.
+    old = (
+        "  - repo: https://github.com/astral-sh/ruff-pre-commit\n"
+        "    rev: v0.17.3\n"
+        "    hooks:\n"
+        "      - id: ruff-check\n"
+        "        args: [--fix]\n"
+        "      - id: ruff-format\n"
     )
+    pyproject = '[dependency-groups]\ndev = ["ruff>=0.15"]\n'
     lock = '[[package]]\nname = "ruff"\nversion = "0.17.3"\n'
-    message = _ruff_pin_mismatch(config, lock)
-    assert message is not None
-    for expected in (".pre-commit-config.yaml", "v0.17.2", "backend/uv.lock", "0.17.3"):
-        assert expected in message, f"{expected!r} ausente de: {message}"
-    assert _ruff_pin_mismatch(config.replace("v0.17.2", "v0.17.3"), lock) is None
+    problems = _ruff_hook_problems(old, pyproject, lock)
+    assert len(problems) == 3, problems
+    assert all(".pre-commit-config.yaml" in p for p in problems)
+
+    # Um hook com `language: python` e o ruff pinado em additional_dependencies
+    # é o mesmo segundo pino, mesmo que um comentário cite o comando certo.
+    pinned = (
+        "  # entry: uv run --project backend ruff check --fix\n"
+        "  - repo: local\n"
+        "    hooks:\n"
+        "      - id: ruff-check\n"
+        "        entry: ruff check --fix\n"
+        "        language: python\n"
+        "        additional_dependencies: [ruff==0.17.2]\n"
+        "      - id: ruff-format\n"
+        "        entry: uv run --locked --project backend ruff format\n"
+        "        language: system\n"
+    )
+    problems = _ruff_hook_problems(pinned, pyproject, lock)
+    assert problems == [
+        "hook `ruff-check` em .pre-commit-config.yaml não roda via "
+        "`uv run --project backend ruff check` (ruff de backend/uv.lock)."
+    ], problems
+
+    problems = _ruff_hook_problems(
+        (REPO / ".pre-commit-config.yaml").read_text(),
+        "[dependency-groups]\ndev = []\n",
+        "",
+    )
+    assert any("dependency-group dev" in p for p in problems), problems
+    assert any("backend/uv.lock" in p for p in problems), problems
 
 
 def test_python_version_matches_dockerfile_and_mypy() -> None:

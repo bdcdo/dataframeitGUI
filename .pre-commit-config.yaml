@@ -47,24 +47,31 @@ repos:
   # framework (so os .py alterados), entao o debito legado fica grandfathered —
   # so barra/formata o arquivo que voce tocar. --fix auto-corrige imports e afins.
   # Config em backend/pyproject.toml; suppressions pontuais ficam inline no codigo.
-  # O `rev` abaixo precisa acompanhar a versao do ruff travada em
-  # backend/uv.lock: sao duas declaracoes da MESMA ferramenta, e versoes
-  # diferentes fazem o hook e o `uv run ruff check .` divergirem em silencio.
-  # O lock e a referencia — nao o `ruff>=X` do dependency-group dev em
-  # backend/pyproject.toml, que e piso e nao versao: um `uv lock --upgrade` sobe
-  # o lock sem tocar o piso, e ai o piso continua "satisfeito" com o rev velho.
-  # O ecossistema `pre-commit` em .github/dependabot.yml existe para que os dois
-  # sejam bumpados; sao PRs separados (grupo `backend-minor-patch` vs. avulso),
-  # entao a convergencia e eventual — o hook `toolchain-pins` (pre-push) e o
-  # job de .github/workflows/fly-contracts.yml reprovam a divergencia (#554).
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.17.3
+  # Hook local que roda o ruff do dependency-group dev via `uv run`, e nao o
+  # hook oficial astral-sh/ruff-pre-commit: o oficial tinha `rev` proprio, uma
+  # segunda declaracao da MESMA ferramenta, e a cada release do ruff os PRs do
+  # Dependabot de `uv` e de `pre-commit` ficavam vermelhos ate alguem alinhar os
+  # dois a mao (#554, #866). Assim o backend/uv.lock e o pino unico: o hook, o
+  # `uv run ruff check .` e o Dependabot de `uv` usam a mesma versao por
+  # construcao. `--locked` falha alto se o lock estiver defasado do
+  # pyproject.toml, em vez de o hook de lint reescrever o uv.lock no meio do
+  # commit. `--force-exclude` reproduz o hook oficial: os excludes do ruff
+  # (os defaults, como .venv) valem tambem para arquivo passado por nome. O
+  # teste em backend/tests/test_toolchain_pins.py barra a volta do hook oficial.
+  - repo: local
     hooks:
       - id: ruff-check
-        args: [--fix]
+        name: ruff check (versao do backend/uv.lock)
+        entry: uv run --locked --project backend ruff check --force-exclude --fix
+        language: system
         files: ^backend/.*\.py$
+        require_serial: true
       - id: ruff-format
+        name: ruff format (versao do backend/uv.lock)
+        entry: uv run --locked --project backend ruff format --force-exclude
+        language: system
         files: ^backend/.*\.py$
+        require_serial: true
 
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
@@ -311,9 +318,9 @@ repos:
         require_serial: true
         stages: [pre-push]
 
-      # Pinos da toolchain do backend declarados fora do backend: o `rev` do
-      # ruff acima contra o uv.lock, e o backend/.python-version contra o
-      # Dockerfile e o mypy (backend/tests/test_toolchain_pins.py). Roda so esse
+      # Pinos da toolchain do backend declarados fora do backend: o ruff acima
+      # vindo do uv.lock (sem `rev` proprio), e o backend/.python-version contra
+      # o Dockerfile e o mypy (backend/tests/test_toolchain_pins.py). Roda so esse
       # teste quando o push toca um desses dois arquivos; os demais lados
       # (uv.lock, Dockerfile, pyproject.toml) ja disparam o backend-pytest
       # inteiro, que inclui o teste.
