@@ -1,3 +1,5 @@
+import { mapWithConcurrency } from "@/lib/upload-chunking";
+
 // Paginação de leitura do PostgREST. O builder é de uso único (o await o
 // executa), por isso o caller passa uma FÁBRICA de query, não a query pronta.
 //
@@ -68,18 +70,13 @@ export async function fetchByDocumentChunks<T>(
   for (let i = 0; i < documentIds.length; i += DOCUMENT_CHUNK) {
     chunks.push(documentIds.slice(i, i + DOCUMENT_CHUNK));
   }
-  const data: T[][] = [];
   let failed: { message: string } | null = null;
-  let next = 0;
-  const worker = async () => {
-    while (failed === null && next < chunks.length) {
-      const index = next++;
-      const result = await fetchChunk(chunks[index]);
-      if (result.error) failed ??= result.error;
-      else data[index] = result.data;
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
+  const results = await mapWithConcurrency(chunks, concurrency, async (ids) => {
+    if (failed) return null;
+    const result = await fetchChunk(ids);
+    failed ??= result.error;
+    return result;
+  });
   if (failed) return { data: [], error: failed };
-  return { data: data.flat(), error: null };
+  return { data: results.flatMap((result) => result?.data ?? []), error: null };
 }

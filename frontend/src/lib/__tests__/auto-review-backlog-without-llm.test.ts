@@ -123,4 +123,18 @@ describe("fetchDocsWithoutLlmCount", () => {
     );
     expect(result).toEqual({ count: null, error: { message: "boom" } });
   });
+
+  // A contagem é informativa nos dois chamadores: na action, uma exceção
+  // rejeitava o Promise.all com o dreno e virava "falha" depois de a RPC já
+  // ter reenfileirado; na tela, derrubava a rota.
+  it("exceção na leitura vira erro explícito, não rejeição", async () => {
+    const client = makeFilterAwareSupabaseMock({ tableData: {}, writeCalls: [] });
+    client.from = () => {
+      throw new Error("fetch failed");
+    };
+    expect(await fetchDocsWithoutLlmCount(client as never, "p1")).toEqual({
+      count: null,
+      error: { message: "fetch failed" },
+    });
+  });
 });

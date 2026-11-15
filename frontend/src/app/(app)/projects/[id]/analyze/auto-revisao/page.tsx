@@ -93,30 +93,6 @@ function buildAutoReviewDocuments(
   );
 }
 
-// Nunca rejeita: a contagem é informativa, e uma falha dela vira o aviso
-// "não foi possível verificar", não a tela de erro.
-async function countDocsWithoutLlm(
-  supabase: Parameters<typeof fetchDocsWithoutLlmCount>[0],
-  projectId: string,
-): Promise<number | null> {
-  try {
-    const result = await fetchDocsWithoutLlmCount(supabase, projectId);
-    if (result.error) {
-      console.error(
-        "AutoReviewRoute: contagem de documentos sem geração LLM falhou",
-        result.error.message,
-      );
-    }
-    return result.count;
-  } catch (error) {
-    console.error(
-      "AutoReviewRoute: contagem de documentos sem geração LLM falhou",
-      error,
-    );
-    return null;
-  }
-}
-
 export default async function AutoReviewRoute({
   params,
   searchParams,
@@ -192,7 +168,15 @@ export default async function AutoReviewRoute({
   // projeto e não pode segurar a tela.
   const docsWithoutLlm =
     isCoordinator && docsToReview.length === 0
-      ? countDocsWithoutLlm(supabase, id)
+      ? fetchDocsWithoutLlmCount(supabase, id).then((result) => {
+          if (result.error) {
+            console.error(
+              "AutoReviewRoute: contagem de documentos sem geração LLM falhou",
+              result.error.message,
+            );
+          }
+          return result.count;
+        })
       : undefined;
 
   return (
