@@ -56,7 +56,7 @@ def _publish(
 ) -> tuple[_RowPublisher, dict]:
     job_id = str(uuid.uuid4())
     publisher = _RowPublisher(
-        sb, job_id, {}, _PreparedLlmModel(_Analysis, {}), 0.5, run
+        sb, job_id, {}, _PreparedLlmModel(_Analysis, {}, {}), 0.5, run
     )
     response = _build_llm_response_row(
         run=run,
