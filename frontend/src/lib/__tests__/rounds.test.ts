@@ -3,7 +3,6 @@ import {
   classifyDocStatus,
   versionLabel,
   versionEquals,
-  responseRoundLabel,
   isCurrentFilter,
   getCurrentRoundDescriptor,
   compareVersionLabels,
@@ -246,58 +245,6 @@ describe("roundLabel", () => {
 
   it("round_id nulo -> 'Sem rodada'", () => {
     expect(roundLabel(null, rounds)).toBe("Sem rodada");
-  });
-});
-
-describe("responseRoundLabel", () => {
-  const piloto = round("rp", "Piloto");
-
-  it("manual usa label da tabela rounds", () => {
-    const ctx: RoundContext = {
-      strategy: "manual",
-      currentRoundId: "rp",
-      currentVersion: v(1, 0, 0),
-      rounds: [piloto],
-    };
-    expect(responseRoundLabel(ctx, { round_id: "rp" }, mapRounds([piloto]))).toBe(
-      "Piloto",
-    );
-  });
-
-  it("manual com round_id null retorna null", () => {
-    const ctx: RoundContext = {
-      strategy: "manual",
-      currentRoundId: "rp",
-      currentVersion: v(1, 0, 0),
-      rounds: [piloto],
-    };
-    expect(responseRoundLabel(ctx, { round_id: null }, mapRounds([piloto]))).toBeNull();
-  });
-
-  it("schema_version usa X.Y.Z da resposta", () => {
-    const ctx: RoundContext = {
-      strategy: "schema_version",
-      currentRoundId: null,
-      currentVersion: v(1, 0, 0),
-      rounds: [],
-    };
-    const r: ResponseRoundFields = {
-      schema_version_major: 0,
-      schema_version_minor: 9,
-      schema_version_patch: 1,
-    };
-    expect(responseRoundLabel(ctx, r, mapRounds([]))).toBe("0.9.1");
-  });
-
-  it("response null/undefined retorna null", () => {
-    const ctx: RoundContext = {
-      strategy: "schema_version",
-      currentRoundId: null,
-      currentVersion: v(1, 0, 0),
-      rounds: [],
-    };
-    expect(responseRoundLabel(ctx, null, mapRounds([]))).toBeNull();
-    expect(responseRoundLabel(ctx, undefined, mapRounds([]))).toBeNull();
   });
 });
 

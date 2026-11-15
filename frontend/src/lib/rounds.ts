@@ -29,23 +29,6 @@ export function versionEquals(a: SchemaVersion, b: SchemaVersion): boolean {
   return a.major === b.major && a.minor === b.minor && a.patch === b.patch;
 }
 
-export function responseRoundLabel(
-  ctx: RoundContext,
-  response: ResponseRoundFields | null | undefined,
-  roundsById: Map<string, Round>,
-): string | null {
-  if (!response) return null;
-  if (ctx.strategy === "manual") {
-    if (!response.round_id) return null;
-    return roundsById.get(response.round_id)?.label ?? null;
-  }
-  const m = response.schema_version_major;
-  const n = response.schema_version_minor;
-  const p = response.schema_version_patch;
-  if (m == null || n == null || p == null) return null;
-  return `${m}.${n}.${p}`;
-}
-
 /**
  * Rotulo de uma rodada explicita (`round_id`) para exibicao: null vira
  * "Sem rodada" e id ausente de `roundsById` vira "Rodada removida".
