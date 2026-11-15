@@ -150,7 +150,43 @@ O primeiro scan completo encontrou **113 erros em 5 arquivos**, com **103 (91%) 
 
 ### Dependabot e semgrep — a segurança
 
-Sobre o gitleaks (secrets) que já existia, a #260 acrescentou duas camadas. O **Dependabot** (`.github/dependabot.yml`) cobre dependências vulneráveis nos três ecossistemas (npm em `/frontend`, pip em `/backend`, github-actions): roda no servidor do GitHub e abre PRs sozinho, com `cooldown` de 7 dias antes de propor uma versão recém-publicada — janela de defesa contra supply-chain. O **semgrep** (hook de pre-push via `uvx`, rulesets `p/typescript`, `p/react`, `p/python`) faz SAST de código inseguro em JS/TS e Python, complementando as poucas regras de Security do react-doctor. O `--baseline-commit` limita aos achados novos vs `origin/main` (grandfathering); o hook falha fechado em achado real (exit 1) e falha aberto em erro de infra/rede (exit > 1), para não travar um push offline.
+Sobre o gitleaks (secrets) que já existia, a #260 acrescentou duas camadas. O **Dependabot** (`.github/dependabot.yml`) cobre dependências vulneráveis e desatualizadas em quatro ecossistemas (npm em `/frontend`, uv em `/backend`, github-actions e pre-commit): roda no servidor do GitHub e abre PRs sozinho, com `cooldown` de 7 dias antes de propor uma versão recém-publicada — janela de defesa contra supply-chain. O **semgrep** (hook de pre-push via `uvx`, rulesets `p/typescript`, `p/react`, `p/python`) faz SAST de código inseguro em JS/TS e Python, complementando as poucas regras de Security do react-doctor. O `--baseline-commit` limita aos achados novos vs `origin/main` (grandfathering); o hook falha fechado em achado real (exit 1) e falha aberto em erro de infra/rede (exit > 1), para não travar um push offline.
+
+### PR que sobe ferramenta de gate: medição pareada antes do merge
+
+O Dependabot também sobe o pino de ferramentas que são gate. No ecossistema `pre-commit`, sobe o `rev` de `pre-commit-hooks`, `gitleaks` e `actionlint`. No ecossistema `uv`, sobe o `ruff` do `backend/uv.lock`, que é a versão rodada pelos hooks `ruff-check` e `ruff-format` (#554). Esse bump é diferente de um bump de dependência comum, porque a versão nova pode mudar a contagem de achados **na mesma árvore**, sem que nenhuma linha nossa mude. O risco já foi medido aqui: no #534, o react-doctor foi de 1 para 10 errors na mesma árvore só ao subir de 0.7.3 para 0.7.8 (ver `docs/LINT_CONFIG.md`). O verde do PR não mede esse efeito. O PR do Dependabot só toca o pino, os hooks são file-scoped e o do gitleaks lê só o diff staged, então a versão nova passa sem ter olhado o débito legado.
+
+Por isso, antes do merge, todo PR desses exige três passos:
+
+1. **Medir as duas versões sobre a mesma árvore**, a antiga e a nova, e comparar as contagens. Conferir só que a nova passa não basta.
+2. **Registrar no corpo do PR** o comando, a contagem em cada versão e o que mudou.
+3. **Se a contagem subir, decidir de forma explícita**: corrigir os achados novos no próprio PR ou suprimi-los pontualmente com o porquê ao lado, no padrão que já existe (allowlist comentada em `.gitleaks.toml`, `-ignore` comentado no hook do actionlint, `# noqa` inline no ruff). Não se mergeia sem nomear a diferença.
+
+Como medir, num worktree do PR. O worktree limpo deixa `node_modules` e `.env.local` fora do scan, e a árvore fica constante enquanto só a ferramenta varia:
+
+```bash
+# pre-commit-hooks e actionlint: a config do merge-base traz o rev antigo.
+git show "$(git merge-base origin/main HEAD)":.pre-commit-config.yaml > /tmp/antiga.yaml
+pre-commit run actionlint --all-files --config /tmp/antiga.yaml   # versão antiga
+pre-commit run actionlint --all-files                             # versão nova
+
+# gitleaks: o hook roda `gitleaks git --pre-commit --staged` e ignora a lista de
+# arquivos, então `--all-files` passa sem escanear nada. Mede-se a árvore com
+# `gitleaks dir`, trocando o entry do hook, uma vez por versão.
+for rev in v8.30.1 v8.31.0; do   # antiga e nova, conforme o PR
+  printf 'repos:\n  - repo: https://github.com/gitleaks/gitleaks\n    rev: %s\n    hooks:\n      - id: gitleaks\n        entry: gitleaks dir --redact --no-banner .\n' "$rev" > "/tmp/gitleaks-$rev.yaml"
+  pre-commit run gitleaks --all-files --verbose --config "/tmp/gitleaks-$rev.yaml"
+done
+
+# ruff (PR do grupo backend-minor-patch que mexe no ruff): o hook roda com
+# --fix e reescreveria arquivos, então a medição usa os comandos só de leitura,
+# com cada versão.
+cd backend
+uvx ruff@0.17.3 check --statistics . && uvx ruff@0.17.3 format --check .   # antiga
+uv run ruff check --statistics . && uv run ruff format --check .           # nova (uv.lock do PR)
+```
+
+As versões acima são exemplos. Use as do PR.
 
 ## Setup (uma vez por checkout)
 
