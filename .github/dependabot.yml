@@ -79,9 +79,10 @@ updates:
   # actionlint). O ruff nao entra aqui: o hook dele roda `uv run ruff`, entao
   # quem o sobe e o ecossistema `uv` acima, pelo backend/uv.lock (#554).
   # Esses hooks sao gate: a versao nova pode mudar a contagem de achados na
-  # mesma arvore (no #534, o react-doctor foi de 1 para 10 errors so com o
-  # bump). Antes do merge, medir a versao antiga e a nova e registrar no PR.
-  # Vale tambem para o PR de `uv` que sobe o ruff. Procedimento em
+  # mesma arvore (no #534, um bump do react-doctor, via npm, levou de 1 para 10
+  # errors). Antes do merge, medir a versao antiga e a nova e registrar no PR.
+  # Vale tambem para os gates que vem por `uv` (ruff, mypy) e `npm`
+  # (react-doctor, fallow, typescript-eslint). Procedimento em
   # docs/CODE_QUALITY_TOOLING.md, secao "PR que sobe ferramenta de gate".
   - package-ecosystem: "pre-commit"
     directory: "/"
