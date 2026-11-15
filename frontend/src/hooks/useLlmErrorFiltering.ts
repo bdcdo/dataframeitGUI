@@ -2,9 +2,10 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { compareVersions } from "@/lib/compare-version";
-import { errorQueueTab, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { errorQueueTab, type ErrorQueueTab, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 export type DatePreset = "all" | "24h" | "7d" | "30d";
+export type ErrorStatusFilter = ErrorQueueTab | "all";
 export type SortBy = "default" | "field" | "document" | "recent";
 
 // Subconjunto não-genérico do retorno do hook consumido pela toolbar de
@@ -16,8 +17,8 @@ export interface LlmErrorFilteringControls {
   setErrorSearchQuery: (v: string) => void;
   errorFieldFilter: string;
   setErrorFieldFilter: (v: string) => void;
-  errorStatusFilter: string;
-  setErrorStatusFilter: (v: string) => void;
+  errorStatusFilter: ErrorStatusFilter;
+  setErrorStatusFilter: (v: ErrorStatusFilter) => void;
   errorDateFilter: DatePreset;
   setErrorDateFilter: (v: DatePreset) => void;
   errorSinceDate: string;
@@ -44,10 +45,6 @@ interface FilterableError extends ScopeFilterable {
   resolution?: ErrorResolutionRow;
 }
 
-function isOpenError(error: FilterableError): boolean {
-  return errorQueueTab(error.resolution) === "open";
-}
-
 function presetCutoffMs(preset: DatePreset, now: number): number | null {
   if (preset === "24h") return now - 24 * 3600_000;
   if (preset === "7d") return now - 7 * 24 * 3600_000;
@@ -64,7 +61,7 @@ export function useLlmErrorFiltering<
 >(errors: E[], reviewedEntries: R[]) {
   const [errorFieldFilter, setErrorFieldFilter] = useState("all");
   const [errorSearchQuery, setErrorSearchQuery] = useState("");
-  const [errorStatusFilter, setErrorStatusFilter] = useState("open");
+  const [errorStatusFilter, setErrorStatusFilter] = useState<ErrorStatusFilter>("open");
   const [errorDateFilter, setErrorDateFilter] = useState<DatePreset>("all");
   const [errorSinceDate, setErrorSinceDate] = useState("");
   const [errorVersionFilter, setErrorVersionFilter] = useState("all");
@@ -153,7 +150,7 @@ export function useLlmErrorFiltering<
 
   // Counted within the current scope so the badge matches the cards.
   const openErrorCount = errors.filter(
-    (e) => isOpenError(e) && matchesScopeFilters(e),
+    (e) => errorQueueTab(e.resolution) === "open" && matchesScopeFilters(e),
   ).length;
 
   return {

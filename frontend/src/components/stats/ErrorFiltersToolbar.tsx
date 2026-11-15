@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { FieldFilterSelect } from "@/components/shared/FieldFilterSelect";
 import type {
   DatePreset,
+  ErrorStatusFilter,
   LlmErrorFilteringControls,
   SortBy,
 } from "@/hooks/useLlmErrorFiltering";
@@ -59,7 +60,7 @@ export function ErrorFiltersToolbar({
         fields={fields}
         className="w-44"
       />
-      <Select value={errorStatusFilter} onValueChange={setErrorStatusFilter}>
+      <Select value={errorStatusFilter} onValueChange={(v) => setErrorStatusFilter(v as ErrorStatusFilter)}>
         <SelectTrigger className="w-40" aria-label="Status dos casos">
           <SelectValue />
         </SelectTrigger>

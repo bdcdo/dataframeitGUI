@@ -902,7 +902,7 @@ describe("ação do card com sucesso muda a classificação na carga seguinte (#
       verdict: "anos: 6, meses: 1", third: { anos: "7", meses: "0" },
     },
   };
-  const kinds = Object.keys(scenarios);
+  const kinds = Object.entries(scenarios);
 
   // O que a tela lê de um (documento, campo): a aba de status em que o card
   // aparece (a mesma regra do filtro da fila) e a entrada do denominador.
@@ -947,8 +947,8 @@ describe("ação do card com sucesso muda a classificação na carga seguinte (#
 
   const before: Classification = { tab: "open", measuredError: true, pending: false };
 
-  it.each(kinds)("%s: a carga antes da ação tem o card aberto na fila", (kind) => {
-    const out = load(scenarios[kind]);
+  it.each(kinds)("%s: a carga antes da ação tem o card aberto na fila", (_kind, s) => {
+    const out = load(s);
     expect(classify(out)).toEqual(before);
     // O card oferece o "=" e as decisões: fonte Comparação, sem decisão, com
     // resposta escolhida e review de origem.
@@ -959,8 +959,7 @@ describe("ação do card com sucesso muda a classificação na carga seguinte (#
   // `markLlmEquivalent` grava o par (valor da resposta escolhida, valor do LLM)
   // em `value_equivalences`, sob o hash atual da pergunta. A ordem dos dois
   // valores na linha não importa: a equivalência é simétrica.
-  it.each(kinds)("%s: \"=\" tira o card da fila e o erro da taxa", (kind) => {
-    const s = scenarios[kind];
+  it.each(kinds)("%s: \"=\" tira o card da fila e o erro da taxa", (_kind, s) => {
     const out = load(s, { equivalences: [equiv("rh", "rllm", s.human, s.llm, { field_hash: s.field.hash! })] });
     expect(classify(out)).toEqual({ tab: null, measuredError: false, pending: false });
   });
@@ -979,9 +978,8 @@ describe("ação do card com sucesso muda a classificação na carga seguinte (#
     for (const [, expected] of decisions) expect(expected).not.toEqual(before);
   });
 
-  describe.each(kinds)("%s", (kind) => {
+  describe.each(kinds)("%s", (_kind, s) => {
     it.each(decisions)("decisão %s muda a classificação do card", (decision, expected) => {
-      const s = scenarios[kind];
       const out = load(s, { errorResolutions: new Map([["doc1:x", decided(s, decision)]]) });
       expect(classify(out)).toEqual(expected);
     });
