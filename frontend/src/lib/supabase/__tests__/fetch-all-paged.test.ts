@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
 
 const PAGE_SIZE = 1000;
 
@@ -87,5 +87,40 @@ describe("fetchAllPaged", () => {
     // estrutural não devolve "menos dados", devolve número errado.
     expect(data).toHaveLength(PAGE_SIZE);
     expect(error).toEqual({ message: "conexão perdida" });
+  });
+});
+
+describe("fetchByDocumentChunks", () => {
+  // Fora do modo de auto-revisão, num round reiniciado, os candidatos da
+  // contagem sem LLM são todos os documentos codificados: sem teto, 5000
+  // documentos viravam 50 requisições simultâneas por tabela.
+  it("limita os lotes em voo e devolve as linhas na ordem dos lotes", async () => {
+    const ids = Array.from({ length: 1_000 }, (_, i) => `d${i}`);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const { data, error } = await fetchByDocumentChunks(ids, async (chunk) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return { data: chunk, error: null };
+    });
+    expect(error).toBeNull();
+    expect(data).toEqual(ids);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+  });
+
+  it("a primeira falha vence e para de abrir lotes novos", async () => {
+    const ids = Array.from({ length: 1_000 }, (_, i) => `d${i}`);
+    let calls = 0;
+    const result = await fetchByDocumentChunks(ids, async (chunk) => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      return chunk[0] === "d0"
+        ? { data: [], error: { message: "conexão perdida" } }
+        : { data: chunk, error: null };
+    });
+    expect(result.error).toEqual({ message: "conexão perdida" });
+    expect(calls).toBeLessThan(10);
   });
 });

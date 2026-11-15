@@ -26,7 +26,11 @@ import {
 } from "@/lib/compare-assignment-status";
 import { versionGate, type ProjectVersionRow } from "@/lib/compare-version";
 import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
-import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
+import {
+  fetchAllPaged,
+  fetchByDocumentChunks,
+  type PagedRead,
+} from "@/lib/supabase/fetch-all-paged";
 import { groupBy } from "@/lib/utils";
 
 const PG_UNIQUE_VIOLATION = "23505";
@@ -224,8 +228,6 @@ interface PlannedChange {
   change: CompareAssignmentChange;
   row: AssignmentRow;
 }
-
-type PagedRead<T> = Promise<{ data: T[]; error: { message: string } | null }>;
 
 // Leitura do projeto inteiro ou, com `documentIds`, só desses documentos, em
 // lotes. Duas fábricas porque o builder do PostgREST não se deixa tipar como

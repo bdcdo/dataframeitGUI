@@ -50,21 +50,36 @@ export async function fetchAllPaged<T>(
 // Lote do `.in("document_id", ...)`: uma lista longa de UUIDs vai na URL do
 // PostgREST, e cem ficam bem abaixo do limite.
 const DOCUMENT_CHUNK = 100;
+// Lotes em voo ao mesmo tempo. Uma lista de milhares de documentos não pode
+// virar dezenas de requisições simultâneas contra o PostgREST.
+const CHUNK_CONCURRENCY = 4;
 
-type PagedRead<T> = Promise<{ data: T[]; error: { message: string } | null }>;
+export type PagedRead<T> = Promise<{ data: T[]; error: { message: string } | null }>;
 
-// Leitura restrita a `documentIds`, um `.in` por lote, em paralelo. A primeira
-// falha vence: um lote faltando daria número errado, não erro.
+// Leitura restrita a `documentIds`, um `.in` por lote, até `concurrency` lotes
+// em paralelo. A primeira falha vence e para de abrir lotes: um lote faltando
+// daria número errado, não erro.
 export async function fetchByDocumentChunks<T>(
   documentIds: readonly string[],
   fetchChunk: (ids: string[]) => PagedRead<T>,
+  concurrency = CHUNK_CONCURRENCY,
 ): PagedRead<T> {
   const chunks: string[][] = [];
   for (let i = 0; i < documentIds.length; i += DOCUMENT_CHUNK) {
     chunks.push(documentIds.slice(i, i + DOCUMENT_CHUNK));
   }
-  const results = await Promise.all(chunks.map(fetchChunk));
-  const failed = results.find((result) => result.error);
-  if (failed) return failed;
-  return { data: results.flatMap((result) => result.data), error: null };
+  const data: T[][] = [];
+  let failed: { message: string } | null = null;
+  let next = 0;
+  const worker = async () => {
+    while (failed === null && next < chunks.length) {
+      const index = next++;
+      const result = await fetchChunk(chunks[index]);
+      if (result.error) failed ??= result.error;
+      else data[index] = result.data;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
+  if (failed) return { data: [], error: failed };
+  return { data: data.flat(), error: null };
 }
