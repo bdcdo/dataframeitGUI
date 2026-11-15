@@ -53,7 +53,7 @@ vi.mock("@/components/llm/DocumentSelector", () => ({
 }));
 
 import { RunCard } from "@/components/llm/RunCard";
-import { saveLlmConfig } from "@/actions/schema";
+import { saveLlmConfig, savePrompt } from "@/actions/schema";
 import { toast } from "sonner";
 import { maskedServerError } from "@/test-utils/masked-server-error";
 
@@ -179,5 +179,19 @@ describe("RunCard — exceção da Server Action (#653)", () => {
         "Erro ao salvar configuração — código 1bkm1w6",
       ),
     );
+  });
+
+  it("ao rodar, o save prévio (Server Action) que lança também vira toast com código", async () => {
+    vi.mocked(savePrompt).mockRejectedValueOnce(maskedServerError());
+    render(<RunCard {...props} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rodar LLM" }));
+
+    await vi.waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Erro ao iniciar execução — código 1bkm1w6",
+      ),
+    );
+    expect(fetchFastAPI).not.toHaveBeenCalled();
   });
 });

@@ -153,7 +153,7 @@ export function RunCard({
       );
       start(res.job_id);
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Erro ao iniciar execução");
+      toast.error(actionErrorMessage(e, "Erro ao iniciar execução"));
     } finally {
       setIsStartingRun(false);
     }
