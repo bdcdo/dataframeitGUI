@@ -3,10 +3,8 @@
 # Roda os testes de integração do backend (`pytest -m integration`) contra o
 # Supabase local, com a URL e a service key que o `supabase status` informa.
 #
-# Hoje cobre o contrato payload×schema dos writes do llm_runner em `llm_runs`
-# (#674): `supabase.Client` real, que o PostgREST recusa quando o payload cita
-# coluna inexistente. O `_FakeTable` dos testes unitários aceita qualquer chave,
-# e foi assim que `llm_runs.round_id` ficou 11 dias sem coluna (#673).
+# Hoje cobre o contrato do llm_runner em `llm_runs` (#674; o porquê está em
+# backend/tests/integration/test_llm_runs_persistence.py).
 #
 # Fail-closed como as suítes SQL: sem `uv`, ou sem API no `supabase status`,
 # sai != 0 em vez de pular.

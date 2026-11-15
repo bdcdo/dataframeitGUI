@@ -138,3 +138,19 @@ def test_python_version_matches_dockerfile_and_mypy() -> None:
         "[tool.mypy] python_version": pyproject["tool"]["mypy"]["python_version"],
     }
     assert len(set(pins.values())) == 1, f"pinos de Python do backend divergem: {pins}"
+
+
+def test_uv_version_matches_dockerfile() -> None:
+    """O uv do contrato de banco no CI (#674) é o mesmo da imagem do backend."""
+    docker = re.search(
+        r"ghcr\.io/astral-sh/uv:(\S+)", (BACKEND / "Dockerfile").read_text()
+    )
+    workflow = re.search(
+        r"astral-sh/setup-uv@.*\n\s*with:\n(?:\s*#.*\n)*\s*version:\s*\"([^\"]+)\"",
+        (REPO / ".github/workflows/database-tests.yml").read_text(),
+    )
+    assert docker, "uv não encontrado em backend/Dockerfile"
+    assert workflow, "setup-uv sem `version` em .github/workflows/database-tests.yml"
+    assert docker.group(1) == workflow.group(1), (
+        f"uv diverge: Dockerfile {docker.group(1)}, database-tests.yml {workflow.group(1)}"
+    )

@@ -13,8 +13,7 @@ on:
       # Glob, não a lista nominal: enquanto o filtro citava um arquivo só, as
       # suítes novas entravam no repo sem gate nenhum e ninguém percebia.
       - "frontend/supabase/tests/**"
-      # Contrato payload×schema dos writes de llm_runs (#674): uma chave nova
-      # no payload do runner, sem migration nenhuma, foi o caso do #673.
+      # Contrato do llm_runner em llm_runs (#674): ver backend/tests/integration/.
       - "backend/services/llm_runner.py"
       - "backend/tests/integration/**"
       # O cliente (supabase-py/postgrest) e a config do pytest também mudam o

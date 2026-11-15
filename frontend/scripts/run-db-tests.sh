@@ -144,13 +144,6 @@ run_psql() {
   bash scripts/run-sql-test.sh "${TESTS_DIR}/$1.test.sql" >"${LOG_DIR}/$1.log" 2>&1
 }
 
-# Contrato payload×schema dos writes do backend em `llm_runs` (#674), por
-# pytest de integração contra este mesmo stack (ver o script).
-BACKEND_INTEGRATION=backend_integration
-run_backend_integration() {
-  bash scripts/run-backend-integration.sh >"${LOG_DIR}/${BACKEND_INTEGRATION}.log" 2>&1
-}
-
 tail_log() {
   echo "    ── saída (cauda):"
   tail -n 15 "${LOG_DIR}/$1.log" | sed 's/^/    /'
@@ -189,7 +182,9 @@ done
 for s in "${!KNOWN_RED[@]}"; do
   run_psql "$s"; report "$s" $? known
 done
-run_backend_integration; report "${BACKEND_INTEGRATION}" $? gate
+# Contrato do llm_runner em `llm_runs` (#674), pytest contra este mesmo stack.
+bash scripts/run-backend-integration.sh >"${LOG_DIR}/backend_integration.log" 2>&1
+report backend_integration $? gate
 
 echo "────────────────────────────────────────"
 printf 'PASS=%d  FAIL(gate)=%d  RED*(conhecida)=%d  VERDE(promover)=%d\n' \

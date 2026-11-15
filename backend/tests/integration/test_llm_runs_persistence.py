@@ -106,6 +106,18 @@ def _read_run(sb: Client, job_id: str) -> dict:
     )
 
 
+def _assert_run(sb: Client, job_id: str, **expected) -> dict:
+    """Relê a run e compara as colunas pedidas de uma vez (o diff sai inteiro)."""
+    row = _read_run(sb, job_id)
+    assert {column: row[column] for column in expected} == expected
+    return row
+
+
+def _patch_run(sb: Client, job_id: str, **columns) -> None:
+    """Prepara o estado da run por fora do runner."""
+    sb.table("llm_runs").update(columns).eq("job_id", job_id).execute()
+
+
 def _assert_nothing_swallowed(caplog: pytest.LogCaptureFixture) -> None:
     errors = [
         record.getMessage() + (f"\n{record.exc_text}" if record.exc_text else "")
@@ -125,13 +137,16 @@ def _new_run(sb: Client, project_id: str) -> str:
 def test_insert_creates_running_row_in_current_round(sb, project):
     job_id = _new_run(sb, project["id"])
 
-    row = _read_run(sb, job_id)
-    assert row["status"] == "running"
-    assert row["phase"] == "loading"
-    assert row["filter_mode"] == "pending"
+    row = _assert_run(
+        sb,
+        job_id,
+        status="running",
+        phase="loading",
+        filter_mode="pending",
+        # O INSERT não manda round_id; o trigger carimba a rodada corrente.
+        round_id=project["current_round_id"],
+    )
     assert row["heartbeat_at"] is not None
-    # O INSERT não manda round_id; o trigger carimba a rodada corrente.
-    assert row["round_id"] == project["current_round_id"]
 
 
 def test_snapshot_writes_config_and_captured_round(sb, project):
@@ -144,6 +159,7 @@ def test_snapshot_writes_config_and_captured_round(sb, project):
         .execute()
         .data[0]["id"]
     )
+    code = "class Analysis(BaseModel):\n    x: str\n"
 
     _persist_run_snapshot(
         sb,
@@ -151,41 +167,37 @@ def test_snapshot_writes_config_and_captured_round(sb, project):
         {
             "llm_provider": "google_genai",
             "llm_model": "gemini-test",
-            "pydantic_code": "class Analysis(BaseModel):\n    x: str\n",
+            "pydantic_code": code,
             "current_round_id": other_round,
         },
         doc_count=7,
     )
 
-    row = _read_run(sb, job_id)
-    assert row["llm_provider"] == "google_genai"
-    assert row["llm_model"] == "gemini-test"
-    assert row["document_count"] == 7
-    assert row["pydantic_code"] == "class Analysis(BaseModel):\n    x: str\n"
-    assert row["round_id"] == other_round
+    _assert_run(
+        sb,
+        job_id,
+        llm_provider="google_genai",
+        llm_model="gemini-test",
+        document_count=7,
+        pydantic_code=code,
+        round_id=other_round,
+    )
 
 
 def test_progress_writes_counters_and_heartbeat(sb, project, caplog):
     job_id = _new_run(sb, project["id"])
-    sb.table("llm_runs").update({"heartbeat_at": None}).eq("job_id", job_id).execute()
+    _patch_run(sb, job_id, heartbeat_at=None)
+    counters = {
+        "processed_complete": 3,
+        "processed_partial": 2,
+        "processed_empty": 1,
+        "progress": 6,
+    }
 
-    _persist_run_progress(
-        sb,
-        job_id,
-        {
-            "processed_complete": 3,
-            "processed_partial": 2,
-            "processed_empty": 1,
-            "progress": 6,
-        },
-    )
+    _persist_run_progress(sb, job_id, counters)
 
     _assert_nothing_swallowed(caplog)
-    row = _read_run(sb, job_id)
-    assert row["processed_complete"] == 3
-    assert row["processed_partial"] == 2
-    assert row["processed_empty"] == 1
-    assert row["progress"] == 6
+    row = _assert_run(sb, job_id, **counters)
     assert row["heartbeat_at"] is not None
 
 
@@ -202,43 +214,47 @@ def test_completion_writes_final_state_and_warnings(sb, project, caplog):
     )
 
     _assert_nothing_swallowed(caplog)
-    row = _read_run(sb, job_id)
-    assert row["status"] == "completed"
-    assert row["phase"] == "completed"
-    assert row["progress"] == 5
-    assert row["total"] == 5
+    row = _assert_run(
+        sb,
+        job_id,
+        status="completed",
+        phase="completed",
+        progress=5,
+        total=5,
+        processed_complete=4,
+        processed_partial=1,
+        processed_empty=0,
+        error_message="Warnings (1 doc(s)): doc-1: campo x ausente",
+    )
     assert row["completed_at"] is not None
-    assert row["processed_complete"] == 4
-    assert row["processed_partial"] == 1
-    assert row["processed_empty"] == 0
-    assert row["error_message"] == "Warnings (1 doc(s)): doc-1: campo x ausente"
 
 
 def test_error_writes_diagnostics(sb, project, caplog):
     job_id = _new_run(sb, project["id"])
     exc = SyntaxError("invalid syntax", ("<pydantic_schema>", 4, 7, "x ="))
+    tb = "Traceback (most recent call last): ..."
 
     line, col = _persist_run_error(
-        sb,
-        job_id,
-        exc,
-        "Traceback (most recent call last): ...",
-        counters={"processed_complete": 1, "processed_empty": 2},
+        sb, job_id, exc, tb, counters={"processed_complete": 1, "processed_empty": 2}
     )
 
     _assert_nothing_swallowed(caplog)
     assert (line, col) == (4, 7)
-    row = _read_run(sb, job_id)
-    assert row["status"] == "error"
-    assert row["phase"] == "error"
-    assert row["error_message"] == "invalid syntax (<pydantic_schema>, line 4)"
-    assert row["error_type"] == "SyntaxError"
-    assert row["error_traceback"] == "Traceback (most recent call last): ..."
-    assert (row["error_line"], row["error_column"]) == (4, 7)
+    row = _assert_run(
+        sb,
+        job_id,
+        status="error",
+        phase="error",
+        error_message="invalid syntax (<pydantic_schema>, line 4)",
+        error_type="SyntaxError",
+        error_traceback=tb,
+        error_line=4,
+        error_column=7,
+        processed_complete=1,
+        processed_partial=0,
+        processed_empty=2,
+    )
     assert row["completed_at"] is not None
-    assert row["processed_complete"] == 1
-    assert row["processed_partial"] == 0
-    assert row["processed_empty"] == 2
 
 
 def test_mark_stale_runs_as_error_only_hits_runs_without_heartbeat(sb, project):
@@ -246,49 +262,40 @@ def test_mark_stale_runs_as_error_only_hits_runs_without_heartbeat(sb, project):
     # Os dois ramos do `.or_()`: heartbeat velho, e run sem heartbeat (anterior
     # à coluna) com início velho. A sem heartbeat e início recente fica viva.
     stale_heartbeat = _new_run(sb, project["id"])
-    sb.table("llm_runs").update({"heartbeat_at": old}).eq(
-        "job_id", stale_heartbeat
-    ).execute()
+    _patch_run(sb, stale_heartbeat, heartbeat_at=old)
     stale_no_heartbeat = _new_run(sb, project["id"])
-    sb.table("llm_runs").update({"heartbeat_at": None, "started_at": old}).eq(
-        "job_id", stale_no_heartbeat
-    ).execute()
+    _patch_run(sb, stale_no_heartbeat, heartbeat_at=None, started_at=old)
     fresh_no_heartbeat = _new_run(sb, project["id"])
-    sb.table("llm_runs").update({"heartbeat_at": None}).eq(
-        "job_id", fresh_no_heartbeat
-    ).execute()
+    _patch_run(sb, fresh_no_heartbeat, heartbeat_at=None)
     alive = _new_run(sb, project["id"])
 
     assert mark_stale_runs_as_error(sb, project["id"]) == 2
 
     for job_id in (stale_heartbeat, stale_no_heartbeat):
-        row = _read_run(sb, job_id)
-        assert row["status"] == "error"
-        assert row["phase"] == "error"
+        row = _assert_run(sb, job_id, status="error", phase="error")
         assert row["error_message"].startswith("Execução abandonada")
         assert row["completed_at"] is not None
     for job_id in (fresh_no_heartbeat, alive):
-        assert _read_run(sb, job_id)["status"] == "running"
+        _assert_run(sb, job_id, status="running")
 
 
 def test_status_fallback_reads_persisted_run(sb, project, caplog, monkeypatch):
     # Não é write, mas lê as mesmas colunas por nome e também engole o erro:
     # coluna sumida viraria "Job not found" depois de um restart do backend.
     job_id = _new_run(sb, project["id"])
-    _persist_run_progress(
-        sb,
-        job_id,
-        {"processed_complete": 2, "processed_partial": 1, "progress": 3},
-    )
+    _patch_run(sb, job_id, progress=3, processed_complete=2, processed_partial=1)
     monkeypatch.setattr(llm_runner, "get_supabase", lambda: sb)
     assert job_id not in llm_runner._jobs
 
     status = get_job_status(job_id)
 
     _assert_nothing_swallowed(caplog)
-    assert status["status"] == "running"
-    assert status["phase"] == "loading"
-    assert status["progress"] == 3
-    assert status["processed_complete"] == 2
-    assert status["processed_partial"] == 1
-    assert status["processed_empty"] == 0
+    expected = {
+        "status": "running",
+        "phase": "loading",
+        "progress": 3,
+        "processed_complete": 2,
+        "processed_partial": 1,
+        "processed_empty": 0,
+    }
+    assert {key: status[key] for key in expected} == expected

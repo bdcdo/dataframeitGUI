@@ -328,7 +328,7 @@ repos:
         name: pinos da toolchain do backend (pre-push)
         entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para conferir os pinos da toolchain" >&2; exit 1; }; cd backend && exec uv run pytest -q tests/test_toolchain_pins.py'
         language: system
-        files: ^(\.pre-commit-config\.yaml|backend/\.python-version)$
+        files: ^(\.pre-commit-config\.yaml|backend/\.python-version|\.github/workflows/database-tests\.yml)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -373,17 +373,15 @@ repos:
         name: test:db (suites de contrato SQL, pre-push)
         entry: bash -c 'cd frontend && exec bash scripts/run-db-tests.sh'
         language: system
-        files: ^frontend/(supabase/(migrations|tests)/.*\.sql|scripts/run-(db-tests|sql-test|backend-integration)\.sh|package\.json)$
+        files: ^frontend/(supabase/(migrations|tests)/.*\.sql|scripts/run-(db-tests|sql-test)\.sh|package\.json)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
 
-      # Contrato payload x schema do llm_runner em llm_runs (#674): pytest de
-      # integracao com supabase.Client real contra o Supabase local, fail-closed
-      # como o db-tests. Hook proprio, e nao o `files` do db-tests, para que um
-      # push so de Python nao rode a bateria SQL inteira. Dispara no llm_runner
-      # porque uma chave nova no payload, sem migration nenhuma, foi o caso do
-      # round_id (#673); o lado da migration fica com o db-tests.
+      # Contrato payload x schema do llm_runner em llm_runs (#674; o porque
+      # esta em backend/tests/integration/), fail-closed como o db-tests. Hook
+      # proprio para que um push so de Python nao rode a bateria SQL inteira;
+      # o lado da migration fica com o db-tests, que tambem o roda.
       - id: llm-runs-contract
         name: contrato llm_runs do llm_runner (pre-push)
         entry: bash -c 'cd frontend && exec bash scripts/run-backend-integration.sh'
