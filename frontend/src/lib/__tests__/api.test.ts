@@ -122,9 +122,11 @@ describe("fetchFastAPI", () => {
     });
   });
 
-  it("cai no statusText quando o corpo do erro não é JSON", async () => {
+  it("corpo que não é JSON vira copy pt-BR com o status, e o statusText vai ao log", async () => {
     // 502 de proxy costuma devolver HTML: sem o catch, o `res.json()` lançaria
-    // um SyntaxError cru no lugar da causa real.
+    // um SyntaxError cru no lugar da causa real. O statusText ("Bad Gateway")
+    // é inglês de protocolo e ia direto ao toast.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     fetchMock.mockResolvedValue({
       ok: false,
       status: 502,
@@ -133,7 +135,64 @@ describe("fetchFastAPI", () => {
         throw new SyntaxError("Unexpected token <");
       },
     });
-    await expect(fetchFastAPI("/api/llm/run")).rejects.toThrow("Bad Gateway");
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 502,
+      message: "Erro no servidor (HTTP 502). Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[api] /api/llm/run falhou",
+      expect.objectContaining({ code: "502", message: "Bad Gateway" }),
+    );
+    consoleError.mockRestore();
+  });
+
+  // O 422 de validação do FastAPI traz `detail` como LISTA de objetos: repassada
+  // ao `new Error`, virava "[object Object]" no toast.
+  it("detail que não é string vira copy pt-BR, e o detail vai ao log", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const detail = [{ loc: ["body", "project_id"], msg: "Field required", type: "missing" }];
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 422,
+      statusText: "Unprocessable Entity",
+      json: async () => ({ detail }),
+    });
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 422,
+      message: "O servidor recusou a requisição (HTTP 422).",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[api] /api/llm/run falhou",
+      expect.objectContaining({ code: "422", message: JSON.stringify(detail) }),
+    );
+    consoleError.mockRestore();
+  });
+
+  // O backend colapsa todo 500 em "Internal Server Error" (main.py), que não é
+  // copy para o usuário; os 503 da autenticação trazem copy pt-BR acionável.
+  it("500 vira copy pt-BR; 503 mantém o detail do backend", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: "Internal Server Error",
+      json: async () => ({ detail: "Internal Server Error" }),
+    });
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toThrow(
+      "Erro no servidor (HTTP 500). Tente novamente.",
+    );
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      statusText: "Service Unavailable",
+      json: async () => ({ detail: "Não foi possível verificar autorização" }),
+    });
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toThrow(
+      "Não foi possível verificar autorização",
+    );
+    consoleError.mockRestore();
   });
 
   it("devolve o JSON da resposta", async () => {
