@@ -72,6 +72,7 @@ type AutoReviewProps = {
   ownQueueUserId: string;
   docs: Array<{ docId: string }>;
   queueUserId: string;
+  docsWithoutLlm?: number | null;
 };
 
 function getAutoReviewProps(result: unknown): AutoReviewProps {
@@ -170,5 +171,57 @@ describe("AutoReviewRoute — identidade efetiva", () => {
       docs: [{ docId: "doc-1" }],
     });
     expect(props.queueUserId === props.ownQueueUserId).toBe(false);
+  });
+});
+
+// #889: depois de um round reiniciado (que arquiva toda geração LLM), a fila
+// fica vazia sem dizer por quê. O coordenador vê quantos documentos ficaram
+// fora por falta de geração LLM corrente — o mesmo critério do toast do reparo.
+describe("AutoReviewRoute — fila vazia por falta de geração LLM", () => {
+  const coordinator = {
+    status: "resolved",
+    accountUserId: "linked-account",
+    memberUserId: "canonical-member",
+    project: { id: "project-1", name: "Projeto", created_by: "coordinator" },
+    membershipRole: "coordenador",
+    isMaster: false,
+    isCoordinator: true,
+  };
+  const humanResponse = (id: string, documentId: string) => ({
+    id,
+    project_id: "project-1",
+    document_id: documentId,
+    respondent_type: "humano",
+    is_latest: true,
+    is_partial: false,
+    "documents.excluded_at": null,
+    "documents.exclusion_pending_at": null,
+  });
+
+  function seedRestartedRound() {
+    tableData = {
+      projects: [{ id: "project-1", pydantic_fields: [], automation_mode: "auto_review_llm" }],
+      project_members: [],
+      documents: [],
+      field_reviews: [],
+      responses: [humanResponse("h1", "doc-1"), humanResponse("h2", "doc-2")],
+    };
+  }
+
+  it("conta, para o coordenador, os documentos sem geração LLM corrente", async () => {
+    seedRestartedRound();
+    authMocks.getProjectAccessContext.mockResolvedValue(coordinator);
+    const props = await renderRoute();
+    expect(props.docs).toEqual([]);
+    expect(props.docsWithoutLlm).toBe(2);
+  });
+
+  it("não conta para o pesquisador nem com fila não vazia", async () => {
+    seedRestartedRound();
+    expect((await renderRoute()).docsWithoutLlm).toBeUndefined();
+
+    seedQueue("canonical-member");
+    authMocks.getProjectAccessContext.mockResolvedValue(coordinator);
+    expect((await renderRoute()).docsWithoutLlm).toBeUndefined();
   });
 });

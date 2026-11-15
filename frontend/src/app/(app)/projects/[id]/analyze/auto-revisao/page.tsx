@@ -13,6 +13,7 @@ import {
 } from "@/lib/review-queue";
 import type { PydanticField } from "@/lib/types";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm";
 
 interface MemberRow {
   user_id: string;
@@ -160,6 +161,21 @@ export default async function AutoReviewRoute({
     fieldsMeta,
   );
 
+  // Fila vazia: diz ao coordenador quantos documentos ficaram fora por falta
+  // de geração LLM corrente (round reiniciado, #690), em vez de um vazio mudo.
+  // Só para ele: a RLS dele vê o projeto inteiro, e rodar o LLM é ação dele.
+  let docsWithoutLlm: number | null | undefined;
+  if (isCoordinator && docsToReview.length === 0) {
+    const result = await fetchDocsWithoutLlmCount(supabase, id);
+    if (result.error) {
+      console.error(
+        "AutoReviewRoute: contagem de documentos sem geração LLM falhou",
+        result.error.message,
+      );
+    }
+    docsWithoutLlm = result.count;
+  }
+
   return (
     <Suspense
       fallback={
@@ -174,6 +190,7 @@ export default async function AutoReviewRoute({
         queueUserId={queueUserId}
         reviewers={reviewers}
         ownQueueUserId={ownQueueUserId}
+        docsWithoutLlm={docsWithoutLlm}
       />
     </Suspense>
   );

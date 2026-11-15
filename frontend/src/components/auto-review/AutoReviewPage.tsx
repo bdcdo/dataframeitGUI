@@ -45,6 +45,8 @@ export interface AutoReviewPageProps {
   reviewers: AutoReviewQueueOwner[];
   /** membro canônico dono da fila própria */
   ownQueueUserId: string;
+  /** ver `AutoReviewEmptyState`; calculado só com a fila vazia */
+  docsWithoutLlm?: number | null;
 }
 
 const STORAGE_KEY_PREFIX = "autoReview:docId:";
@@ -66,6 +68,7 @@ function AutoReviewPageInner({
   queueUserId,
   reviewers,
   ownQueueUserId,
+  docsWithoutLlm,
 }: AutoReviewPageProps) {
   const { push } = useRouter();
   const searchParams = useSearchParams();
@@ -134,6 +137,7 @@ function AutoReviewPageInner({
         queueUserId={queueUserId}
         ownQueueUserId={ownQueueUserId}
         onViewAsChange={handleViewAsChange}
+        docsWithoutLlm={docsWithoutLlm}
       />
     );
   }
