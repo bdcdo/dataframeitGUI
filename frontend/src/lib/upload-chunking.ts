@@ -7,6 +7,8 @@
 // preservar essa ausência de dependência de Server Actions/React aqui.
 
 import type { UploadDoc, UploadOptions } from "@/actions/documents";
+import { actionErrorMessage, errorCode } from "@/lib/server-error";
+import { errorMessage } from "@/lib/utils";
 
 export interface ColumnMapping {
   text: string;
@@ -48,10 +50,12 @@ export const utf8Bytes = (s: string) => textEncoder.encode(s).length;
 // Fonte única da medição — usada tanto no chunking quanto no fail-early do hook.
 export const docBytes = (doc: UploadDoc) => utf8Bytes(JSON.stringify(doc));
 
+// Recebe a mensagem CRUA do erro, nunca a copy com o código de erro (#653): o
+// código é base 36 e pode conter "413". O `\b` é a segunda trava.
 export function isPayloadTooLarge(msg: string): boolean {
   return (
     msg.includes("Body exceeded") ||
-    msg.includes("413") ||
+    /\b413\b/.test(msg) ||
     msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
   );
 }
@@ -184,9 +188,15 @@ export function buildUploadErrorMessage(params: {
   totalDocs: number;
   mode: UploadOptions["mode"] | undefined;
   deleteResponses: boolean | undefined;
-  msg: string;
+  error: unknown;
 }): string {
-  const { totalInserted, totalDocs, mode, deleteResponses, msg } = params;
+  const { totalInserted, totalDocs, mode, deleteResponses, error } = params;
+  // Exceção de Server Action chega mascarada em produção: o detalhe vira o
+  // código que casa com a linha do log, e não o texto genérico do Next (#653).
+  // A detecção de payload olha a mensagem crua, antes de o código entrar.
+  const tooLarge = isPayloadTooLarge(errorMessage(error));
+  const code = errorCode(error);
+  const msg = code ? `código ${code}` : errorMessage(error);
   const destructiveReplace = mode === "replace_and_add" && !!deleteResponses;
 
   if (totalInserted > 0) {
@@ -200,12 +210,12 @@ export function buildUploadErrorMessage(params: {
     const destructiveWarn = destructiveReplace
       ? " Respostas/revisões de documentos duplicados podem já ter sido removidas — confira a lista."
       : "";
-    return isPayloadTooLarge(msg)
+    return tooLarge
       ? `${totalInserted}/${totalDocs} ${importedVerb}. ${PAYLOAD_TOO_LARGE_MESSAGE}${destructiveWarn}`
       : `${totalInserted} de ${totalDocs} documentos ${importedVerb} antes de uma falha${msg ? `: ${msg}` : ""}${destructiveWarn}`;
   }
   if (destructiveReplace) {
     return `A importação falhou, mas respostas/revisões dos documentos duplicados podem já ter sido removidas. Confira a lista.${msg ? ` (${msg})` : ""}`;
   }
-  return isPayloadTooLarge(msg) ? PAYLOAD_TOO_LARGE_MESSAGE : msg || "Erro ao importar documentos";
+  return tooLarge ? PAYLOAD_TOO_LARGE_MESSAGE : actionErrorMessage(error, "Erro ao importar documentos");
 }

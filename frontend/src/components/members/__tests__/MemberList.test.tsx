@@ -26,6 +26,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { MemberList } from "../MemberList";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 const targetMember: MemberRow = {
   id: "member-target",
@@ -170,7 +171,7 @@ describe("MemberList — confirmação de remoção (#177)", () => {
 
   it("mantém o diálogo aberto quando a action rejeita e permite tentar novamente", async () => {
     mocks.removeMember
-      .mockRejectedValueOnce(new Error("rede indisponível"))
+      .mockRejectedValueOnce(maskedServerError())
       .mockResolvedValueOnce(undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const user = userEvent.setup();
@@ -181,7 +182,7 @@ describe("MemberList — confirmação de remoção (#177)", () => {
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
-        "Não foi possível remover o membro. Tente novamente.",
+        "Não foi possível remover o membro. Tente novamente. — código 1bkm1w6",
       ),
     );
     expect(screen.getByRole("alertdialog")).toBeTruthy();

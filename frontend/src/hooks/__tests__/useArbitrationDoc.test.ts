@@ -29,6 +29,7 @@ import type {
   ArbitrationField,
 } from "@/components/arbitration/ArbitrationPage";
 import type { ArbitrationVerdict } from "@/lib/types";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 function field(
   fieldReviewId: string,
@@ -417,14 +418,14 @@ describe("useArbitrationDoc — action que rejeita", () => {
   });
 
   it("handleBlindSubmit avisa o erro, devolve submitting a false e não avança", async () => {
-    submitBlindVerdicts.mockRejectedValue(new Error("rede"));
+    submitBlindVerdicts.mockRejectedValue(maskedServerError());
     const { result } = setup(makeDoc("d1", [field("f1", "q1", null)]));
     act(() => result.current.onChooseBlind("f1", "a"));
     await act(async () => {
       await result.current.handleBlindSubmit();
     });
     expect(toastError).toHaveBeenCalledWith(
-      "Não foi possível registrar o veredito cego. Tente novamente.",
+      "Não foi possível registrar o veredito cego. Tente novamente. — código 1bkm1w6",
     );
     expect(console.error).toHaveBeenCalled();
     expect(result.current.submitting).toBe(false);
@@ -433,7 +434,7 @@ describe("useArbitrationDoc — action que rejeita", () => {
   });
 
   it("handleFinalSubmit avisa o erro, devolve submitting a false e não avança", async () => {
-    submitFinalVerdicts.mockRejectedValue(new Error("rede"));
+    submitFinalVerdicts.mockRejectedValue(maskedServerError());
     const onNavigate = vi.fn();
     const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]), {
       docsLength: 2,
@@ -444,7 +445,7 @@ describe("useArbitrationDoc — action que rejeita", () => {
       await result.current.handleFinalSubmit();
     });
     expect(toastError).toHaveBeenCalledWith(
-      "Não foi possível enviar o veredito final. Tente novamente.",
+      "Não foi possível enviar o veredito final. Tente novamente. — código 1bkm1w6",
     );
     expect(console.error).toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();

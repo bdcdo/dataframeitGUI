@@ -72,9 +72,16 @@ export function errorCode(error: unknown): string | null {
 // servidor vira a copy pt-BR do fluxo com o código; erro do próprio cliente
 // mantém a mensagem, como antes.
 export function actionErrorMessage(error: unknown, fallback: string): string {
-  const code = errorCode(error);
-  if (code) return `${fallback} — código ${code}`;
+  if (errorCode(error)) return withErrorCode(error, fallback);
   return errorMessage(error) || fallback;
+}
+
+// O mesmo para o `catch` cuja copy pt-BR é fixa: acrescenta o código quando a
+// exceção veio do servidor, e em erro do navegador (rede, por exemplo) mantém a
+// copy, em vez de trocá-la pela mensagem em inglês como `actionErrorMessage`.
+export function withErrorCode(error: unknown, copy: string): string {
+  const code = errorCode(error);
+  return code ? `${copy} — código ${code}` : copy;
 }
 
 // Detalhe que as telas de erro (`error.tsx`, `global-error.tsx`) mostram: o

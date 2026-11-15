@@ -5,6 +5,8 @@ import { pasteInto } from "@/test-utils/paste-into";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
+import { toast } from "sonner";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 const { push, refresh, getDocumentText, acknowledgeVerdict } = vi.hoisted(
   () => ({
@@ -182,5 +184,16 @@ describe("MyVerdictsView: reconhecimento preso ao veredito", () => {
     renderView([makeItem({ documentId: "dp", isCorrect: false, acknowledgmentStatus: null, verdict: "nao", myAnswer: "sim" })]);
     await user.click(screen.getByRole("button", { name: /aceitar correção/i }));
     expect(acknowledgeVerdict).toHaveBeenCalledWith("r-dp", "p1", "accepted", "nao", undefined);
+  });
+  // A action que rejeita em produção chega com a mensagem mascarada: o toast
+  // mantém a copy pt-BR e leva o código que casa com a linha do log (#653).
+  it("action que rejeita mostra a copy com o código do erro", async () => {
+    acknowledgeVerdict.mockRejectedValue(maskedServerError());
+    const user = userEvent.setup();
+    renderView([makeItem({ documentId: "dp", isCorrect: false, acknowledgmentStatus: null, verdict: "nao", myAnswer: "sim" })]);
+    await user.click(screen.getByRole("button", { name: /aceitar correção/i }));
+    expect(toast.error).toHaveBeenCalledWith(
+      "Não foi possível registrar. Tente novamente. — código 1bkm1w6",
+    );
   });
 });

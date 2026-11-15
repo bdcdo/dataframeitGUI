@@ -20,6 +20,7 @@ vi.mock("sonner", () => ({
 
 import { UnifyMembersDialog } from "@/components/members/UnifyMembersDialog";
 import type { UnificationPreview } from "@/actions/members";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 const basePreview: UnificationPreview = {
   sourceUserId: "source-1",
@@ -88,7 +89,7 @@ describe("UnifyMembersDialog", () => {
   });
 
   it("libera o botão e informa erro quando a action rejeita", async () => {
-    mocks.unifyMembers.mockRejectedValue(new Error("network failure"));
+    mocks.unifyMembers.mockRejectedValue(maskedServerError());
     const user = userEvent.setup();
     renderDialog();
 
@@ -98,7 +99,7 @@ describe("UnifyMembersDialog", () => {
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
-        "Não foi possível unificar os membros. Tente novamente.",
+        "Não foi possível unificar os membros. Tente novamente. — código 1bkm1w6",
       ),
     );
     const button = await findUnifyButton();

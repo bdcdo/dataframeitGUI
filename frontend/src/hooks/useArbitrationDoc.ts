@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { withErrorCode } from "@/lib/server-error";
 import {
   submitBlindVerdicts,
   submitFinalVerdicts,
@@ -152,7 +153,7 @@ export function useArbitrationDoc({
       }
     } catch (error) {
       console.error("[useArbitrationDoc] erro ao registrar veredito cego", error);
-      toast.error("Não foi possível registrar o veredito cego. Tente novamente.");
+      toast.error(withErrorCode(error, "Não foi possível registrar o veredito cego. Tente novamente."));
       return;
     } finally {
       setSubmitting(false);
@@ -192,7 +193,7 @@ export function useArbitrationDoc({
       r = await submitFinalVerdicts(projectId, doc.docId, payload);
     } catch (error) {
       console.error("[useArbitrationDoc] erro ao enviar veredito final", error);
-      toast.error("Não foi possível enviar o veredito final. Tente novamente.");
+      toast.error(withErrorCode(error, "Não foi possível enviar o veredito final. Tente novamente."));
       return;
     } finally {
       setSubmitting(false);

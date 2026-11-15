@@ -13,6 +13,7 @@ import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog";
 import { LinkEmailDialog } from "@/components/members/LinkEmailDialog";
 import { UnifyMembersDialog } from "@/components/members/UnifyMembersDialog";
 import { toast } from "sonner";
+import { withErrorCode } from "@/lib/server-error";
 import { useMemberListDialogs } from "@/hooks/useMemberListDialogs";
 import { MemberRow } from "./MemberRow";
 import {
@@ -95,7 +96,7 @@ export function MemberList({
         setRemovingMember(null);
       } catch (error) {
         console.error("[MemberList] erro ao remover membro", error);
-        toast.error("Não foi possível remover o membro. Tente novamente.");
+        toast.error(withErrorCode(error, "Não foi possível remover o membro. Tente novamente."));
       }
     });
   };

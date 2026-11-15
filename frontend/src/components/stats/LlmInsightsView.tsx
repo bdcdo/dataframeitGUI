@@ -25,7 +25,7 @@ import type {
   LlmError,
   ReviewedEntry,
 } from "@/lib/llm-error-metrics";
-import { actionErrorMessage } from "@/lib/server-error";
+import { actionErrorMessage, withErrorCode } from "@/lib/server-error";
 
 interface LlmInsightsViewProps {
   projectId: string;
@@ -110,8 +110,8 @@ export function LlmInsightsView({
           decision, bothCorrectValue: error.bothCorrectValue });
         if (!result.context) { toast.error(result.error ?? "Não foi possível conferir as respostas."); return; }
         setPendingDecision({ error, decision, context: result.context });
-      } catch {
-        toast.error("Não foi possível conferir as respostas.");
+      } catch (e) {
+        toast.error(withErrorCode(e, "Não foi possível conferir as respostas."));
       }
     });
   };
@@ -125,8 +125,8 @@ export function LlmInsightsView({
         toast.success(pendingDecision.decision ? "Decisão salva" : "Caso reaberto");
         setPendingDecision(null);
         refresh();
-      } catch {
-        toast.error("Não foi possível confirmar a gravação. Recarregue antes de tentar novamente.");
+      } catch (e) {
+        toast.error(withErrorCode(e, "Não foi possível confirmar a gravação. Recarregue antes de tentar novamente."));
       }
     });
   };

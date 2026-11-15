@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { linkMemberEmail, type UnificationPreview } from "@/actions/members";
 import { toast } from "sonner";
+import { withErrorCode } from "@/lib/server-error";
 
 interface LinkEmailDialogProps {
   projectId: string;
@@ -58,8 +59,8 @@ export function LinkEmailDialog({
       );
       setEmail("");
       onOpenChange(false);
-    } catch {
-      toast.error("Não foi possível vincular o e-mail. Tente novamente.");
+    } catch (error) {
+      toast.error(withErrorCode(error, "Não foi possível vincular o e-mail. Tente novamente."));
     } finally {
       setLoading(false);
     }

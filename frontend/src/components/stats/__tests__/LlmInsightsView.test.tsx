@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
 import type { LlmError } from "@/lib/llm-error-metrics";
 import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 const mocks = vi.hoisted(() => ({ prepare: vi.fn(), resolve: vi.fn(), reopen: vi.fn(), refresh: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn(), regenerate: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
@@ -155,6 +156,30 @@ describe("decisão individual em Insights", () => {
     expect(mocks.success).not.toHaveBeenCalled();
     expect(mocks.refresh).not.toHaveBeenCalled();
     expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  // Action que rejeita em produção chega mascarada: o toast mantém a copy e
+  // leva o código que casa com a linha do log (#653).
+  it("conferir que rejeita mostra a copy com o código do erro", async () => {
+    mocks.prepare.mockRejectedValue(maskedServerError());
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Erro humano" }));
+    await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(
+      "Não foi possível conferir as respostas. — código 1bkm1w6",
+    ));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("confirmar que rejeita mostra a copy com o código do erro", async () => {
+    mocks.resolve.mockRejectedValue(maskedServerError());
+    show();
+    await userEvent.click(screen.getByRole("button", { name: "Erro do LLM" }));
+    await screen.findByRole("dialog");
+    await userEvent.click(await findConfirmButton());
+    await waitFor(() => expect(mocks.error).toHaveBeenCalledWith(
+      "Não foi possível confirmar a gravação. Recarregue antes de tentar novamente. — código 1bkm1w6",
+    ));
+    expect(mocks.success).not.toHaveBeenCalled();
   });
 
   it("cancelar a discussão não grava nada", async () => {

@@ -19,6 +19,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { LinkEmailDialog } from "@/components/members/LinkEmailDialog";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 const linkedResult = (access: "ready" | "pending") => ({
   status: "linked" as const,
@@ -104,14 +105,14 @@ describe("LinkEmailDialog", () => {
   });
 
   it("libera o botão e informa erro quando a action rejeita", async () => {
-    mocks.linkMemberEmail.mockRejectedValue(new Error("network failure"));
+    mocks.linkMemberEmail.mockRejectedValue(maskedServerError());
     renderDialog();
 
     await submitAliasEmail();
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
-        "Não foi possível vincular o e-mail. Tente novamente.",
+        "Não foi possível vincular o e-mail. Tente novamente. — código 1bkm1w6",
       ),
     );
     const button = screen.getByRole("button", { name: "Vincular" });

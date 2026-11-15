@@ -4,6 +4,7 @@ import {
   caughtErrorCopy,
   errorCode,
   errorDetail,
+  withErrorCode,
   serverErrorCopy,
   serverErrorScope,
 } from "@/lib/server-error";
@@ -126,5 +127,20 @@ describe("errorDetail", () => {
     );
     expect(errorDetail(new Error(""))).toBeNull();
     expect(errorDetail(undefined)).toBeNull();
+  });
+});
+
+describe("withErrorCode", () => {
+  const copy = "Não foi possível remover o membro. Tente novamente.";
+
+  it("acrescenta à copy fixa o código da exceção do servidor", () => {
+    expect(withErrorCode(maskedServerError("2876531478"), copy)).toBe(
+      `${copy} — código 1bkm1w6`,
+    );
+  });
+
+  it("erro do navegador mantém a copy pt-BR, sem a mensagem em inglês", () => {
+    expect(withErrorCode(new TypeError("Failed to fetch"), copy)).toBe(copy);
+    expect(withErrorCode(undefined, copy)).toBe(copy);
   });
 });

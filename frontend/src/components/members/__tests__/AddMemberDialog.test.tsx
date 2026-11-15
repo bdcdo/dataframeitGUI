@@ -16,6 +16,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { AddMemberDialog } from "@/components/members/AddMemberDialog";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 // Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
 beforeAll(() => warmUpJsdom(), 30_000);
@@ -83,13 +84,13 @@ describe("AddMemberDialog", () => {
   });
 
   it("libera o botão e informa erro quando a action rejeita", async () => {
-    mocks.addMember.mockRejectedValue(new Error("network failure"));
+    mocks.addMember.mockRejectedValue(maskedServerError());
 
     await submitMember();
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
-        "Não foi possível adicionar o membro. Tente novamente.",
+        "Não foi possível adicionar o membro. Tente novamente. — código 1bkm1w6",
       ),
     );
     expect(console.error).toHaveBeenCalled();

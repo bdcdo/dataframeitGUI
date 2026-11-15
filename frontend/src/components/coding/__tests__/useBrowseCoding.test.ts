@@ -136,7 +136,7 @@ describe("useBrowseCoding", () => {
   });
 
   it("submit mantém rascunho e seleção, e permite retry após rejeição de transporte", async () => {
-    mockSave.mockRejectedValue(new Error("Failed to find Server Action"));
+    mockSave.mockRejectedValue(new TypeError("Failed to fetch"));
     const dirty = new Set<string>();
     const { view, params } = setup("b1", dirty);
     const draft = { answers: { q: "sim" }, notes: "n" };

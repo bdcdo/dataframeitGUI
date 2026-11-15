@@ -145,7 +145,7 @@ describe("useAssignedCoding", () => {
   });
 
   it("mantém respostas e documento atual, e permite retry após rejeição de transporte", async () => {
-    mockSave.mockRejectedValue(new Error("Failed to find Server Action"));
+    mockSave.mockRejectedValue(new TypeError("Failed to fetch"));
     const { view, params } = setup();
     act(() => view.result.current.handleAnswer("q1", "sim"));
 

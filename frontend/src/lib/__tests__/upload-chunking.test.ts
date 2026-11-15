@@ -17,6 +17,7 @@ import {
   remapDuplicateMapToChunk,
   utf8Bytes,
 } from "@/lib/upload-chunking";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 const doc = (text: string) => ({ text });
 
@@ -39,6 +40,11 @@ describe("isPayloadTooLarge", () => {
   it("é falso para mensagem vazia ou não relacionada", () => {
     expect(isPayloadTooLarge("")).toBe(false);
     expect(isPayloadTooLarge("Erro de rede genérico")).toBe(false);
+  });
+
+  // Código de erro em base 36 (#653) pode conter "413" no meio.
+  it("é falso para \"413\" dentro de um código de erro", () => {
+    expect(isPayloadTooLarge("Erro ao importar documentos — código a413bz")).toBe(false);
   });
 });
 
@@ -368,7 +374,7 @@ describe("buildUploadErrorMessage", () => {
       totalDocs: 10,
       mode: "add_all",
       deleteResponses: undefined,
-      msg: "FUNCTION_PAYLOAD_TOO_LARGE",
+      error: new Error("FUNCTION_PAYLOAD_TOO_LARGE"),
     });
     expect(msg).toBe(PAYLOAD_TOO_LARGE_MESSAGE);
   });
@@ -379,7 +385,7 @@ describe("buildUploadErrorMessage", () => {
       totalDocs: 10,
       mode: "add_all",
       deleteResponses: undefined,
-      msg: "erro de rede",
+      error: new Error("erro de rede"),
     });
     expect(msg).toBe("4 de 10 documentos importados antes de uma falha: erro de rede");
   });
@@ -390,7 +396,7 @@ describe("buildUploadErrorMessage", () => {
       totalDocs: 10,
       mode: "replace_and_add",
       deleteResponses: true,
-      msg: "erro qualquer",
+      error: new Error("erro qualquer"),
     });
     expect(msg).toBe(
       "A importação falhou, mas respostas/revisões dos documentos duplicados podem já ter sido removidas. Confira a lista. (erro qualquer)"
@@ -403,12 +409,37 @@ describe("buildUploadErrorMessage", () => {
       totalDocs: 10,
       mode: "replace_and_add",
       deleteResponses: true,
-      msg: "erro de rede",
+      error: new Error("erro de rede"),
     });
     expect(msg).toContain("3 de 10 documentos importados/atualizados antes de uma falha");
     expect(msg).toContain(
       "Respostas/revisões de documentos duplicados podem já ter sido removidas"
     );
+  });
+
+  // Em produção a exceção da Server Action chega mascarada, com o digest.
+  it("exceção mascarada vira o código do erro, e não o texto em inglês do Next", () => {
+    const base = { totalDocs: 10, mode: "add_all" as const, deleteResponses: undefined };
+    expect(
+      buildUploadErrorMessage({ ...base, totalInserted: 0, error: maskedServerError() }),
+    ).toBe("Erro ao importar documentos — código 1bkm1w6");
+    expect(
+      buildUploadErrorMessage({ ...base, totalInserted: 4, error: maskedServerError() }),
+    ).toBe("4 de 10 documentos importados antes de uma falha: código 1bkm1w6");
+  });
+
+  it("código com \"413\" não vira erro de payload", () => {
+    // Digest cujo código em base 36 é "a413bz".
+    const digest = String(parseInt("a413bz", 36));
+    expect(
+      buildUploadErrorMessage({
+        totalInserted: 0,
+        totalDocs: 10,
+        mode: "add_all",
+        deleteResponses: undefined,
+        error: maskedServerError(digest),
+      }),
+    ).toBe("Erro ao importar documentos — código a413bz");
   });
 
   it("erro genérico sem docs inseridos usa a mensagem crua ou o fallback", () => {
@@ -418,7 +449,7 @@ describe("buildUploadErrorMessage", () => {
         totalDocs: 10,
         mode: "add_all",
         deleteResponses: undefined,
-        msg: "algo deu errado",
+        error: new Error("algo deu errado"),
       })
     ).toBe("algo deu errado");
     expect(
@@ -427,7 +458,7 @@ describe("buildUploadErrorMessage", () => {
         totalDocs: 10,
         mode: "add_all",
         deleteResponses: undefined,
-        msg: "",
+        error: new Error(""),
       })
     ).toBe("Erro ao importar documentos");
   });

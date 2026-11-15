@@ -10,6 +10,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { unifyMembers, type UnificationPreview } from "@/actions/members";
 import { toast } from "sonner";
+import { withErrorCode } from "@/lib/server-error";
 
 interface UnifyMembersDialogProps {
   projectId: string;
@@ -53,8 +54,8 @@ export function UnifyMembersDialog({
         `Membros unificados. ${preview.sourceName} agora atua como ${targetName} neste projeto.`,
       );
       onClose();
-    } catch {
-      toast.error("Não foi possível unificar os membros. Tente novamente.");
+    } catch (error) {
+      toast.error(withErrorCode(error, "Não foi possível unificar os membros. Tente novamente."));
     } finally {
       setLoading(false);
     }

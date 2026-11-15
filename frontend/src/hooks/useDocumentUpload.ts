@@ -9,6 +9,7 @@ import {
   type UploadDoc,
   type UploadOptions,
 } from "@/actions/documents";
+import { actionErrorMessage } from "@/lib/server-error";
 import { errorMessage } from "@/lib/utils";
 import {
   MAX_CHUNK_BYTES,
@@ -138,7 +139,6 @@ export function useDocumentUpload(projectId: string) {
       setPhase({ kind: "idle" });
     } catch (e) {
       console.error("[useDocumentUpload] doUpload falhou", e);
-      const msg = errorMessage(e);
       const destructiveReplace =
         options?.mode === "replace_and_add" && !!options?.deleteResponses;
       // Revalida sempre que o banco pode ter mudado: algo entrou (totalInserted > 0)
@@ -158,7 +158,7 @@ export function useDocumentUpload(projectId: string) {
           totalDocs: docs.length,
           mode: options?.mode,
           deleteResponses: options?.deleteResponses,
-          msg,
+          error: e,
         })
       );
       setPhase(returnTo);
@@ -216,11 +216,10 @@ export function useDocumentUpload(projectId: string) {
       }
     } catch (e) {
       console.error("[useDocumentUpload] handleCheckAndUpload falhou", e);
-      const msg = errorMessage(e);
       toast.error(
-        isPayloadTooLarge(msg)
+        isPayloadTooLarge(errorMessage(e))
           ? PAYLOAD_TOO_LARGE_MESSAGE
-          : msg || "Erro ao verificar duplicatas"
+          : actionErrorMessage(e, "Erro ao verificar duplicatas")
       );
       setPhase({ kind: "mapping" });
     }

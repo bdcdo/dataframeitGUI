@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addMember } from "@/actions/members";
 import { toast } from "sonner";
+import { withErrorCode } from "@/lib/server-error";
 
 interface AddMemberDialogProps {
   projectId: string;
@@ -34,7 +35,7 @@ export function AddMemberDialog({ projectId }: AddMemberDialogProps) {
       setOpen(false);
     } catch (error) {
       console.error("[AddMemberDialog] erro ao adicionar membro", error);
-      toast.error("Não foi possível adicionar o membro. Tente novamente.");
+      toast.error(withErrorCode(error, "Não foi possível adicionar o membro. Tente novamente."));
     } finally {
       setLoading(false);
     }

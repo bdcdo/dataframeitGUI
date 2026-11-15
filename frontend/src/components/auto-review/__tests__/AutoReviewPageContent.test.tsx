@@ -43,6 +43,7 @@ vi.mock("../AutoReviewFieldPanel", () => ({
 
 import { AutoReviewPageContent } from "../AutoReviewPageContent";
 import type { AutoReviewDoc } from "../AutoReviewPage";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 // Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
 beforeAll(() => warmUpJsdom(), 30_000);
@@ -114,14 +115,14 @@ describe("AutoReviewPageContent — envio", () => {
   });
 
   it("libera o botão e informa erro quando a action rejeita", async () => {
-    mocks.submitAutoReview.mockRejectedValue(new Error("network failure"));
+    mocks.submitAutoReview.mockRejectedValue(maskedServerError());
     const { setChoices } = renderContent();
 
     await userEvent.setup().click(screen.getByRole("button", { name: "Enviar" }));
 
     await waitFor(() =>
       expect(mocks.toastError).toHaveBeenCalledWith(
-        "Não foi possível enviar a revisão. Tente novamente.",
+        "Não foi possível enviar a revisão. Tente novamente. — código 1bkm1w6",
       ),
     );
     expect(console.error).toHaveBeenCalled();
