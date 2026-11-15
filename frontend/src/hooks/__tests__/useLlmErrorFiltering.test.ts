@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { useLlmErrorFiltering } from "@/hooks/useLlmErrorFiltering";
+import { errorQueueTab } from "@/lib/error-resolution";
 import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
+
+vi.mock("@/lib/error-resolution", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/error-resolution")>();
+  return { ...actual, errorQueueTab: vi.fn(actual.errorQueueTab) };
+});
 
 const scope = { fieldName: "x", documentTitle: "Documento", reviewedAt: "2026-09-14T12:00:00Z", schemaVersion: "1.0.0" };
 
@@ -48,5 +54,22 @@ describe("filtros de triagem e taxa", () => {
     expect(result.current.filteredErrorRate).toBe(50);
     act(() => result.current.setErrorFieldFilter("x"));
     expect(result.current.filteredErrorRate).toBe(100);
+  });
+});
+
+// #893: `errorQueueTab` resolve a decisão inteira (contexto, validade, valor);
+// é por erro, não por render — busca e filtros re-renderizam a cada tecla.
+describe("custo da aba de status", () => {
+  it("calcula a aba uma vez por erro, não a cada render", () => {
+    const errors = (["llm_correct", "discussion", "both_correct"] as const)
+      .map((decision) => ({ ...scope, fieldDescription: "Pergunta", resolution: resolutionFixture(decision) }));
+    const reviewed: never[] = [];
+    vi.mocked(errorQueueTab).mockClear();
+    const { result } = renderHook(() => useLlmErrorFiltering(errors, reviewed));
+    act(() => result.current.setErrorSearchQuery("Doc"));
+    act(() => result.current.setErrorStatusFilter("all"));
+    expect(result.current.filteredErrors).toHaveLength(3);
+    expect(result.current.openErrorCount).toBe(0);
+    expect(errorQueueTab).toHaveBeenCalledTimes(errors.length);
   });
 });

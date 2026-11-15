@@ -97,6 +97,13 @@ export function useLlmErrorFiltering<
     ? new Date(errorSinceDate + "T00:00:00").getTime()
     : presetCutoffMs(errorDateFilter, now);
 
+  // A aba depende só da decisão do erro, e resolvê-la custa (contexto,
+  // validade, valor): uma vez por lista de erros, não a cada tecla da busca.
+  const queueTabs = useMemo(
+    () => new Map(errors.map((e) => [e, errorQueueTab(e.resolution)])),
+    [errors],
+  );
+
   // Status recorta só a fila; filtros de população recortam os dois termos da taxa.
   const matchesScopeFilters = (e: ScopeFilterable): boolean => {
     if (errorFieldFilter !== "all" && e.fieldName !== errorFieldFilter)
@@ -119,7 +126,7 @@ export function useLlmErrorFiltering<
 
   const filteredReviewed = reviewedEntries.filter((e) => !e.isPending && matchesScopeFilters(e));
   const filteredErrors = errors.filter((e) => {
-    if (errorStatusFilter !== "all" && errorQueueTab(e.resolution) !== errorStatusFilter) return false;
+    if (errorStatusFilter !== "all" && queueTabs.get(e) !== errorStatusFilter) return false;
     return matchesScopeFilters(e);
   });
 
@@ -150,7 +157,7 @@ export function useLlmErrorFiltering<
 
   // Counted within the current scope so the badge matches the cards.
   const openErrorCount = errors.filter(
-    (e) => errorQueueTab(e.resolution) === "open" && matchesScopeFilters(e),
+    (e) => queueTabs.get(e) === "open" && matchesScopeFilters(e),
   ).length;
 
   return {
