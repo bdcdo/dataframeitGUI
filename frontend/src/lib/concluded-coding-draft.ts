@@ -30,7 +30,7 @@ export interface ConcludedCodingDraftInput {
   assignments: readonly ConcludedCodingAssignment[];
   /** Ids dos documentos não excluídos (`excluded_at IS NULL`). */
   activeDocIds: ReadonlySet<string>;
-  /** Codificações humanas `is_latest`, de qualquer documento. */
+  /** Codificações humanas `is_latest` (o script manda só as `is_partial = true`). */
   humanLatest: readonly HumanLatestResponse[];
 }
 
@@ -62,7 +62,8 @@ export function concludedCodingDraftViolations({
   humanLatest,
 }: ConcludedCodingDraftInput): Violation[] {
   // Response is_latest do par (única por (doc, respondente), garantida por
-  // 'responses-is-latest-unica'). Só `is_partial === true` é candidato:
+  // 'responses-is-latest-unica'). O script já filtra is_partial=true no banco
+  // só para trafegar menos; a regra fica aqui. Só `is_partial === true` é candidato:
   // `undefined` (sem response) é caso de 'concluida-tem-response', `false` é
   // submetida e `null` é linha legada sem o sinal — conservador, para não
   // falso-positivar sem prova de rascunho.

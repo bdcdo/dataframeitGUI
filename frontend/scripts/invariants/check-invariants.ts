@@ -418,7 +418,7 @@ const invariants: Invariant[] = [
   {
     name: "codificacao-concluida-response-so-rascunho",
     motivation:
-      "vão entre as duas invariantes pareadas acima (#552): assignment 'concluido' em doc ATIVO cuja response humana is_latest do par nunca foi submetida (is_partial=true). 'concluida-tem-response' só vê ausência de response; 'completa-marcada-pendente' só olha response submetida (is_partial=false) — nenhuma cobre o rascunho promovido a concluído. Estado que o guard do #538 fechou na criação e do qual keepCodingAssignmentInProgress não regride; FAIL aqui = canal de escrita futuro reintroduziu o vão. Desde o #608, is_partial=true também marca envio incompleto, e o feito DEPOIS da conclusão (responses.updated_at > completed_at) mantém o concluído de propósito (#626) e fica isento",
+      "vão entre as duas invariantes pareadas acima (#552): assignment 'concluido' em doc ATIVO cuja response humana is_latest do par nunca foi submetida (is_partial=true). 'concluida-tem-response' só vê ausência de response; 'completa-marcada-pendente' só olha response submetida (is_partial=false) — nenhuma cobre o rascunho promovido a concluído. Estado que o guard do #538 fechou na criação e do qual keepCodingAssignmentInProgress não regride; FAIL aqui = canal de escrita futuro reintroduziu o vão. Envio incompleto pós-conclusão (#608/#626) é isento — ver lib/concluded-coding-draft",
     run: async () => {
       const active = await activeDocIds();
       const [assignments, responses] = await Promise.all([
