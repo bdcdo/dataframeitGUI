@@ -10,6 +10,19 @@ class MissingAuthTokenError extends Error {
   }
 }
 
+/** Resposta não-ok do backend. Carrega o status para o caller separar o 4xx,
+ * cujo `detail` é copy pt-BR escrita para o usuário ("Projeto não possui código
+ * Pydantic armazenado"), do 5xx, que é falha de servidor e vai para o log. */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 type GetToken = () => Promise<string | null>;
 
 /** Busca o session token do Clerk e falha fechado (lança) quando vem nulo, em
@@ -54,7 +67,7 @@ export async function fetchFastAPI<T>(
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `API error: ${res.status}`);
+    throw new ApiError(error.detail || `API error: ${res.status}`, res.status);
   }
 
   return res.json();

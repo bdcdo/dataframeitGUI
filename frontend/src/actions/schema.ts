@@ -4,6 +4,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { fetchFastAPIServer } from "@/lib/api-server";
+import { ApiError } from "@/lib/api";
 import type {
   PydanticField,
   SchemaBaselineIdentity,
@@ -230,7 +231,6 @@ type SchemaCommitRpc =
   | "resolve_schema_suggestion"
   | "apply_schema_backfill";
 
-
 // As RAISE EXCEPTION das RPCs são de duas naturezas, e só uma delas interessa ao
 // usuário. Violação de contrato (22023, 23514, 42501: payload malformado, log
 // vazio, salto semver incompatível) um cliente correto não produz — a mensagem
@@ -242,7 +242,6 @@ type SchemaCommitRpc =
 const SCHEMA_RPC_COPY: Record<SchemaCommitRpc, ServerErrorCopy> = {
   commit_project_schema: {
     generic: "Não foi possível salvar o schema. Tente novamente.",
-    byCode: {},
   },
   approve_schema_suggestion: {
     generic: "Não foi possível aplicar a sugestão. Tente novamente.",
@@ -376,8 +375,10 @@ export async function recoverFieldsFromStoredCode(
     }
     return { fields };
   } catch (e) {
-    // Falha de rede ou do backend ("fetch failed", "Internal Server Error"):
-    // diagnóstico para o log, copy pt-BR para o toast.
+    // O 4xx do backend já vem com copy pt-BR acionável (projeto sem código,
+    // acesso negado). Falha de rede ou 5xx ("fetch failed", "Internal Server
+    // Error") é diagnóstico: vai para o log, e o toast recebe copy pt-BR.
+    if (e instanceof ApiError && e.status < 500) return { error: e.message };
     return {
       error: serverErrorCopy(
         "[schema] recuperação dos campos falhou",

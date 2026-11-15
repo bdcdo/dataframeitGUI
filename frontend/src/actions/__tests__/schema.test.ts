@@ -8,6 +8,7 @@ import {
   type WriteCall,
 } from "./supabase-mock";
 import { EMPTY_BASELINE, FIELD, PROJECT_SELECT } from "./schema-test-fixtures";
+import { ApiError } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
 
 const state = vi.hoisted(() => ({
@@ -762,7 +763,30 @@ describe("erro de servidor não chega cru ao toast", () => {
     consoleError.mockRestore();
   });
 
-  it("recoverFieldsFromStoredCode", async () => {
+  // O 4xx do backend é copy pt-BR escrita para o usuário, e diz o que fazer.
+  it("recoverFieldsFromStoredCode mantém o detail do 4xx do backend", async () => {
+    fetchMock.mockRejectedValueOnce(
+      new ApiError("Projeto não possui código Pydantic armazenado", 404),
+    );
+
+    const result = await recoverFieldsFromStoredCode("p1");
+
+    expect(result).toEqual({ error: "Projeto não possui código Pydantic armazenado" });
+  });
+
+  it("recoverFieldsFromStoredCode com 5xx não repassa o statusText", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockRejectedValueOnce(new ApiError("Internal Server Error", 500));
+
+    const result = await recoverFieldsFromStoredCode("p1");
+
+    expect(result).toEqual({
+      error: "Não foi possível recuperar os campos do código armazenado. Tente novamente.",
+    });
+    vi.mocked(console.error).mockRestore();
+  });
+
+  it("recoverFieldsFromStoredCode com falha de rede", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
 

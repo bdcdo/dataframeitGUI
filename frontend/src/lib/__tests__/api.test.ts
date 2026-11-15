@@ -116,7 +116,11 @@ describe("fetchFastAPI", () => {
     });
     await expect(fetchFastAPI("/api/llm/run")).rejects.toThrow(
       "project_id inválido",
-    );
+    );    // O status vai junto: o caller separa o 4xx (copy para o usuário) do 5xx.
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toMatchObject({
+      name: "ApiError",
+      status: 422,
+    });
   });
 
   it("cai no statusText quando o corpo do erro não é JSON", async () => {
