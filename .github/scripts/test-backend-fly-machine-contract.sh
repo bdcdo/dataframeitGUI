@@ -162,7 +162,8 @@ cat >"$wait_bin/curl" <<'EOF'
 #!/usr/bin/env bash
 count="$(cat "$WAIT_LOG.curl" 2>/dev/null || echo 0)"
 echo "$((count + 1))" >"$WAIT_LOG.curl"
-echo "$(($(<"$WAIT_LOG.clock") + 60))" >"$WAIT_LOG.clock"
+read -r clock <"$WAIT_LOG.clock"
+echo "$((clock + 60))" >"$WAIT_LOG.clock"
 line="$(sed -n "$((count + 1))p" "$CURL_RESPONSES")"
 if [[ "$line" == "FAIL" ]]; then
   exit 22
@@ -172,12 +173,14 @@ EOF
 cat >"$wait_bin/sleep" <<'EOF'
 #!/usr/bin/env bash
 echo "$1" >>"$WAIT_LOG.sleep"
-echo "$(($(<"$WAIT_LOG.clock") + $1))" >"$WAIT_LOG.clock"
+read -r clock <"$WAIT_LOG.clock"
+echo "$((clock + $1))" >"$WAIT_LOG.clock"
 EOF
 cat >"$wait_bin/date" <<'EOF'
 #!/usr/bin/env bash
 [[ "$*" == "+%s" ]] || { echo "date inesperado: $*" >&2; exit 64; }
-echo "$(<"$WAIT_LOG.clock")"
+read -r clock <"$WAIT_LOG.clock"
+echo "$clock"
 EOF
 chmod +x "$wait_bin/curl" "$wait_bin/sleep" "$wait_bin/date"
 
@@ -222,15 +225,12 @@ assert_wait "API sem resposta" "10 10"
 # Um 502 transitório não encerra a espera com run ativa.
 run_wait FAIL '{"status":"ok","active_jobs":1}' '{"status":"ok","active_jobs":0}'
 assert_wait "Nenhuma run em curso." "10 60"
-# Run que não termina: cada volta gasta 120 s de relógio (leitura e sleep), e a
-# leitura que passa de 4 h faz o passo sair 0 para o deploy seguir. São 121
-# leituras e 120 sleeps; sem a checagem do prazo, a leitura seguinte vem vazia
-# e a espera sairia por "API sem resposta", com outra mensagem e mais sleeps.
-endless_run=()
-for _ in {1..121}; do endless_run+=('{"status":"ok","active_jobs":1}'); done
+# Run que não termina: o prazo vence na 121ª leitura, depois de 120 sleeps, e o
+# passo sai 0 para o deploy seguir. Sem a checagem do prazo, a leitura seguinte
+# vem vazia e a espera sairia por "API sem resposta", com mais sleeps.
+mapfile -t endless_run < <(yes '{"status":"ok","active_jobs":1}' | head -n 121)
 run_wait "${endless_run[@]}"
-expected_sleeps="$(printf '60 %.0s' {1..120})"
-assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" "${expected_sleeps% }"
+assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" "$(yes 60 | head -n 120 | paste -sd' ')"
 
 # Mesma comparação por linha inteira, sem comentários, do contrato do frontend:
 # o arquivo cita em prosa formas que estas asserções rejeitam, e um grep de
