@@ -7,6 +7,7 @@ on:
       - ".nvmrc"
       - "frontend/package.json"
       - "frontend/package-lock.json"
+      - "frontend/scripts/run-db-tests.sh"
       - "frontend/scripts/run-sql-test.sh"
       - "frontend/scripts/run-backend-integration.sh"
       - "frontend/supabase/migrations/**"
@@ -16,6 +17,8 @@ on:
       # Contrato do llm_runner em llm_runs (#674): ver backend/tests/integration/.
       - "backend/services/llm_runner.py"
       - "backend/tests/integration/**"
+      # O pytest do contrato carrega este conftest.py antes dos testes.
+      - "backend/tests/conftest.py"
       # O cliente (supabase-py/postgrest) e a config do pytest também mudam o
       # que o contrato exercita.
       - "backend/pyproject.toml"
@@ -49,55 +52,15 @@ jobs:
       - run: npx supabase start
       - run: npx supabase db reset --local --no-seed
 
-      # Cada suíte roda em passo próprio: um `npm run test:db` só diria que
-      # "o banco falhou", e a suíte que quebrou é a informação útil.
-      - name: Responses LLM actor integrity
-        run: npm run test:db:responses-actor
-      - name: Identidade canônica por projeto e RLS
-        run: npm run test:db:identity
-      - name: Shape de pydantic_fields (id canônico, sem id nem nome repetido)
-        run: npm run test:db:pydantic-fields-shape
-      - name: Chave visible_if no código Pydantic armazenado
-        run: npm run test:db:visible-if
-      - name: Mapping Clerk e snapshot em duas fases
-        run: npm run test:db:clerk-mapping
-      - name: Fechamento da fila de auto-revisão
-        run: npm run test:db:auto-review-sync
-      - name: RPCs atômicas de replace
-        run: npm run test:db:atomic-replace
-      - name: Rate limit de LLM
-        run: npm run test:db:llm-rate-limit
-      - name: RPCs de permissão de membros
-        run: npm run test:db:member-permissions
-      - name: Column guard de project_members
-        run: npm run test:db:column-guard
-      - name: Unicidade da resposta humana corrente
-        run: npm run test:db:responses-human-latest
-      - name: Rodada da execução LLM
-        run: npm run test:db:llm-runs-round
-      - name: Rodada da arbitragem
-        run: npm run test:db:reviews-round
-      - name: Veredito vale enquanto a pergunta não muda
-        run: npm run test:db:reviews-field-hash
-      - name: Mudança da pergunta derruba os julgamentos presos a respostas
-        run: npm run test:db:judgments-follow-question
-      - name: Ambos corretos grava o valor comum
-        run: npm run test:db:both-correct-value
-      - name: Reconhecimento preso ao veredito reconhecido
-        run: npm run test:db:verdict-ack-pinned
-      - name: Revisão monotônica e RPCs atômicas de schema
-        run: npm run test:db:schema-revision-rpcs
-
+      # O mesmo runner do hook `db-tests` (pre-push): a lista de suítes vive só
+      # em GATE_SUITES/PGTAP_SUITES/KNOWN_RED (run-db-tests.sh), e o runner
+      # recusa suíte no disco fora dela. A lista escrita à mão aqui, um passo
+      # por suíte, tinha ficado 17 suítes atrás. O runner imprime PASS/FAIL por
+      # suíte e a cauda da saída de cada uma que falha, e roda por último o
+      # contrato payload×schema dos writes de llm_runs (uv, abaixo).
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           # Mesmo uv do backend/Dockerfile.
           version: "0.9.18"
-      - name: Contrato payload×schema dos writes de llm_runs
-        run: npm run test:db:llm-runs-contract
-
-      # As fixtures destes precisam estar commitadas (duas conexões dblink veem
-      # o mesmo estado), então eles sujam o banco e ficam por último.
-      - name: Concorrência da auto-revisão
-        run: npm run test:db:auto-review-concurrency
-      - name: Concorrência do save humano
-        run: npm run test:db:responses-human-concurrency
+      - name: Suítes de contrato do banco (run-db-tests.sh)
+        run: npm run test:db
