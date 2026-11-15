@@ -11,16 +11,14 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { createHash } from "crypto";
 import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type { DocumentMetadata, PydanticField } from "@/lib/types";
-import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { serverErrorScope, type ServerError } from "@/lib/server-error";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
 // copy pt-BR do fluxo (#502). `replace_and_add_documents` fica de fora: a RPC
 // levanta copy pt-BR própria sobre o texto de documento já respondido.
 const UPLOAD_FAILED = "Não foi possível gravar os documentos. Tente novamente.";
 
-function documentsServerError(step: string, error: ServerError, generic: string): string {
-  return serverErrorCopy(`[documents] ${step} falhou`, error, { generic });
-}
+const documentsServerError = serverErrorScope("documents");
 
 export interface DocumentRow {
   external_id?: string;

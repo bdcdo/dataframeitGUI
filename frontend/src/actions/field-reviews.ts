@@ -17,7 +17,7 @@ import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm"
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { propagateValueEquivalenceChange } from "@/lib/value-equivalence-effects";
-import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { serverErrorScope } from "@/lib/server-error";
 import type {
   SelfVerdict,
   ArbitrationVerdict,
@@ -29,9 +29,7 @@ import type {
 const AUTO_REVIEW_FAILED = "Não foi possível enviar a auto-revisão. Tente novamente.";
 const ARBITRATION_FAILED = "Não foi possível registrar a arbitragem. Tente novamente.";
 
-function reviewServerError(step: string, error: ServerError, generic: string): string {
-  return serverErrorCopy(`[field-reviews] ${step} falhou`, error, { generic });
-}
+const reviewServerError = serverErrorScope("field-reviews");
 
 type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 

@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { actionErrorMessage, errorCode, errorDetail, serverErrorCopy } from "@/lib/server-error";
+import {
+  actionErrorMessage,
+  caughtErrorCopy,
+  errorCode,
+  errorDetail,
+  serverErrorCopy,
+  serverErrorScope,
+} from "@/lib/server-error";
 import { maskedServerError } from "@/test-utils/masked-server-error";
 
 describe("serverErrorCopy", () => {
@@ -28,6 +35,49 @@ describe("serverErrorCopy", () => {
     );
     expect(copy).toBe("Já resolvida.");
     expect(consoleError).not.toHaveBeenCalled();
+  });
+});
+
+describe("serverErrorScope", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("monta o escopo `[modulo] passo falhou` e devolve a copy genérica", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const copy = serverErrorScope("members")(
+      "leitura do e-mail",
+      { code: "57014", message: "statement timeout" },
+      "Tente novamente.",
+    );
+    expect(copy).toBe("Tente novamente.");
+    expect(consoleError).toHaveBeenCalledWith("[members] leitura do e-mail falhou", {
+      code: "57014",
+      message: "statement timeout",
+    });
+  });
+});
+
+describe("caughtErrorCopy", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("loga o code string do erro capturado, quando há", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const coded = Object.assign(new Error("statement timeout"), { code: "57014" });
+    expect(caughtErrorCopy("[x] falhou", coded, "Tente novamente.")).toBe("Tente novamente.");
+    expect(consoleError).toHaveBeenCalledWith("[x] falhou", {
+      code: "57014",
+      message: "statement timeout",
+    });
+  });
+
+  it("code não string (status do ApiError) e erro sem code saem com code undefined", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    caughtErrorCopy("[x] falhou", Object.assign(new Error("boom"), { code: 502 }), "g");
+    caughtErrorCopy("[x] falhou", new TypeError("fetch failed"), "g");
+    expect(consoleError).toHaveBeenNthCalledWith(1, "[x] falhou", { code: undefined, message: "boom" });
+    expect(consoleError).toHaveBeenNthCalledWith(2, "[x] falhou", {
+      code: undefined,
+      message: "fetch failed",
+    });
   });
 });
 

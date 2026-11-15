@@ -20,7 +20,7 @@ import {
 import { guardErrorCopy, updateOrThrow } from "@/lib/supabase/rls-guard";
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
 import { errorMessage } from "@/lib/utils";
-import { serverErrorCopy, type ServerError, type ServerErrorCopy } from "@/lib/server-error";
+import { caughtErrorCopy, serverErrorCopy, type ServerError, type ServerErrorCopy } from "@/lib/server-error";
 import {
   generateFieldId,
   parsePydanticFields,
@@ -379,16 +379,9 @@ export async function recoverFieldsFromStoredCode(
     // acesso negado). O 5xx o fetchFastAPI já levou ao log, com status e
     // detail; falha de rede ("fetch failed") é diagnóstico que ainda não foi.
     // Os dois dão a copy pt-BR do fluxo.
-    if (e instanceof ApiError && e.status < 500) return { error: e.message };
     const generic = "Não foi possível recuperar os campos do código armazenado. Tente novamente.";
-    if (e instanceof ApiError) return { error: generic };
-    return {
-      error: serverErrorCopy(
-        "[schema] recuperação dos campos falhou",
-        { message: errorMessage(e) },
-        { generic },
-      ),
-    };
+    if (e instanceof ApiError) return { error: e.status < 500 ? e.message : generic };
+    return { error: caughtErrorCopy("[schema] recuperação dos campos falhou", e, generic) };
   }
 }
 
@@ -617,8 +610,9 @@ export type BackfillSchemaResult =
   | { status: "conflict"; current: SchemaSnapshot }
   | { status: "error"; message: string };
 
-// Falha prevista do backfill, cuja mensagem já é copy pt-BR para o toast. O que
-// não for isto é exceção inesperada: o texto vai para o log, não ao usuário.
+// Falha da paginação, que o fetchAllPages já levou ao log e cuja mensagem é a
+// copy pt-BR do toast. O resto que o runBackfill lança é exceção inesperada: o
+// texto vai para o log, não ao usuário.
 class BackfillFailure extends Error {}
 
 export async function backfillSchemaVersionHistory(
@@ -631,10 +625,10 @@ export async function backfillSchemaVersionHistory(
     if (e instanceof BackfillFailure) return { status: "error", message: e.message };
     return {
       status: "error",
-      message: serverErrorCopy(
+      message: caughtErrorCopy(
         "[schema] backfill falhou",
-        { message: errorMessage(e) },
-        { generic: SCHEMA_RPC_COPY.apply_schema_backfill.generic },
+        e,
+        SCHEMA_RPC_COPY.apply_schema_backfill.generic,
       ),
     };
   }
@@ -713,7 +707,7 @@ async function runBackfill(
   expectedBaseline: SchemaBaselineIdentity,
 ): Promise<BackfillSchemaResult> {
   const user = await getAuthUser();
-  if (!user) throw new BackfillFailure("Não autenticado");
+  if (!user) return { status: "error", message: "Não autenticado" };
 
   const supabase = await createSupabaseServer();
 
@@ -730,8 +724,8 @@ async function runBackfill(
     .eq("id", projectId)
     .maybeSingle();
 
-  if (projectError) throw new BackfillFailure(projectReadFailed(projectError));
-  if (!project) throw new BackfillFailure("Projeto não encontrado ou sem permissão");
+  if (projectError) return { status: "error", message: projectReadFailed(projectError) };
+  if (!project) return { status: "error", message: "Projeto não encontrado ou sem permissão" };
 
   // O CAS compara contra a revisão que a ABA observou, como em
   // publishMajorVersion — não contra a leitura fresca deste request. Ler o

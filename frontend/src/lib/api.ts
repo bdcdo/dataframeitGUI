@@ -25,40 +25,32 @@ export class ApiError extends Error {
   }
 }
 
-/** Texto do toast para uma resposta não-ok. O `detail` string do backend é copy
- * pt-BR escrita para o usuário (4xx e os 503 da autenticação) e passa como está.
- * O resto é diagnóstico e vai para o log: o 422 de validação do FastAPI, cujo
- * `detail` é uma lista de objetos; o corpo que não é JSON (HTML de proxy), de
- * que só sobra o `statusText` em inglês; e o 500, que o backend colapsa em
- * "Internal Server Error". Também é diagnóstico a reason phrase que o roteador
- * do Starlette devolve para rota ou método inexistente (frontend publicado antes
- * do backend, que tem deploy próprio). */
+// Reason phrase que o roteador do Starlette devolve como `detail` para rota ou
+// método inexistente (frontend publicado antes do backend, que tem deploy
+// próprio): inglês de protocolo, não copy.
 const ROUTER_DEFAULT_DETAIL: Record<number, string> = {
   404: "Not Found",
   405: "Method Not Allowed",
 };
 
+/** Texto do toast para uma resposta não-ok. O `detail` string do backend é copy
+ * pt-BR escrita para o usuário (4xx e os 503 da autenticação) e passa como está.
+ * O resto é diagnóstico e vai para o log: o 422 de validação do FastAPI, cujo
+ * `detail` é uma lista de objetos; o corpo que não é JSON (HTML de proxy), de
+ * que só sobra o `statusText` em inglês; o 500, que o backend colapsa em
+ * "Internal Server Error"; e o 404/405 padrão do roteador. */
 function apiErrorCopy(path: string, status: number, statusText: string, body: unknown): string {
   const detail = (body as { detail?: unknown } | null)?.detail;
-  if (
+  const isCopy =
     typeof detail === "string" &&
-    detail &&
+    detail !== "" &&
     status !== 500 &&
-    detail !== ROUTER_DEFAULT_DETAIL[status]
-  ) {
-    return detail;
-  }
+    detail !== ROUTER_DEFAULT_DETAIL[status];
+  if (isCopy) return detail;
+  const raw = typeof detail === "string" || detail === undefined ? detail : JSON.stringify(detail);
   return serverErrorCopy(
     `[api] ${path} falhou`,
-    {
-      code: String(status),
-      message:
-        detail === undefined || detail === ""
-          ? statusText
-          : typeof detail === "string"
-            ? detail
-            : JSON.stringify(detail),
-    },
+    { code: String(status), message: raw || statusText },
     {
       generic:
         status >= 500

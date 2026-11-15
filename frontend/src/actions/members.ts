@@ -13,7 +13,7 @@ import { retryPendingArbitrations } from "@/actions/field-reviews";
 import { retryPendingComparisons } from "@/actions/comparisons";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { MEMBERS_TAG_PROFILE as TAG_PROFILE } from "@/lib/cache";
-import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { serverErrorCopy, serverErrorScope, type ServerError } from "@/lib/server-error";
 
 // Erro do Postgres, PostgREST ou Auth: o texto é diagnóstico em inglês e vai
 // para o log; o toast recebe a copy pt-BR do fluxo (#502).
@@ -24,9 +24,7 @@ const PERMISSION_COPY = "Não foi possível alterar a permissão do membro. Tent
 const EMAIL_LINK_COPY = "Não foi possível atualizar o vínculo de e-mail. Tente novamente.";
 const UNIFY_COPY = "Não foi possível preparar a unificação dos membros. Tente novamente.";
 
-function memberServerError(step: string, error: ServerError, generic: string): string {
-  return serverErrorCopy(`[members] ${step} falhou`, error, { generic });
-}
+const memberServerError = serverErrorScope("members");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -989,9 +987,7 @@ const MEMBER_EMAIL_LINK_WRITE_ERRORS: Readonly<Record<string, string>> = {
     "Não foi possível confirmar a conta deste e-mail. Verifique o endereço e tente de novo.",
 };
 
-function memberEmailLinkWriteError(
-  error: { code?: string; message: string } | null,
-): string | null {
+function memberEmailLinkWriteError(error: ServerError | null): string | null {
   if (!error) return null;
   return serverErrorCopy("[members] gravação do vínculo de e-mail falhou", error, {
     generic: EMAIL_LINK_COPY,

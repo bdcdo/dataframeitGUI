@@ -5,15 +5,13 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
-import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { serverErrorScope } from "@/lib/server-error";
 import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
 // copy pt-BR do fluxo (#502). `set_error_resolution` fica de fora: a RPC levanta
 // copy pt-BR própria ("A decisão mudou. Recarregue antes de confirmar.").
-function statsServerError(step: string, error: ServerError, generic: string): string {
-  return serverErrorCopy(`[stats] ${step} falhou`, error, { generic });
-}
+const statsServerError = serverErrorScope("stats");
 
 async function withResolutionAction(
   projectId: string,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 
 import {
   makeSupabaseMock,
@@ -159,6 +159,8 @@ function expectLogged(message: string) {
     expect.objectContaining({ message }),
   );
 }
+
+afterEach(() => consoleError.mockRestore());
 
 beforeEach(() => {
   consoleError = vi.spyOn(console, "error").mockImplementation(() => {});

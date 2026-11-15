@@ -7,13 +7,11 @@ import {
   revalidateProjectDocumentsCache,
 } from "@/actions/documents";
 import { revalidatePath } from "next/cache";
-import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { serverErrorScope } from "@/lib/server-error";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
 // copy pt-BR do fluxo (#502).
-function commentServerError(step: string, error: ServerError, generic: string): string {
-  return serverErrorCopy(`[project-comments] ${step} falhou`, error, { generic });
-}
+const commentServerError = serverErrorScope("project-comments");
 
 export async function createProjectComment(
   projectId: string,

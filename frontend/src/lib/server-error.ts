@@ -29,6 +29,24 @@ export function serverErrorCopy(
   return copy.generic;
 }
 
+// O mesmo para o módulo de actions que loga vários passos: o escopo do log sai
+// sempre como `[modulo] passo falhou`.
+export function serverErrorScope(module: string) {
+  return (step: string, error: ServerError, generic: string): string =>
+    serverErrorCopy(`[${module}] ${step} falhou`, error, { generic });
+}
+
+// Exceção capturada num `catch` (rede, PostgREST, erro lançado por helper):
+// vai para o log com o `code`, quando o erro o carrega (PostgrestWriteError,
+// por exemplo), e o toast recebe a copy genérica.
+export function caughtErrorCopy(scope: string, e: unknown, generic: string): string {
+  const code =
+    typeof e === "object" && e !== null && "code" in e && typeof e.code === "string"
+      ? e.code
+      : undefined;
+  return serverErrorCopy(scope, { code, message: errorMessage(e) }, { generic });
+}
+
 // Exceção não tratada no servidor (Server Action, render de RSC): em produção
 // o Next 16 troca a `message` por um texto genérico em inglês e só deixa
 // passar o `digest`, um hash de `message + stack` que é o mesmo no cliente e no

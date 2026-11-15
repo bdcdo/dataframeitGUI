@@ -32,16 +32,14 @@ import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField, Round } from "@/lib/types";
 import { decideSelfComparison, planAssignmentCycle, type CycleStep } from "@/lib/assignment-cycle";
 import { z } from "zod";
-import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { serverErrorScope } from "@/lib/server-error";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
 // copy pt-BR do fluxo (#502). As escritas de comparação ficam de fora: os
 // gatilhos de autocomparação levantam copy pt-BR própria.
 const CODING_ASSIGNMENT_FAILED = "Não foi possível alterar a atribuição. Tente novamente.";
 
-function assignmentServerError(step: string, error: ServerError, generic: string): string {
-  return serverErrorCopy(`[assignments] ${step} falhou`, error, { generic });
-}
+const assignmentServerError = serverErrorScope("assignments");
 
 // --- Status inicial do assignment de codificação (issue #521) ---
 
