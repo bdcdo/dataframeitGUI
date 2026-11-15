@@ -6,7 +6,7 @@
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, actionlint,
 #                                                deploy notifier, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, toolchain-pins, mypy, db-tests
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, toolchain-pins, mypy, db-tests, llm-runs-contract
 #   post-checkout (informativo, nunca bloqueia):   worktree-env
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
@@ -367,15 +367,28 @@ repos:
       # backend-pytest). As orfas schema_revision_* (#571/#572) estao em
       # KNOWN_RED no runner e sao reportadas sem bloquear ate serem consertadas.
       # Escopo por `files`: so roda quando o push toca migrations, suites .sql
-      # ou os scripts do runner — e tambem o llm_runner e os testes de
-      # integracao do backend, porque o runner roda o contrato payload x schema
-      # dos writes de llm_runs (#674): uma chave nova no payload, sem migration
-      # nenhuma, e exatamente o caso do round_id (#673).
+      # ou os scripts do runner. O runner tambem roda o contrato do llm_runner
+      # (hook seguinte), para que migration nova seja conferida contra ele.
       - id: db-tests
         name: test:db (suites de contrato SQL, pre-push)
         entry: bash -c 'cd frontend && exec bash scripts/run-db-tests.sh'
         language: system
-        files: ^(frontend/(supabase/(migrations|tests)/.*\.sql|scripts/run-(db-tests|sql-test|backend-integration)\.sh|package\.json)|backend/(services/llm_runner\.py|tests/integration/.*\.py))$
+        files: ^frontend/(supabase/(migrations|tests)/.*\.sql|scripts/run-(db-tests|sql-test|backend-integration)\.sh|package\.json)$
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # Contrato payload x schema do llm_runner em llm_runs (#674): pytest de
+      # integracao com supabase.Client real contra o Supabase local, fail-closed
+      # como o db-tests. Hook proprio, e nao o `files` do db-tests, para que um
+      # push so de Python nao rode a bateria SQL inteira. Dispara no llm_runner
+      # porque uma chave nova no payload, sem migration nenhuma, foi o caso do
+      # round_id (#673); o lado da migration fica com o db-tests.
+      - id: llm-runs-contract
+        name: contrato llm_runs do llm_runner (pre-push)
+        entry: bash -c 'cd frontend && exec bash scripts/run-backend-integration.sh'
+        language: system
+        files: ^(backend/(services/llm_runner\.py|tests/integration/.*\.py)|frontend/scripts/run-backend-integration\.sh)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

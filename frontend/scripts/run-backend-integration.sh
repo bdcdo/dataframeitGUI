@@ -20,9 +20,15 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 2
 fi
 
-status_env="$(npx supabase status -o env)"
-url="$(sed -n 's/^API_URL="\(.*\)"$/\1/p' <<<"${status_env}")"
-key="$(sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p' <<<"${status_env}")"
+# As variáveis já definidas prevalecem: é como apontar para outro stack local
+# (o teste recusa URL que não seja de loopback).
+url="${INTEGRATION_SUPABASE_URL:-}"
+key="${INTEGRATION_SUPABASE_SERVICE_KEY:-}"
+if [[ -z "${url}" || -z "${key}" ]]; then
+  status_env="$(npx supabase status -o env)"
+  url="$(sed -n 's/^API_URL="\(.*\)"$/\1/p' <<<"${status_env}")"
+  key="$(sed -n 's/^SERVICE_ROLE_KEY="\(.*\)"$/\1/p' <<<"${status_env}")"
+fi
 if [[ -z "${url}" || -z "${key}" ]]; then
   echo "supabase status sem API_URL/SERVICE_ROLE_KEY — rode 'npx supabase start' antes." >&2
   exit 2
@@ -30,4 +36,4 @@ fi
 
 cd ../backend
 INTEGRATION_SUPABASE_URL="${url}" INTEGRATION_SUPABASE_SERVICE_KEY="${key}" \
-  exec uv run --locked pytest -m integration -q
+  exec uv run pytest -m integration -q tests/integration

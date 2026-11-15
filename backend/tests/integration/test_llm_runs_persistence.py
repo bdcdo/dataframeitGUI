@@ -1,4 +1,4 @@
-"""Contrato payload×schema dos writes de `llm_runs` contra o Supabase local (#674).
+"""Contrato payload×schema do llm_runner em `llm_runs` contra o Supabase local (#674).
 
 Os testes de `run_llm` usam um `_FakeTable` em memória que aceita qualquer
 chave de payload, e por isso `_persist_run_snapshot` gravou `llm_runs.round_id`
@@ -29,12 +29,14 @@ from urllib.parse import urlparse
 import pytest
 from supabase import Client, create_client
 
+import services.llm_runner as llm_runner
 from services.llm_runner import (
     _persist_run_completion,
     _persist_run_error,
     _persist_run_insert,
     _persist_run_progress,
     _persist_run_snapshot,
+    get_job_status,
     mark_stale_runs_as_error,
 )
 
@@ -77,18 +79,20 @@ def project(sb: Client):
     sb.table("projects").insert(
         {"id": project_id, "name": f"contrato llm_runs {project_id}"}
     ).execute()
-    row = (
-        sb.table("projects")
-        .select("id, current_round_id")
-        .eq("id", project_id)
-        .single()
-        .execute()
-        .data
-    )
-    assert row["current_round_id"], "trigger não criou a rodada inicial"
-    yield row
-    # O cascade de projects leva rounds e llm_runs junto.
-    sb.table("projects").delete().eq("id", project_id).execute()
+    try:
+        row = (
+            sb.table("projects")
+            .select("id, current_round_id")
+            .eq("id", project_id)
+            .single()
+            .execute()
+            .data
+        )
+        assert row["current_round_id"], "trigger não criou a rodada inicial"
+        yield row
+    finally:
+        # O cascade de projects leva rounds e llm_runs junto.
+        sb.table("projects").delete().eq("id", project_id).execute()
 
 
 def _read_run(sb: Client, job_id: str) -> dict:
@@ -238,16 +242,53 @@ def test_error_writes_diagnostics(sb, project, caplog):
 
 
 def test_mark_stale_runs_as_error_only_hits_runs_without_heartbeat(sb, project):
-    stale = _new_run(sb, project["id"])
-    alive = _new_run(sb, project["id"])
     old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-    sb.table("llm_runs").update({"heartbeat_at": old}).eq("job_id", stale).execute()
+    # Os dois ramos do `.or_()`: heartbeat velho, e run sem heartbeat (anterior
+    # à coluna) com início velho. A sem heartbeat e início recente fica viva.
+    stale_heartbeat = _new_run(sb, project["id"])
+    sb.table("llm_runs").update({"heartbeat_at": old}).eq(
+        "job_id", stale_heartbeat
+    ).execute()
+    stale_no_heartbeat = _new_run(sb, project["id"])
+    sb.table("llm_runs").update({"heartbeat_at": None, "started_at": old}).eq(
+        "job_id", stale_no_heartbeat
+    ).execute()
+    fresh_no_heartbeat = _new_run(sb, project["id"])
+    sb.table("llm_runs").update({"heartbeat_at": None}).eq(
+        "job_id", fresh_no_heartbeat
+    ).execute()
+    alive = _new_run(sb, project["id"])
 
-    assert mark_stale_runs_as_error(sb, project["id"]) == 1
+    assert mark_stale_runs_as_error(sb, project["id"]) == 2
 
-    stale_row = _read_run(sb, stale)
-    assert stale_row["status"] == "error"
-    assert stale_row["phase"] == "error"
-    assert stale_row["error_message"].startswith("Execução abandonada")
-    assert stale_row["completed_at"] is not None
-    assert _read_run(sb, alive)["status"] == "running"
+    for job_id in (stale_heartbeat, stale_no_heartbeat):
+        row = _read_run(sb, job_id)
+        assert row["status"] == "error"
+        assert row["phase"] == "error"
+        assert row["error_message"].startswith("Execução abandonada")
+        assert row["completed_at"] is not None
+    for job_id in (fresh_no_heartbeat, alive):
+        assert _read_run(sb, job_id)["status"] == "running"
+
+
+def test_status_fallback_reads_persisted_run(sb, project, caplog, monkeypatch):
+    # Não é write, mas lê as mesmas colunas por nome e também engole o erro:
+    # coluna sumida viraria "Job not found" depois de um restart do backend.
+    job_id = _new_run(sb, project["id"])
+    _persist_run_progress(
+        sb,
+        job_id,
+        {"processed_complete": 2, "processed_partial": 1, "progress": 3},
+    )
+    monkeypatch.setattr(llm_runner, "get_supabase", lambda: sb)
+    assert job_id not in llm_runner._jobs
+
+    status = get_job_status(job_id)
+
+    _assert_nothing_swallowed(caplog)
+    assert status["status"] == "running"
+    assert status["phase"] == "loading"
+    assert status["progress"] == 3
+    assert status["processed_complete"] == 2
+    assert status["processed_partial"] == 1
+    assert status["processed_empty"] == 0

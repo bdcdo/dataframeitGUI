@@ -17,6 +17,10 @@ on:
       # no payload do runner, sem migration nenhuma, foi o caso do #673.
       - "backend/services/llm_runner.py"
       - "backend/tests/integration/**"
+      # O cliente (supabase-py/postgrest) e a config do pytest também mudam o
+      # que o contrato exercita.
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
   workflow_dispatch:
 
 permissions:
