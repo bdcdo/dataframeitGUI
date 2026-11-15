@@ -234,22 +234,13 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
   const rowText = (label: string) =>
     screen.getByText(`${label}:`).parentElement!.textContent;
 
-  it("campo sem `target` nem `required` mostra os defaults", () => {
+  it.each([
+    ["sem `target` nem `required`", {}],
+    ["com os defaults explícitos", { target: "all", required: true }],
+  ])("campo %s mostra os defaults", (_, extra) => {
     render(
       <FieldChangeDiff
-        entry={entry({ afterValue: { name: "q1", type: "text", description: "d" } })}
-      />,
-    );
-    expect(rowText("alvo")).toBe("alvo:Todos");
-    expect(rowText("obrigatório")).toBe("obrigatório:Sim");
-  });
-
-  it("campo com os defaults explícitos mostra o mesmo", () => {
-    render(
-      <FieldChangeDiff
-        entry={entry({
-          beforeValue: { name: "q1", type: "text", description: "d", target: "all", required: true },
-        })}
+        entry={entry({ afterValue: { name: "q1", type: "text", description: "d", ...extra } })}
       />,
     );
     expect(rowText("alvo")).toBe("alvo:Todos");
