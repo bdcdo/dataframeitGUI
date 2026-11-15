@@ -13,8 +13,10 @@ export function frontendEslint(configFile: string): ESLint {
 }
 
 /**
- * Lint de fixture filtrado por uma regra. Fixture que não parseia reprova em
- * vez de devolver lista vazia, que passaria por "a regra aceitou".
+ * Lint de fixture filtrado por uma regra. Fixture que não parseia, ou cujo
+ * caminho o ESLint ignora ou nenhum bloco da config cobre, reprova em vez de
+ * devolver lista vazia, que passaria por "a regra aceitou". Os três casos
+ * chegam como mensagem sem `ruleId`.
  */
 export function ruleLinter(
   eslint: ESLint,
@@ -23,8 +25,10 @@ export function ruleLinter(
 ) {
   async function messagesFor(code: string, filePath = defaultFilePath) {
     const [result] = await eslint.lintText(code, { filePath });
-    const fatal = result?.messages.find((message) => message.fatal);
-    if (fatal) throw new Error(`fixture não parseou: ${fatal.message}`);
+    const notLinted = result?.messages.find((message) => message.ruleId === null);
+    if (notLinted) {
+      throw new Error(`fixture não foi lintada: ${notLinted.message}`);
+    }
     return result?.messages.filter((message) => message.ruleId === ruleId) ?? [];
   }
 
