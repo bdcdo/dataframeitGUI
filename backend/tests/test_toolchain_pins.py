@@ -1,12 +1,10 @@
-"""Versões da toolchain do backend declaradas em dois lugares precisam convergir.
+"""Pinos da toolchain do backend declarados em mais de um lugar precisam convergir.
 
-- O ``rev`` do hook ``ruff-pre-commit`` em ``.pre-commit-config.yaml`` e a
-  versão do ``ruff`` travada em ``backend/uv.lock`` são a MESMA ferramenta:
-  divergentes, o hook de commit e o ``uv run ruff check .`` aplicam regras
-  diferentes em silêncio. O Dependabot bumpa os dois em PRs separados (#554).
-- ``backend/.python-version`` escolhe o Python do ``uv`` local; precisa ser o
-  do ``Dockerfile`` (produção). Sem o pino, o ``uv`` pegava o Python mais novo
-  instalado (3.15), para o qual o lock não tem wheel do tiktoken.
+- ``rev`` do ``ruff-pre-commit`` == ``ruff`` em ``uv.lock`` (porquê: comentário
+  do hook em ``.pre-commit-config.yaml``; #554).
+- ``.python-version`` == Python do ``Dockerfile`` == ``python_version`` do
+  mypy. Sem o pino, o ``uv`` local pegava o Python mais novo instalado (3.15),
+  para o qual o lock não tem wheel do tiktoken.
 """
 
 from __future__ import annotations
@@ -22,7 +20,7 @@ REPO = BACKEND.parent
 def test_ruff_hook_rev_matches_locked_ruff() -> None:
     config = (REPO / ".pre-commit-config.yaml").read_text()
     match = re.search(
-        r"repo:\s*https://github\.com/astral-sh/ruff-pre-commit\s*\n\s*rev:\s*v?(\S+)",
+        r"repo:\s*https://github\.com/astral-sh/ruff-pre-commit\s*\n\s*rev:\s*[\"']?v?([^\"'\s]+)",
         config,
     )
     assert match, "hook ruff-pre-commit não encontrado em .pre-commit-config.yaml"
@@ -39,7 +37,7 @@ def test_ruff_hook_rev_matches_locked_ruff() -> None:
     )
 
 
-def test_python_version_matches_dockerfile() -> None:
+def test_python_version_matches_dockerfile_and_mypy() -> None:
     pinned = (BACKEND / ".python-version").read_text().strip()
     match = re.search(
         r"^FROM python:(\d+\.\d+)",
@@ -47,7 +45,11 @@ def test_python_version_matches_dockerfile() -> None:
         re.MULTILINE,
     )
     assert match, "FROM python:X.Y não encontrado em backend/Dockerfile"
-    assert pinned == match.group(1), (
-        f"backend/.python-version ({pinned}) diverge do Python do "
-        f"Dockerfile ({match.group(1)})"
-    )
+    pyproject = tomllib.loads((BACKEND / "pyproject.toml").read_text())
+
+    pins = {
+        "backend/.python-version": pinned,
+        "backend/Dockerfile": match.group(1),
+        "[tool.mypy] python_version": pyproject["tool"]["mypy"]["python_version"],
+    }
+    assert len(set(pins.values())) == 1, f"pinos de Python do backend divergem: {pins}"

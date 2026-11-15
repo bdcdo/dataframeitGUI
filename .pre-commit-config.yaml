@@ -6,7 +6,7 @@
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, actionlint,
 #                                                deploy notifier, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, mypy, db-tests
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, toolchain-pins, mypy, db-tests
 #   post-checkout (informativo, nunca bloqueia):   worktree-env
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
@@ -55,9 +55,8 @@ repos:
   # o lock sem tocar o piso, e ai o piso continua "satisfeito" com o rev velho.
   # O ecossistema `pre-commit` em .github/dependabot.yml existe para que os dois
   # sejam bumpados; sao PRs separados (grupo `backend-minor-patch` vs. avulso),
-  # entao a convergencia e eventual. backend/tests/test_toolchain_pins.py
-  # reprova a divergencia (#554) no backend-pytest de pre-push, que dispara
-  # tambem quando o push toca este arquivo.
+  # entao a convergencia e eventual — o hook `toolchain-pins` (pre-push) reprova
+  # a divergencia (#554).
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.3
     hooks:
@@ -298,8 +297,7 @@ repos:
       # pytest do backend como gate de pre-push: roda a suite inteira (auth,
       # rotas, cors) quando o push toca codigo ou o grafo/deploy do backend.
       # O field_hash_parity_cases.json entra pelo nome porque não é .py e o
-      # teste de paridade do hash de campo depende dele; o .python-version e
-      # este arquivo, porque test_toolchain_pins.py confere os pinos deles.
+      # teste de paridade do hash de campo depende dele.
       # Diferente do semgrep
       # (fail-open em erro de infra), pytest e fail-CLOSED — sem `uv` o push
       # e barrado com mensagem, pois e um gate de verdade. `package = false`
@@ -308,7 +306,22 @@ repos:
         name: pytest backend (pre-push)
         entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para rodar os testes do backend" >&2; exit 1; }; cd backend && exec uv run pytest -q'
         language: system
-        files: ^(backend/(.*\.py|pyproject\.toml|uv\.lock|Dockerfile|\.dockerignore|\.python-version|tests/field_hash_parity_cases\.json)|docker-compose\.yml|\.pre-commit-config\.yaml)$
+        files: ^(backend/(.*\.py|pyproject\.toml|uv\.lock|Dockerfile|\.dockerignore|tests/field_hash_parity_cases\.json)|docker-compose\.yml)$
+        pass_filenames: false
+        require_serial: true
+        stages: [pre-push]
+
+      # Pinos da toolchain do backend declarados fora do backend: o `rev` do
+      # ruff acima contra o uv.lock, e o backend/.python-version contra o
+      # Dockerfile e o mypy (backend/tests/test_toolchain_pins.py). Roda so esse
+      # teste quando o push toca um desses dois arquivos; os demais lados
+      # (uv.lock, Dockerfile, pyproject.toml) ja disparam o backend-pytest
+      # inteiro, que inclui o teste.
+      - id: toolchain-pins
+        name: pinos da toolchain do backend (pre-push)
+        entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para conferir os pinos da toolchain" >&2; exit 1; }; cd backend && exec uv run pytest -q tests/test_toolchain_pins.py'
+        language: system
+        files: ^(\.pre-commit-config\.yaml|backend/\.python-version)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

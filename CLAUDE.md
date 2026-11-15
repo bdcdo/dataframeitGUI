@@ -93,7 +93,7 @@ Comandos conferidos rodando em 2026-11-14 (Node 24, uv 0.13; backend em Python 3
 ```bash
 # Instalar (a partir da raiz)
 (cd frontend && npm ci)            # Node >= 24.10
-(cd backend && uv sync --locked)   # Python >= 3.11 (produção usa 3.12)
+(cd backend && uv sync --locked)   # Python de backend/.python-version (= Dockerfile); piso >= 3.11
 
 # Frontend (em frontend/)
 npm run lint        # eslint; hoje 0 erros e alguns warnings
