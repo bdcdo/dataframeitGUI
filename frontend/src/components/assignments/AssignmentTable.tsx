@@ -23,11 +23,19 @@ interface AssignmentTableProps {
 }
 
 type CellState = {
-  cod?: Assignment;
-  comp?: Assignment;
+  cod?: OptimisticAssignment;
+  comp?: OptimisticAssignment;
 };
 
 type OptimisticAction = { docId: string; userId: string };
+
+/**
+ * Linha otimista cujo status só o servidor decide: a codificação criada pelo
+ * ciclo nasce `concluido` se o pesquisador já codificou o documento (#538), e
+ * a tabela não tem como saber. A célula mostra "salvando" em vez de afirmar
+ * "pendente" até o `revalidatePath` trazer a linha real (#551).
+ */
+type OptimisticAssignment = Assignment & { statusUnknown?: true };
 
 /**
  * Calcula a próxima lista de assignments após um ciclo na célula (docId, userId).
@@ -35,11 +43,11 @@ type OptimisticAction = { docId: string; userId: string };
  * Bloqueia se houver assignment não-pendente.
  */
 function cycleOptimistic(
-  current: Assignment[],
+  current: OptimisticAssignment[],
   projectId: string,
   docId: string,
   userId: string,
-): Assignment[] {
+): OptimisticAssignment[] {
   const related = current.filter(
     (a) => a.document_id === docId && a.user_id === userId,
   );
@@ -53,7 +61,7 @@ function cycleOptimistic(
   const hasCod = related.some((a) => a.type === "codificacao");
   const hasComp = related.some((a) => a.type === "comparacao");
 
-  const stub = (type: "codificacao" | "comparacao"): Assignment => ({
+  const stub = (type: "codificacao" | "comparacao"): OptimisticAssignment => ({
     id: `optimistic-${type}-${docId}-${userId}`,
     project_id: projectId,
     document_id: docId,
@@ -65,7 +73,8 @@ function cycleOptimistic(
     round_id: "optimistic",
   });
 
-  if (!hasCod && !hasComp) return [...others, stub("codificacao")];
+  if (!hasCod && !hasComp) return [...others, { ...stub("codificacao"), statusUnknown: true }];
+  // A promoção só troca o tipo da codificação pendente: segue pendente.
   if (hasCod && !hasComp) return [...others, stub("comparacao")];
   if (hasComp && !hasCod) return others;
   // ambos (sorteio): voltar para vazio
@@ -80,9 +89,12 @@ const researcherName = (r: AssignmentTableProps["researchers"][number]) =>
 export function AssignmentTable({ projectId, documents, researchers, assignments, readOnly = false }: AssignmentTableProps) {
   const [isPending, startTransition] = useTransition();
 
-  const [optimisticAssignments, applyOptimistic] = useOptimistic(
+  const [optimisticAssignments, applyOptimistic] = useOptimistic<
+    OptimisticAssignment[],
+    OptimisticAction
+  >(
     assignments,
-    (current: Assignment[], action: OptimisticAction) =>
+    (current, action) =>
       cycleOptimistic(current, projectId, action.docId, action.userId),
   );
 
@@ -151,6 +163,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                       undefined,
                     );
                   const status = dominant?.status;
+                  // Codificação recém-criada: o status ainda é do servidor.
+                  const saving = cod?.statusUnknown === true;
 
                   const isNonRemovable = status === "concluido" || status === "em_andamento";
                   // Codificação entregue ainda aceita a comparação da própria
@@ -161,7 +175,9 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   const isLocked = readOnly || isPending || (isNonRemovable && !canAddSelfComparison);
 
                   // Cor base pelo status
-                  const baseColor = status === "concluido"
+                  const baseColor = saving
+                    ? "border-dashed border-brand text-foreground"
+                    : status === "concluido"
                     ? "bg-green-500 border-green-600 text-white"
                     : status === "em_andamento"
                     ? "bg-yellow-400 border-yellow-500 text-white"
@@ -192,6 +208,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                         })
                       }
                       disabled={isLocked}
+                      aria-busy={saving || undefined}
                       className={cn(
                         "relative size-6 rounded border transition-colors",
                         baseColor,
@@ -200,6 +217,8 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                       aria-label={
                         !hasAny
                           ? "Atribuir codificação"
+                          : saving
+                          ? "Salvando a atribuição de codificação…"
                           : canAddSelfComparison
                           ? "Codificação concluída (clique para atribuir a comparação da própria codificação)"
                           : cod && !comp
@@ -226,7 +245,7 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
                   );
 
                   const tooltipParts: string[] = [];
-                  if (cod) tooltipParts.push(`Codificação (${cod.status})`);
+                  if (cod) tooltipParts.push(`Codificação (${saving ? "salvando…" : cod.status})`);
                   if (comp) tooltipParts.push(`Comparação (${comp.status})`);
                   if (comp?.self_comparison_approved_by) tooltipParts.push("Autocomparação liberada pelo coordenador");
 
@@ -254,7 +273,11 @@ export function AssignmentTable({ projectId, documents, researchers, assignments
             <tr className="bg-muted/30">
               <td className="px-3 py-1.5 font-medium">Total</td>
               {researchers.map((r) => {
-                const forUser = optimisticAssignments.filter((a) => a.user_id === r.user_id);
+                // Sem a linha ainda sem status: contá-la como não concluída
+                // afirmaria o "pendente" que a célula deixou de afirmar.
+                const forUser = optimisticAssignments.filter(
+                  (a) => a.user_id === r.user_id && !a.statusUnknown,
+                );
                 const codTotal = forUser.filter((a) => a.type === "codificacao").length;
                 const codDone = forUser.filter(
                   (a) => a.type === "codificacao" && a.status === "concluido",
