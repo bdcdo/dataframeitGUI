@@ -1,4 +1,4 @@
-import { expect } from "@playwright/test";
+import { expect, type Route } from "@playwright/test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { createClient } from "@supabase/supabase-js";
 import { withClerkCleanup } from "./clerk-cleanup";
@@ -25,9 +25,9 @@ import { visivel } from "./visivel";
 //
 // Autentica como PESQUISADOR (E2E_MEMBER_EMAIL) via login-por-ticket, como os
 // demais smokes. Roda serial dentro do arquivo (mode default) — issue #198.
-// Entre execuções simultâneas, quem serializa é o `holdFixtureLock`: os dois
-// testes resetam a mesma response, e o segundo afirma que NENHUMA existe, o
-// que a response recém-enviada pelo primeiro teste da outra execução desmente.
+// Entre execuções simultâneas, quem serializa é o `holdFixtureLock`: os testes
+// resetam a mesma response, e o segundo afirma que NENHUMA existe, o que a
+// response recém-enviada por outro teste da outra execução desmente.
 test.describe.configure({ mode: "default" });
 
 const hasClerkTestingEnv =
@@ -49,6 +49,34 @@ function createAdminClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
+}
+
+// Devolve o par do membro no documento ao estado inicial: sem response humana e
+// com o assignment de codificação em "pendente". Só recebe ids já resolvidos
+// pelo lookup de título exato de cada teste — é ele o interlock que impede este
+// DELETE de cair num projeto real.
+async function resetCodingFixture(
+  admin: ReturnType<typeof createAdminClient>,
+  projectId: string,
+  documentId: string,
+  memberId: string,
+) {
+  const { error: delErr } = await admin
+    .from("responses")
+    .delete()
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("respondent_id", memberId)
+    .eq("respondent_type", "humano");
+  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
+  const { error: assignErr } = await admin
+    .from("assignments")
+    .update({ status: "pendente", completed_at: null })
+    .eq("project_id", projectId)
+    .eq("document_id", documentId)
+    .eq("user_id", memberId)
+    .eq("type", "codificacao");
+  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
 }
 
 test("codificação: enviar respostas persiste response e conclui assignment", async ({
@@ -106,22 +134,7 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
   // assignment a "pendente" — o run anterior (verde) deixa response
   // submetida + assignment concluído, e sem reset o doc nem apareceria na
   // fila padrão (filtro "current" esconde current_done).
-  const { error: delErr } = await admin
-    .from("responses")
-    .delete()
-    .eq("project_id", projectId!)
-    .eq("document_id", documentId)
-    .eq("respondent_id", memberId)
-    .eq("respondent_type", "humano");
-  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
-  const { error: assignErr } = await admin
-    .from("assignments")
-    .update({ status: "pendente", completed_at: null })
-    .eq("project_id", projectId!)
-    .eq("document_id", documentId)
-    .eq("user_id", memberId)
-    .eq("type", "codificacao");
-  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
+  await resetCodingFixture(admin, projectId!, documentId, memberId);
 
   await setupClerkTestingToken({ page });
   await page.goto("/auth/login");
@@ -254,22 +267,7 @@ test("codificação: editar e sair sem enviar não grava, e o rascunho local ret
   const memberId = member!.id as string;
   const documentId = doc!.id as string;
 
-  const { error: delErr } = await admin
-    .from("responses")
-    .delete()
-    .eq("project_id", projectId!)
-    .eq("document_id", documentId)
-    .eq("respondent_id", memberId)
-    .eq("respondent_type", "humano");
-  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
-  const { error: assignErr } = await admin
-    .from("assignments")
-    .update({ status: "pendente", completed_at: null })
-    .eq("project_id", projectId!)
-    .eq("document_id", documentId)
-    .eq("user_id", memberId)
-    .eq("type", "codificacao");
-  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
+  await resetCodingFixture(admin, projectId!, documentId, memberId);
 
   await setupClerkTestingToken({ page });
   await page.goto("/auth/login");
@@ -468,22 +466,7 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
   const memberId = member!.id as string;
   const documentId = doc!.id as string;
 
-  const { error: delErr } = await admin
-    .from("responses")
-    .delete()
-    .eq("project_id", projectId!)
-    .eq("document_id", documentId)
-    .eq("respondent_id", memberId)
-    .eq("respondent_type", "humano");
-  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
-  const { error: assignErr } = await admin
-    .from("assignments")
-    .update({ status: "pendente", completed_at: null })
-    .eq("project_id", projectId!)
-    .eq("document_id", documentId)
-    .eq("user_id", memberId)
-    .eq("type", "codificacao");
-  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
+  await resetCodingFixture(admin, projectId!, documentId, memberId);
 
   const readResponse = () =>
     admin
@@ -508,47 +491,53 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
   await page.goto("/auth/login");
   await clerk.signIn({ page, emailAddress: email! });
 
-  await withClerkCleanup({
-    page,
-    context: "coding-save-incomplete",
-    run: async () => {
-      // 1. Codifica por completo e envia: o assignment nasce `concluido`.
-      await page.goto(`/projects/${projectId}/analyze/code`);
-      await expect(visivel(page.getByText("Resumo do documento"))).toBeVisible({
-        timeout: 30_000,
-      });
-      const textareas = visivel(page.getByPlaceholder("Digite sua resposta..."));
-      await expect(textareas).toHaveCount(2);
-      await textareas.nth(0).fill(RESUMO_VALUE);
-      await textareas.nth(1).fill(OBSERVACAO_VALUE);
-      await page.getByRole("button", { name: "Enviar respostas" }).click();
-      await expect(visivel(page.getByText("Respostas salvas!"))).toBeVisible({
-        timeout: 15_000,
-      });
+  // O estado que este teste deixa — assignment `concluido` com response
+  // `is_partial = true` — é o que a invariante
+  // `codificacao-concluida-response-so-rascunho` (scripts/invariants) lê como
+  // rascunho promovido a concluído. Devolver o fixture ao estado inicial no fim
+  // evita que cada pre-push plante essa violação no banco.
+  try {
+    await withClerkCleanup({
+      page,
+      context: "coding-save-incomplete",
+      run: async () => {
+        // 1. Codifica por completo e envia: o assignment nasce `concluido`.
+        await page.goto(`/projects/${projectId}/analyze/code`);
+        await expect(visivel(page.getByText("Resumo do documento"))).toBeVisible({
+          timeout: 30_000,
+        });
+        const textareas = visivel(page.getByPlaceholder("Digite sua resposta..."));
+        await expect(textareas).toHaveCount(2);
+        await textareas.nth(0).fill(RESUMO_VALUE);
+        await textareas.nth(1).fill(OBSERVACAO_VALUE);
+        await page.getByRole("button", { name: "Enviar respostas" }).click();
+        await expect(visivel(page.getByText("Respostas salvas!"))).toBeVisible({
+          timeout: 15_000,
+        });
 
-      // Pré-condição no banco: sem ela, a asserção final não distingue "não
-      // regrediu" de "nunca concluiu".
-      const { data: complete, error: completeErr } = await readResponse();
-      expect(completeErr, `leitura de responses falhou: ${completeErr?.message}`).toBeNull();
-      expect(complete?.is_partial, "o primeiro envio, completo, ficou parcial").toBe(false);
-      const { data: concluded, error: concludedErr } = await readAssignment();
-      expect(
-        concludedErr,
-        `leitura do assignment falhou: ${concludedErr?.message}`,
-      ).toBeNull();
-      expect(concluded!.status, "o primeiro envio, completo, não concluiu").toBe(
-        "concluido",
-      );
-      const completedAt = concluded!.completed_at as string;
-      expect(completedAt).toBeTruthy();
+        // Pré-condição no banco: sem ela, a asserção final não distingue "não
+        // regrediu" de "nunca concluiu".
+        const { data: complete, error: completeErr } = await readResponse();
+        expect(completeErr, `leitura de responses falhou: ${completeErr?.message}`).toBeNull();
+        expect(complete?.is_partial, "o primeiro envio, completo, ficou parcial").toBe(false);
+        const { data: concluded, error: concludedErr } = await readAssignment();
+        expect(
+          concludedErr,
+          `leitura do assignment falhou: ${concludedErr?.message}`,
+        ).toBeNull();
+        expect(concluded!.status, "o primeiro envio, completo, não concluiu").toBe(
+          "concluido",
+        );
+        const completedAt = concluded!.completed_at as string;
+        expect(completedAt).toBeTruthy();
 
-      // 2. Reabre o documento. Concluído na rodada atual, ele sai da fila de
-      // Atribuídos; o `?doc=` o abre no modo Explorar, editável (o filtro
-      // `?round=all` abriria somente leitura).
-      let rewrites = 0;
-      await page.route(
-        (url) => url.pathname === `/projects/${projectId}/analyze/code`,
-        async (route) => {
+        // 2. Reabre o documento. Concluído na rodada atual, ele sai da fila de
+        // Atribuídos; o `?doc=` o abre no modo Explorar, editável (o filtro
+        // `?round=all` abriria somente leitura).
+        let rewrites = 0;
+        const codePage = (url: URL) =>
+          url.pathname === `/projects/${projectId}/analyze/code`;
+        const blankObservacao = async (route: Route) => {
           const request = route.request();
           const args =
             request.method() === "POST" && request.headers()["next-action"]
@@ -564,60 +553,72 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
           ) {
             // O que uma textarea apagada envia.
             (answers as Record<string, unknown>).observacao = "";
-            rewrites += 1;
             await route.continue({ postData: JSON.stringify(args) });
+            rewrites += 1;
             return;
           }
           await route.continue();
-        },
-      );
+        };
+        await page.route(codePage, blankObservacao);
 
-      await page.goto(`/projects/${projectId}/analyze/code?doc=${documentId}`);
-      const reopened = visivel(page.getByPlaceholder("Digite sua resposta..."));
-      await expect(reopened.nth(0)).toHaveValue(RESUMO_VALUE, { timeout: 30_000 });
-      await expect(reopened.nth(1)).toHaveValue(OBSERVACAO_VALUE);
-      await page.getByRole("button", { name: "Enviar respostas" }).click();
+        await page.goto(`/projects/${projectId}/analyze/code?doc=${documentId}`);
+        const reopened = visivel(page.getByPlaceholder("Digite sua resposta..."));
+        await expect(reopened.nth(0)).toHaveValue(RESUMO_VALUE, { timeout: 30_000 });
+        await expect(reopened.nth(1)).toHaveValue(OBSERVACAO_VALUE);
+        await page.getByRole("button", { name: "Enviar respostas" }).click();
 
-      // O servidor viu o conjunto incompleto e o disse: o aviso nomeia a
-      // pergunta que ficou em branco. Ancora a leitura do banco na resposta da
-      // Server Action, que só volta depois do upsert e do sync do assignment.
-      await expect(
-        visivel(page.getByText('Salvo — falta responder "Observação livre"')),
-        "o servidor não acusou a obrigatória em branco — o envio chegou completo?",
-      ).toBeVisible({ timeout: 15_000 });
-      expect(
-        rewrites,
-        "a interceptação não reescreveu o envio: o corpo da Server Action " +
-          "deixou de ser o array JSON de argumentos que parseActionArgs lê",
-      ).toBe(1);
+        // A reescrita vem antes do aviso: se o formato do corpo mudar, é esta a
+        // mensagem que diz por quê, e não o timeout genérico do aviso. Depois
+        // dela a interceptação sai, para não apagar nenhum envio seguinte.
+        await expect
+          .poll(() => rewrites, {
+            message:
+              "a interceptação não reescreveu o envio: o corpo da Server Action " +
+              "deixou de ser o array JSON de argumentos que parseActionArgs lê",
+            timeout: 15_000,
+          })
+          .toBe(1);
+        await page.unroute(codePage, blankObservacao);
 
-      // 3. Coração do teste: os dois sinais, no banco.
-      const { data: response, error: respErr } = await readResponse();
-      expect(respErr, `leitura de responses falhou: ${respErr?.message}`).toBeNull();
-      expect(response!.is_latest).toBe(true);
-      const answers = response!.answers as Record<string, unknown>;
-      expect(answers.resumo).toBe(RESUMO_VALUE);
-      expect(answers.observacao ?? "", "o envio incompleto não foi gravado").toBe("");
-      expect(
-        response!.is_partial,
-        "o conjunto gravado ficou incompleto mas is_partial continuou false",
-      ).toBe(true);
+        // O servidor viu o conjunto incompleto e o disse: o aviso nomeia a
+        // pergunta que ficou em branco. Ancora a leitura do banco na resposta da
+        // Server Action, que só volta depois do upsert e do sync do assignment.
+        await expect(
+          visivel(page.getByText('Salvo — falta responder "Observação livre"')),
+          "o servidor não acusou a obrigatória em branco — o envio chegou completo?",
+        ).toBeVisible({ timeout: 15_000 });
 
-      const { data: assignment, error: readAssignErr } = await readAssignment();
-      expect(
-        readAssignErr,
-        `leitura do assignment falhou: ${readAssignErr?.message}`,
-      ).toBeNull();
-      expect(
-        assignment!.status,
-        "envio incompleto regrediu o assignment concluído — o guard de " +
-          "keepCodingAssignmentInProgress (lib/coding-sync.ts) deixou de " +
-          "segurar a invariante (#636)",
-      ).toBe("concluido");
-      expect(
-        new Date(assignment!.completed_at as string).getTime(),
-        "o envio incompleto reescreveu completed_at do assignment concluído",
-      ).toBe(new Date(completedAt).getTime());
-    },
-  });
+        // 3. Coração do teste: os dois sinais, no banco.
+        const { data: response, error: respErr } = await readResponse();
+        expect(respErr, `leitura de responses falhou: ${respErr?.message}`).toBeNull();
+        expect(response, "nenhuma response is_latest depois do envio incompleto").toBeTruthy();
+        expect(response!.is_latest).toBe(true);
+        const answers = response!.answers as Record<string, unknown>;
+        expect(answers.resumo).toBe(RESUMO_VALUE);
+        expect(answers.observacao ?? "", "o envio incompleto não foi gravado").toBe("");
+        expect(
+          response!.is_partial,
+          "o conjunto gravado ficou incompleto mas is_partial continuou false",
+        ).toBe(true);
+
+        const { data: assignment, error: readAssignErr } = await readAssignment();
+        expect(
+          readAssignErr,
+          `leitura do assignment falhou: ${readAssignErr?.message}`,
+        ).toBeNull();
+        expect(
+          assignment!.status,
+          "envio incompleto regrediu o assignment concluído — o guard de " +
+            "keepCodingAssignmentInProgress (lib/coding-sync.ts) deixou de " +
+            "segurar a invariante (#636)",
+        ).toBe("concluido");
+        expect(
+          new Date(assignment!.completed_at as string).getTime(),
+          "o envio incompleto reescreveu completed_at do assignment concluído",
+        ).toBe(new Date(completedAt).getTime());
+      },
+    });
+  } finally {
+    await resetCodingFixture(admin, projectId!, documentId, memberId);
+  }
 });
