@@ -65,7 +65,9 @@ const PROPERTY_LABELS: Record<FieldPropertyDiff["property"], string> = {
   options: "opções",
   type: "tipo",
   target: "alvo",
-  required: "obrigatoriedade",
+  // O nome do controle no editor (FieldCard), e o mesmo do snapshot de campo
+  // adicionado ou removido.
+  required: "obrigatório",
   allow_other: "permite outro",
   subfield_rule: "regra de subcampos",
   subfields: "subcampos",

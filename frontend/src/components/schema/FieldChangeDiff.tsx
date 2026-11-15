@@ -18,10 +18,13 @@ import {
 } from "@/lib/schema-change-format";
 import { isProjectScopedLogEntry } from "@/lib/schema-utils";
 import {
+  resolveAllowOther,
   resolveRequired,
   resolveSubfieldRequired,
+  resolveSubfieldRule,
   resolveTarget,
   type PydanticFieldTarget,
+  type PydanticSubfieldRule,
 } from "@/lib/pydantic-field";
 import type { SchemaChangeEntry, FieldCondition, SubfieldDef } from "@/lib/types";
 
@@ -518,38 +521,38 @@ function FieldSnapshot({
       ? "border-green-500/30 bg-green-500/5"
       : "border-red-500/30 bg-red-500/5";
 
+  // Rótulos de `propertyLabel`, os mesmos do diff abaixo do snapshot: a mesma
+  // propriedade não ganha dois nomes na mesma tela.
   const rows: { label: string; value: string }[] = [];
-  if (data.description)
-    rows.push({ label: "descrição", value: String(data.description) });
-  if (data.type) rows.push({ label: "tipo", value: formatType(data.type) });
-  // Alvo e obrigatoriedade têm default implícito: ausente no payload é "all" e
-  // "obrigatório", e não "sem valor". Pelo resolvedor, como no diff de
-  // propriedades, para o campo legado mostrar o mesmo que o explícito.
-  rows.push({
-    label: "alvo",
-    value: formatTarget(resolveTarget(data.target as PydanticFieldTarget | null | undefined)),
-  });
-  rows.push({
-    label: "obrigatório",
-    value: yesNo(resolveRequired(data.required as boolean | null | undefined)),
-  });
-  if (data.help_text)
-    rows.push({ label: "instruções", value: String(data.help_text) });
+  const row = (property: FieldPropertyDiff["property"], value: string) =>
+    rows.push({ label: propertyLabel(property), value });
+  if (data.description) row("description", String(data.description));
+  if (data.type) row("type", formatType(data.type));
+  // Alvo, obrigatoriedade, "permite outro" e regra de subcampos têm default
+  // implícito: ausente no payload é um valor, e não "sem valor". Pelo
+  // resolvedor, como no diff de propriedades, para o campo legado mostrar o
+  // mesmo que o explícito.
+  row("target", formatTarget(resolveTarget(data.target as PydanticFieldTarget | null | undefined)));
+  row("required", yesNo(resolveRequired(data.required as boolean | null | undefined)));
+  if (data.help_text) row("help_text", String(data.help_text));
   if (Array.isArray(data.options) && (data.options as string[]).length > 0)
-    rows.push({
-      label: "opções",
-      value: (data.options as string[]).join(", "),
-    });
-  if (data.condition)
-    rows.push({
-      label: "condição",
-      value: formatCondition(data.condition as FieldCondition),
-    });
-  if (data.justification_prompt)
-    rows.push({
-      label: "prompt de justificativa",
-      value: String(data.justification_prompt),
-    });
+    row("options", (data.options as string[]).join(", "));
+  // Só os campos de escolha oferecem "Outro" (o editor só mostra o controle
+  // neles); num texto livre a linha seria ruído.
+  if (data.type === "single" || data.type === "multi")
+    row("allow_other", yesNo(resolveAllowOther(data.allow_other as boolean | null | undefined)));
+  const subfields = Array.isArray(data.subfields) ? (data.subfields as SubfieldDef[]) : [];
+  if (subfields.length > 0) {
+    row("subfields", subfields.map(subfieldText).join(", "));
+    row(
+      "subfield_rule",
+      SUBFIELD_RULE_LABELS[
+        resolveSubfieldRule(data.subfield_rule as PydanticSubfieldRule | null | undefined)
+      ],
+    );
+  }
+  if (data.condition) row("condition", formatCondition(data.condition as FieldCondition));
+  if (data.justification_prompt) row("justification_prompt", String(data.justification_prompt));
 
   return (
     <div className={cn("space-y-0.5 rounded border px-2 py-1.5", tone)}>

@@ -262,3 +262,69 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
     expect(screen.queryByText("Sim")).toBeNull();
   });
 });
+
+// O snapshot de campo adicionado ou removido não listava `allow_other`,
+// `subfield_rule` nem os subcampos — só o diff abaixo dele, e só quando não
+// eram o default. E rotulava `required` como "obrigatório", enquanto o diff
+// do mesmo campo dizia "obrigatoriedade".
+describe("FieldChangeDiff — snapshot completo e com os rótulos do diff", () => {
+  const rowText = (property: Parameters<typeof propertyLabel>[0]) =>
+    screen.getByText(`${propertyLabel(property)}:`).parentElement!.textContent;
+  const noRow = (property: Parameters<typeof propertyLabel>[0]) =>
+    expect(screen.queryByText(`${propertyLabel(property)}:`)).toBeNull();
+
+  it("snapshot e diff chamam `required` pelo mesmo nome, o do editor", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({ beforeValue: { name: "q1", type: "text", description: "d", required: false } })}
+      />,
+    );
+    expect(propertyLabel("required")).toBe("obrigatório");
+    expect(rowText("required")).toBe("obrigatório:Não");
+    expect(propertySection("required")).toBe("Não—");
+  });
+
+  it.each([
+    ["sem a chave", {}, "Não"],
+    ["com o default explícito", { allow_other: false }, "Não"],
+    ["ligado", { allow_other: true }, "Sim"],
+  ])("campo de escolha %s mostra `allow_other`", (_, extra, value) => {
+    render(
+      <FieldChangeDiff
+        entry={entry({ afterValue: { name: "q1", type: "single", description: "d", options: ["A"], ...extra } })}
+      />,
+    );
+    expect(rowText("allow_other")).toBe(`${propertyLabel("allow_other")}:${value}`);
+  });
+
+  it("campo sem opções não ganha a linha de `allow_other`", () => {
+    render(<FieldChangeDiff entry={entry({ afterValue: { name: "q1", type: "text", description: "d" } })} />);
+    noRow("allow_other");
+    noRow("subfields");
+    noRow("subfield_rule");
+  });
+
+  it.each([
+    ["sem `subfield_rule`", {}, "Todos obrigatórios"],
+    ["com `at_least_one`", { subfield_rule: "at_least_one" }, "Pelo menos um"],
+  ])("subcampos e regra aparecem %s", (_, extra, rule) => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          beforeValue: {
+            name: "q1",
+            type: "text",
+            description: "d",
+            subfields: [
+              { key: "cid", label: "CID", required: true },
+              { key: "obs", label: "Obs" },
+            ],
+            ...extra,
+          },
+        })}
+      />,
+    );
+    expect(rowText("subfields")).toBe(`${propertyLabel("subfields")}:CID *, Obs`);
+    expect(rowText("subfield_rule")).toBe(`${propertyLabel("subfield_rule")}:${rule}`);
+  });
+});
