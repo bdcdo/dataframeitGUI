@@ -121,6 +121,9 @@ describe("AssignmentTable — estado otimista", () => {
     expect(saving.textContent).toBe("C");
     expect(saving.className).not.toMatch(/\bbg-amber-500\b/);
     expect(saving.getAttribute("aria-busy")).toBe("true");
+    // O rodapé segue contando a codificação real, como a célula que ainda a
+    // mostra: tirá-la do C afirmaria a troca que a célula deixou de afirmar.
+    expect(screen.getByText("C: 0/1")).toBeTruthy();
     expect(screen.getByText("R: 0/0")).toBeTruthy();
 
     await act(async () => {
@@ -135,5 +138,41 @@ describe("AssignmentTable — estado otimista", () => {
     });
     expect(cell.textContent).toBe("C");
     expect(screen.getByRole("alertdialog")).toBeTruthy();
+
+    // Cancelar não grava nada: a codificação pendente fica como estava.
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(
+      screen.getByRole("button", {
+        name: "Atribuição de codificação (clique para trocar por comparação)",
+      }).textContent,
+    ).toBe("C");
+    expect(screen.getByText("C: 0/1")).toBeTruthy();
+    expect(cycleAssignment).toHaveBeenCalledTimes(1);
+  });
+
+  it("a troca gravada pelo servidor mostra o R quando a linha real chega", async () => {
+    cycleAssignment.mockReturnValue(serverCall());
+    const { rerender } = render(table([pendingCoding]));
+
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "Atribuição de codificação (clique para trocar por comparação)",
+        }),
+      );
+    });
+    await act(async () => {
+      pending.shift()!({});
+      rerender(table([{ ...pendingCoding, type: "comparacao" }]));
+    });
+
+    const cell = screen.getByRole("button", {
+      name: "Atribuição de comparação (clique para remover)",
+    });
+    expect(cell.textContent).toBe("R");
+    expect(cell.getAttribute("aria-busy")).toBeNull();
+    expect(screen.getByText("C: 0/0")).toBeTruthy();
+    expect(screen.getByText("R: 0/1")).toBeTruthy();
   });
 });
