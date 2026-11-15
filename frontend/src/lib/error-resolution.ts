@@ -303,6 +303,20 @@ export function effectiveErrorResolution(row: ErrorResolutionRow | undefined): E
   return llmCorrectResolution(row, context);
 }
 
+/** As abas de status da fila do LLM Insights, menos "Todos", que mostra as três. */
+export type ErrorQueueTab = "open" | "resolved" | "discussion";
+
+/**
+ * Em qual aba de status da fila o card fica. Sem decisão, decisão legada e
+ * decisão que perdeu a validade pedem triagem; "Em discussão" adia sem
+ * resolver.
+ */
+export function errorQueueTab(row: ErrorResolutionRow | undefined): ErrorQueueTab {
+  const { status } = effectiveErrorResolution(row);
+  if (status === "approved" || status === "upheld") return "resolved";
+  return status === "discussion" ? "discussion" : "open";
+}
+
 /**
  * Se a decisão depende do veredito que a originou para valer. "Erro humano",
  * "Erro do LLM" e "Todos errados" gravam valor próprio (a resposta do LLM ou

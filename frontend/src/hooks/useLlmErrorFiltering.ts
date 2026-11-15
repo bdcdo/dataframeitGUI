@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { compareVersions } from "@/lib/compare-version";
-import { effectiveErrorResolution, type ErrorResolutionRow } from "@/lib/error-resolution";
+import { errorQueueTab, type ErrorResolutionRow } from "@/lib/error-resolution";
 
 export type DatePreset = "all" | "24h" | "7d" | "30d";
 export type SortBy = "default" | "field" | "document" | "recent";
@@ -44,11 +44,8 @@ interface FilterableError extends ScopeFilterable {
   resolution?: ErrorResolutionRow;
 }
 
-// Exportado para o teste de propriedade da fila (#745), que confere a
-// classificação do card pelo mesmo filtro que a tela usa.
-export function isOpenError(error: Pick<FilterableError, "resolution">): boolean {
-  const status = effectiveErrorResolution(error.resolution).status;
-  return status === "open" || status === "legacy" || status === "stale";
+function isOpenError(error: FilterableError): boolean {
+  return errorQueueTab(error.resolution) === "open";
 }
 
 function presetCutoffMs(preset: DatePreset, now: number): number | null {
@@ -125,10 +122,7 @@ export function useLlmErrorFiltering<
 
   const filteredReviewed = reviewedEntries.filter((e) => !e.isPending && matchesScopeFilters(e));
   const filteredErrors = errors.filter((e) => {
-    const status = effectiveErrorResolution(e.resolution).status;
-    if (errorStatusFilter === "open" && !isOpenError(e)) return false;
-    if (errorStatusFilter === "resolved" && status !== "approved" && status !== "upheld") return false;
-    if (errorStatusFilter === "discussion" && status !== "discussion") return false;
+    if (errorStatusFilter !== "all" && errorQueueTab(e.resolution) !== errorStatusFilter) return false;
     return matchesScopeFilters(e);
   });
 

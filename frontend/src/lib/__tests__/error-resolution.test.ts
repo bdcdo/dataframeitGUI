@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  blankAnswerFor, choosesValue, decisionDependsOnSource, effectiveErrorResolution, errorDecisionSchema, errorResolutionComment, hasResolutionValue, isBlankAnswer,
+  blankAnswerFor, choosesValue, decisionDependsOnSource, effectiveErrorResolution, errorDecisionSchema, errorQueueTab, errorResolutionComment, hasResolutionValue, isBlankAnswer,
   prefillLosesItems, prefillFromValue, prefillFromVerdict, startsBlank,
   type ErrorDecision, type ErrorResolutionRow, type ErrorResolutionContext,
 } from "@/lib/error-resolution";
@@ -23,6 +23,24 @@ function row(decision: ErrorResolutionRow["decision"]): ErrorResolutionRow {
     decision, context: structuredClone(context), current_context: structuredClone(context),
     approved_value: decision === "researchers_correct" ? "humano" : decision === "all_wrong" ? "terceira" : null };
 }
+
+// A aba de status da fila em que o card aparece, para cada status efetivo:
+// o que ainda pede triagem fica nos abertos, inclusive a decisão que perdeu a
+// validade (#745).
+describe("errorQueueTab", () => {
+  it.each([
+    ["sem decisão (open)", undefined, "open"],
+    ["legada", { ...row(null), context: null, current_context: null }, "open"],
+    ["que perdeu a validade (stale)", { ...row("llm_correct"), current_context: null }, "open"],
+    ["Em discussão", row("discussion"), "discussion"],
+    ["Ambos corretos sem valor (upheld)", row("both_correct"), "resolved"],
+    ["Erro humano (approved)", row("llm_correct"), "resolved"],
+    ["Erro do LLM (approved)", row("researchers_correct"), "resolved"],
+    ["Todos errados (approved)", row("all_wrong"), "resolved"],
+  ] as const)("decisão %s", (_label, resolution, tab) => {
+    expect(errorQueueTab(resolution)).toBe(tab);
+  });
+});
 
 describe("resolução explícita de divergência", () => {
   it("aprova o valor LLM sem interpretar texto formatado", () => {
