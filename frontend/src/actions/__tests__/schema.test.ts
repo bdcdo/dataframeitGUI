@@ -758,7 +758,9 @@ describe("erro de servidor não chega cru ao toast", () => {
     expect(result).toEqual({ error: copy });
     expect(consoleError).toHaveBeenCalledWith(
       expect.stringContaining("falhou"),
-      expect.objectContaining({ message: postgresError.message }),
+      // O `code` do Postgres é o que diferencia timeout de violação no log:
+      // `updateOrThrow` o descartava, e o log saía com `code: undefined`.
+      expect.objectContaining({ code: postgresError.code, message: postgresError.message }),
     );
     consoleError.mockRestore();
   });

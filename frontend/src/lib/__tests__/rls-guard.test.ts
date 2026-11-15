@@ -1,9 +1,17 @@
 import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { updateOrThrow, deleteOrThrow, ZeroRowsError } from "../supabase/rls-guard";
+import {
+  updateOrThrow,
+  deleteOrThrow,
+  PostgrestWriteError,
+  ZeroRowsError,
+} from "../supabase/rls-guard";
 
 // Client mínimo: registra a cadeia chamada e resolve com o resultado fixado.
-function makeClient(result: { data: unknown; error: { message: string } | null }) {
+function makeClient(result: {
+  data: unknown;
+  error: { message: string; code?: string } | null;
+}) {
   const calls: Record<string, unknown[]> = {};
   const builder = {
     update(payload: unknown) {
@@ -44,6 +52,15 @@ describe("updateOrThrow", () => {
     ).rejects.toThrow("boom");
   });
 
+  // Sem o `code`, o log da action não distingue timeout (57014) de violação de
+  // constraint (23505): `new Error(error.message)` o descartava.
+  it("preserva o code do Postgres no erro lançado", async () => {
+    const { client } = makeClient({ data: null, error: { message: "timeout", code: "57014" } });
+    const promise = updateOrThrow(client, "projects", { name: "X" }, { id: "p1" });
+    await expect(promise).rejects.toBeInstanceOf(PostgrestWriteError);
+    await expect(promise).rejects.toMatchObject({ code: "57014", message: "timeout" });
+  });
+
   it("lança ZeroRowsError em 0 linhas (RLS filtrou ou registro inexistente)", async () => {
     const { client } = makeClient({ data: [], error: null });
     const promise = updateOrThrow(client, "projects", { name: "X" }, { id: "p1" });
@@ -70,6 +87,14 @@ describe("updateOrThrow", () => {
 });
 
 describe("deleteOrThrow", () => {
+  it("preserva o code do Postgres no erro lançado", async () => {
+    const { client } = makeClient({ data: null, error: { message: "fk", code: "23503" } });
+    await expect(deleteOrThrow(client, "rounds", { id: "r1" })).rejects.toMatchObject({
+      code: "23503",
+      message: "fk",
+    });
+  });
+
   it("retorna as linhas removidas no caminho feliz", async () => {
     const { client, calls } = makeClient({ data: [{ id: "r1" }], error: null });
     const rows = await deleteOrThrow(client, "rounds", { id: "r1" });

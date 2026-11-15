@@ -30,6 +30,19 @@ export class ZeroRowsError extends Error {
   }
 }
 
+// Erro real do PostgREST no write. Carrega o `code` do Postgres (57014 timeout,
+// 23505 unique, ...) para o log da action distinguir as causas: um
+// `new Error(error.message)` o descartava e o log saía com `code: undefined`.
+export class PostgrestWriteError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string,
+  ) {
+    super(message);
+    this.name = "PostgrestWriteError";
+  }
+}
+
 interface GuardOpts {
   // Copy pt-BR específica do fluxo — vai para o toast do usuário.
   message?: string;
@@ -50,7 +63,7 @@ export async function updateOrThrow(
     .update(payload)
     .match(match)
     .select(col);
-  if (error) throw new Error(error.message);
+  if (error) throw new PostgrestWriteError(error.message, error.code);
   if (!data || data.length === 0) {
     throw new ZeroRowsError(table, "update", opts?.message);
   }
@@ -70,7 +83,7 @@ export async function deleteOrThrow(
     .delete()
     .match(match)
     .select(col);
-  if (error) throw new Error(error.message);
+  if (error) throw new PostgrestWriteError(error.message, error.code);
   if (!data || data.length === 0) {
     throw new ZeroRowsError(table, "delete", opts?.message);
   }

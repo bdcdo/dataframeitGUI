@@ -17,7 +17,7 @@ import {
   PROJECT_LOG_FIELD_NAME,
   type SchemaPersistencePlan,
 } from "@/lib/schema-utils";
-import { updateOrThrow, ZeroRowsError } from "@/lib/supabase/rls-guard";
+import { PostgrestWriteError, updateOrThrow, ZeroRowsError } from "@/lib/supabase/rls-guard";
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
 import { errorMessage } from "@/lib/utils";
 import { serverErrorCopy, type ServerError, type ServerErrorCopy } from "@/lib/server-error";
@@ -393,10 +393,11 @@ export async function recoverFieldsFromStoredCode(
 // Server Actions em produção, então a copy pt-BR precisa voltar no resultado.
 
 // `updateOrThrow` lança dois tipos de erro: ZeroRowsError, que já traz a copy de
-// permissão do fluxo, e o texto cru do Postgres, que vai para o log.
+// permissão do fluxo, e PostgrestWriteError, cujo texto e código vão para o log.
 function projectUpdateFailed(e: unknown, scope: string, generic: string): string {
   if (e instanceof ZeroRowsError) return e.message;
-  return serverErrorCopy(scope, { message: errorMessage(e) }, { generic });
+  const code = e instanceof PostgrestWriteError ? e.code : undefined;
+  return serverErrorCopy(scope, { code, message: errorMessage(e) }, { generic });
 }
 
 export async function savePrompt(
