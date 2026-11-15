@@ -96,13 +96,32 @@ class _FakeQuery:
     "null")` de run_llm (bug histórico documentado em llm_runner.py —
     docs arquivados voltando a receber resposta LLM) passaria batida por
     este "teste de integração".
+
+    Pelo mesmo motivo, toda resposta é cortada em `max_rows`, como o PostgREST
+    faz em silêncio (1000 no Supabase), e sem `.order()` as linhas voltam na
+    ordem da lista, que faz o papel da ordem física da tabela (issue #693).
     """
 
-    def __init__(self, data, on_execute=None):
+    def __init__(self, data, on_execute=None, max_rows=1000):
         self._data = data
-        self._filters: list[tuple[str, str, object]] = []
+        self._max_rows = max_rows
+        self._filters: list[tuple[str, str, Any]] = []
         self._single = False
         self._on_execute = on_execute
+        self._order: str | None = None
+        self._limit: int | None = None
+
+    def order(self, column, *a, **k):
+        self._order = column
+        return self
+
+    def limit(self, size):
+        self._limit = size
+        return self
+
+    def gt(self, column, value):
+        self._filters.append(("gt", column, value))
+        return self
 
     def eq(self, column, value):
         self._filters.append(("eq", column, value))
@@ -130,6 +149,8 @@ class _FakeQuery:
                 return False
             if op == "in" and row.get(column) not in value:
                 return False
+            if op == "gt" and not row[column] > value:
+                return False
             if op == "is":
                 if value == "null":
                     if row.get(column) is not None:
@@ -143,6 +164,9 @@ class _FakeQuery:
             self._on_execute(list(self._filters))
         if isinstance(self._data, list):
             rows = [r for r in self._data if self._matches(r)]
+            if self._order is not None:
+                rows.sort(key=lambda r: r[self._order])
+            rows = rows[: min(self._limit or self._max_rows, self._max_rows)]
             if self._single:
                 return SimpleNamespace(data=rows[0] if rows else None)
             return SimpleNamespace(data=rows)
@@ -155,9 +179,10 @@ class _RaisingQuery(_FakeQuery):
 
 
 class _FakeTable:
-    def __init__(self, select_data=None, select_error=None):
+    def __init__(self, select_data=None, select_error=None, max_rows=1000):
         self.select_data = select_data
         self.select_error = select_error
+        self.max_rows = max_rows
         self.insert_calls: list[dict] = []
         self.update_calls: list[dict] = []
         self.name = ""
@@ -168,7 +193,7 @@ class _FakeTable:
     def select(self, *a, **k):
         if self.select_error is not None:
             return _RaisingQuery(self.select_error)
-        return _FakeQuery(self.select_data)
+        return _FakeQuery(self.select_data, max_rows=self.max_rows)
 
     def insert(self, payload):
         def record(filters):
@@ -1626,7 +1651,9 @@ def test_run_llm_falhas_intercaladas_nao_disparam_o_corte(monkeypatch):
 
     _run_llm_sync(monkeypatch, sb, row_specs)
 
-    assert _published_doc_ids(sb) == [f"doc-{i}" for i in range(0, 12, 2)]
+    # sorted: os documentos chegam em ordem de id (issue #693), e "doc-10"
+    # vem antes de "doc-2"; a ordem não é o que este teste guarda.
+    assert sorted(_published_doc_ids(sb)) == sorted(f"doc-{i}" for i in range(0, 12, 2))
     # Toda linha foi tentada: o corte não disparou em momento nenhum.
     assert len(_attempted_doc_ids(sb)) == 12
     error_update = _last_update_where(sb.table("llm_runs"), status="error")

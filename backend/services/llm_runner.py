@@ -16,6 +16,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pandas as pd
 
@@ -759,6 +760,38 @@ def _build_prompt(
     return "\n".join(parts)
 
 
+# Linhas pedidas por página em `_select_all`: o `max-rows` padrão do PostgREST
+# no Supabase.
+_SELECT_PAGE_SIZE = 1000
+
+
+def _select_all(build_query: Callable[[], Any]) -> list:
+    """Todas as linhas de uma leitura, em ordem de `id` e sem o teto do PostgREST.
+
+    Sem `.order(...)` o Postgres não garante ordem de retorno, e sem paginação
+    o PostgREST corta a resposta no `max-rows` sem avisar — e quais linhas
+    sobrevivem ao corte depende da mesma ordem não especificada (issue #693).
+
+    A query tem de selecionar `id`. A paginação é por chave (`id` maior que o
+    último lido), e não por offset: uma linha excluída ou inserida durante a
+    leitura não desloca as páginas seguintes, então nenhum documento é pulado
+    nem lido duas vezes (e pago duas vezes). A leitura só para na página
+    vazia, e não na página curta, para que um `max-rows` do servidor menor que
+    `_SELECT_PAGE_SIZE` não volte a cortar em silêncio. `build_query` monta a
+    query do zero a cada página porque o builder do postgrest-py é mutável e
+    acumula parâmetros.
+    """
+    rows: list = []
+    while True:
+        query = build_query()
+        if rows:
+            query = query.gt("id", rows[-1]["id"])
+        page = query.order("id").limit(_SELECT_PAGE_SIZE).execute().data
+        if not page:
+            return rows
+        rows.extend(page)
+
+
 def _filter_docs(
     sb,
     docs: list[dict],
@@ -766,6 +799,7 @@ def _filter_docs(
     filter_mode: str,
     max_response_count: int | None,
     sample_size: int | None,
+    sample_seed: str,
 ) -> list[dict]:
     """Apply filtering to the document list based on filter_mode."""
     if filter_mode == "all":
@@ -773,14 +807,14 @@ def _filter_docs(
 
     if filter_mode in ("pending", "max_responses"):
         # Fetch current LLM responses to count per document
-        existing = (
-            sb.table("responses")
-            .select("document_id")
-            .eq("project_id", project_id)
-            .eq("respondent_type", "llm")
-            .eq("is_latest", True)
-            .execute()
-            .data
+        existing = _select_all(
+            lambda: (
+                sb.table("responses")
+                .select("id, document_id")
+                .eq("project_id", project_id)
+                .eq("respondent_type", "llm")
+                .eq("is_latest", True)
+            )
         )
         counts = Counter(r["document_id"] for r in existing)
 
@@ -791,7 +825,11 @@ def _filter_docs(
 
     if filter_mode == "random_sample" and sample_size is not None:
         if len(docs) > sample_size:
-            docs = random.sample(docs, sample_size)
+            # Semente = job_id, que fica gravado em llm_runs: a amostra de uma
+            # run é reproduzível a partir do registro dela, e runs diferentes
+            # continuam sorteando amostras diferentes. Depende de `docs` vir em
+            # ordem estável, o que `_select_all` garante.
+            docs = random.Random(sample_seed).sample(docs, sample_size)
 
     return docs
 
@@ -901,6 +939,7 @@ def _load_documents_for_run(
     filter_mode: str,
     max_response_count: int | None,
     sample_size: int | None,
+    sample_seed: str,
 ) -> list[dict]:
     # O escopo de um documento são os dois filtros juntos, e não só o soft
     # delete: `excluded_at` é a exclusão já aprovada pelo coordenador, e
@@ -910,18 +949,27 @@ def _load_documents_for_run(
     # para processamento aplica os dois. A tela LLM -> Configurar conta pelos
     # dois campos, e um filtro a menos aqui faz a run processar mais
     # documentos do que a tela anunciou.
-    query = (
-        sb.table("documents")
-        .select("id, text, title, external_id")
-        .eq("project_id", project_id)
-        .is_("excluded_at", "null")
-        .is_("exclusion_pending_at", "null")
-    )
-    if document_ids:
-        query = query.in_("id", document_ids)
-    docs = query.execute().data
+    def build_query():
+        query = (
+            sb.table("documents")
+            .select("id, text, title, external_id")
+            .eq("project_id", project_id)
+            .is_("excluded_at", "null")
+            .is_("exclusion_pending_at", "null")
+        )
+        if document_ids:
+            query = query.in_("id", document_ids)
+        return query
+
+    docs = _select_all(build_query)
     return _filter_docs(
-        sb, docs, project_id, filter_mode, max_response_count, sample_size
+        sb,
+        docs,
+        project_id,
+        filter_mode,
+        max_response_count,
+        sample_size,
+        sample_seed,
     )
 
 
@@ -2137,6 +2185,7 @@ def run_llm(
             filter_mode,
             max_response_count,
             sample_size,
+            sample_seed=job_id,
         )
 
         _jobs[job_id]["total"] = len(docs)
