@@ -86,6 +86,14 @@ export function isFieldVisible(
 // garante a terminação (cada passada troca ao menos um valor não nulo por
 // `null`). Não muta a entrada e devolve o MESMO objeto quando nada muda,
 // preservando a identidade referencial que o React usa para evitar re-renders.
+function isHiddenWithValue(
+  field: PydanticField,
+  view: Record<string, unknown>,
+): boolean {
+  if (!field.condition || isFieldVisible(field, view)) return false;
+  return Object.hasOwn(view, field.name) && view[field.name] != null;
+}
+
 export function clearHiddenConditionalAnswers(
   fields: PydanticField[],
   answers: Record<string, unknown>,
@@ -94,15 +102,13 @@ export function clearHiddenConditionalAnswers(
   let changed = true;
   while (changed) {
     changed = false;
+    // Sequencial de propósito: o campo seguinte da mesma passada já vê o
+    // anterior zerado (com `exists: false`, isso o torna visível).
     for (const f of fields) {
-      if (!f.condition) continue;
-      if (isFieldVisible(f, view)) continue;
-      const v = Object.hasOwn(view, f.name) ? view[f.name] : undefined;
-      if (v !== undefined && v !== null) {
-        if (view === answers) view = { ...answers };
-        view[f.name] = null;
-        changed = true;
-      }
+      if (!isHiddenWithValue(f, view)) continue;
+      if (view === answers) view = { ...answers };
+      view[f.name] = null;
+      changed = true;
     }
   }
   return view;
