@@ -84,6 +84,14 @@ export const pydanticFieldSchema = z.strictObject({
 // mudam de um lado só.
 type FieldsRefinement<T> = (fields: T[], context: z.RefinementCtx) => void;
 
+// Rótulo do campo nas mensagens de validação: a posição sozinha ("Campo 2")
+// obrigava a contar cards, e a aba Schema e o `EditFieldDialog` não numeram os
+// campos. O nome acompanha a posição quando existe (#502).
+function fieldLabel(index: number, name: unknown): string {
+  const position = `Campo ${index + 1}`;
+  return typeof name === "string" && name ? `${position} ("${name}")` : position;
+}
+
 export const refineUniqueNames: FieldsRefinement<{ name: string }> = (
   fields,
   context,
@@ -95,7 +103,7 @@ export const refineUniqueNames: FieldsRefinement<{ name: string }> = (
       context.addIssue({
         code: "custom",
         path: [index, "name"],
-        message: `Campo ${index + 1}: nome "${name}" duplicado`,
+        message: `${fieldLabel(index, name)}: nome duplicado`,
       });
     }
     names.add(name);
@@ -113,7 +121,7 @@ const refineUniqueIds: FieldsRefinement<z.infer<typeof pydanticFieldSchema>> = (
       context.addIssue({
         code: "custom",
         path: [index, "id"],
-        message: `Campo ${index + 1}: id "${id}" duplicado`,
+        message: `${fieldLabel(index, fields[index].name)}: id "${id}" duplicado`,
       });
     }
     ids.add(id);
@@ -159,12 +167,12 @@ function validateFieldIdentity(
   const nameIssue = pydanticFieldNameIssue(field.name);
   if (nameIssue === "invalid") {
     issue(
-      `${label}: nome inválido "${field.name}" (use letras minúsculas, números e _)`,
+      `${label}: nome inválido (use letras minúsculas, números e _)`,
       ["name"],
     );
   } else if (nameIssue === "reserved") {
     issue(
-      `${label}: nome "${field.name}" não pode começar e terminar com "__" (reservado pelo Python)`,
+      `${label}: nome não pode começar e terminar com "__" (reservado pelo Python)`,
       ["name"],
     );
   }
@@ -299,7 +307,7 @@ const saveablePydanticFieldsSchema = pydanticFieldsSchema.superRefine(
     const fieldByName = new Map<string, PydanticField>();
     for (let index = 0; index < fields.length; index += 1) {
       const field = fields[index];
-      const label = `Campo ${index + 1}`;
+      const label = fieldLabel(index, field.name);
       const issue = (message: string, path: PropertyKey[] = []) =>
         context.addIssue({ code: "custom", path: [index, ...path], message });
 
@@ -444,20 +452,21 @@ export function parsePydanticFields(value: unknown): PydanticField[] | null {
 }
 
 // As regras de negócio (superRefine acima) já nascem em pt-BR e nomeadas
-// ("Campo N: ..."). As estruturais vêm com o texto padrão do Zod, em inglês, e
-// por isso viram "Campo N: formato inválido em <propriedade>" — ainda apontam
-// o culpado (#502).
-function describeFieldIssue(issue: z.core.$ZodIssue): string {
+// ("Campo N ("nome"): ..."). As estruturais vêm com o texto padrão do Zod, em
+// inglês, e por isso viram "Campo N ("nome"): formato inválido em
+// <propriedade>" — ainda apontam o culpado (#502). O nome sai do valor bruto,
+// porque o campo malformado não chega a ser parseado.
+function describeFieldIssue(issue: z.core.$ZodIssue, value: unknown): string {
   if (issue.code === "custom") return issue.message;
   const [index, ...property] = issue.path;
   if (typeof index !== "number") return "Formato de schema inválido";
+  const raw = Array.isArray(value) ? (value[index] as { name?: unknown } | null) : null;
+  const label = fieldLabel(index, raw?.name);
   const where =
     issue.code === "unrecognized_keys"
       ? issue.keys.join(", ")
       : property.map(String).join(".");
-  return where
-    ? `Campo ${index + 1}: formato inválido em ${where}`
-    : `Campo ${index + 1}: formato inválido`;
+  return where ? `${label}: formato inválido em ${where}` : `${label}: formato inválido`;
 }
 
 type SaveablePydanticFields =
@@ -470,7 +479,7 @@ export function parseSaveablePydanticFields(
   const result = saveablePydanticFieldsSchema.safeParse(value);
   return result.success
     ? { fields: result.data, errors: [] }
-    : { fields: null, errors: result.error.issues.map(describeFieldIssue) };
+    : { fields: null, errors: result.error.issues.map((issue) => describeFieldIssue(issue, value)) };
 }
 
 export function validatePydanticFields(fields: PydanticField[]): string[] {

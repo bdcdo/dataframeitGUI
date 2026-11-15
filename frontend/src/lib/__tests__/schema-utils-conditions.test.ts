@@ -152,7 +152,7 @@ describe("after strip, validateGUIFields should pass", () => {
       }),
     ];
     expect(validateGUIFields(fields)).toContain(
-      'Campo 2: valor "NatJus aponta incerteza" não está nas opções de "q25"',
+      'Campo 2 ("q26"): valor "NatJus aponta incerteza" não está nas opções de "q25"',
     );
 
     const fixed = stripOptionFromConditions(fields, "q25", "NatJus aponta incerteza");
@@ -172,7 +172,7 @@ describe("validateGUIFields — unicidade de nome no save", () => {
       baseField({ name: "q1", type: "text" }),
     ];
     expect(validateGUIFields(fields)).toContain(
-      'Campo 2: nome "q1" duplicado',
+      'Campo 2 ("q1"): nome duplicado',
     );
   });
 
@@ -194,7 +194,7 @@ describe("validateGUIFields — unicidade de nome no save", () => {
       { ...baseField({ name: "q2", type: "text" }), id },
     ];
     expect(validateGUIFields(fields)).toContain(
-      `Campo 2: id "${id}" duplicado`,
+      `Campo 2 ("q2"): id "${id}" duplicado`,
     );
   });
 });
@@ -205,7 +205,7 @@ describe("validateGUIFields — nomes dunder", () => {
       baseField({ name: "__class__", type: "text", description: "x" }),
     ];
     expect(validateGUIFields(fields)).toContain(
-      'Campo 1: nome "__class__" não pode começar e terminar com "__" (reservado pelo Python)',
+      'Campo 1 ("__class__"): nome não pode começar e terminar com "__" (reservado pelo Python)',
     );
   });
 
@@ -226,7 +226,7 @@ describe("validateGUIFields — nomes dunder", () => {
       }),
     ];
     expect(validateGUIFields(fields)).toContain(
-      'Campo 1: subcampo "__init__" não pode começar e terminar com "__" (reservado pelo Python)',
+      'Campo 1 ("doc"): subcampo "__init__" não pode começar e terminar com "__" (reservado pelo Python)',
     );
   });
 
@@ -238,7 +238,7 @@ describe("validateGUIFields — nomes dunder", () => {
     (name) => {
       const fields = [baseField({ name, type: "text", description: "x" })];
       expect(validateGUIFields(fields)).toContain(
-        `Campo 1: nome "${name}" não pode começar e terminar com "__" (reservado pelo Python)`,
+        `Campo 1 ("${name}"): nome não pode começar e terminar com "__" (reservado pelo Python)`,
       );
     },
   );
@@ -260,8 +260,29 @@ describe("validateGUIFields — erro estrutural", () => {
       },
     ] as unknown as PydanticField[];
     expect(validateGUIFields(broken)).toEqual([
-      "Campo 1: formato inválido em target",
-      "Campo 1: formato inválido em extra",
+      'Campo 1 ("q1"): formato inválido em target',
+      'Campo 1 ("q1"): formato inválido em extra',
+    ]);
+  });
+});
+
+// A aba Schema e o EditFieldDialog não numeram os campos: a posição sozinha
+// obrigava a contar cards até o culpado. O nome vai junto quando existe.
+describe("validateGUIFields — rótulo do campo", () => {
+  it("nomeia o campo além da posição", () => {
+    const fields = [
+      baseField({ name: "q1", type: "text", description: "Pergunta" }),
+      baseField({ name: "valor_pedido", type: "text", description: "" }),
+    ];
+    expect(validateGUIFields(fields)).toEqual([
+      'Campo 2 ("valor_pedido"): descrição não pode ser vazia',
+    ]);
+  });
+
+  it("campo sem nome fica só com a posição", () => {
+    const fields = [baseField({ name: "", type: "text", description: "Pergunta" })];
+    expect(validateGUIFields(fields)).toEqual([
+      "Campo 1: nome inválido (use letras minúsculas, números e _)",
     ]);
   });
 });

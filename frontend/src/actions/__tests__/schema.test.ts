@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   makeSupabaseMock,
+  type FilterCall,
   type RpcCall,
   type TableResult,
   type TableResults,
@@ -12,6 +13,7 @@ import type { PydanticField } from "@/lib/types";
 const state = vi.hoisted(() => ({
   writes: [] as WriteCall[],
   rpcs: [] as RpcCall[],
+  filters: [] as FilterCall[],
   tables: undefined as TableResults | undefined,
   rpcResults: undefined as Record<string, TableResult | TableResult[]> | undefined,
 }));
@@ -30,6 +32,7 @@ vi.mock("@/lib/supabase/server", () => ({
       tableResults: state.tables,
       writeCalls: state.writes,
       rpcCalls: state.rpcs,
+      filterCalls: state.filters,
       rpcResults: state.rpcResults,
     }),
 }));
@@ -58,6 +61,7 @@ function commitRow(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   state.writes = [];
   state.rpcs = [];
+  state.filters = [];
   state.tables = undefined;
   state.rpcResults = undefined;
   fetchMock.mockReset();
@@ -345,7 +349,7 @@ describe("saveSchemaFromGUI", () => {
     expect(result).toEqual({
       status: "error",
       message:
-        "O schema enviado é inválido. Campo 2: descrição não pode ser vazia",
+        'O schema enviado é inválido. Campo 2 ("q2"): descrição não pode ser vazia',
     });
     expect(state.rpcs).toHaveLength(0);
   });
@@ -360,7 +364,7 @@ describe("saveSchemaFromGUI", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "O schema enviado é inválido. Campo 1: formato inválido em unexpected",
+      message: 'O schema enviado é inválido. Campo 1 ("q1"): formato inválido em unexpected',
     });
   });
 
@@ -382,8 +386,8 @@ describe("saveSchemaFromGUI", () => {
     expect(result).toEqual({
       status: "error",
       message:
-        "O schema enviado é inválido. Campo 1: descrição não pode ser vazia; " +
-        "Campo 2: descrição não pode ser vazia; Campo 3: descrição não pode ser vazia (e mais 2)",
+        'O schema enviado é inválido. Campo 1 ("q1"): descrição não pode ser vazia; ' +
+        'Campo 2 ("q2"): descrição não pode ser vazia; Campo 3 ("q3"): descrição não pode ser vazia (e mais 2)',
     });
   });
 
@@ -498,6 +502,10 @@ describe("publishMajorVersion", () => {
 });
 
 describe("backfillSchemaVersionHistory", () => {
+  // Tabelas que o backfill paginou (o filtro por projeto é a assinatura delas).
+  const pagedTables = () =>
+    state.filters.filter((f) => f.table !== "projects").map((f) => f.table);
+
   it("calcula em TypeScript e aplica logs, respostas e revisão numa única RPC", async () => {
     state.tables = {
       projects: {
@@ -632,6 +640,27 @@ describe("backfillSchemaVersionHistory", () => {
     consoleError.mockRestore();
   });
 
+  // O log e as respostas eram paginados em paralelo com a leitura do projeto:
+  // páginas lidas à toa quando ela falhava, e uma falha da paginação que
+  // chegasse antes trocava a copy da leitura pela genérica do backfill.
+  it("falha na leitura do projeto não pagina log nem respostas", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.tables = {
+      projects: { error: { code: "57014", message: "statement timeout" } },
+      schema_change_log: { error: { code: "57014", message: "statement timeout" } },
+      responses: { error: { code: "57014", message: "statement timeout" } },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Não foi possível ler o schema do projeto. Tente novamente.",
+    });
+    expect(pagedTables()).toEqual([]);
+    consoleError.mockRestore();
+  });
+
   it("projeto ausente ou filtrado pela RLS mantém a copy de permissão", async () => {
     state.tables = {
       projects: { data: null },
@@ -674,6 +703,7 @@ describe("backfillSchemaVersionHistory", () => {
     });
     expect(state.rpcs).toHaveLength(0);
     expect(state.writes).toHaveLength(0);
+    expect(pagedTables()).toEqual([]);
   });
 });
 
@@ -703,6 +733,49 @@ describe("recoverFieldsFromStoredCode", () => {
     const result = await recoverFieldsFromStoredCode("p1");
     expect(result.fields).toBeUndefined();
     expect(result.error).toMatch(/não são válidos/i);
+  });
+});
+
+// O texto do Postgres e o da falha de rede iam crus, em inglês, ao toast pt-BR:
+// vão para o log, e o toast recebe a copy do fluxo.
+describe("erro de servidor não chega cru ao toast", () => {
+  const postgresError = { code: "57014", message: "canceling statement due to statement timeout" };
+
+  it.each([
+    ["savePrompt", () => savePrompt("p1", "prompt"), "Não foi possível salvar o prompt. Tente novamente."],
+    [
+      "saveLlmConfig",
+      () => saveLlmConfig("p1", { llm_provider: "google_genai", llm_model: "gemini-3.7-flash", llm_kwargs: {} }),
+      "Não foi possível salvar a configuração do LLM. Tente novamente.",
+    ],
+  ])("%s", async (_, run, copy) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.tables = { projects: { error: postgresError } };
+
+    const result = await run();
+
+    expect(result).toEqual({ error: copy });
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringContaining("falhou"),
+      expect.objectContaining({ message: postgresError.message }),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("recoverFieldsFromStoredCode", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+
+    const result = await recoverFieldsFromStoredCode("p1");
+
+    expect(result).toEqual({
+      error: "Não foi possível recuperar os campos do código armazenado. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[schema] recuperação dos campos falhou",
+      expect.objectContaining({ message: "fetch failed" }),
+    );
+    consoleError.mockRestore();
   });
 });
 

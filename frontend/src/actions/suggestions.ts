@@ -3,6 +3,7 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, requireCoordinator } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { serverErrorCopy } from "@/lib/server-error";
 import { saveSchemaAndApproveSuggestion } from "./schema";
 import type {
   PydanticField,
@@ -39,17 +40,11 @@ export async function createSchemaSuggestion(
   });
 
   if (error) {
-    // O texto do Postgres é diagnóstico de servidor, em inglês: vai para o log,
-    // e o toast recebe copy pt-BR (#502), como no mapRpcError de schema.ts.
-    console.error("[suggestions] criação da sugestão falhou", {
-      code: error.code,
-      message: error.message,
-    });
     return {
-      error:
-        error.code === "42501"
-          ? "Sem permissão para sugerir alterações neste projeto."
-          : "Não foi possível enviar a sugestão. Tente novamente.",
+      error: serverErrorCopy("[suggestions] criação da sugestão falhou", error, {
+        generic: "Não foi possível enviar a sugestão. Tente novamente.",
+        byCode: { "42501": "Sem permissão para sugerir alterações neste projeto." },
+      }),
     };
   }
   revalidatePath(`/projects/${projectId}/reviews/comments`);
@@ -88,11 +83,11 @@ export async function rejectSchemaSuggestion(
     .select("id");
 
   if (error) {
-    console.error("[suggestions] rejeição da sugestão falhou", {
-      code: error.code,
-      message: error.message,
-    });
-    return { error: "Não foi possível rejeitar a sugestão. Tente novamente." };
+    return {
+      error: serverErrorCopy("[suggestions] rejeição da sugestão falhou", error, {
+        generic: "Não foi possível rejeitar a sugestão. Tente novamente.",
+      }),
+    };
   }
   if (!updated || updated.length === 0) {
     // O filtro status='pending' zera o UPDATE tanto para sugestão inexistente
