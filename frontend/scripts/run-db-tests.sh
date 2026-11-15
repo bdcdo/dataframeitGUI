@@ -72,7 +72,6 @@ GATE_SUITES=(
   responses_latest_human_concurrency
   response_round_serialization
   unmark_equivalence_atomic
-  value_equivalences
   auto_review_reconciliation_outbox
   arbitration_reopen
   rls_audit
@@ -87,8 +86,17 @@ GATE_SUITES=(
 # derruba o gate até ser consertada. Isto NÃO é silenciamento: aparece no resumo
 # com sua issue; ao consertar, mover para GATE_SUITES (a guarda 2 força esse
 # passo).
+#
+# value_equivalences (#851) troca a sessão com `SET SESSION AUTHORIZATION
+# authenticator` para exercitar as recusas das RPCs, que liberam
+# `SESSION_USER = 'postgres'`. Isso exige superusuário, e o `postgres` da imagem
+# do Supabase não é (o mesmo motivo da #572): a suíte nunca passou no CI nem no
+# hook local. Apareceu quando o CI passou a rodar GATE_SUITES (#913); o conserto
+# (rodar como `supabase_admin` ou outra forma de trocar o SESSION_USER) fica com
+# o dono.
 declare -A KNOWN_RED=(
   [schema_revision_serialization]="#572"
+  [value_equivalences]="#913"
 )
 
 # ── Guarda 1: drift entre o runner e o disco (fecha a causa raiz da #557). ────

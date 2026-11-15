@@ -76,19 +76,22 @@ function run(failing: string[], env: Record<string, string> = {}) {
   });
 }
 
-// A órfã conhecida (#572) falha em toda execução de hoje.
+// As órfãs conhecidas (#572 e a value_equivalences, que exige superusuário)
+// falham em toda execução de hoje.
 const knownRed = "schema_revision_serialization";
+const knownReds = [knownRed, "value_equivalences"];
 
 describe("run-db-tests.sh", () => {
   it("reporta a órfã conhecida como RED* sem reprovar", () => {
-    const { status, stdout } = run([knownRed]);
+    const { status, stdout } = run(knownReds);
     expect(stdout).toContain(`RED*  ${knownRed} (conhecida, #572)`);
+    expect(stdout).toContain("RED*  value_equivalences (conhecida, #913)");
     expect(stdout).toContain("OK: todas as suítes de gate passaram.");
     expect(status).toBe(0);
   });
 
   it("reprova a suíte de gate que falha, com a cauda da saída", () => {
-    const { status, stdout } = run([knownRed, "rls_audit"]);
+    const { status, stdout } = run([...knownReds, "rls_audit"]);
     expect(status).toBe(1);
     expect(stdout).toContain("  FAIL  rls_audit");
     expect(stdout).toContain("linha 30 de rls_audit.test.sql");
@@ -99,7 +102,7 @@ describe("run-db-tests.sh", () => {
   // O workflow roda tudo num passo só. O passo por suíte de antes mostrava a
   // saída inteira de cada uma e, num travamento, qual suíte estava rodando.
   it("no GitHub Actions abre um grupo por suíte, antes de rodá-la, com a saída inteira", () => {
-    const { status, stdout } = run([knownRed, "rls_audit", "responses_llm_actor_integrity"], { GITHUB_ACTIONS: "true" });
+    const { status, stdout } = run([...knownReds, "rls_audit", "responses_llm_actor_integrity"], { GITHUB_ACTIONS: "true" });
     expect(status).toBe(1);
     for (const failed of ["rls_audit", "responses_llm_actor_integrity"]) {
       const start = stdout.indexOf(`::group::${failed}\n`);
