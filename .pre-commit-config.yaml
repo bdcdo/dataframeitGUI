@@ -6,7 +6,7 @@
 # Divisao de estagios (ver docs/CODE_QUALITY_TOOLING.md):
 #   pre-commit (todo commit, leve / file-scoped): gitleaks, ruff, actionlint,
 #                                                deploy notifier, react-doctor
-#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, deployment-versioning, model-registry, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, toolchain-pins, mypy, db-tests, llm-runs-contract
+#   pre-push   (todo push,  pesado / grafo):       typecheck, vitest, deployment-versioning, e2e-smoke, lint:types, fallow, semgrep, backend-pytest, toolchain-pins, mypy, db-tests, llm-runs-contract
 #   post-checkout (informativo, nunca bloqueia):   worktree-env
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
@@ -187,14 +187,19 @@ repos:
       # Os .env.*.example sao a excecao inevitavel: sao a fonte canonica das
       # variaveis obrigatorias e o teste do contrato afirma os nomes que eles
       # declaram, mas nao tem extensao pela qual casar.
-      # O field_hash_parity_cases.json do backend também entra pelo nome: a
-      # suíte do frontend o lê para conferir a paridade do hash de campo com o
-      # Python, e um push que mude só esse arquivo precisa rodar os dois lados.
+      # Também entram, pelo caminho, os arquivos que não são TS mas que a suíte
+      # lê, para que um push que mude só um deles rode o teste que depende dele:
+      # os JSON de paridade do backend (field_hash_parity_cases, hash de campo;
+      # reserved_field_names e schema_roundtrip_cases, nomes reservados e
+      # round-trip do schema), as migrations e o llm_runner.py
+      # (model-registry.test.ts confere os DEFAULT de llm_model/llm_kwargs e o
+      # DEFAULT_PARALLEL_REQUESTS) e a suíte SQL do ciclo de resolução de erros
+      # (error-resolution-cycle.test.ts).
       - id: vitest
         name: vitest run (full suite, pre-push)
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^(frontend/(.*\.(mjs|mts|ts|tsx|sh)|\.env\.(local|e2e)\.example)|backend/tests/field_hash_parity_cases\.json)$
+        files: ^(frontend/(.*\.(mjs|mts|ts|tsx|sh)|\.env\.(local|e2e)\.example|supabase/(migrations/.*|tests/error_resolution_cycle\.test)\.sql)|backend/(services/llm_runner\.py|tests/(field_hash_parity_cases|reserved_field_names|schema_roundtrip_cases)\.json))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -209,21 +214,6 @@ repos:
         entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run src/tooling/__tests__/deployment-versioning.test.ts || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
         files: ^(README\.md|frontend/Dockerfile|\.github/workflows/frontend-fly-deploy\.yml)$
-        pass_filenames: false
-        require_serial: true
-        stages: [pre-push]
-
-      # Registro de modelos LLM (model-registry.test.ts): o teste le as
-      # migrations SQL (os DEFAULT de projects.llm_model e llm_kwargs) e o
-      # backend/services/llm_runner.py (DEFAULT_PARALLEL_REQUESTS), que nao
-      # casam com o glob por extensao do hook do vitest. Roda so esse teste
-      # quando o push toca um deles. As outras suites que leem migration (upload
-      # e resolucao de erro) leem um arquivo fixo, que migration aplicada nao muda.
-      - id: model-registry
-        name: registro de modelos LLM (pre-push)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run src/lib/__tests__/model-registry.test.ts || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
-        language: system
-        files: ^(frontend/supabase/migrations/.*\.sql|backend/services/llm_runner\.py)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

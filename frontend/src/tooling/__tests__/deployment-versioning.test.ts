@@ -20,19 +20,29 @@ const readmeFallback = readme.match(
 )?.[0];
 
 // Flags que o Dockerfile EXIGE, lidos do proprio Dockerfile: o ARG que o RUN do
-// build confere com `test -n "$X"` vira `--build-arg X=...`, e o secret montado
-// com `required=true` vira `--build-secret X=...`. O workflow e o README repetem
-// esses flags a mao; um terceiro flag obrigatorio entra nesta lista sozinho, e
-// o teste no fim do arquivo passa a cobrar dos dois.
+// build confere com `test -n` (ou `[ -n ]`) vira `--build-arg X=...`, e o
+// secret montado com `required` vira `--build-secret X=...`. O workflow e o
+// README repetem esses flags a mao; um terceiro flag obrigatorio entra nesta
+// lista sem editar o teste, e o `it.each` no fim do arquivo passa a cobrar dos
+// dois.
 const requiredBuildFlags = [
-  ...[...dockerfile.matchAll(/test -n "\$(\w+)"/g)].map(([, name]) => ({
+  ...[...dockerfile.matchAll(/(?:test|\[) -n "\$\{?(\w+)\}?"/g)].map(([, name]) => ({
     flag: "--build-arg",
     name,
   })),
-  ...[...dockerfile.matchAll(/--mount=type=secret,id=(\w+),required=true/g)].map(
-    ([, name]) => ({ flag: "--build-secret", name }),
-  ),
+  ...[...dockerfile.matchAll(/--mount=type=secret,(\S+)/g)].flatMap(([, options]) => {
+    const parts = options.split(",");
+    const id = parts.find((part) => part.startsWith("id="))?.slice(3);
+    const required = parts.some((part) => part === "required" || part === "required=true");
+    return id && required ? [{ flag: "--build-secret", name: id }] : [];
+  }),
 ];
+
+// O workflow sem as linhas de comentario: um flag comentado nao chega ao build.
+const deployWorkflowCode = deployWorkflow
+  .split("\n")
+  .filter((line) => !/^\s*#/.test(line))
+  .join("\n");
 
 describe("versionamento do build do frontend", () => {
   it("entrega o SHA e a chave estavel ao build", () => {
@@ -68,12 +78,11 @@ describe("versionamento do build do frontend", () => {
   // ele nao passar o que o Dockerfile exige, o build falha no `test` acima
   // justamente no momento de incidente em que o fallback e usado (#549).
   it("o deploy manual do README entrega o SHA e a chave ao build", () => {
-    const fallback = readmeFallback;
-    expect(fallback).toBeDefined();
-    expect(fallback).toContain(
+    expect(readmeFallback).toBeDefined();
+    expect(readmeFallback).toContain(
       '--build-arg NEXT_DEPLOYMENT_ID="$(git rev-parse HEAD)"',
     );
-    expect(fallback).toContain(
+    expect(readmeFallback).toContain(
       '--build-secret NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY:?',
     );
   });
@@ -92,16 +101,22 @@ describe("versionamento do build do frontend", () => {
       ]),
     );
     for (const { flag, name } of requiredBuildFlags) {
-      if (flag === "--build-arg") expect(dockerfile).toMatch(new RegExp(`^ARG ${name}$`, "m"));
+      if (flag === "--build-arg") expect(dockerfile).toMatch(new RegExp(`^ARG ${name}(?:=.*)?$`, "m"));
     }
   });
 
   it.each(requiredBuildFlags)(
     "o workflow e o deploy manual do README passam $flag $name",
     ({ flag, name }) => {
+      expect(readmeFallback, "comando de deploy manual nao encontrado no README").toBeDefined();
       const passed = new RegExp(`${flag} "?${name}=`);
-      expect(deployWorkflow).toMatch(passed);
+      expect(deployWorkflowCode).toMatch(passed);
       expect(readmeFallback).toMatch(passed);
+      // Secret do build vem do repositorio no GitHub: sem o mapeamento no
+      // `env`, a variavel expande vazia e o `required` do mount nao percebe.
+      if (flag === "--build-secret") {
+        expect(deployWorkflowCode).toContain(`${name}: \${{ secrets.${name} }}`);
+      }
     },
   );
 });
