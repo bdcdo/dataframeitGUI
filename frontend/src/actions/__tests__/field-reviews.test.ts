@@ -213,7 +213,7 @@ describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", ()
     });
   });
 
-  it("retry de contesta_llm sem árbitro repete apenas a atribuição", async () => {
+  it("retry de contesta_llm sem árbitro reenvia a linha à RPC, que é quem atribui", async () => {
     const submitAutoReview = await loadSubmit();
     tableData.field_reviews = [
       autoReview({ self_verdict: "contesta_llm", arbitrator_id: null }),
@@ -371,7 +371,7 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
     );
   });
 
-  it("equivalente em retry (UPDATE casa 0 linhas) ainda registra a equivalencia", async () => {
+  it("equivalente em retry reenvia a linha à RPC, dona da idempotência", async () => {
     const submitAutoReview = await loadSubmit();
     // Cenario de retry: um call anterior ja gravou self_verdict='equivalente'.
     // A idempotencia e da RPC; o TS reenvia a linha mesmo assim.

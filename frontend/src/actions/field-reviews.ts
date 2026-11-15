@@ -690,12 +690,16 @@ export async function retryPendingArbitrations(
     ];
     const codersByDoc = new Map<string, Set<string>>();
     if (allDocIds.length > 0) {
-      const { data: allCoders } = await supabase
+      const { data: allCoders, error: codersError } = await supabase
         .from("responses")
         .select("document_id, respondent_id")
         .eq("project_id", projectId)
         .in("document_id", allDocIds)
         .eq("respondent_type", "humano");
+      // Sem o set, o codificador do documento entraria no pool como árbitro
+      // "neutro": falha alto em vez de atribuir errado (P3).
+      if (codersError)
+        return { success: false, error: codersError.message, assigned: 0, stillNoPool: 0 };
       for (const c of allCoders ?? []) {
         const docId = c.document_id as string;
         const respId = c.respondent_id as string | null;

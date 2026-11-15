@@ -2,6 +2,7 @@ import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
   makeFilterAwareSupabaseMock,
+  type QueryError,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 
@@ -11,9 +12,14 @@ import {
 // descartada como o Postgres descartaria.
 let opCalls: WriteCall[];
 let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError | null>;
 
 function makeClient() {
-  return makeFilterAwareSupabaseMock({ tableData, writeCalls: opCalls });
+  return makeFilterAwareSupabaseMock({
+    tableData,
+    writeCalls: opCalls,
+    queryErrors,
+  });
 }
 
 const payloadOf = (call: WriteCall | undefined) =>
@@ -55,6 +61,7 @@ vi.mock("@/lib/compare-sync", () => ({
 beforeEach(() => {
   opCalls = [];
   tableData = {};
+  queryErrors = {};
   mockSyncCompareAssignment.mockReset();
   mockSyncCompareAssignment.mockImplementation(async () => {});
 });
@@ -204,6 +211,28 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
     expect(
       opCalls.some((c) => c.op === "delete" && c.table === "project_comments"),
     ).toBe(true);
+  });
+
+  it("falha na leitura de \"ainda ambíguo\" não apaga o comentário às cegas", async () => {
+    // Leitura falha sem linhas, como no PostgREST: o código não tem como
+    // saber se outro revisor ainda marca o campo como ambíguo.
+    tableData = {
+      reviews: [],
+      projects: [PROJECT],
+      project_comments: [ambiguityComment()],
+    };
+    queryErrors = { "reviews:select": { message: "timeout", code: "57014" } };
+    const submitVerdict = await loadSubmit();
+    await submitVerdict({
+      projectId: "p1",
+      documentId: "doc1",
+      fieldName: "q1",
+      verdict: "concordo",
+    });
+
+    expect(
+      opCalls.some((c) => c.op === "delete" && c.table === "project_comments"),
+    ).toBe(false);
   });
 
   // Cada filtro da busca de "ainda ambíguo" descarta o review que não sustenta

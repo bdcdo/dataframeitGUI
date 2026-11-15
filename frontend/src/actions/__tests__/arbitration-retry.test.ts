@@ -4,6 +4,7 @@ import {
   makeSupabaseServerModuleMock,
   makeFilterAwareSupabaseMock,
   type RpcCall,
+  type QueryError,
   type RpcResult,
   type WriteCall,
 } from "@/test-utils/supabase-mock";
@@ -18,6 +19,7 @@ let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, RpcResult>;
 let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError | null>;
 
 // Linhas que satisfazem os filtros da action para o projeto "p1"; `over`
 // ajusta só o que o cenário quer variar.
@@ -77,6 +79,7 @@ function makeClient() {
     writeCalls,
     rpcCalls,
     rpcResults,
+    queryErrors,
   });
 }
 
@@ -99,6 +102,7 @@ beforeEach(() => {
   rpcResults = {
     assign_arbitration_cycles_if_eligible: { data: 1 },
   };
+  queryErrors = {};
   tableData = {
     field_reviews: [],
     project_members: [],
@@ -280,6 +284,20 @@ describe("retryPendingArbitrations — exclui codificadores do documento", () =>
     expect(r.success).toBe(true);
     expect(r.assigned).toBe(0);
     expect(r.stillNoPool).toBe(1);
+    expect(arbitrationCalls()).toHaveLength(0);
+  });
+});
+
+describe("retryPendingArbitrations — erro na pré-busca de codificadores", () => {
+  it("falha na leitura dos codificadores → erro, sem atribuir codificador como árbitro neutro", async () => {
+    tableData.field_reviews = [pendingReview("fr1", "doc1", "userA")];
+    tableData.project_members = [arbiter("userB")];
+    // A leitura falha sem linhas, como no PostgREST: sem o set, userB (que
+    // pode ter codificado o doc) pareceria neutro.
+    queryErrors = { "responses:select": { message: "timeout", code: "57014" } };
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r.success).toBe(false);
     expect(arbitrationCalls()).toHaveLength(0);
   });
 });

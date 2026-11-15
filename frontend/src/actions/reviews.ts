@@ -183,13 +183,17 @@ async function removeOrphanAmbiguityComment(
   // (`review-validity.ts`): o dado sobre outra versão da pergunta não é
   // mais o veredito de ninguém. Sem `limit(1)`, porque o primeiro pode ser
   // justamente um inválido; são no máximo um por revisor da célula.
-  const { data: ambiguous } = await supabase
+  const { data: ambiguous, error: ambiguousError } = await supabase
     .from("reviews")
     .select("id, field_name, verdict, field_hash, chosen_response_id")
     .eq("project_id", projectId)
     .eq("document_id", documentId)
     .eq("field_name", fieldName)
     .eq("verdict", "ambiguo");
+  // Sem a leitura, não dá para saber se outro revisor ainda marca ambíguo:
+  // apagar o comentário às cegas quebraria "comentário existe sse há ambiguo
+  // válido" (P3).
+  if (ambiguousError) throw new Error(ambiguousError.message);
   const stillAmbiguous = (ambiguous ?? []).some((r) => reviewIsValid(r, field));
   if (stillAmbiguous) return;
 
