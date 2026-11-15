@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import type { LlmRunRecord } from "@/actions/llm";
 import { formatDateTime } from "@/lib/date-format";
+import { roundLabel } from "@/lib/rounds";
+import type { Round } from "@/lib/types";
 import { LlmErrorCard, type LlmErrorInfo } from "./LlmErrorCard";
 
 export interface LlmRunStats {
@@ -29,6 +31,7 @@ interface LlmRunsPaneProps {
   projectId: string;
   runs: LlmRunRecord[];
   stats: Record<string, LlmRunStats>;
+  rounds: Pick<Round, "id" | "label">[];
 }
 
 const FILTER_LABELS: Record<string, string> = {
@@ -89,8 +92,16 @@ function StatusBadge({ status }: { status: LlmRunRecord["status"] }) {
   );
 }
 
-export function LlmRunsPane({ projectId, runs, stats }: LlmRunsPaneProps) {
+export function LlmRunsPane({
+  projectId,
+  runs,
+  stats,
+  rounds,
+}: LlmRunsPaneProps) {
   const [openErrorId, setOpenErrorId] = useState<string | null>(null);
+  // llm_runs.round_id e NOT NULL com FK sem cascade: aqui "Rodada removida"
+  // indica leitura de `rounds` incompleta, nao rodada apagada.
+  const roundsById = new Map(rounds.map((r) => [r.id, r]));
 
   if (runs.length === 0) {
     return (
@@ -124,10 +135,11 @@ export function LlmRunsPane({ projectId, runs, stats }: LlmRunsPaneProps) {
                 <StatusBadge status={run.status} />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium truncate">{modelLabel}</div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="text-xs text-muted-foreground truncate">
                     {formatDateTime(run.started_at)} ·{" "}
                     {formatFilterMode(run.filter_mode)} ·{" "}
-                    {run.document_count ?? "—"} docs
+                    {run.document_count ?? "—"} docs ·{" "}
+                    {roundLabel(run.round_id, roundsById)}
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs">

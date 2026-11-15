@@ -95,6 +95,8 @@ export interface LlmRunRecord {
   error_column: number | null;
   started_at: string;
   completed_at: string | null;
+  // NOT NULL desde 20260811120000_llm_runs_round_id.sql.
+  round_id: string;
 }
 
 export async function getLlmRuns(
@@ -108,7 +110,8 @@ export async function getLlmRuns(
     .select(
       "id, job_id, status, phase, llm_provider, llm_model, filter_mode, " +
         "document_count, progress, total, pydantic_code, error_message, " +
-        "error_type, error_traceback, error_line, error_column, started_at, completed_at"
+        "error_type, error_traceback, error_line, error_column, started_at, completed_at, " +
+        "round_id"
     )
     .eq("project_id", projectId)
     .order("started_at", { ascending: false })

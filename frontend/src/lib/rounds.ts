@@ -46,6 +46,18 @@ export function responseRoundLabel(
   return `${m}.${n}.${p}`;
 }
 
+/**
+ * Rotulo de uma rodada explicita (`round_id`) para exibicao: null vira
+ * "Sem rodada" e id ausente de `roundsById` vira "Rodada removida".
+ */
+export function roundLabel(
+  roundId: string | null | undefined,
+  roundsById: ReadonlyMap<string, Pick<Round, "label">>,
+): string {
+  if (!roundId) return "Sem rodada";
+  return roundsById.get(roundId)?.label ?? "Rodada removida";
+}
+
 export type DocRoundStatus =
   | { kind: "current_pending" }
   | { kind: "current_done" }
@@ -75,12 +87,9 @@ export function classifyDocStatus(
       return { kind: "current_done" };
     }
     // Guardrail: com FK responses.round_id ON DELETE SET NULL, round_id de uma
-    // rodada removida vira null (cai no branch "Sem rodada") — o lookup falhar
-    // com label "Rodada removida" so deve ocorrer em estado intermediario.
-    const label = response.round_id
-      ? roundsById.get(response.round_id)?.label ?? "Rodada removida"
-      : "Sem rodada";
-    return { kind: "previous", label };
+    // rodada removida vira null (cai em "Sem rodada") — o lookup falhar com
+    // "Rodada removida" so deve ocorrer em estado intermediario.
+    return { kind: "previous", label: roundLabel(response.round_id, roundsById) };
   }
 
   // schema_version

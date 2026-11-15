@@ -10,17 +10,23 @@ interface QueryResult {
 }
 
 let results: Record<string, QueryResult>;
+let selects: Record<string, string[]>;
 
 beforeEach(() => {
   results = {};
+  selects = {};
 });
 
-function makeChain(result: QueryResult) {
+function makeChain(table: string, result: QueryResult) {
   const r: QueryResult = { data: null, count: null, error: null, ...result };
   const chain: Record<string, unknown> = {};
-  for (const m of ["select", "eq", "is", "gt", "order", "limit", "range"]) {
+  for (const m of ["eq", "is", "gt", "order", "limit", "range"]) {
     chain[m] = () => chain;
   }
+  chain.select = (columns: string) => {
+    (selects[table] ??= []).push(columns);
+    return chain;
+  };
   chain.maybeSingle = () => Promise.resolve(r);
   chain.single = () => Promise.resolve(r);
   // Thenable: `await query` (sem .single/.maybeSingle) resolve aqui.
@@ -31,7 +37,7 @@ function makeChain(result: QueryResult) {
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () => ({
     from: (table: string) =>
-      makeChain(results[table] ?? { data: [], count: 0, error: null }),
+      makeChain(table, results[table] ?? { data: [], count: 0, error: null }),
   }),
 }));
 
@@ -119,6 +125,12 @@ describe("getLlmRuns", () => {
     results.llm_runs = { data: [{ id: "r1" }, { id: "r2" }] };
     const { getLlmRuns } = await loadLlm();
     await expect(getLlmRuns("p1")).resolves.toHaveLength(2);
+  });
+
+  it("seleciona round_id, que a aba Execuções exibe (#675)", async () => {
+    const { getLlmRuns } = await loadLlm();
+    await getLlmRuns("p1");
+    expect(selects.llm_runs?.[0]?.split(/,\s*/)).toContain("round_id");
   });
 });
 

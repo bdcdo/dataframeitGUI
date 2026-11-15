@@ -8,6 +8,7 @@ import {
   getCurrentRoundDescriptor,
   compareVersionLabels,
   resolveRoundFilter,
+  roundLabel,
   type RoundContext,
   type ResponseRoundFields,
   type SchemaVersion,
@@ -229,6 +230,22 @@ describe("classifyDocStatus — manual", () => {
     expect(classifyDocStatus(ctx, r, mapRounds([piloto, r2]))).toEqual({
       kind: "current_pending",
     });
+  });
+});
+
+describe("roundLabel", () => {
+  const rounds = mapRounds([round("r1", "Piloto")]);
+
+  it("devolve o rotulo da rodada conhecida", () => {
+    expect(roundLabel("r1", rounds)).toBe("Piloto");
+  });
+
+  it("round_id sem rodada correspondente -> 'Rodada removida'", () => {
+    expect(roundLabel("fantasma", rounds)).toBe("Rodada removida");
+  });
+
+  it("round_id nulo -> 'Sem rodada'", () => {
+    expect(roundLabel(null, rounds)).toBe("Sem rodada");
   });
 });
 
