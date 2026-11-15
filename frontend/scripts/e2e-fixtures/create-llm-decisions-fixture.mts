@@ -7,9 +7,7 @@
 // receita no repo, o spec só roda na máquina de quem montou a fixture à mão
 // (#738).
 //
-// SÓ BANCO LOCAL. O spec grava e apaga `error_resolutions` e por isso recusa
-// Supabase que não seja localhost; este script recusa pelo mesmo critério,
-// para nunca criar projeto de teste no banco remoto.
+// SÓ BANCO LOCAL, pelo mesmo critério do spec (ver .env.e2e.example).
 //
 // O que o spec lê, e por isso não pode mudar sem mudar o spec junto:
 //   • nome `LLM decision browser fixture <modo>` e `automation_mode` = modo;
@@ -35,6 +33,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { acquireFixtureLock, defaultFixtureLockDir, fixtureLockWaitMs } from "../../e2e/fixture-lock";
+import { fieldHashOf } from "../../src/lib/schema-utils";
 import {
   applyEnvironment,
   readEnvironmentFile,
@@ -59,9 +58,10 @@ const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 if (!url || !key) {
   throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes");
 }
-if (!/^(localhost|127\.0\.0\.1)$/.test(new URL(url).hostname)) {
+const host = new URL(url).hostname;
+if (!/^(localhost|127\.0\.0\.1)$/.test(host)) {
   throw new Error(
-    `NEXT_PUBLIC_SUPABASE_URL aponta para ${new URL(url).hostname}: esta fixture só é criada no Supabase local (ver E2E_ENV_PATH em .env.e2e.example)`,
+    `NEXT_PUBLIC_SUPABASE_URL aponta para ${host}: esta fixture só é criada no Supabase local (ver E2E_ENV_PATH em .env.e2e.example)`,
   );
 }
 const COORDINATOR_EMAIL = process.env.E2E_COORDINATOR_EMAIL;
@@ -76,31 +76,29 @@ const MODES = ["compare_llm", "auto_review_llm"] as const;
 type Mode = (typeof MODES)[number];
 const DOC_TITLE = "Documento de teste de decisões";
 
-// Hashes reais (`computeFieldHash`), como em create-coding-save-fixture.mts: o
-// veredito vale pela versão da pergunta, e o banco carimba o hash do campo nas
-// reviews e nos ciclos de auto-revisão.
+// Hash real do campo (o que o save grava): o veredito vale pela versão da
+// pergunta, e o banco carimba esse hash nas reviews e nos ciclos de
+// auto-revisão.
 const FIELDS = [
-  {
-    id: "e2e00000-0000-4000-8000-0000000007a1",
-    hash: "2c8e8a29d69c",
-    name: "x",
-    type: "text",
-    options: null,
-    description: "Pergunta principal",
-  },
-  {
-    id: "e2e00000-0000-4000-8000-0000000007a2",
-    hash: "19cfd27d3e8f",
-    name: "other",
-    type: "text",
-    options: null,
-    description: "Outra pergunta",
-  },
-];
+  { id: "e2e00000-0000-4000-8000-0000000007a1", name: "x", description: "Pergunta principal" },
+  { id: "e2e00000-0000-4000-8000-0000000007a2", name: "other", description: "Outra pergunta" },
+].map((f) => {
+  const field = { ...f, type: "text" as const, options: null };
+  return { ...field, hash: fieldHashOf(field) };
+});
 const ANSWER_FIELD_HASHES = Object.fromEntries(FIELDS.map((f) => [f.name, f.hash]));
-const SCHEMA_HASH = "e2e-llm-decisions-schema-hash";
+// O mesmo carimbo de schema no projeto e nas respostas.
+const SCHEMA_STAMP = {
+  pydantic_hash: "e2e-llm-decisions-schema-hash",
+  schema_version_major: 1,
+  schema_version_minor: 0,
+  schema_version_patch: 0,
+};
+const fieldsSignature = (fields: { name: string; hash?: string }[]) =>
+  fields.map((f) => `${f.name}:${f.hash}`).join();
 const LLM_ANSWERS = { x: "Resposta LLM", other: "Outra LLM" };
 const HUMAN_ANSWERS = { x: "Resposta humana", other: "Outra humana" };
+const LLM_NAME = "LLM";
 const HUMAN_NAME = "Pesquisador E2E";
 
 async function profileId(email: string): Promise<string> {
@@ -121,8 +119,7 @@ async function ensureProject(mode: Mode, coordId: string): Promise<string> {
     // O schema só é gravado na criação: o banco recusa avançar `schema_revision`
     // sem mudança de schema. Se alguém o mudou depois, recusar é melhor que
     // seguir com respostas carimbadas com hashes que o projeto não tem mais.
-    const stored = (existing.pydantic_fields as { name: string; hash?: string }[]) ?? [];
-    if (stored.map((f) => `${f.name}:${f.hash}`).join() !== FIELDS.map((f) => `${f.name}:${f.hash}`).join()) {
+    if (fieldsSignature(existing.pydantic_fields ?? []) !== fieldsSignature(FIELDS)) {
       throw new Error(`O schema do projeto "${name}" (${existing.id}) mudou. Apague o projeto e rode de novo.`);
     }
     const { error } = await supabase.from("projects").update({ automation_mode: mode }).eq("id", existing.id);
@@ -132,15 +129,12 @@ async function ensureProject(mode: Mode, coordId: string): Promise<string> {
   const { data, error } = await supabase
     .from("projects")
     .insert({
+      ...SCHEMA_STAMP,
       pydantic_fields: FIELDS,
-      pydantic_hash: SCHEMA_HASH,
       automation_mode: mode,
       name,
       description: "Fixture sintético do smoke de decisões do LLM Insights (#738). Pode ser apagado.",
       created_by: coordId,
-      schema_version_major: 1,
-      schema_version_minor: 0,
-      schema_version_patch: 0,
     })
     .select("id")
     .single();
@@ -179,10 +173,7 @@ async function insertResponse(row: Record<string, unknown>): Promise<string> {
       answer_field_hashes: ANSWER_FIELD_HASHES,
       is_latest: true,
       is_partial: false,
-      pydantic_hash: SCHEMA_HASH,
-      schema_version_major: 1,
-      schema_version_minor: 0,
-      schema_version_patch: 0,
+      ...SCHEMA_STAMP,
     })
     .select("id")
     .single();
@@ -206,7 +197,7 @@ async function seed(mode: Mode, projectId: string, coordId: string, memberId: st
   const llmId = await insertResponse({
     ...base,
     respondent_type: "llm",
-    respondent_name: "LLM",
+    respondent_name: LLM_NAME,
     answers: LLM_ANSWERS,
     justifications: { x: justification, other: justification },
   });
@@ -233,7 +224,7 @@ async function seed(mode: Mode, projectId: string, coordId: string, memberId: st
           verdict: HUMAN_ANSWERS[name],
           chosen_response_id: humanId,
           response_snapshot: [
-            { id: llmId, respondent_name: "LLM", respondent_type: "llm", answer: LLM_ANSWERS[name], justification },
+            { id: llmId, respondent_name: LLM_NAME, respondent_type: "llm", answer: LLM_ANSWERS[name], justification },
             { id: humanId, respondent_name: HUMAN_NAME, respondent_type: "humano", answer: HUMAN_ANSWERS[name] },
           ],
         };
