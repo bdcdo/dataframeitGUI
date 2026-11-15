@@ -1536,7 +1536,23 @@ class _ProcessedLlmRow:
 
 
 def _extract_dataframeit_error(row) -> tuple[object, str | None]:
+    """O status da linha e a mensagem dela **só quando ela de fato falhou**.
+
+    O dataframeit usa `_error_details` para duas coisas diferentes: em falha
+    grava o erro com `_dataframeit_status='error'`, mas em sucesso que passou
+    por retry grava `"Sucesso após N retry(s)"` mantendo o status
+    `'processed'` (`core.py`, tanto no caminho sequencial quanto no
+    paralelo). Quem lê só a mensagem confunde um sucesso com uma recusa de
+    schema — no canário, um único retry passaria a disparar a bisseção
+    inteira, e em `responses.llm_error` uma resposta saudável sairia marcada
+    com erro (issue #698).
+
+    Por isso a mensagem crua não sai daqui: a regra é uma só, e o status é
+    quem a decide.
+    """
     dfi_status = row.get("_dataframeit_status")
+    if dfi_status != "error":
+        return dfi_status, None
     dfi_error_raw = row.get("_error_details")
     dfi_error = (
         str(dfi_error_raw)
@@ -1547,22 +1563,8 @@ def _extract_dataframeit_error(row) -> tuple[object, str | None]:
 
 
 def _row_error(row) -> str | None:
-    """A mensagem da linha **só quando ela de fato falhou**.
-
-    O dataframeit usa `_error_details` para duas coisas diferentes: em falha
-    grava o erro com `_dataframeit_status='error'`, mas em sucesso que passou
-    por retry grava `"Sucesso após N retry(s)"` mantendo o status
-    `'processed'` (`core.py`, tanto no caminho sequencial quanto no
-    paralelo). Quem lê só a mensagem confunde um sucesso com uma recusa de
-    schema — e, no canário, um único retry passaria a disparar a bisseção
-    inteira.
-
-    É por isso que este predicado existe em vez de `_error_details is not
-    None` repetido em cada chamador: a regra é uma só, e o status é quem a
-    decide.
-    """
-    status, message = _extract_dataframeit_error(row)
-    return message if status == "error" else None
+    """A mensagem da linha só quando ela falhou (`_extract_dataframeit_error`)."""
+    return _extract_dataframeit_error(row)[1]
 
 
 def _reconstruct_nested_answers(

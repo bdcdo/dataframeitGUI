@@ -1059,6 +1059,8 @@ def test_run_llm_linha_do_callback_publica_o_mesmo_que_o_laco_do_frame():
     assert por_doc["doc-0"]["is_partial"] is False
     assert set(por_doc["doc-0"]["answers"]) == {"campo_a", "campo_b", "campo_c"}
     assert por_doc["doc-0"]["justifications"] == {"campo_a": "porque sim"}
+    # E não é erro: o texto do retry não vai para `llm_error` (issue #698).
+    assert por_doc["doc-0"]["llm_error"] is None
     assert por_doc["doc-1"]["is_partial"] is True
     assert "boom" in por_doc["doc-2"]["llm_error"]
     # Texto vazio: a biblioteca chama o callback com success=False.
@@ -2130,6 +2132,43 @@ def test_run_llm_sucesso_apos_retry_no_canario_nao_dispara_divisao(monkeypatch):
     # mesmo com ou sem a divisão espúria, só o custo muda.
     assert _sondas(calls) == []
     assert all(lote == set(campos) for lote in _campos_por_lote(calls, "doc-0"))
+
+
+def test_run_llm_sucesso_apos_retry_fica_fora_dos_erros_do_provider(monkeypatch):
+    # Mesma confusão, agora na mensagem da run comprometida: os documentos que
+    # só passaram por retry apareciam como `doc=doc-N: Sucesso após 1 retry(s)`
+    # sob "Erros do provider", ao lado (ou no lugar) dos erros de verdade.
+    docs = _docs(4)
+    row_specs = {
+        d["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for d in docs
+    }
+    # doc-0 e doc-1 com cobertura baixa já comprometem a run (2/4 >= 0.3), e
+    # a mensagem lista os erros do provider. O doc-3 falha de verdade: o erro
+    # dele precisa continuar lá e no llm_error; os sucessos com retry, não.
+    row_specs["doc-0"] = {"campo_a": "a"}
+    row_specs["doc-1"] = {"campo_a": "a"}
+    sb = _build_supabase(_project_row(), docs)
+
+    _run_llm_sync(
+        monkeypatch,
+        sb,
+        row_specs,
+        dataframeit_errors={"doc-3": "[Erro não-recuperável] BadRequestError: 400"},
+        retry_success=True,
+    )
+
+    assert _jobs[JOB_ID]["status"] == "error"
+    message = _jobs[JOB_ID]["errors"][0]
+    assert "Run comprometida" in message
+    assert "Erros do provider: doc=doc-3: [Erro não-recuperável]" in message
+    assert "Sucesso após" not in message
+
+    por_doc = {r["document_id"]: r for r in _published_responses(sb)}
+    assert por_doc["doc-2"]["llm_error"] is None
+    assert por_doc["doc-0"]["llm_error"].startswith("cobertura baixa")
+    assert por_doc["doc-3"]["llm_error"].startswith(
+        "dataframeit: [Erro não-recuperável]"
+    )
 
 
 def test_run_llm_sucesso_apos_retry_na_sonda_nao_conta_como_recusa(monkeypatch):
