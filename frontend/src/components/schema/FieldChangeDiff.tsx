@@ -521,34 +521,37 @@ function FieldSnapshot({
       ? "border-green-500/30 bg-green-500/5"
       : "border-red-500/30 bg-red-500/5";
 
-  // Rótulos de `propertyLabel`, os mesmos do diff abaixo do snapshot: a mesma
-  // propriedade não ganha dois nomes na mesma tela.
+  // Rótulos de `propertyLabel` e formatadores de `PILL_FORMATTERS`, os mesmos
+  // do diff abaixo do snapshot: a mesma propriedade não ganha dois nomes nem
+  // duas grafias na mesma tela.
   const rows: { label: string; value: string }[] = [];
   const row = (property: FieldPropertyDiff["property"], value: string) =>
     rows.push({ label: propertyLabel(property), value });
+  const pillRow = (property: FieldPropertyDiff["property"], value: unknown) =>
+    row(property, PILL_FORMATTERS[property]?.(value) ?? String(value));
   if (data.description) row("description", String(data.description));
-  if (data.type) row("type", formatType(data.type));
+  if (data.type) pillRow("type", data.type);
   // Alvo, obrigatoriedade, "permite outro" e regra de subcampos têm default
   // implícito: ausente no payload é um valor, e não "sem valor". Pelo
   // resolvedor, como no diff de propriedades, para o campo legado mostrar o
   // mesmo que o explícito.
-  row("target", formatTarget(resolveTarget(data.target as PydanticFieldTarget | null | undefined)));
-  row("required", yesNo(resolveRequired(data.required as boolean | null | undefined)));
+  pillRow("target", resolveTarget(data.target as PydanticFieldTarget | null | undefined));
+  pillRow("required", resolveRequired(data.required as boolean | null | undefined));
   if (data.help_text) row("help_text", String(data.help_text));
   if (Array.isArray(data.options) && (data.options as string[]).length > 0)
     row("options", (data.options as string[]).join(", "));
-  // Só os campos de escolha oferecem "Outro" (o editor só mostra o controle
-  // neles); num texto livre a linha seria ruído.
-  if (data.type === "single" || data.type === "multi")
-    row("allow_other", yesNo(resolveAllowOther(data.allow_other as boolean | null | undefined)));
+  // "Outro" é controle dos campos de escolha (o editor só o mostra neles), e
+  // num texto livre a linha "Não" seria ruído. Ligado, aparece em qualquer
+  // tipo, como no diff, que não olha o tipo.
+  const allowOther = resolveAllowOther(data.allow_other as boolean | null | undefined);
+  if (allowOther || data.type === "single" || data.type === "multi")
+    pillRow("allow_other", allowOther);
   const subfields = Array.isArray(data.subfields) ? (data.subfields as SubfieldDef[]) : [];
   if (subfields.length > 0) {
     row("subfields", subfields.map(subfieldText).join(", "));
-    row(
+    pillRow(
       "subfield_rule",
-      SUBFIELD_RULE_LABELS[
-        resolveSubfieldRule(data.subfield_rule as PydanticSubfieldRule | null | undefined)
-      ],
+      resolveSubfieldRule(data.subfield_rule as PydanticSubfieldRule | null | undefined),
     );
   }
   if (data.condition) row("condition", formatCondition(data.condition as FieldCondition));

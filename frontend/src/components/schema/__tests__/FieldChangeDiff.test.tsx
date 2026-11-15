@@ -244,7 +244,7 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
       />,
     );
     expect(rowText("alvo")).toBe("alvo:Todos");
-    expect(rowText("obrigatório")).toBe("obrigatório:Sim");
+    expect(rowText("obrigatoriedade")).toBe("obrigatoriedade:Sim");
   });
 
   it("valores não-default continuam aparecendo", () => {
@@ -256,7 +256,7 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
       />,
     );
     expect(rowText("alvo")).toBe("alvo:Só humano");
-    expect(rowText("obrigatório")).toBe("obrigatório:Não");
+    expect(rowText("obrigatoriedade")).toBe("obrigatoriedade:Não");
     // O diff abaixo do snapshot não inventa o default do lado removido.
     expect(screen.queryByText("Todos")).toBeNull();
     expect(screen.queryByText("Sim")).toBeNull();
@@ -273,14 +273,13 @@ describe("FieldChangeDiff — snapshot completo e com os rótulos do diff", () =
   const noRow = (property: Parameters<typeof propertyLabel>[0]) =>
     expect(screen.queryByText(`${propertyLabel(property)}:`)).toBeNull();
 
-  it("snapshot e diff chamam `required` pelo mesmo nome, o do editor", () => {
+  it("snapshot e diff chamam `required` pelo mesmo nome", () => {
     render(
       <FieldChangeDiff
         entry={entry({ beforeValue: { name: "q1", type: "text", description: "d", required: false } })}
       />,
     );
-    expect(propertyLabel("required")).toBe("obrigatório");
-    expect(rowText("required")).toBe("obrigatório:Não");
+    expect(rowText("required")).toBe(`${propertyLabel("required")}:Não`);
     expect(propertySection("required")).toBe("Não—");
   });
 
@@ -297,11 +296,40 @@ describe("FieldChangeDiff — snapshot completo e com os rótulos do diff", () =
     expect(rowText("allow_other")).toBe(`${propertyLabel("allow_other")}:${value}`);
   });
 
-  it("campo sem opções não ganha a linha de `allow_other`", () => {
+  it("campo que não é de escolha, sem `allow_other` gravado, não ganha a linha", () => {
     render(<FieldChangeDiff entry={entry({ afterValue: { name: "q1", type: "text", description: "d" } })} />);
     noRow("allow_other");
     noRow("subfields");
     noRow("subfield_rule");
+  });
+
+  // O diff abaixo do snapshot não olha o tipo: um `allow_other: true` gravado
+  // num campo de texto legado aparecia no diff e sumia do snapshot.
+  it("`allow_other` ligado num campo que não é de escolha também aparece", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({ beforeValue: { name: "q1", type: "text", description: "d", allow_other: true } })}
+      />,
+    );
+    expect(rowText("allow_other")).toBe(`${propertyLabel("allow_other")}:Sim`);
+  });
+
+  // Mesmo formatador do diff: regra fora do enum vira "—", e não valor vazio.
+  it("regra de subcampos desconhecida aparece como —", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          beforeValue: {
+            name: "q1",
+            type: "text",
+            description: "d",
+            subfields: [{ key: "cid", label: "CID" }],
+            subfield_rule: "legado",
+          },
+        })}
+      />,
+    );
+    expect(rowText("subfield_rule")).toBe(`${propertyLabel("subfield_rule")}:—`);
   });
 
   it.each([
@@ -326,5 +354,25 @@ describe("FieldChangeDiff — snapshot completo e com os rótulos do diff", () =
     );
     expect(rowText("subfields")).toBe(`${propertyLabel("subfields")}:CID *, Obs`);
     expect(rowText("subfield_rule")).toBe(`${propertyLabel("subfield_rule")}:${rule}`);
+  });
+});
+
+// O rótulo da propriedade também aparece sem o valor: no selo da linha
+// recolhida do histórico e na mensagem de conflito ("<rótulo> de "q1"").
+// Como adjetivo, "obrigatório" ali afirmava que o campo ficou obrigatório
+// quando a mudança foi a oposta.
+describe("FieldChangeDiff — selo da linha recolhida", () => {
+  it("nomeia a propriedade `required` sem afirmar o valor", () => {
+    render(
+      <FieldChangeDiff
+        defaultExpanded={false}
+        entry={entry({
+          beforeValue: { name: "q1", type: "text", description: "d" },
+          afterValue: { name: "q1", type: "text", description: "d", required: false },
+        })}
+      />,
+    );
+    expect(screen.getByText("obrigatoriedade")).toBeTruthy();
+    expect(screen.queryByText("obrigatório")).toBeNull();
   });
 });
