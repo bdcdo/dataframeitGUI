@@ -48,7 +48,8 @@ strix_runs/
 # contem "@AGENTS.md"; sem estas linhas eles apareciam como untracked a cada dev
 # server ou E2E local. Um frontend/CLAUDE.md escrito de proposito precisaria de
 # `git add -f`.
-frontend/AGENTS.md
+AGENTS.md
+!/AGENTS.md
 frontend/CLAUDE.md
 
 # Claude Code — estado local por dev (configs/commands/agents compartilhados ficam versionados)
