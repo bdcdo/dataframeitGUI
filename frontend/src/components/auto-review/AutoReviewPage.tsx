@@ -46,7 +46,7 @@ export interface AutoReviewPageProps {
   /** membro canônico dono da fila própria */
   ownQueueUserId: string;
   /** ver `AutoReviewEmptyState`; calculado só com a fila vazia */
-  docsWithoutLlm?: number | null;
+  docsWithoutLlm?: Promise<number | null>;
 }
 
 const STORAGE_KEY_PREFIX = "autoReview:docId:";

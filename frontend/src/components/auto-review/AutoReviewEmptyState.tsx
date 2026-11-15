@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense, use } from "react";
 import { AlertTriangle } from "lucide-react";
 import {
   Select,
@@ -19,10 +20,11 @@ interface AutoReviewEmptyStateProps {
   onViewAsChange: (userId: string) => void;
   /**
    * Documentos com codificação humana fora da auto-revisão por não terem
-   * geração LLM corrente (#690) — o reinício do round arquiva todas. `null`:
-   * a contagem falhou; `undefined`: não calculada (só o coordenador a vê).
+   * geração LLM corrente (#690) — o reinício do round arquiva todas. Chega
+   * por streaming. `null`: a contagem falhou; `undefined`: não calculada
+   * (só o coordenador a vê, e só com a fila vazia).
    */
-  docsWithoutLlm?: number | null;
+  docsWithoutLlm?: Promise<number | null>;
 }
 
 export function AutoReviewEmptyState({
@@ -49,18 +51,10 @@ export function AutoReviewEmptyState({
       )}
       {isCoordinator ? (
         <div className="mt-6 space-y-3 border-t pt-4 text-left">
-          {docsWithoutLlm !== undefined && docsWithoutLlm !== 0 ? (
-            <div
-              role="note"
-              className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
-            >
-              <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-              <p>
-                {docsWithoutLlm === null
-                  ? "Não foi possível verificar se há documentos fora da auto-revisão por não ter geração LLM corrente."
-                  : `${docsWithoutLlm} documento(s) com codificação humana estão fora da auto-revisão por não ter geração LLM corrente (por exemplo, depois de reiniciar o round, que arquiva as gerações LLM). Rode o LLM neles para que as divergências apareçam aqui.`}
-              </p>
-            </div>
+          {docsWithoutLlm ? (
+            <Suspense fallback={null}>
+              <DocsWithoutLlmNote count={docsWithoutLlm} />
+            </Suspense>
           ) : null}
           {reviewers.length > 1 ? (
             <div>
@@ -88,6 +82,24 @@ export function AutoReviewEmptyState({
           </p>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function DocsWithoutLlmNote({ count }: { count: Promise<number | null> }) {
+  const docsWithoutLlm = use(count);
+  if (docsWithoutLlm === 0) return null;
+  return (
+    <div
+      role="note"
+      className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
+    >
+      <AlertTriangle aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+      <p>
+        {docsWithoutLlm === null
+          ? "Não foi possível verificar se há documentos fora da auto-revisão por não ter geração LLM corrente."
+          : `No projeto, ${docsWithoutLlm} documento(s) com codificação humana estão fora da auto-revisão por não ter geração LLM corrente (por exemplo, depois de reiniciar o round, que arquiva as gerações LLM). Rode o LLM neles para que as divergências entrem na auto-revisão.`}
+      </p>
     </div>
   );
 }

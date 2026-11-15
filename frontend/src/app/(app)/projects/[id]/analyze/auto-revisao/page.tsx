@@ -93,6 +93,30 @@ function buildAutoReviewDocuments(
   );
 }
 
+// Nunca rejeita: a contagem é informativa, e uma falha dela vira o aviso
+// "não foi possível verificar", não a tela de erro.
+async function countDocsWithoutLlm(
+  supabase: Parameters<typeof fetchDocsWithoutLlmCount>[0],
+  projectId: string,
+): Promise<number | null> {
+  try {
+    const result = await fetchDocsWithoutLlmCount(supabase, projectId);
+    if (result.error) {
+      console.error(
+        "AutoReviewRoute: contagem de documentos sem geração LLM falhou",
+        result.error.message,
+      );
+    }
+    return result.count;
+  } catch (error) {
+    console.error(
+      "AutoReviewRoute: contagem de documentos sem geração LLM falhou",
+      error,
+    );
+    return null;
+  }
+}
+
 export default async function AutoReviewRoute({
   params,
   searchParams,
@@ -164,17 +188,12 @@ export default async function AutoReviewRoute({
   // Fila vazia: diz ao coordenador quantos documentos ficaram fora por falta
   // de geração LLM corrente (round reiniciado, #690), em vez de um vazio mudo.
   // Só para ele: a RLS dele vê o projeto inteiro, e rodar o LLM é ação dele.
-  let docsWithoutLlm: number | null | undefined;
-  if (isCoordinator && docsToReview.length === 0) {
-    const result = await fetchDocsWithoutLlmCount(supabase, id);
-    if (result.error) {
-      console.error(
-        "AutoReviewRoute: contagem de documentos sem geração LLM falhou",
-        result.error.message,
-      );
-    }
-    docsWithoutLlm = result.count;
-  }
+  // Vai como promessa (streaming): a contagem pagina as respostas correntes do
+  // projeto e não pode segurar a tela.
+  const docsWithoutLlm =
+    isCoordinator && docsToReview.length === 0
+      ? countDocsWithoutLlm(supabase, id)
+      : undefined;
 
   return (
     <Suspense

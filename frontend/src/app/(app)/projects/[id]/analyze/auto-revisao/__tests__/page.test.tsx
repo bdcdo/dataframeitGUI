@@ -72,7 +72,7 @@ type AutoReviewProps = {
   ownQueueUserId: string;
   docs: Array<{ docId: string }>;
   queueUserId: string;
-  docsWithoutLlm?: number | null;
+  docsWithoutLlm?: Promise<number | null>;
 };
 
 function getAutoReviewProps(result: unknown): AutoReviewProps {
@@ -213,7 +213,27 @@ describe("AutoReviewRoute — fila vazia por falta de geração LLM", () => {
     authMocks.getProjectAccessContext.mockResolvedValue(coordinator);
     const props = await renderRoute();
     expect(props.docs).toEqual([]);
-    expect(props.docsWithoutLlm).toBe(2);
+    // Promessa, não número: a contagem pagina as respostas correntes do
+    // projeto e vai por streaming, sem segurar a renderização da página.
+    expect(props.docsWithoutLlm).toBeInstanceOf(Promise);
+    expect(await props.docsWithoutLlm).toBe(2);
+  });
+
+  it("contagem que lança vira aviso de falha, sem derrubar a página", async () => {
+    seedRestartedRound();
+    authMocks.getProjectAccessContext.mockResolvedValue(coordinator);
+    createSupabaseServer.mockImplementation(async () => {
+      const client = makeFilterAwareSupabaseMock({ tableData, writeCalls: [] });
+      const from = client.from;
+      client.from = (table: string) => {
+        if (table === "responses") throw new Error("fetch failed");
+        return from(table);
+      };
+      return client;
+    });
+    const props = await renderRoute();
+    expect(props.docs).toEqual([]);
+    expect(await props.docsWithoutLlm).toBeNull();
   });
 
   it("não conta para o pesquisador nem com fila não vazia", async () => {
