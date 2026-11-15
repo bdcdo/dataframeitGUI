@@ -58,6 +58,37 @@ describe("detectFieldChangeKind", () => {
 });
 
 describe("diffPydanticField", () => {
+  // O lado vazio de um campo removido (ou adicionado) não tem default: antes, o
+  // resolvedor o preenchia e o histórico dizia que o campo removido tinha
+  // passado a "Todos" e "obrigatório".
+  it("campo removido não ganha o default do lado vazio", () => {
+    const removed = {
+      name: "q1",
+      target: "human_only",
+      required: false,
+      allow_other: true,
+      subfield_rule: "at_least_one",
+    };
+    const resolved = diffPydanticField(removed, {}).filter((d) => d.property !== "name");
+    expect(resolved).toEqual([
+      { property: "target", before: "human_only", after: null },
+      { property: "required", before: false, after: null },
+      { property: "allow_other", before: true, after: null },
+      { property: "subfield_rule", before: "at_least_one", after: null },
+    ]);
+    expect(diffPydanticField({}, removed).find((d) => d.property === "target")).toEqual({
+      property: "target",
+      before: null,
+      after: "human_only",
+    });
+  });
+
+  it("campo removido com os defaults não acusa mudança neles", () => {
+    expect(diffPydanticField({ name: "q1", target: "all", required: true }, {})).toEqual([
+      { property: "name", before: "q1", after: undefined },
+    ]);
+  });
+
   it("não retorna diffs quando before === after", () => {
     const v = { name: "x", description: "d", required: true };
     expect(diffPydanticField(v, v)).toEqual([]);

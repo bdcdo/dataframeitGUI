@@ -633,8 +633,8 @@ function pendingReason(docId: string, fieldName: string, ctx: CellContext, signa
   return arbitrationReason(docId, ctx, signals.inComparison);
 }
 
-// Quando a regra da Comparação não vê a divergência (campo `human_only`),
-// ninguém vai arbitrar. Quando vê, a divergência só tem quem a arbitre se o
+// Quando a regra da Comparação não vê a divergência (campo fora de
+// `isComparedField`), ninguém vai arbitrar. Quando vê, a divergência só tem quem a arbitre se o
 // documento tem atribuição de comparação na rodada atual.
 function arbitrationReason(docId: string, ctx: CellContext, inComparison: boolean): string {
   if (!inComparison) return PENDING_REASON.uncompared;

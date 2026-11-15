@@ -137,32 +137,38 @@ export function diffPydanticField(
   // default resolvido. `Boolean(null)` e `false`, mas o default de `required` e
   // `true` — era por isso que marcar um campo como opcional gravava o log e nao
   // renderizava linha nenhuma (`Boolean(null) !== Boolean(false)` e falso).
+  // O lado inteiro vazio (campo adicionado ou removido) e outra coisa: nao ha
+  // campo ali para ter o default, e mostra-lo como valor dizia que o campo
+  // removido tinha passado a "Todos". A comparacao segue pelo resolvedor; so a
+  // exibicao do lado vazio vira `null`.
+  const shown = <T,>(side: Record<string, unknown>, value: T): T | null =>
+    isEmptySnapshot(side) ? null : value;
   if (has(before, "target") || has(after, "target")) {
     const b = resolveTarget(before.target as PydanticFieldTarget | null | undefined);
     const a = resolveTarget(after.target as PydanticFieldTarget | null | undefined);
     if (b !== a) {
-      diffs.push({ property: "target", before: b, after: a });
+      diffs.push({ property: "target", before: shown(before, b), after: shown(after, a) });
     }
   }
   if (has(before, "required") || has(after, "required")) {
     const b = resolveRequired(before.required as boolean | null | undefined);
     const a = resolveRequired(after.required as boolean | null | undefined);
     if (b !== a) {
-      diffs.push({ property: "required", before: b, after: a });
+      diffs.push({ property: "required", before: shown(before, b), after: shown(after, a) });
     }
   }
   if (has(before, "allow_other") || has(after, "allow_other")) {
     const b = resolveAllowOther(before.allow_other as boolean | null | undefined);
     const a = resolveAllowOther(after.allow_other as boolean | null | undefined);
     if (b !== a) {
-      diffs.push({ property: "allow_other", before: b, after: a });
+      diffs.push({ property: "allow_other", before: shown(before, b), after: shown(after, a) });
     }
   }
   if (has(before, "subfield_rule") || has(after, "subfield_rule")) {
     const b = resolveSubfieldRule(before.subfield_rule as PydanticSubfieldRule | null | undefined);
     const a = resolveSubfieldRule(after.subfield_rule as PydanticSubfieldRule | null | undefined);
     if (b !== a) {
-      diffs.push({ property: "subfield_rule", before: b, after: a });
+      diffs.push({ property: "subfield_rule", before: shown(before, b), after: shown(after, a) });
     }
   }
   if (has(before, "subfields") || has(after, "subfields")) {

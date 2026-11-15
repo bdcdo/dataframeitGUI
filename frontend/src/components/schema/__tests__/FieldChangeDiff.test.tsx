@@ -266,5 +266,8 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
     );
     expect(rowText("alvo")).toBe("alvo:Só humano");
     expect(rowText("obrigatório")).toBe("obrigatório:Não");
+    // O diff abaixo do snapshot não inventa o default do lado removido.
+    expect(screen.queryByText("Todos")).toBeNull();
+    expect(screen.queryByText("Sim")).toBeNull();
   });
 });

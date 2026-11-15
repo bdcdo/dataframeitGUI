@@ -35,7 +35,9 @@ const SUBFIELD_RULE_LABELS: Record<string, string> = {
   at_least_one: "Pelo menos um",
 };
 
-const yesNo = (v: unknown) => (v ? "Sim" : "Não");
+// `null` é o lado vazio de um campo adicionado ou removido (`diffPydanticField`),
+// e não "Não": mostra "—", como `formatType` e `formatTarget`.
+const yesNo = (v: unknown) => (v == null ? "—" : v ? "Sim" : "Não");
 
 // Propriedades de valor curto e enumerável: o diff é um par de pílulas
 // antes → depois, e só o formatador muda.
