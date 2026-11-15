@@ -787,6 +787,21 @@ def _safe_literal(node: ast.AST):
         raise SchemaError("Valor não literal no schema") from e
 
 
+def _unwrap_optional(annotation: type) -> type:
+    """`Optional[X]` -> `X`; qualquer outra anotação volta como está.
+
+    Campo com condição de visibilidade sai do gerador como `Optional[...]`
+    (`fieldAnnotation` em schema-utils.ts), inclusive o composto, cujo
+    `Optional[_<nome>_fields]` precisa ser desembrulhado para que os subcampos
+    voltem no round-trip (#525).
+    """
+    if get_origin(annotation) is typing.Union:
+        non_none = [a for a in get_args(annotation) if a is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return annotation
+
+
 def _parse_annotation(annotation: type) -> tuple[str, list[str] | None]:
     """Parse a type annotation into (type, options)."""
     origin = get_origin(annotation)
@@ -809,10 +824,9 @@ def _parse_annotation(annotation: type) -> tuple[str, list[str] | None]:
         return "text", None
 
     # Optional[X] -> unwrap
-    if origin is typing.Union:
-        non_none = [a for a in args if a is not type(None)]
-        if len(non_none) == 1:
-            return _parse_annotation(non_none[0])
+    inner = _unwrap_optional(annotation)
+    if inner is not annotation:
+        return _parse_annotation(inner)
 
     # Nested BaseModel -> composite text field
     from pydantic import BaseModel
@@ -831,6 +845,7 @@ def _extract_subfields(annotation: type) -> list[dict] | None:
     """Extract subfield definitions from a nested BaseModel annotation."""
     from pydantic import BaseModel
 
+    annotation = _unwrap_optional(annotation)
     if not (
         isinstance(annotation, type)
         and issubclass(annotation, BaseModel)

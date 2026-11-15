@@ -152,6 +152,32 @@ class Analysis(BaseModel):
     ]
 
 
+def test_conditional_composite_field_keeps_subfields():
+    # Campo composto com condição sai do gerador como Optional[_x_fields]; sem
+    # desembrulhar o Optional, a recuperação devolvia o campo sem subcampos
+    # (achado do teste de propriedade do round-trip, #525).
+    code = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+class _doc_fields(BaseModel):
+    part_a: str = Field(description="Part A")
+
+class Analysis(BaseModel):
+    has_doc: Literal["Sim", "Não"] = Field(description="Tem documento?")
+    doc: Optional[_doc_fields] = Field(
+        default=None,
+        description="Doc",
+        json_schema_extra={"visible_if": {"field": "has_doc", "equals": "Sim"}},
+    )
+"""
+    result = compile_pydantic(code, generate_missing_ids=True)
+    f = _field(result, "doc")
+    assert f["type"] == "text"
+    assert f["subfields"] == [{"key": "part_a", "label": "Part A", "required": True}]
+    assert f["subfield_rule"] == "all"
+    assert f["condition"] == {"field": "has_doc", "equals": "Sim"}
+
+
 def test_allow_other_preserved_for_single():
     code = """from pydantic import BaseModel, Field
 from typing import Literal, Optional
