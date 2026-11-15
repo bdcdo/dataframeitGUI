@@ -80,6 +80,21 @@ describe("applyFormEdits", () => {
 
   // O EditFieldDialog não renderiza sem `baseField`, então isto é o contrato do
   // módulo puro para um chamador futuro: sem o campo, não há edição a aplicar.
+  // O que o diálogo grava é o que `compile_pydantic` devolve: o `strip()` do
+  // Python também remove \x1f e \x85 (o `trim()` do JS não) e mantém
+  // \ufeff (o JS removia). Gravado diferente, o save era recusado (#525).
+  it("apara instruções e prompt de justificativa como o Python", () => {
+    const [edited] = applyFormEdits([q1], "q1", formOf({
+      helpText: "\x85Leia\x1f",
+      justificationPrompt: "\ufeffJustifique \x1c",
+    }));
+    expect(edited.help_text).toBe("Leia");
+    expect(edited.justification_prompt).toBe("\ufeffJustifique");
+    expect(
+      applyFormEdits([q1], "q1", formOf({ helpText: "\x1f " }))[0].help_text,
+    ).toBeUndefined();
+  });
+
   it("base sem o campo devolve os campos intactos", () => {
     expect(applyFormEdits([q2], "q1", formOf())).toEqual([q2]);
   });

@@ -296,6 +296,34 @@ function validateOptions(
   });
 }
 
+// `help_text` e `justification_prompt` saem aparados no código e voltam
+// aparados de `compile_pydantic` (`stripLikePython`, acima): gravados com
+// branco na borda, ou só com branco, o campo recuperado era diferente do salvo
+// e a recuperação acusava mudança. O editor os apara ao sair do campo; a
+// validação barra o que chega ao save sem passar por ele, em vez de reescrever
+// o texto, como faz com a descrição e as opções (#525).
+const TRIMMED_TEXTS = [
+  ["help_text", "das instruções"],
+  ["justification_prompt", "do prompt de justificativa"],
+] as const;
+
+function validateTrimmedTexts(
+  field: PydanticField,
+  label: string,
+  issue: AddFieldIssue,
+): void {
+  for (const [key, of] of TRIMMED_TEXTS) {
+    const text = field[key];
+    if (text === undefined) continue;
+    const stripped = stripLikePython(text);
+    if (!stripped) {
+      issue(`${label}: texto ${of} está em branco`, [key]);
+    } else if (stripped !== text) {
+      issue(`${label}: espaço em branco no início ou no fim ${of}`, [key]);
+    }
+  }
+}
+
 function conditionValues(condition: FieldCondition): ConditionScalar[] {
   if ("equals" in condition) return [condition.equals];
   if ("not_equals" in condition) return [condition.not_equals];
@@ -381,6 +409,7 @@ const saveablePydanticFieldsSchema = pydanticFieldsSchema.superRefine(
       validateFieldIdentity(field, label, issue);
       validateSubfields(field, label, issue);
       validateOptions(field, label, issue);
+      validateTrimmedTexts(field, label, issue);
       validateCondition(field, fieldByName, label, issue);
       if (!fieldByName.has(field.name)) fieldByName.set(field.name, field);
     }

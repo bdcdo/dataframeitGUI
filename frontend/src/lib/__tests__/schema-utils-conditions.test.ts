@@ -320,6 +320,46 @@ describe("validateGUIFields — opções repetidas", () => {
   });
 });
 
+// O gerador e `compile_pydantic` aparam `help_text` e `justification_prompt`:
+// gravado com branco na borda, o texto voltava diferente da recuperação (#525).
+describe("validateGUIFields — instruções e prompt de justificativa", () => {
+  it.each([
+    ["help_text", "das instruções"],
+    ["justification_prompt", "do prompt de justificativa"],
+  ] as const)("rejeita %s com branco na borda", (key, of) => {
+    for (const text of [" Leia", "Leia\n", "Leia\x1f", "\x85Leia"]) {
+      const fields = [baseField({ name: "q", type: "text", [key]: text })];
+      expect(validateGUIFields(fields), JSON.stringify(text)).toEqual([
+        `Campo 1 ("q"): espaço em branco no início ou no fim ${of}`,
+      ]);
+    }
+  });
+
+  it.each([
+    ["help_text", "das instruções"],
+    ["justification_prompt", "do prompt de justificativa"],
+  ] as const)("rejeita %s em branco", (key, of) => {
+    for (const text of ["", "  ", "\x1f"]) {
+      const fields = [baseField({ name: "q", type: "text", [key]: text })];
+      expect(validateGUIFields(fields), JSON.stringify(text)).toEqual([
+        `Campo 1 ("q"): texto ${of} está em branco`,
+      ]);
+    }
+  });
+
+  it("aceita texto aparado, com \ufeff na borda (o Python não o apara)", () => {
+    const fields = [
+      baseField({
+        name: "q",
+        type: "text",
+        help_text: "Leia  com\ncalma",
+        justification_prompt: "\ufeffJustifique",
+      }),
+    ];
+    expect(validateGUIFields(fields)).toEqual([]);
+  });
+});
+
 // #502: erro estrutural do Zod (texto em inglês) vira mensagem pt-BR que
 // nomeia o campo e a propriedade.
 describe("validateGUIFields — erro estrutural", () => {

@@ -29,6 +29,7 @@ import {
   RESERVED_NAME_REASON,
   resolveRequired,
   resolveTarget,
+  stripLikePython,
 } from "@/lib/pydantic-field";
 
 interface FieldCardProps {
@@ -258,7 +259,7 @@ function FieldAnswerEditors({
             updateField({ justification_prompt: value || undefined })
           }
           onBlur={(value) =>
-            updateField({ justification_prompt: value.trim() || undefined })
+            updateField({ justification_prompt: stripLikePython(value) || undefined })
           }
         />
       )}
@@ -357,7 +358,7 @@ export function FieldCard({
               <Textarea
                 value={field.help_text || ""}
                 onChange={(e) => updateField({ help_text: e.target.value || undefined })}
-                onBlur={(e) => updateField({ help_text: e.target.value.trim() || undefined })}
+                onBlur={(e) => updateField({ help_text: stripLikePython(e.target.value) || undefined })}
                 placeholder="Explicações adicionais sobre como responder esta pergunta"
                 className="text-sm min-h-[60px] resize-y"
               />

@@ -3,6 +3,7 @@ import {
   unresolvedSchemaConflicts,
   type SchemaMergeConflict,
 } from "@/lib/schema-merge";
+import { stripLikePython } from "@/lib/pydantic-field";
 import { stripOptionFromConditions } from "@/lib/schema-utils";
 import { propertyLabel } from "@/lib/schema-change-format";
 import type {
@@ -55,11 +56,11 @@ function editedFieldFromForm(
   return {
     ...baseField,
     description: form.description,
-    help_text: form.helpText.trim() || undefined,
+    help_text: stripLikePython(form.helpText) || undefined,
     ...optionShapeFromForm(form),
     allow_other: allowsOther ? true : undefined,
     condition: form.condition,
-    justification_prompt: form.justificationPrompt.trim() || undefined,
+    justification_prompt: stripLikePython(form.justificationPrompt) || undefined,
   };
 }
 
