@@ -149,3 +149,48 @@ describe("SchemaBuilderGUI — hidratação", () => {
     }
   });
 });
+
+// Propriedade de um tipo não sobrevive à troca para outro: `subfields` de um
+// texto viraria anotação composta num campo de data, e `allow_other` num texto
+// não volta no round-trip do schema (achado do #879).
+describe("SchemaBuilderGUI — troca de tipo", () => {
+  function lastFields(onChange: ReturnType<typeof vi.fn>): PydanticField[] {
+    return onChange.mock.calls.at(-1)![0] as PydanticField[];
+  }
+
+  it("limpa subcampos e regra ao sair de texto", async () => {
+    const onChange = vi.fn();
+    const composite: PydanticField = {
+      ...field("composto"),
+      subfields: [{ key: "a", label: "A", required: true }],
+      subfield_rule: "at_least_one",
+    };
+    render(<SchemaBuilderGUI fields={[composite]} onChange={onChange} />);
+    await userEvent.click(cardTrigger("composto"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Data" }));
+
+    const [changed] = lastFields(onChange);
+    expect(changed.type).toBe("date");
+    expect(changed.subfields).toBeUndefined();
+    expect(changed.subfield_rule).toBeUndefined();
+  });
+
+  it("limpa a opção Outro ao sair de escolha", async () => {
+    const onChange = vi.fn();
+    const choice: PydanticField = {
+      ...field("escolha"),
+      type: "single",
+      options: ["Sim", "Não"],
+      allow_other: true,
+    };
+    render(<SchemaBuilderGUI fields={[choice]} onChange={onChange} />);
+    await userEvent.click(cardTrigger("escolha"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Texto livre" }));
+
+    const [changed] = lastFields(onChange);
+    expect(changed.type).toBe("text");
+    expect(changed.allow_other).toBeUndefined();
+  });
+});

@@ -23,6 +23,7 @@ import { OptionsAllowOtherEditor } from "./OptionsAllowOtherEditor";
 import { DateSentinelEditor } from "./DateSentinelEditor";
 import { useOptionRemovalGuard } from "./useOptionRemovalGuard";
 import { stripOptionFromConditions } from "@/lib/schema-utils";
+import { fieldTypeChangePatch } from "@/lib/field-type-change";
 import type { PydanticField } from "@/lib/types";
 import {
   pydanticFieldNameIssue,
@@ -96,16 +97,6 @@ function FieldNameInput({
 
 type UpdateField = (patch: Partial<PydanticField>) => void;
 
-function fieldTypePatch(
-  field: PydanticField,
-  type: PydanticField["type"],
-): Partial<PydanticField> {
-  if (type === "text") return { type, options: null };
-  if (type === "date") return { type };
-  if (!field.options?.length) return { type, options: ["Opção 1"] };
-  return { type };
-}
-
 function FieldTypeControls({
   field,
   updateField,
@@ -126,7 +117,7 @@ function FieldTypeControls({
               "text-xs",
               field.type === type && "bg-brand/10 text-brand border-brand/40",
             )}
-            onClick={() => updateField(fieldTypePatch(field, type))}
+            onClick={() => updateField(fieldTypeChangePatch(field, type))}
           >
             {TYPE_LABELS[type]}
           </Button>
