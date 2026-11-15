@@ -68,6 +68,16 @@ beforeAll(() => {
   return warmUpJsdom({ select: true });
 }, 30_000);
 
+// O download faz `import("exceljs")`, um módulo pesado. Carregado frio dentro
+// do teste, o import gastava segundos de parede com a suíte disputando a CPU
+// (6,7 s na suíte completa, estourando os 5 s; 2,9 a 4,9 s com o arquivo
+// sozinho e a CPU ocupada), e o jszip ainda rejeitava depois do teardown
+// ("reading 'nodebuffer'"). O carregamento fica no beforeAll, fora do prazo do
+// teste: ver docs/CODE_QUALITY_TOOLING.md, "Orçamento de CPU por teste".
+beforeAll(async () => {
+  await import("exceljs");
+}, 30_000);
+
 afterEach(cleanup);
 beforeEach(() => {
   hoisted.getAutoReviewVerdicts.mockReset();
