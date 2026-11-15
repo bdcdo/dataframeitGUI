@@ -74,11 +74,8 @@ interface CompareFieldReviewProps {
 /**
  * Tudo que pertence a UM campo divergente: os cards de resposta (ou a grade de
  * um campo multi), o aviso de quem não respondeu e as ações da divergência.
- * Só campo divergente chega aqui: a fila de campos do `ComparePage` é
- * `docFields ⊆ divergentFields`, que o servidor já entrega filtrado
- * (`computeDivergentFieldNames`), e doc sem campo divergente sai antes de montar
- * o painel. Por isso não há ramo "concordante" — o que existia era inalcançável
- * (#616).
+ * Só campo divergente chega aqui (ver `isCurrentFieldDivergent` em
+ * `useCompareNavigation`), por isso não há ramo "concordante" (#616).
  *
  * Existe como componente próprio para que a identidade do campo seja UMA
  * fronteira de montagem, não três keys irmãs coincidentes — que era o desenho
@@ -99,7 +96,7 @@ interface CompareFieldReviewProps {
  * cabeçalho, os ProgressDots, o rodapé de confirmação e o container de scroll —
  * assim a troca de campo não zera o `scrollTop` nem rouba o foco.
  */
-// Cognitive 24 vs. limiar 15, com cyclomatic 6 (medido após a #616): a pontuação
+// Cognitive acima do limiar 15 (números no `fallow health`): a pontuação
 // vem do encaminhamento de props, que o fallow conta como fiação. É o mesmo
 // débito JSX inerente já rastreado na #580 para ComparePage/CompareMainView.
 //

@@ -10,6 +10,7 @@ const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: toastError, info: vi.fn(), success: vi.fn() } }));
 
 import { useCompareKeyboard } from "@/components/compare/useCompareKeyboard";
+import { keyboardParams } from "./compare-test-helpers";
 
 afterEach(() => {
   cleanup();
@@ -27,13 +28,12 @@ function group(id: string, answer: string): FieldResponse[] {
 
 function setup() {
   const onPrepareVerdict = vi.fn();
-  renderHook(() => useCompareKeyboard({
-    readOnly: false, isFullscreen: false, isCurrentFieldDivergent: true,
-    currentField: FIELD, answerGroups: [group("r1", "Sim"), group("r2", "Talvez")],
-    origin: { documentId: "doc1", fieldName: "q" },
-    onToggleFullscreen: vi.fn(), onExitFullscreen: vi.fn(), onNextField: vi.fn(), onPrevField: vi.fn(),
-    onPrepareVerdict, onSubmitSpecialVerdict: vi.fn(), onConfirmPendingVerdict: vi.fn(), hasPendingVerdict: false,
-  }));
+  const params = keyboardParams({
+    currentField: FIELD,
+    answerGroups: [group("r1", "Sim"), group("r2", "Talvez")],
+    onPrepareVerdict,
+  });
+  renderHook(() => useCompareKeyboard(params));
   return { onPrepareVerdict };
 }
 

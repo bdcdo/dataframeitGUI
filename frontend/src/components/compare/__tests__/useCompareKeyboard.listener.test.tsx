@@ -6,28 +6,14 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, cleanup } from "@testing-library/react";
 import { useCompareKeyboard } from "@/components/compare/useCompareKeyboard";
+import { keyboardParams } from "./compare-test-helpers";
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-const params = {
-  readOnly: false,
-  isFullscreen: false,
-  isCurrentFieldDivergent: true,
-  currentField: undefined,
-  answerGroups: [],
-  origin: { documentId: "doc1", fieldName: "q" },
-  onToggleFullscreen: vi.fn(),
-  onExitFullscreen: vi.fn(),
-  onNextField: vi.fn(),
-  onPrevField: vi.fn(),
-  onPrepareVerdict: vi.fn(),
-  onSubmitSpecialVerdict: vi.fn(),
-  onConfirmPendingVerdict: vi.fn(),
-  hasPendingVerdict: false,
-};
+const params = keyboardParams();
 
 describe("useCompareKeyboard: listener de teclado", () => {
   it("não é religado quando o documento passa a estar concluído", () => {

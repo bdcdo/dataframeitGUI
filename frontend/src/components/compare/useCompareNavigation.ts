@@ -172,6 +172,10 @@ export function useCompareNavigation({
   }
 
   const currentField = fields.find((f) => f.name === currentFieldName);
+  // Invariante: havendo campo, ele é divergente — `docFields ⊆ allDocDivergent`,
+  // que o servidor já entrega filtrado (`computeDivergentFieldNames`), e doc
+  // sem campo divergente sai antes de montar o painel. Este flag só é `false`
+  // quando não há campo; por isso a UI não tem ramo "concordante" (#616).
   const isCurrentFieldDivergent = divergentSet.has(currentFieldName);
 
   // Avisa quando a COMPOSIÇÃO da fila de campos muda sob a revisora. Tanto a

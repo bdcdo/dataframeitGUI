@@ -163,9 +163,9 @@ function compareWriteGate(
   if (readOnly) return { ok: false, reason: "read-only" };
   if (currentDoc === undefined) return { ok: false, reason: "no-doc" };
   if (currentFieldName.length === 0) return { ok: false, reason: "no-field" };
-  // Defesa da fronteira de escrita, não ramo de fluxo: o campo atual sai de
-  // `docFields ⊆ divergentes` e, sem campo, `no-field` já recusou acima. Só
-  // dispara se um caminho novo montar o painel com campo fora da fila (#616).
+  // Defesa da fronteira de escrita, não ramo de fluxo: com campo, ele é
+  // sempre divergente (ver `useCompareNavigation`), e sem campo `no-field` já
+  // recusou acima. Só dispara se um caminho novo fugir dessa fila (#616).
   if (!isCurrentFieldDivergent) return { ok: false, reason: "not-divergent" };
   if (
     !verdictOriginMatches(origin, {

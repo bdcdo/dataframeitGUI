@@ -1,6 +1,7 @@
 import { vi } from "vitest";
 import type { CompareDocument } from "@/components/compare/compare-types";
 import type { ComparisonPanel } from "@/components/compare/ComparisonPanel";
+import type { useCompareKeyboard } from "@/components/compare/useCompareKeyboard";
 import type { PydanticField } from "@/lib/types";
 
 /**
@@ -89,6 +90,33 @@ export function panelProps(over: Partial<PanelProps> = {}): PanelProps {
     onConfirmEquivalent: vi.fn(async () => {}),
     onUnmarkEquivalencePair: vi.fn(async () => {}),
     currentUserId: "u1",
+    ...over,
+  };
+}
+
+export type KeyboardParams = Parameters<typeof useCompareKeyboard>[0];
+
+/**
+ * Parâmetros de `useCompareKeyboard` com um campo divergente resolvido e
+ * callbacks estáveis — compartilhado pelos testes do hook para que uma mudança
+ * de assinatura seja editada num lugar só.
+ */
+export function keyboardParams(over: Partial<KeyboardParams> = {}): KeyboardParams {
+  return {
+    readOnly: false,
+    isFullscreen: false,
+    isCurrentFieldDivergent: true,
+    currentField: undefined,
+    answerGroups: [],
+    origin: { documentId: "doc1", fieldName: "q" },
+    onToggleFullscreen: vi.fn(),
+    onExitFullscreen: vi.fn(),
+    onNextField: vi.fn(),
+    onPrevField: vi.fn(),
+    onPrepareVerdict: vi.fn(),
+    onSubmitSpecialVerdict: vi.fn(),
+    onConfirmPendingVerdict: vi.fn(),
+    hasPendingVerdict: false,
     ...over,
   };
 }
