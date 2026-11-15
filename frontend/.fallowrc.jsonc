@@ -104,7 +104,9 @@
   "rules": {
     // Diretivas client/server: a classe de bug que quebrou tres deploys
     // seguidos (#404) e motivou o CI proprio do #452. O Next ignora a diretiva
-    // em silencio, entao nada falha ate o deploy.
+    // em silencio, entao nada falha ate o deploy. O canario em
+    // src/tooling/__tests__/fallow-severity-canary.test.ts reprova se alguma
+    // destas quatro deixar de barrar (rebaixada, desligada ou renomeada).
     "invalid-client-export": "error",
     "misplaced-directive": "error",
     "mixed-client-server-barrel": "error",

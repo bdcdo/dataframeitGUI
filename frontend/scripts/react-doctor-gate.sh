@@ -12,18 +12,10 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
-# Guarda de versao. O hook invoca o binario PINADO direto (nao npx), justamente
-# para respeitar o pino do package.json. Mas nada detectava um node_modules
-# stale: um checkout preso na 0.5.8 enquanto o package.json ja pinava 0.7.8
-# media com a ferramenta errada -- contagem e ate numero de linha divergentes --
-# sem ninguem perceber. Aqui o gate falha fechado quando o instalado diverge do
-# pino, em vez de medir com a versao errada.
-pinned=$(node -p "require('./package.json').devDependencies['react-doctor'].replace(/^[^0-9]*/, '')")
-installed=$(node -p "require('./node_modules/react-doctor/package.json').version")
-if [ "$pinned" != "$installed" ]; then
-  echo "react-doctor instalado ($installed) != pinado ($pinned); rode (cd frontend && npm install)" >&2
-  exit 1
-fi
+# Guarda de versao: o hook invoca o binario PINADO direto (nao npx), e falha
+# fechado quando o node_modules diverge do pino (porque em
+# scripts/gates/lib/assert-pinned-version.sh, compartilhado com o fallow).
+bash scripts/gates/lib/assert-pinned-version.sh react-doctor
 
 # --scope lines --base HEAD: line-scoped, so bloqueia as LINHAS alteradas vs
 # HEAD (o debito legado fica grandfathered). Nao --scope changed, que deixou de

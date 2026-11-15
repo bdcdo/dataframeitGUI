@@ -217,15 +217,16 @@ repos:
       # nao casam com o glob por extensao do hook do vitest): as migrations e o
       # backend/services/llm_runner.py (model-registry: DEFAULT de llm_model e
       # llm_kwargs, DEFAULT_PARALLEL_REQUESTS), os JSON de paridade do backend
-      # (pydantic-field-names, schema-roundtrip) e a suite SQL do ciclo de
-      # resolucao de erros (error-resolution-cycle). Roda so essas suites, e nao
-      # a suite inteira, para que um push so de backend nao pague o frontend
-      # todo. Suite nova que leia arquivo desses entra nas duas listas abaixo.
+      # (pydantic-field-names, schema-roundtrip), a suite SQL do ciclo de
+      # resolucao de erros (error-resolution-cycle) e o canario de severidade do
+      # fallow, que le o .fallowrc.jsonc e o fallow instalado pelo package.json
+      # (fallow-severity-canary). Roda so essas suites, e nao a suite inteira,
+      # para que um push so de backend nao pague o frontend todo. Suite nova que leia arquivo desses entra nas duas listas abaixo.
       - id: vitest-non-ts-inputs
-        name: vitest das suites que leem SQL, Python e JSON do backend (pre-push)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run src/lib/__tests__/model-registry.test.ts src/lib/__tests__/pydantic-field-names.test.ts src/lib/__tests__/schema-roundtrip.property.test.ts src/lib/__tests__/error-resolution-cycle.test.ts || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        name: vitest das suites que leem SQL, Python e JSON (pre-push)
+        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run src/lib/__tests__/model-registry.test.ts src/lib/__tests__/pydantic-field-names.test.ts src/lib/__tests__/schema-roundtrip.property.test.ts src/lib/__tests__/error-resolution-cycle.test.ts src/tooling/__tests__/fallow-severity-canary.test.ts || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
         language: system
-        files: ^(frontend/supabase/(migrations/.*|tests/error_resolution_cycle\.test)\.sql|backend/(services/llm_runner\.py|tests/(reserved_field_names|schema_roundtrip_cases)\.json))$
+        files: ^(frontend/(supabase/(migrations/.*|tests/error_resolution_cycle\.test)\.sql|\.fallowrc\.jsonc|package(-lock)?\.json)|backend/(services/llm_runner\.py|tests/(reserved_field_names|schema_roundtrip_cases)\.json))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
@@ -318,11 +319,15 @@ repos:
       # os arquivos vindos da main como introduzidos aqui, barrando o push por
       # achado alheio. Fixar em origin/main faz o gate responder a pergunta certa:
       # o que ESTE PR introduz em relacao ao alvo do merge.
+      #
+      # O script tambem falha fechado com o fallow instalado != pinado e com
+      # regra do .fallowrc.jsonc que o fallow nao conhece (#652). Por isso o
+      # hook roda ainda quando o push so muda a config ou a versao do fallow.
       - id: fallow-audit
         name: fallow audit (new findings block, pre-push)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/fallow && exec ./node_modules/.bin/fallow audit --base origin/main || { echo "fallow ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        entry: bash frontend/scripts/fallow-audit-gate.sh
         language: system
-        files: ^frontend/.*\.(mts|ts|tsx)$
+        files: ^frontend/(.*\.(mts|ts|tsx)|\.fallowrc\.jsonc|package(-lock)?\.json)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
