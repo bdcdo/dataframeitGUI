@@ -169,13 +169,17 @@ describe("LlmErrorCard: respostas atuais dos pesquisadores", () => {
 
   // Dois pesquisadores sem nome viram ambos "Pesquisador": a chave da lista é
   // o id da resposta, não o nome (react-doctor no-array-index-as-key).
-  it("lista os dois quando o nome empata", () => {
+  it("lista os dois quando o nome empata, sem chave duplicada", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     renderWith([
       { responseId: "r1", name: "Pesquisador", answer: "Sim" },
       { responseId: "r2", name: "Pesquisador", answer: "Não" },
     ]);
     const items = screen.getByText("Pesquisadores agora:").parentElement!.querySelectorAll("li");
     expect([...items].map((li) => li.textContent)).toEqual(["Pesquisador: Sim", "Pesquisador: Não"]);
+    // Com `key={answer.name}` o React avisaria "Encountered two children with the same key".
+    expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+    consoleError.mockRestore();
   });
 
   it("sem resposta humana corrente, diz isso em vez de sumir", () => {

@@ -90,7 +90,6 @@ export function CompareNav({
           onChange={onFilterChange}
           fields={fields}
           className="h-8 w-[200px] text-xs"
-          placeholder="Filtrar campos"
         />
         <DocPager index={docIndex} total={totalDocs} onNavigate={onDocNavigate} />
         {projectId && documentId && (

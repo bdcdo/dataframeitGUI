@@ -14,22 +14,22 @@ interface FieldFilterSelectProps {
   fields: { name: string; description: string }[];
   /** Classes do gatilho: cada tela tem a sua largura e densidade. */
   className?: string;
-  placeholder?: string;
 }
 
 // Filtro "Todos os campos" / um campo do schema, comum à Comparação, ao LLM
-// Insights e aos Comentários. O valor "all" é o sem filtro.
+// Insights, aos Comentários, ao gabarito e ao histórico do schema. O valor
+// "all" é o sem filtro, então sempre há um valor visível no gatilho; o
+// aria-label diz ao leitor de tela o que ele filtra.
 export function FieldFilterSelect({
   value,
   onChange,
   fields,
   className,
-  placeholder = "Campo",
 }: FieldFilterSelectProps) {
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={className}>
-        <SelectValue placeholder={placeholder} />
+      <SelectTrigger className={className} aria-label="Filtrar por campo">
+        <SelectValue />
       </SelectTrigger>
       <SelectContent>
         <SelectItem value="all">Todos os campos</SelectItem>

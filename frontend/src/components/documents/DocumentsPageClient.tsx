@@ -1,5 +1,6 @@
 "use client";
 
+import type { ComponentProps } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { DocumentList, type DocumentSummary } from "@/components/documents/DocumentList";
 import { DocumentPreview } from "@/components/documents/DocumentPreview";
@@ -59,7 +60,7 @@ export function DocumentsPageClient({
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null;
 
   // Seleção e ações por documento só existem dentro de um projeto.
-  const projectListActions = projectId
+  const projectListActions = (projectId
     ? {
         selectedIds,
         onToggleSelect: toggleSelect,
@@ -68,7 +69,7 @@ export function DocumentsPageClient({
         onRequestRestore: requestRestoreSingle,
         onRequestHardDelete: requestHardDeleteSingle,
       }
-    : {};
+    : {}) satisfies Partial<ComponentProps<typeof DocumentList>>;
 
   function handleToggleShowExcluded(checked: boolean) {
     if (!pathname) return;

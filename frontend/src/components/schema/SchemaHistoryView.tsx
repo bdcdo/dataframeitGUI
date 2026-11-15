@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { History, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FieldFilterSelect } from "@/components/shared/FieldFilterSelect";
 import { SchemaChangeGroup } from "./SchemaChangeGroup";
 import {
   groupChangesByCommit,
@@ -107,19 +108,12 @@ export function SchemaHistoryView({
             onChange={(e) => setSearch(e.target.value)}
             className="h-8 w-64"
           />
-          <Select value={fieldFilter} onValueChange={setFieldFilter}>
-            <SelectTrigger className="h-8 w-44 text-xs">
-              <SelectValue placeholder="Campo" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos os campos</SelectItem>
-              {fieldOptions.map((f) => (
-                <SelectItem key={f.name} value={f.name}>
-                  {f.description || f.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <FieldFilterSelect
+            value={fieldFilter}
+            onChange={setFieldFilter}
+            fields={fieldOptions}
+            className="h-8 w-44 text-xs"
+          />
           <Select value={authorFilter} onValueChange={setAuthorFilter}>
             <SelectTrigger className="h-8 w-44 text-xs">
               <SelectValue placeholder="Autor" />
