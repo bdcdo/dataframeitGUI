@@ -49,6 +49,12 @@ only-include = ["main.py", "config.py", "routes", "services"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Deadlock reprova o teste pendurado em vez de pendurar a suíte (#833). O
+# método "thread" despeja a pilha de todas as threads (os dois lados do
+# deadlock) e, em troca, encerra a sessão no primeiro timeout. Ver
+# docs/CODE_QUALITY_TOOLING.md.
+timeout = 60
+timeout_method = "thread"
 
 # ignore_missing_imports: as libs de LLM (langchain-*, dataframeit) nao tem
 # stubs publicados; sem isso o mypy so reportaria "import-untyped" em cascata
@@ -122,4 +128,5 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.15.22",
     "mypy>=2.3.0",
+    "pytest-timeout>=2.4.0",
 ]
