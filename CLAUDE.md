@@ -143,8 +143,7 @@ Cada query de Server Action ou RSC e uma ida e volta HTTP ao PostgREST do Supaba
 - **Fetch em 2 fases para dados pesados**: primeiro os metadados leves para filtrar, depois os campos pesados (ex: `text`) so do que sobrou.
 
 ### Componentes pesados
-- **Lazy-load Monaco** via `dynamic()`: sao megabytes de JS que, importados direto, entram no bundle da rota mesmo para quem nunca abre o editor.
-- **Nao adicionar dependencias pesadas** sem lazy-load (monaco, markdown renderers), pelo mesmo motivo.
+- **Dependencias pesadas (Monaco, markdown renderers) so via `dynamic()`**: sao megabytes de JS que, importados direto, entram no bundle da rota mesmo para quem nunca abre o editor.
 - **Manter `'use client'` o mais baixo possivel** na arvore: todo modulo importado a partir da fronteira entra no bundle do cliente e roda no browser.
 
 ### Supabase indexes
