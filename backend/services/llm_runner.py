@@ -772,6 +772,15 @@ _SELECT_PAGE_SIZE = 1000
 _ID_BATCH_SIZE = 100
 
 
+# Fração do escopo escolhida a partir da qual a segunda fase de
+# `_load_documents_for_run` lê o escopo paginado e descarta em Python os não
+# escolhidos, em vez de pedir os escolhidos em lotes de `_ID_BATCH_SIZE`. Uma
+# página traz `_SELECT_PAGE_SIZE` linhas e um lote só `_ID_BATCH_SIZE`: com
+# 19.999 pendentes de 20 mil, os lotes são 200 requisições, e o escopo, 21. O
+# preço é baixar o texto dos descartados, que aqui é no máximo 10% do escopo.
+_SCOPE_READ_MIN_FRACTION = 0.9
+
+
 def _select_all(
     build_query: Callable[[], Any],
     ids: list[str] | None = None,
@@ -965,6 +974,7 @@ def _load_documents_for_run(
     max_response_count: int | None,
     sample_size: int | None,
     sample_seed: str,
+    scope_read_min_fraction: float = _SCOPE_READ_MIN_FRACTION,
 ) -> list[dict]:
     """Os documentos que a run processa, com o `text` só dos escolhidos.
 
@@ -972,6 +982,10 @@ def _load_documents_for_run(
     contagem de respostas LLM, nos modos que filtram por ela), para escolher
     a amostra ou os pendentes; depois o `text` só dos escolhidos. Uma amostra
     de 10 num projeto de 20 mil documentos não baixa os 20 mil textos.
+
+    Quando os escolhidos são ao menos `scope_read_min_fraction` do escopo, a
+    segunda fase lê o escopo paginado e descarta o resto, o que custa menos
+    requisições que os lotes de ids (ver `_SCOPE_READ_MIN_FRACTION`).
     """
 
     # O escopo de um documento são os dois filtros juntos, e não só o soft
@@ -1022,7 +1036,14 @@ def _load_documents_for_run(
         # vez de pedir os ids em lotes. Um documento criado entre as fases
         # entra na run por aqui, como entraria numa leitura de fase única.
         return _select_all(full_documents, document_ids)
-    by_id = {d["id"]: d for d in _select_all(full_documents, chosen_ids)}
+    # Com `document_ids`, a leitura do escopo também iria em lotes de ids, e
+    # mais lotes que os dos escolhidos: só sem seleção ela economiza.
+    scope_is_cheaper = len(chosen_ids) >= scope_read_min_fraction * len(candidates)
+    if document_ids is None and scope_is_cheaper:
+        rows = _select_all(full_documents)
+    else:
+        rows = _select_all(full_documents, chosen_ids)
+    by_id = {d["id"]: d for d in rows}
     # A ordem é a da escolha: a da amostra sorteada, ou a de `id` nos demais
     # modos.
     return [by_id[i] for i in chosen_ids if i in by_id]

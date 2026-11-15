@@ -6,6 +6,7 @@ ordem da lista, que aqui é embaralhada como a ordem física de uma tabela, e
 toda resposta é cortada em `max_rows` sem erro nem aviso.
 """
 
+import math
 import random
 
 from test_llm_runner_run_llm import _FakeQuery, _FakeSupabase, _FakeTable
@@ -338,3 +339,65 @@ def test_sem_nada_filtrado_le_o_escopo_sem_lotes():
 
     assert len(loaded) == 150
     assert _in_sizes(sb) == []
+
+
+def _text_requests(sb) -> int:
+    """Quantas requisições a documents baixaram `text` (a segunda fase)."""
+    return sum(1 for columns, _, _ in sb.table("documents").reads if "text" in columns)
+
+
+def _pending_run(n_docs: int, n_pending: int):
+    """Uma run "pending" com `n_pending` de `n_docs` documentos sem resposta."""
+    docs = _documents(n_docs)
+    ids = sorted(d["id"] for d in docs)
+    answered = ids[n_pending:]
+    sb = _supabase(docs, [_llm_response(i, d) for i, d in enumerate(answered)])
+    return sb, ids[:n_pending]
+
+
+def test_muitos_escolhidos_leem_o_escopo_paginado_em_vez_de_lotes():
+    # 2000 documentos: no limiar, a segunda fase lê o escopo em 3 páginas
+    # (1000, 1000 e a vazia) e descarta os respondidos; um pendente abaixo
+    # dele, pede os escolhidos em lotes de 100 ids.
+    n_docs = 2000
+    at_threshold = math.ceil(llm_runner._SCOPE_READ_MIN_FRACTION * n_docs)
+
+    sb_scope, pending_scope = _pending_run(n_docs, at_threshold)
+    sb_batches, pending_batches = _pending_run(n_docs, at_threshold - 1)
+
+    via_scope = _load(sb_scope, "pending")
+    via_batches = _load(sb_batches, "pending")
+
+    assert [d["id"] for d in via_scope] == pending_scope
+    assert [d["id"] for d in via_batches] == pending_batches
+    assert _in_sizes(sb_scope) == []
+    assert _text_requests(sb_scope) == 3
+    assert _text_requests(sb_batches) == math.ceil(
+        (at_threshold - 1) / llm_runner._ID_BATCH_SIZE
+    )
+
+
+def test_limiar_do_escopo_e_parametro():
+    # Limiar 1: só a escolha do escopo inteiro lê o escopo; 1999 de 2000
+    # pendentes voltam aos lotes.
+    sb, pending = _pending_run(2000, 1999)
+
+    loaded = llm_runner._load_documents_for_run(
+        sb, PROJECT_ID, None, "pending", None, None, "job-1", scope_read_min_fraction=1
+    )
+
+    assert [d["id"] for d in loaded] == pending
+    assert _text_requests(sb) == 20
+
+
+def test_com_selecao_de_ids_nao_le_o_escopo():
+    # Com `document_ids`, a leitura paginada sem lotes seria a do projeto
+    # inteiro, e não a da seleção: 299 pendentes entre 300 selecionados num
+    # projeto de 2000 baixariam os 2000 textos. Os escolhidos seguem em lotes.
+    sb, pending = _pending_run(2000, 1999)
+    answered = sorted(d["id"] for d in sb.table("documents").select_data)[-1]
+
+    loaded = _load(sb, "pending", ids=[*pending[:299], answered])
+
+    assert [d["id"] for d in loaded] == pending[:299]
+    assert sorted(_texts_read(sb)) == pending[:299]
