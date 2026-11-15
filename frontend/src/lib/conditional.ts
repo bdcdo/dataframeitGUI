@@ -72,21 +72,21 @@ export function isFieldVisible(
   return evaluateCondition(field.condition, answers);
 }
 
-// Ponto-fixo do estado vivo: limpar uma condicional pode esconder outra que
-// dependia dela, então iteramos até estabilizar. Trabalha sobre uma view
-// copy-on-write (clona só na primeira limpeza), marcando cada órfão com valor
-// como `null` para reavaliar a visibilidade em cascata — `null` e chave
+// Núcleo compartilhado do ponto-fixo: limpar uma condicional pode esconder
+// outra que dependia dela, então iteramos até estabilizar. Trabalha sobre uma
+// view copy-on-write (clona só na primeira limpeza), marcando cada órfão com
+// valor como `null` para reavaliar a visibilidade em cascata — `null` e chave
 // ausente são equivalentes para `isFieldVisible`. `""` também é zerado: para
 // `not_equals`/`not_in` ele é valor e deixa o dependente visível, enquanto a
-// fronteira (`dropHiddenConditionals`) o omite e esconde o dependente; mantê-lo
-// mostrava na tela uma pergunta cuja resposta o save descartava. Só `null` e
-// ausente ficam de fora, porque zerá-los não muda nada (sem churn). Cada campo
-// entra em `cleared` no máximo uma vez, o que garante terminação em ≤N passes.
-// Não muta a entrada. Retorna o conjunto de nomes efetivamente zerados.
+// fronteira omite a chave e o esconde; mantê-lo mostrava na tela uma pergunta
+// cuja resposta o save descartava. Só `null` e ausente ficam de fora, porque
+// zerá-los não muda nada (sem churn). Cada campo entra em `cleared` no máximo
+// uma vez, o que garante terminação em ≤N passes. Não muta a entrada. Retorna
+// a `view` resolvida e o conjunto `cleared` de nomes efetivamente zerados.
 function resolveHiddenConditionals(
   fields: PydanticField[],
   answers: Record<string, unknown>,
-): Set<string> {
+): { view: Record<string, unknown>; cleared: Set<string> } {
   const cleared = new Set<string>();
   let view = answers;
   let changed = true;
@@ -105,7 +105,7 @@ function resolveHiddenConditionals(
       }
     }
   }
-  return cleared;
+  return { view, cleared };
 }
 
 // Cliente (estado vivo de codificação): zera as respostas de condicionais
@@ -116,7 +116,7 @@ export function clearHiddenConditionalAnswers(
   fields: PydanticField[],
   answers: Record<string, unknown>,
 ): Record<string, unknown> {
-  const cleared = resolveHiddenConditionals(fields, answers);
+  const { cleared } = resolveHiddenConditionals(fields, answers);
   if (cleared.size === 0) return answers;
   const next = { ...answers };
   for (const name of cleared) next[name] = null;
@@ -133,29 +133,29 @@ export function clearHiddenConditionalAnswers(
 // `target`), pois uma condição pode referenciar qualquer campo. Retorna o
 // MESMO objeto quando nada há a omitir.
 //
-// O ponto-fixo roda sobre a própria saída: cada dependente é avaliado sem as
-// chaves já omitidas, como ficará nas respostas devolvidas. Avaliar sobre uma
-// view que ainda tinha o `""` órfão deixava na saída a resposta de um campo
-// oculto (`""` é valor para `not_equals`/`not_in`, ausente não). Cada passada
-// omite ao menos uma chave, então termina. É o que
-// `_prune_inactive_conditionals` faz no backend.
+// A visibilidade final é lida na view resolvida do mesmo ponto-fixo do estado
+// vivo, e não decidida durante a cascata: com o dependente antes do gatilho
+// (o editor permite arrastar) e `exists: false`, omitir o gatilho oculto torna
+// o dependente visível, e uma omissão feita enquanto o gatilho ainda estava
+// presente não se desfaz. Ler da view também faz a tela e o save concordarem
+// por construção.
 export function dropHiddenConditionals(
   fields: PydanticField[],
   answers: Record<string, unknown>,
 ): Record<string, unknown> {
-  let next = answers;
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (const f of fields) {
-      if (!f.condition) continue;
-      if (!Object.hasOwn(next, f.name)) continue;
-      if (isFieldVisible(f, next)) continue;
-      if (next === answers) next = { ...answers };
-      delete next[f.name];
-      changed = true;
-    }
+  const { view } = resolveHiddenConditionals(fields, answers);
+  // Uma chave presente cujo campo condicional segue oculto na view resolvida é
+  // órfã, independente de o valor ser vazio.
+  const orphans: string[] = [];
+  for (const f of fields) {
+    if (!f.condition) continue;
+    if (!Object.hasOwn(answers, f.name)) continue;
+    if (isFieldVisible(f, view)) continue;
+    orphans.push(f.name);
   }
+  if (orphans.length === 0) return answers;
+  const next = { ...answers };
+  for (const name of orphans) delete next[name];
   return next;
 }
 

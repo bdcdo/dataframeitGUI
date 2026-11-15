@@ -333,4 +333,18 @@ describe("dropHiddenConditionals", () => {
     expect(result).toEqual({ q1: "não" });
     expect(dropHiddenConditionals(fields, result)).toBe(result);
   });
+
+  // Arrastar um campo para antes do seu gatilho é permitido no editor. Com
+  // `exists: false`, omitir o gatilho oculto TORNA o dependente visível: a
+  // decisão sobre o dependente não pode ficar presa ao momento em que o
+  // gatilho ainda estava presente.
+  it("mantém a resposta de dependente anterior ao gatilho que fica visível", () => {
+    const fields = [
+      field({ name: "t" }),
+      field({ name: "b", type: "text", options: null, condition: { field: "a", exists: false } }),
+      field({ name: "a", type: "text", options: null, condition: { field: "t", equals: "a" } }),
+    ];
+    const result = dropHiddenConditionals(fields, { t: "b", a: "v", b: "w" });
+    expect(result).toEqual({ t: "b", b: "w" });
+  });
 });
