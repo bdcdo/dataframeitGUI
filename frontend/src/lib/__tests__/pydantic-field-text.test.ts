@@ -70,6 +70,7 @@ describe("parseSaveablePydanticFields — texto que o banco não grava", () => {
     ["subcampo", {
       subfields: [{ key: "x", label: "\udc00" }],
     }],
+    ["valor de condição", { condition: { field: "outro", equals: "a\x00" } }],
   ] as const)("recusa %s com NUL ou surrogate isolado", (_, over) => {
     const { errors } = parseSaveablePydanticFields([
       field(over as Partial<PydanticField>),

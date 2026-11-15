@@ -34,7 +34,7 @@ const trimmedText = nonBlankText.map(stripLikePython);
 // Nomes que a validação recusa (palavra reservada do Python, `_` inicial,
 // `model_config`...) ficam fora pela própria `pydanticFieldNameIssue`, e não por
 // uma lista copiada aqui: o gerador sorteia exatamente os nomes que a GUI salva.
-//
+
 // Nomes que sombreiam algo que o código gerado usa (`str`, `list`, `Field`
 // minúsculo não colide) ou um atributo do BaseModel: o compilador os aceita, e
 // é bom que o gerador os sorteie com frequência.

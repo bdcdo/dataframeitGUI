@@ -331,31 +331,26 @@ function isStorableText(text: string): boolean {
   return !text.includes("\0") && text.isWellFormed();
 }
 
+// Varre todas as strings do campo, e não uma lista de propriedades: o limite
+// é do documento jsonb inteiro, então vale também para valores de `condition`
+// e para propriedade de texto que entrar depois.
 function validateStorableTexts(
-  field: PydanticField,
+  value: unknown,
+  path: PropertyKey[],
   label: string,
   issue: AddFieldIssue,
 ): void {
-  const texts: [string | null | undefined, PropertyKey[]][] = [
-    [field.description, ["description"]],
-    [field.help_text, ["help_text"]],
-    [field.justification_prompt, ["justification_prompt"]],
-    ...(field.options ?? []).map(
-      (option, index): [string, PropertyKey[]] => [option, ["options", index]],
-    ),
-    ...(field.subfields ?? []).map(
-      (subfield, index): [string, PropertyKey[]] => [
-        subfield.label,
-        ["subfields", index, "label"],
-      ],
-    ),
-  ];
-  for (const [text, path] of texts) {
-    if (text && !isStorableText(text)) {
+  if (typeof value === "string") {
+    if (!isStorableText(value)) {
       issue(
         `${label}: texto com caractere inválido (nulo ou surrogate isolado)`,
         path,
       );
+    }
+  } else if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value)) {
+      const childKey = Array.isArray(value) ? Number(key) : key;
+      validateStorableTexts(child, [...path, childKey], label, issue);
     }
   }
 }
@@ -446,7 +441,7 @@ const saveablePydanticFieldsSchema = pydanticFieldsSchema.superRefine(
       validateSubfields(field, label, issue);
       validateOptions(field, label, issue);
       validateTrimmedTexts(field, label, issue);
-      validateStorableTexts(field, label, issue);
+      validateStorableTexts(field, [], label, issue);
       validateCondition(field, fieldByName, label, issue);
       if (!fieldByName.has(field.name)) fieldByName.set(field.name, field);
     }
