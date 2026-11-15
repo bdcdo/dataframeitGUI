@@ -14,8 +14,11 @@ on:
       # Glob, não a lista nominal: enquanto o filtro citava um arquivo só, as
       # suítes novas entravam no repo sem gate nenhum e ninguém percebia.
       - "frontend/supabase/tests/**"
-      # Contrato do llm_runner em llm_runs (#674): ver backend/tests/integration/.
+      # Contratos do backend com o banco (#674): ver backend/tests/integration/.
       - "backend/services/llm_runner.py"
+      - "backend/services/llm_rate_limiter.py"
+      - "backend/services/auth.py"
+      - "backend/services/auto_review_reconciliation.py"
       - "backend/tests/integration/**"
       # O pytest do contrato carrega este conftest.py antes dos testes.
       - "backend/tests/conftest.py"

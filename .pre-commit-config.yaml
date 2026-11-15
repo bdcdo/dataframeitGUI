@@ -410,7 +410,7 @@ repos:
         name: contrato llm_runs do llm_runner (pre-push)
         entry: bash -c 'cd frontend && exec bash scripts/run-backend-integration.sh'
         language: system
-        files: ^(backend/(services/llm_runner\.py|tests/integration/.*\.py)|frontend/scripts/run-backend-integration\.sh)$
+        files: ^(backend/(services/(llm_runner|llm_rate_limiter|auth|auto_review_reconciliation)\.py|tests/integration/.*\.py)|frontend/scripts/run-backend-integration\.sh)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

@@ -3,8 +3,10 @@
 # Roda os testes de integração do backend (`pytest -m integration`) contra o
 # Supabase local, com a URL e a service key que o `supabase status` informa.
 #
-# Hoje cobre o contrato do llm_runner em `llm_runs` (#674; o porquê está em
-# backend/tests/integration/test_llm_runs_persistence.py).
+# Cobre os contratos do backend com o banco (#674): llm_runner (llm_runs,
+# publicação de respostas, pydantic_hash), limitador de LLM, autorização e
+# outbox da auto-revisão. O porquê de cada um está no docstring do arquivo em
+# backend/tests/integration/.
 #
 # Fail-closed como as suítes SQL: sem `uv`, ou sem API no `supabase status`,
 # sai != 0 em vez de pular.
