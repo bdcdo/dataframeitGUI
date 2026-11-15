@@ -40,7 +40,10 @@ function renderCard(source: LlmErrorSource) {
 // Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
 beforeAll(() => warmUpJsdom(), 30_000);
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 describe("LlmErrorCard — affordance de equivalência", () => {
   it("oferece 'marcar como equivalente' em erro vindo da Comparação", () => {
@@ -179,7 +182,6 @@ describe("LlmErrorCard: respostas atuais dos pesquisadores", () => {
     expect([...items].map((li) => li.textContent)).toEqual(["Pesquisador: Sim", "Pesquisador: Não"]);
     // Com `key={answer.name}` o React avisaria "Encountered two children with the same key".
     expect(consoleError.mock.calls.flat().join(" ")).not.toMatch(/same key/);
-    consoleError.mockRestore();
   });
 
   it("sem resposta humana corrente, diz isso em vez de sumir", () => {

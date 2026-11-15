@@ -517,7 +517,7 @@ function FieldSnapshot({
   if (data.type) rows.push({ label: "tipo", value: formatType(data.type) });
   if (data.target) rows.push({ label: "alvo", value: formatTarget(data.target) });
   if (typeof data.required === "boolean")
-    rows.push({ label: "obrigatório", value: data.required ? "Sim" : "Não" });
+    rows.push({ label: "obrigatório", value: yesNo(data.required) });
   if (data.help_text)
     rows.push({ label: "instruções", value: String(data.help_text) });
   if (Array.isArray(data.options) && (data.options as string[]).length > 0)
