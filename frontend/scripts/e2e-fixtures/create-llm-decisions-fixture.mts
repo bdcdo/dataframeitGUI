@@ -21,18 +21,20 @@
 //   • campo `other`: no fim do spec, a linha `comparacao` do CSV traz
 //     "Outra humana" em compare_llm e branco em auto_review_llm. Em
 //     compare_llm o revisor arbitrou `other` a favor do pesquisador; em
-//     auto_review_llm o ciclo de `other` ainda espera a auto-revisão. É a prova
-//     de que decidir `x` não mexe na célula vizinha.
+//     auto_review_llm o pesquisador o marcou como ambíguo. É a prova de que
+//     decidir `x` não mexe na célula vizinha.
 //
 // Idempotente: reutiliza os projetos pelo nome (o id não muda) e recria o
 // documento, então rodar de novo devolve a fixture ao estado inicial — inclusive
 // depois de um spec que morreu no meio.
 //
-// Rodar de frontend/, com o .env.e2e apontando para o Supabase local:
-//   npm run e2e:fixture:llm-decisions
+// Rodar de frontend/, com E2E_ENV_PATH apontando para o env do Supabase local
+// (ver .env.e2e.example):
+//   E2E_ENV_PATH=<arquivo> npm run e2e:fixture:llm-decisions
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import { acquireFixtureLock, defaultFixtureLockDir, fixtureLockWaitMs } from "../../e2e/fixture-lock";
 import {
   applyEnvironment,
   readEnvironmentFile,
@@ -99,6 +101,7 @@ const ANSWER_FIELD_HASHES = Object.fromEntries(FIELDS.map((f) => [f.name, f.hash
 const SCHEMA_HASH = "e2e-llm-decisions-schema-hash";
 const LLM_ANSWERS = { x: "Resposta LLM", other: "Outra LLM" };
 const HUMAN_ANSWERS = { x: "Resposta humana", other: "Outra humana" };
+const HUMAN_NAME = "Pesquisador E2E";
 
 async function profileId(email: string): Promise<string> {
   const { data, error } = await supabase.from("profiles").select("id").eq("email", email).single();
@@ -110,14 +113,22 @@ async function ensureProject(mode: Mode, coordId: string): Promise<string> {
   const name = `LLM decision browser fixture ${mode}`;
   const { data: existing, error: findError } = await supabase
     .from("projects")
-    .select("id")
+    .select("id, pydantic_fields")
     .eq("name", name)
     .maybeSingle();
   if (findError) throw new Error(`projects: ${findError.message}`);
-  // O schema só é gravado na criação: o banco recusa avançar `schema_revision`
-  // sem mudança de schema, e regravar os mesmos campos não muda nada. Para
-  // mudar FIELDS, apague os projetos e rode de novo.
-  if (existing) return existing.id as string;
+  if (existing) {
+    // O schema só é gravado na criação: o banco recusa avançar `schema_revision`
+    // sem mudança de schema. Se alguém o mudou depois, recusar é melhor que
+    // seguir com respostas carimbadas com hashes que o projeto não tem mais.
+    const stored = (existing.pydantic_fields as { name: string; hash?: string }[]) ?? [];
+    if (stored.map((f) => `${f.name}:${f.hash}`).join() !== FIELDS.map((f) => `${f.name}:${f.hash}`).join()) {
+      throw new Error(`O schema do projeto "${name}" (${existing.id}) mudou. Apague o projeto e rode de novo.`);
+    }
+    const { error } = await supabase.from("projects").update({ automation_mode: mode }).eq("id", existing.id);
+    if (error) throw new Error(`update projects: ${error.message}`);
+    return existing.id as string;
+  }
   const { data, error } = await supabase
     .from("projects")
     .insert({
@@ -179,65 +190,68 @@ async function insertResponse(row: Record<string, unknown>): Promise<string> {
   return data.id as string;
 }
 
-async function seed(mode: Mode, coordId: string, memberId: string): Promise<string> {
-  const projectId = await ensureProject(mode, coordId);
-  for (const [userId, role] of [
-    [coordId, "coordenador"],
-    [memberId, "pesquisador"],
-  ] as const) {
-    const { error } = await supabase
-      .from("project_members")
-      .upsert({ project_id: projectId, user_id: userId, role }, { onConflict: "project_id,user_id" });
-    if (error) throw new Error(`upsert project_members: ${error.message}`);
-  }
+async function seed(mode: Mode, projectId: string, coordId: string, memberId: string): Promise<void> {
+  const { error: membersError } = await supabase.from("project_members").upsert(
+    [
+      { project_id: projectId, user_id: coordId, role: "coordenador" },
+      { project_id: projectId, user_id: memberId, role: "pesquisador" },
+    ],
+    { onConflict: "project_id,user_id" },
+  );
+  if (membersError) throw new Error(`upsert project_members: ${membersError.message}`);
 
   const documentId = await recreateDocument(projectId);
   const base = { project_id: projectId, document_id: documentId };
+  const justification = "Justificativa sintética do LLM.";
   const llmId = await insertResponse({
     ...base,
     respondent_type: "llm",
     respondent_name: "LLM",
     answers: LLM_ANSWERS,
-    justifications: { x: "Justificativa sintética do LLM.", other: "Justificativa sintética do LLM." },
+    justifications: { x: justification, other: justification },
   });
   const humanId = await insertResponse({
     ...base,
     respondent_type: "humano",
     respondent_id: memberId,
+    respondent_name: HUMAN_NAME,
     answers: HUMAN_ANSWERS,
   });
 
   if (mode === "compare_llm") {
     // O coordenador arbitrou as duas divergências na Comparação, a favor do
-    // pesquisador.
+    // pesquisador. `response_snapshot` é o que o `submitVerdict` grava: as
+    // respostas que o revisor viu, e sem elas a invariante
+    // review-com-escolha-tem-snapshot-da-escolhida acusa a review.
     const { error } = await supabase.from("reviews").insert(
-      FIELDS.map((f) => ({
-        ...base,
-        field_name: f.name,
-        reviewer_id: coordId,
-        verdict: HUMAN_ANSWERS[f.name as keyof typeof HUMAN_ANSWERS],
-        chosen_response_id: humanId,
-      })),
+      FIELDS.map((f) => {
+        const name = f.name as keyof typeof HUMAN_ANSWERS;
+        return {
+          ...base,
+          field_name: name,
+          reviewer_id: coordId,
+          verdict: HUMAN_ANSWERS[name],
+          chosen_response_id: humanId,
+          response_snapshot: [
+            { id: llmId, respondent_name: "LLM", respondent_type: "llm", answer: LLM_ANSWERS[name], justification },
+            { id: humanId, respondent_name: HUMAN_NAME, respondent_type: "humano", answer: HUMAN_ANSWERS[name] },
+          ],
+        };
+      }),
     );
     if (error) throw new Error(`insert reviews: ${error.message}`);
   } else {
-    // Auto-revisão: em `x` o pesquisador contestou o LLM e o coordenador
-    // arbitrou a favor dele; em `other` o ciclo espera a auto-revisão.
+    // Auto-revisão, os dois ciclos já fechados (nenhum espera atribuição): em
+    // `x` o pesquisador contestou o LLM e o coordenador arbitrou a favor dele;
+    // em `other` o pesquisador marcou "ambíguo", que não vai ao gabarito. Os
+    // snapshots das respostas o banco grava sozinho, na inserção.
     const now = new Date().toISOString();
-    const cycle = (fieldName: keyof typeof HUMAN_ANSWERS) => ({
-      ...base,
-      field_name: fieldName,
-      human_response_id: humanId,
-      llm_response_id: llmId,
-      human_answer_snapshot: HUMAN_ANSWERS[fieldName],
-      llm_answer_snapshot: LLM_ANSWERS[fieldName],
-      self_reviewer_id: memberId,
-    });
+    const cycle = { ...base, human_response_id: humanId, llm_response_id: llmId, self_reviewer_id: memberId, self_reviewed_at: now };
     const { error } = await supabase.from("field_reviews").insert([
       {
-        ...cycle("x"),
+        ...cycle,
+        field_name: "x",
         self_verdict: "contesta_llm",
-        self_reviewed_at: now,
         self_justification: "O documento diz outra coisa.",
         arbitrator_id: coordId,
         blind_verdict: "humano",
@@ -245,28 +259,39 @@ async function seed(mode: Mode, coordId: string, memberId: string): Promise<stri
         final_verdict: "humano",
         final_decided_at: now,
       },
-      cycle("other"),
+      { ...cycle, field_name: "other", self_verdict: "ambiguo" },
     ]);
     if (error) throw new Error(`insert field_reviews: ${error.message}`);
   }
-  // A resposta do LLM enfileira a reconciliação da auto-revisão nos dois modos,
-  // e o app a drena: em auto_review_llm criando exatamente os ciclos acima, em
-  // compare_llm sem criar nada. Enquanto a request existe, a view
-  // `final_answers` dá o documento como "aguarda reconciliação" e o card não
-  // abre decisão; apagá-la é o estado pós-dreno.
+  // A resposta do LLM enfileira a reconciliação da auto-revisão nos dois modos.
+  // Enquanto a request existe, a view `final_answers` dá o documento como
+  // "aguarda reconciliação" e o card não abre decisão. Os ciclos que o dreno
+  // abriria já estão gravados acima (em compare_llm ele não abre nenhum), então
+  // apagá-la é o estado pós-dreno.
   const { error: drainError } = await supabase
     .from("auto_review_reconciliation_requests")
     .delete()
     .eq("document_id", documentId);
   if (drainError) throw new Error(`delete auto_review_reconciliation_requests: ${drainError.message}`);
-  return projectId;
 }
 
 const [coordId, memberId] = await Promise.all([profileId(COORDINATOR_EMAIL), profileId(MEMBER_EMAIL)]);
 const ids: string[] = [];
 for (const mode of MODES) {
-  const id = await seed(mode, coordId, memberId);
-  console.log(`${mode}: ${id}`);
-  ids.push(id);
+  const projectId = await ensureProject(mode, coordId);
+  // O mesmo lock que o spec toma (e2e/fixture-lock.ts): recriar o documento no
+  // meio do teste de outra worktree trocaria o documento debaixo dele.
+  const lock = await acquireFixtureLock(projectId, {
+    dir: defaultFixtureLockDir(process.env, frontendDir),
+    label: "npm run e2e:fixture:llm-decisions",
+    waitMs: fixtureLockWaitMs(process.env),
+  });
+  try {
+    await seed(mode, projectId, coordId, memberId);
+  } finally {
+    lock.release();
+  }
+  console.log(`${mode}: ${projectId}`);
+  ids.push(projectId);
 }
 console.log(`\nE2E_LLM_DECISIONS_PROJECT_IDS=${ids.join(",")}`);
