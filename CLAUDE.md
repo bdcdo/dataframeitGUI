@@ -27,7 +27,7 @@ Browser  →  Next.js 16 (Fly.io)  ←→  Supabase (Postgres + RLS)
 - Supabase client: `lib/supabase/server.ts` (server, autenticado via Clerk JWT) e `lib/supabase/admin.ts` (service key)
 - **FastAPI** so para LLM e Pydantic (nao para CRUD)
 - **EditFieldDialog**: toda config de schema acessivel na aba Schema deve ser igualmente acessivel via `EditFieldDialog` inline (Comentarios e LLM Insights). Ao adicionar um campo novo a `PydanticField`, garantir que ambos os editores (FieldCard e EditFieldDialog) o exponham.
-- **Pydantic = fonte de verdade do schema**: toda propriedade de `PydanticField` (inferida do schema Zod em `frontend/src/lib/pydantic-field.ts`) deve ser transportada no codigo Pydantic gerado — via annotation, `Field(...)` ou `json_schema_extra={...}`. E proibido depender apenas do JSON em `projects.pydantic_fields` para reconstruir um campo. Motivo: garantir que `projects.pydantic_code` seja fonte de verdade reconstruivel — o `llm_runner` recria o modelo a partir dele (via `build_model_from_code`) para rodar o LLM, e o round-trip `UI -> pydantic_code -> compile_pydantic -> UI` precisa ser completo sem depender do JSON. (O codigo e read-only na UI e gerado pela GUI desde o PR #197; a completude segue exigida pela reconstrucao no backend e pelo round-trip.) Ao adicionar um campo novo a `PydanticField`, atualize:
+- **Pydantic = fonte de verdade do schema**: toda propriedade de `PydanticField` (inferida do schema Zod em `frontend/src/lib/pydantic-field.ts`) deve ser transportada no codigo Pydantic gerado — via annotation, `Field(...)` ou `json_schema_extra={...}`. E proibido depender apenas do JSON em `projects.pydantic_fields` para reconstruir um campo. Motivo: garantir que `projects.pydantic_code` seja fonte de verdade reconstruivel — o `llm_runner` recria o modelo a partir dele (via `build_model_from_code`) para rodar o LLM, e o round-trip `UI -> pydantic_code -> compile_pydantic -> UI` precisa ser completo sem depender do JSON. (O codigo e somente-leitura na UI e sempre gerado pela GUI; a completude e exigida pela reconstrucao no backend e pelo round-trip.) Ao adicionar um campo novo a `PydanticField`, atualize:
   - (a) `generatePydanticCode()` em `frontend/src/lib/schema-utils.ts` para emitir a propriedade. Em `json_schema_extra`, nao usar as chaves que a biblioteca dataframeit le com sentido proprio (a fonte e `_LIBRARY_EXTRA_KEYS` em `dataframeit/agent.py`; hoje `condition`, `depends_on`, `prompt`, `prompt_replace`, `prompt_append`, `search_depth`, `max_results`, `max_search_calls`): a visibilidade do campo sai como `visible_if` por isso (`VISIBILITY_KEY` em `backend/services/pydantic_compiler.py`);
   - (b) `compile_pydantic()` em `backend/services/pydantic_compiler.py` para le-la de volta;
   - (c) as primitivas de versionamento/auditoria em `frontend/src/lib/schema-utils.ts` — `snapshotOf`, `diffFields`, `fieldDiffIsStructural` — para que a mudanca da propriedade seja classificada (minor/patch) e registrada em `schema_change_log`. Essas primitivas sao puras e compartilhadas entre `saveSchemaFromGUI` e scripts fora do Next runtime, justamente para evitar drift (ver #63). **Nao edite `classifyChange`**: ele e derivado de `diffFields` + `fieldDiffIsStructural`, e e essa derivacao que sustenta a invariante `classifyChange != null ⇒ diffFields != []` de que o save depende (a RPC recusa log vazio);
@@ -133,18 +133,19 @@ Vai para o repo (PR normal) só a **correção de causa raiz genérica** que dec
 Navegação e ações devem parecer instantâneas, e lentidão reportada entra como bug. Metas: transição de rota com p75 < 2 s, feedback visual de mutation < 200 ms e LCP < 2,5 s na lista de projetos, na codificação e na comparação.
 
 ### Queries Supabase
-- **Nunca usar `.select("*")`** — sempre listar colunas explicitas (ex: `.select("id, title, created_at")`)
-- **Nunca buscar todos os registros sem `.limit()`** em paginas que podem ter muitos dados
-- **Usar `count()` do Supabase** ao inves de buscar registros so para contar: `.select("*", { count: "exact", head: true })`
-- **Usar agregacao via join** quando possivel: `.select("id, responses(count)")` ao inves de query separada
-- **Paralelizar queries independentes** com `Promise.all()` — nunca fazer queries sequenciais que nao dependem uma da outra
-- **Evitar N+1** — nunca fazer UPDATE/INSERT em loop. Usar `Promise.all()` para batch ou queries `.in()`
-- **Fetch em 2 fases para dados pesados** — primeiro buscar metadados leves para filtrar, depois buscar campos pesados (ex: `text`) so do que precisa
+Cada query de Server Action ou RSC e uma ida e volta HTTP ao PostgREST do Supabase, e o que ela devolve trafega inteiro ate o servidor do Next (e ate o browser, se virar prop de client component). As regras abaixo saem disso:
+- **Listar as colunas, nunca `.select("*")`** (ex: `.select("id, title, created_at")`): o `*` traz colunas que a tela nao usa, inclusive as pesadas como `documents.text`, e toda coluna criada depois passa a trafegar sem ninguem decidir. A excecao e a contagem com `head: true`, que nao devolve linha.
+- **Leitura que pode crescer leva `.limit()` ou pagina**: sem limite, o PostgREST corta em `max_rows` (1000) sem erro, e a tela mostra as primeiras 1000 linhas em ordem indefinida como se fossem todas. Para varrer a tabela inteira de um projeto, use `fetchAllPaged` (`lib/supabase/fetch-all-paged.ts`).
+- **Contar com `count()`**, nao buscando registros: `.select("*", { count: "exact", head: true })` devolve so o numero.
+- **Agregar via join** quando possivel: `.select("id, responses(count)")` resolve numa ida so o que uma query separada faria em duas.
+- **Paralelizar queries independentes** com `Promise.all()`: `await` em sequencia soma a latencia de cada ida e volta.
+- **Sem UPDATE/INSERT em loop (N+1)**: sao N idas e voltas em vez de uma. Use `.in()` ou um lote unico; `Promise.all()` quando cada linha precisa de valor proprio.
+- **Fetch em 2 fases para dados pesados**: primeiro os metadados leves para filtrar, depois os campos pesados (ex: `text`) so do que sobrou.
 
 ### Componentes pesados
-- **Lazy-load Monaco** via `dynamic()`
-- **Nao adicionar dependencias pesadas** sem lazy-load (monaco, markdown renderers)
-- **Manter `'use client'` o mais baixo possivel** na arvore de componentes
+- **Lazy-load Monaco** via `dynamic()`: sao megabytes de JS que, importados direto, entram no bundle da rota mesmo para quem nunca abre o editor.
+- **Nao adicionar dependencias pesadas** sem lazy-load (monaco, markdown renderers), pelo mesmo motivo.
+- **Manter `'use client'` o mais baixo possivel** na arvore: tudo abaixo da fronteira vira JS do cliente e deixa de poder buscar dado no servidor.
 
 ### Supabase indexes
-- Queries frequentes com `.eq()` em colunas sem index devem ter index criado via migration
+- Queries frequentes com `.eq()` em colunas sem index devem ter index criado via migration: sem ele o Postgres varre a tabela a cada chamada, e o custo cresce com o projeto.
