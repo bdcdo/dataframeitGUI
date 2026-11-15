@@ -76,24 +76,24 @@ function run(failing: string[], env: Record<string, string> = {}) {
   });
 }
 
-// As órfãs conhecidas (#572 e a value_equivalences, que exige superusuário)
-// falham em toda execução de hoje.
-const knownRed = "schema_revision_serialization";
-const knownReds = [knownRed, "value_equivalences"];
+// A órfã conhecida (value_equivalences, que exige superusuário) falha em toda
+// execução de hoje.
+const knownRed = "value_equivalences";
 
 describe("run-db-tests.sh", () => {
   it("reporta a órfã conhecida como RED* sem reprovar", () => {
-    const { status, stdout } = run(knownReds);
-    expect(stdout).toContain(`RED*  ${knownRed} (conhecida, #572)`);
-    expect(stdout).toContain("RED*  value_equivalences (conhecida, #913)");
+    const { status, stdout } = run([knownRed]);
+    expect(stdout).toContain(`RED*  ${knownRed} (conhecida, #913)`);
     expect(stdout).toContain("OK: todas as suítes de gate passaram.");
     expect(status).toBe(0);
   });
 
   it("reprova a suíte de gate que falha, com a cauda da saída", () => {
-    const { status, stdout } = run([...knownReds, "rls_audit"]);
+    // schema_revision_serialization saiu de KNOWN_RED (#572): a falha dela reprova.
+    const { status, stdout } = run([knownRed, "rls_audit", "schema_revision_serialization"]);
     expect(status).toBe(1);
     expect(stdout).toContain("  FAIL  rls_audit");
+    expect(stdout).toContain("  FAIL  schema_revision_serialization");
     expect(stdout).toContain("linha 30 de rls_audit.test.sql");
     expect(stdout).not.toContain("linha 1 de rls_audit.test.sql\n");
     expect(stdout).not.toContain("::group::");
@@ -102,7 +102,7 @@ describe("run-db-tests.sh", () => {
   // O workflow roda tudo num passo só. O passo por suíte de antes mostrava a
   // saída inteira de cada uma e, num travamento, qual suíte estava rodando.
   it("no GitHub Actions abre um grupo por suíte, antes de rodá-la, com a saída inteira", () => {
-    const { status, stdout } = run([...knownReds, "rls_audit", "responses_llm_actor_integrity"], { GITHUB_ACTIONS: "true" });
+    const { status, stdout } = run([knownRed, "rls_audit", "responses_llm_actor_integrity"], { GITHUB_ACTIONS: "true" });
     expect(status).toBe(1);
     for (const failed of ["rls_audit", "responses_llm_actor_integrity"]) {
       const start = stdout.indexOf(`::group::${failed}\n`);

@@ -1,17 +1,15 @@
 -- Prova de serialização do `FOR UPDATE` de `schema_write_gate`.
 --
 -- Como rodar depois de `npx supabase start` e `npx supabase db reset`:
---   docker exec -i -e PGPASSWORD=postgres supabase_db_frontend \
---     psql -U supabase_admin -d postgres -X -v ON_ERROR_STOP=1 \
---     < supabase/tests/schema_revision_serialization.test.sql
+--   npm run test:db:schema-revision-serialization
 --
--- Roda como `supabase_admin`, e não como `postgres` feito a suíte irmã, por uma
--- restrição do dblink: o pg_hba local autentica 127.0.0.1 por `trust`, e o
--- `dblink_connect` recusa abrir conexão sem senha quando quem chama não é
--- superusuário (o `postgres` do Supabase não é). É exigência do harness de
--- teste, não do código sob teste: as duas sessões concorrentes conectam como
--- `postgres` e assumem `authenticated` via SET LOCAL ROLE, exatamente como a
--- suíte irmã — o caminho de RLS exercitado é o mesmo.
+-- As duas sessões concorrentes conectam por dblink no endereço e na porta da
+-- própria sessão (`inet_server_addr()`/`inet_server_port()`), com senha, como
+-- `llm_rate_limit`: o `dblink_connect` chamado por quem não é superusuário (o
+-- `postgres` do Supabase não é) exige que a senha seja de fato usada, e sobre
+-- 127.0.0.1 o pg_hba é `trust`, que não a usa (#572). O run-sql-test.sh conecta
+-- pelo IP do container, cuja rota autentica por scram. As sessões entram como
+-- `postgres` e assumem `authenticated` via SET LOCAL ROLE, como a suíte irmã.
 --
 -- Identidade canônica (migration 20260716155000, #440): `clerk_uid()` só resolve
 -- o autor quando o JWT carrega `sub` E `supabase_uid` casando com uma linha ativa
@@ -35,7 +33,7 @@
 -- novamente" e perde a edição, em vez da tela de merge. É essa diferença que a
 -- asserção final mede.
 
-CREATE EXTENSION IF NOT EXISTS dblink;
+CREATE EXTENSION IF NOT EXISTS dblink WITH SCHEMA extensions;
 
 -- ----- Auto-limpeza preventiva (idempotente) -----
 -- O arquivo roda fora de BEGIN/ROLLBACK (as sessões concorrentes precisam de
@@ -94,14 +92,14 @@ GRANT SELECT, INSERT ON public.schema_change_log TO authenticated;
 GRANT SELECT ON public.project_members TO authenticated;
 
 -- ----- Duas sessões concorrentes -----
-SELECT dblink_connect(
-  'writer_one',
-  'dbname=postgres user=postgres host=127.0.0.1 port=5432'
-);
-SELECT dblink_connect(
-  'writer_two',
-  'dbname=postgres user=postgres host=127.0.0.1 port=5432'
-);
+SELECT format(
+  'hostaddr=%s port=%s dbname=%s user=postgres password=postgres',
+  host(inet_server_addr()),
+  inet_server_port(),
+  current_database()
+) AS connstr \gset
+SELECT dblink_connect('writer_one', :'connstr');
+SELECT dblink_connect('writer_two', :'connstr');
 
 -- T1 abre transação, escreve o schema e **não** commita: fica segurando o lock
 -- da linha do projeto adquirido pelo `FOR UPDATE` do gate.
@@ -144,6 +142,11 @@ BEGIN
 END;
 $$;
 
+-- O pid de T2 identifica a sessão na asserção 1; depois do send_query a conexão
+-- fica ocupada e não responde mais.
+CREATE TEMP TABLE writer_two_pid AS
+SELECT pid FROM dblink('writer_two', 'SELECT pg_backend_pid()') AS t(pid int);
+
 -- T2 parte da MESMA revisão observada (0) — é a corrida real: dois coordenadores
 -- que carregaram a tela juntos. `lock_timeout` existe para o teste falhar em
 -- segundos caso o lock nunca seja liberado, em vez de pendurar a suíte.
@@ -175,30 +178,29 @@ SELECT dblink_send_query(
 );
 
 -- ----- Asserção 1: T2 bloqueia enquanto T1 não commita -----
+-- Sonda com prazo em vez de uma amostra só depois de um sleep fixo: numa
+-- máquina lenta T2 pode ainda não ter chegado ao `FOR UPDATE`. O filtro é o pid
+-- de T2, e não o texto da query, para que outra sessão no container
+-- compartilhado não satisfaça a asserção.
 DO $$
 DECLARE
-  v_busy int;
-  v_waiting boolean;
+  v_pid int := (SELECT pid FROM writer_two_pid);
+  v_deadline timestamptz := clock_timestamp() + interval '5 seconds';
 BEGIN
-  PERFORM pg_sleep(1);
-  v_busy := dblink_is_busy('writer_two');
-
-  SELECT EXISTS (
-    SELECT 1
-    FROM pg_stat_activity
-    WHERE wait_event_type = 'Lock'
-      AND query LIKE '%field_from_t2%'
-  ) INTO v_waiting;
-
-  IF v_busy <> 1 THEN
-    RAISE EXCEPTION
-      'FALHOU serialização: T2 não ficou bloqueada com T1 segurando o lock';
-  END IF;
-
-  IF NOT v_waiting THEN
-    RAISE EXCEPTION
-      'FALHOU serialização: T2 está ocupada, mas não esperando por lock';
-  END IF;
+  LOOP
+    EXIT WHEN EXISTS (
+      SELECT 1
+      FROM pg_stat_activity
+      WHERE pid = v_pid
+        AND wait_event_type = 'Lock'
+    );
+    IF clock_timestamp() > v_deadline THEN
+      RAISE EXCEPTION
+        'FALHOU serialização: T2 não ficou esperando o lock com T1 segurando-o';
+    END IF;
+    PERFORM pg_sleep(0.01);
+    PERFORM pg_stat_clear_snapshot();
+  END LOOP;
 
   RAISE NOTICE 'OK serialização: T2 bloqueia no lock enquanto T1 não commita';
 END;
@@ -283,6 +285,7 @@ SELECT dblink_disconnect('writer_two');
 
 DROP TABLE serialization_result;
 DROP TABLE writer_one_result;
+DROP TABLE writer_two_pid;
 DELETE FROM public.projects WHERE id = '86000000-0000-0000-0000-000000000001';
 DELETE FROM auth.users WHERE id = '86000000-0000-0000-0000-000000000002';
 DELETE FROM public.clerk_user_mapping

@@ -80,10 +80,10 @@ GATE_SUITES=(
   self_comparison_exception
   schema_revision_rpcs
   error_resolution_cycle
+  schema_revision_serialization
 )
 
-# Órfã quebrada pela era da migration 20260717120000 (connstr de dblink), fora
-# do escopo da #557 e rastreada em issue própria. Roda e é reportada, mas NÃO
+# Suíte vermelha rastreada em issue própria. Roda e é reportada, mas NÃO
 # derruba o gate até ser consertada. Isto NÃO é silenciamento: aparece no resumo
 # com sua issue; ao consertar, mover para GATE_SUITES (a guarda 2 força esse
 # passo).
@@ -91,12 +91,10 @@ GATE_SUITES=(
 # value_equivalences (#851) troca a sessão com `SET SESSION AUTHORIZATION
 # authenticator` para exercitar as recusas das RPCs, que liberam
 # `SESSION_USER = 'postgres'`. Isso exige superusuário, e o `postgres` da imagem
-# do Supabase não é (o mesmo motivo da #572): a suíte nunca passou no CI nem no
-# hook local. Apareceu quando o CI passou a rodar GATE_SUITES (#913); o conserto
+# do Supabase não é: a suíte nunca passou no CI nem no hook local. Apareceu quando o CI passou a rodar GATE_SUITES (#913); o conserto
 # (rodar como `supabase_admin` ou outra forma de trocar o SESSION_USER) fica com
 # o dono.
 declare -A KNOWN_RED=(
-  [schema_revision_serialization]="#572"
   [value_equivalences]="#913"
 )
 
