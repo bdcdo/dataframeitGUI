@@ -5,7 +5,15 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
+import { serverErrorCopy, type ServerError } from "@/lib/server-error";
 import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
+
+// Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
+// copy pt-BR do fluxo (#502). `set_error_resolution` fica de fora: a RPC levanta
+// copy pt-BR própria ("A decisão mudou. Recarregue antes de confirmar.").
+function statsServerError(step: string, error: ServerError, generic: string): string {
+  return serverErrorCopy(`[stats] ${step} falhou`, error, { generic });
+}
 
 async function withResolutionAction(
   projectId: string,
@@ -40,7 +48,7 @@ export async function resolveReviewComment(
       .eq("id", reviewId)
       .select("id");
 
-    if (error) return { success: false, error: error.message };
+    if (error) return { success: false, error: statsServerError("resolver comentário", error, "Não foi possível resolver o comentário. Tente novamente.") };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para resolver este comentário" };
     return { success: true };
@@ -61,7 +69,7 @@ export async function reopenReviewComment(
       .eq("id", reviewId)
       .select("id");
 
-    if (error) return { success: false, error: error.message };
+    if (error) return { success: false, error: statsServerError("reabrir comentário", error, "Não foi possível reabrir o comentário. Tente novamente.") };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para reabrir este comentário" };
     return { success: true };
@@ -81,7 +89,7 @@ export async function resolveNote(
       note: note || null,
     });
 
-    if (error) return { success: false, error: error.message };
+    if (error) return { success: false, error: statsServerError("resolver anotação", error, "Não foi possível resolver a anotação. Tente novamente.") };
     return { success: true };
   });
 }
@@ -102,7 +110,7 @@ async function deleteResolutionByResponse(
     .eq("response_id", responseId)
     .select("response_id");
 
-  if (error) return { success: false, error: error.message };
+  if (error) return { success: false, error: statsServerError(`reabrir ${table}`, error, "Não foi possível reabrir a resolução. Tente novamente.") };
   if (!data || data.length === 0) return { success: false, error: nothingReopened };
   return { success: true };
 }
@@ -123,7 +131,7 @@ async function setDuvidaResolution(
     .eq("respondent_id", respondentId)
     .select("review_id");
 
-  if (error) return { success: false, error: error.message };
+  if (error) return { success: false, error: statsServerError("resolução da dúvida", error, "Não foi possível atualizar a dúvida. Tente novamente.") };
   if (!data || data.length === 0) return { success: false, error: forbidden };
   return { success: true };
 }
@@ -174,7 +182,7 @@ export async function resolveDifficulty(
       note: note || null,
     });
 
-    if (error) return { success: false, error: error.message };
+    if (error) return { success: false, error: statsServerError("resolver dificuldade", error, "Não foi possível resolver a dificuldade. Tente novamente.") };
     return { success: true };
   });
 }
@@ -296,7 +304,7 @@ export async function prepareErrorResolution(input: {
         approved_value: input.decision === "both_correct" ? input.bothCorrectValue?.value ?? null : null,
       }),
     });
-    if (error) return { error: error.message };
+    if (error) return { error: statsServerError("contexto do erro do LLM", error, "Não foi possível carregar as fontes da decisão. Tente novamente.") };
     const parsed = errorResolutionContextSchema.safeParse(data);
     return parsed.success ? { context: parsed.data } : { error: "As fontes mudaram ou não estão disponíveis. Recarregue a página." };
   } catch (e) {

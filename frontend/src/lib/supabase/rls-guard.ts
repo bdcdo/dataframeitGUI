@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { serverErrorCopy } from "@/lib/server-error";
+import { errorMessage } from "@/lib/utils";
 
 // UPDATE/DELETE via client RLS que não casa nenhuma linha (porque a policy
 // filtrou, ou porque o registro não existe) retorna sucesso com 0 linhas e
@@ -41,6 +43,15 @@ export class PostgrestWriteError extends Error {
     super(message);
     this.name = "PostgrestWriteError";
   }
+}
+
+// Copy do toast para o que updateOrThrow/deleteOrThrow lançam: ZeroRowsError já
+// traz a copy de permissão do fluxo; o resto (PostgrestWriteError, falha de rede)
+// vai para o log com o `code`, e o toast recebe a copy genérica (#502).
+export function guardErrorCopy(e: unknown, scope: string, generic: string): string {
+  if (e instanceof ZeroRowsError) return e.message;
+  const code = e instanceof PostgrestWriteError ? e.code : undefined;
+  return serverErrorCopy(scope, { code, message: errorMessage(e) }, { generic });
 }
 
 interface GuardOpts {

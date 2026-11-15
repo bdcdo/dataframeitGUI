@@ -206,7 +206,10 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
     expect(r.documents.rows).toHaveLength(1001);
   });
 
-  it("propaga a mensagem de erro de uma query com falha", async () => {
+  // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do
+  // servidor, e a action devolve a copy do fluxo (#502).
+  it("erro de uma query vira copy pt-BR, e o texto cru vai ao log", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     serverTableResults = {
       projects: [{ data: { name: "P", pydantic_fields: [], min_responses_for_comparison: 2 } }],
       documents: [{ error: { message: "boom na query de documentos" } }],
@@ -215,7 +218,12 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
     };
     const getExportDataset = await loadAction();
     const r = await getExportDataset("proj-1");
-    expect(r).toEqual({ error: "boom na query de documentos" });
+    expect(r).toEqual({ error: "Não foi possível carregar os dados da exportação. Tente novamente." });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[export] leitura falhou",
+      expect.objectContaining({ message: "boom na query de documentos" }),
+    );
+    consoleError.mockRestore();
   });
 });
 
@@ -258,7 +266,7 @@ describe("getExportDataset: equivalências \"=\" e auto-revisão", () => {
       value_equivalences: [{ error: { message: "boom nos pares" } }],
     };
     const r = await (await loadAction())("proj-1");
-    expect(r).toEqual({ error: "boom nos pares" });
+    expect(r).toEqual({ error: "Não foi possível carregar os dados da exportação. Tente novamente." });
   });
 
   it("em projeto de auto-revisão, a célula resolvida pela view entra no Gabarito", async () => {
@@ -307,7 +315,7 @@ describe("getExportDataset: equivalências \"=\" e auto-revisão", () => {
       final_answers: [{ error: { message: "boom na view" } }],
     };
     const r = await (await loadAction())("proj-1");
-    expect(r).toEqual({ error: "boom na view" });
+    expect(r).toEqual({ error: "Não foi possível carregar os dados da exportação. Tente novamente." });
   });
 });
 
@@ -350,6 +358,6 @@ describe("getExportDataset: atribuições de comparação da rodada atual", () =
 
   it("propaga o erro da leitura das atribuições", async () => {
     serverTableResults = { ...tables("r2", []), assignments: [{ error: { message: "boom nas atribuições" } }] };
-    expect(await (await loadAction())("proj-1")).toEqual({ error: "boom nas atribuições" });
+    expect(await (await loadAction())("proj-1")).toEqual({ error: "Não foi possível carregar os dados da exportação. Tente novamente." });
   });
 });

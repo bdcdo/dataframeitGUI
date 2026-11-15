@@ -658,7 +658,9 @@ describe("excludeDocuments", () => {
     });
   });
 
-  it("erro do Supabase → error, sem revalidar", async () => {
+  // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log (#502).
+  it("erro do Supabase → copy pt-BR, texto cru no log, sem revalidar", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     serverTableResults = {
       documents: [{ error: { message: "db down" } }],
     };
@@ -666,7 +668,12 @@ describe("excludeDocuments", () => {
 
     const r = await excludeDocuments("proj-1", ["doc1"], "motivo");
 
-    expect(r).toEqual({ error: "db down" });
+    expect(r).toEqual({ error: "Não foi possível alterar os documentos. Tente novamente." });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[documents] alteração dos documentos falhou",
+      expect.objectContaining({ message: "db down" }),
+    );
+    consoleError.mockRestore();
   });
 });
 

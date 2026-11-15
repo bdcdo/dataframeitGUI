@@ -8,6 +8,7 @@ import { missingRequiredHumanFields } from "@/lib/coding-completeness";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import { deriveProjectVersionContext } from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+import { serverErrorCopy, type ServerError } from "@/lib/server-error";
 
 export interface SaveResponseOpts {
   notes?: string;
@@ -395,6 +396,10 @@ function buildSaveWrite({
   return { snapshot, missingRequiredFields, payload };
 }
 
+// Leitura que falha antes do save: o texto do Postgres vai para o log, e o
+// toast recebe esta copy (#502).
+const SAVE_READ_FAILED = "Não foi possível carregar a codificação para salvar. Tente novamente.";
+
 // Os motivos para não gravar, avaliados antes de montar qualquer payload.
 // Nenhum deles depende do que foi digitado — só do estado do projeto, da
 // leitura da resposta corrente e do documento.
@@ -403,17 +408,17 @@ function rejectedSaveContext({
   existingErr,
   doc,
 }: {
-  projErr: { message: string } | null;
-  existingErr: { message: string } | null;
+  projErr: ServerError | null;
+  existingErr: ServerError | null;
   doc: { excluded_at: string | null } | null;
 }): SaveResponseResult | null {
-  if (projErr) return { success: false, error: projErr.message };
+  if (projErr) return { success: false, error: serverErrorCopy("[responses] leitura do projeto falhou", projErr, { generic: SAVE_READ_FAILED }) };
 
   // Falha ao LER a resposta corrente aborta o save. Seguir como se não
   // existisse gravaria por cima dela um snapshot construído sem os valores
   // preservados (#484) — perda silenciosa, sem rastro. Falhar fechado aqui é
   // o que a #609 corrige junto com o índice.
-  if (existingErr) return { success: false, error: existingErr.message };
+  if (existingErr) return { success: false, error: serverErrorCopy("[responses] leitura da resposta corrente falhou", existingErr, { generic: SAVE_READ_FAILED }) };
 
   // Doc já excluído (soft delete) não aceita mais respostas. Pedido de
   // exclusão apenas PENDENTE não bloqueia: é reversível e o dado humano

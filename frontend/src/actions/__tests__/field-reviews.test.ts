@@ -405,7 +405,9 @@ describe("submitAutoReview — conclusão do assignment", () => {
     expect(updateCallsOf("assignments")).toHaveLength(0);
   });
 
+  // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log (#502).
   it("falha da RPC atômica é reportada sem escritas parciais no cliente", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     rpcResults.submit_auto_review_verdicts = { error: { message: "lock timeout" } };
     const submitAutoReview = await loadSubmit();
 
@@ -413,8 +415,16 @@ describe("submitAutoReview — conclusão do assignment", () => {
       { fieldReviewId: "fr1", fieldName: "q1", verdict: "contesta_llm", justification: "discordo" },
     ]);
 
-    expect(r).toEqual({ success: false, error: "lock timeout" });
+    expect(r).toEqual({
+      success: false,
+      error: "Não foi possível enviar a auto-revisão. Tente novamente.",
+    });
     expect(updateCallsOf()).toHaveLength(0);
+    expect(consoleError).toHaveBeenCalledWith(
+      "[field-reviews] envio da auto-revisão falhou",
+      expect.objectContaining({ message: "lock timeout" }),
+    );
+    consoleError.mockRestore();
   });
 });
 

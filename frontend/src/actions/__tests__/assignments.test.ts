@@ -45,6 +45,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import {
+  clearPendingAssignments,
   cycleAssignment,
   getLotteryDocStats,
   previewLottery,
@@ -989,5 +990,29 @@ describe("cycleAssignment — autocomparação", () => {
 
     expect(result.needsSelfComparisonConfirmation).toBeUndefined();
     expect(result.error).toMatch(/assignments_self_comparison_approval_shape/);
+  });
+});
+
+// O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do
+// servidor, e a action devolve a copy do fluxo (#502).
+describe("clearPendingAssignments — erro do banco", () => {
+  it("devolve copy pt-BR e loga o texto cru", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pgError = { code: "57014", message: "canceling statement due to statement timeout" };
+    serverTableResults = {
+      projects: { data: { current_round_id: "round-1" } },
+      assignments: { error: pgError },
+    };
+
+    const result = await clearPendingAssignments("p1");
+
+    expect(result).toEqual({
+      error: "Não foi possível limpar as atribuições pendentes. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[assignments] limpeza das pendentes falhou",
+      pgError,
+    );
+    consoleError.mockRestore();
   });
 });

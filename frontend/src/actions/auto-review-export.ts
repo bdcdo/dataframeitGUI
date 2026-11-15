@@ -11,6 +11,7 @@
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { serverErrorCopy } from "@/lib/server-error";
 import type { PydanticField } from "@/lib/types";
 import {
   reviewerDisplayName,
@@ -57,6 +58,10 @@ function fetchCycles(
 
 const NO_CYCLES = { data: [] as CycleWithDocument[], error: null };
 
+// Erro de leitura do Postgres: o texto vai para o log, e o toast recebe esta
+// copy (#502).
+const AUTO_REVIEW_READ_FAILED = "Não foi possível carregar os vereditos da auto-revisão. Tente novamente.";
+
 // Lê os ciclos com veredito do pesquisador (todos os vereditos: o filtro por
 // veredito e por pesquisador é do card, sem nova ida ao banco). Sem a opção,
 // só os ciclos vigentes de `field_reviews`; com ela, também os arquivados,
@@ -86,7 +91,7 @@ export async function getAutoReviewVerdicts(
   ]);
 
   const error = [projectError, current.error, history.error].find(Boolean);
-  if (error) return { error: error.message };
+  if (error) return { error: serverErrorCopy("[auto-review-export] leitura falhou", error, { generic: AUTO_REVIEW_READ_FAILED }) };
   if (!project) return { error: "Projeto não encontrado." };
 
   // O arquivamento copia a linha para o histórico com o mesmo id; a de
@@ -107,7 +112,7 @@ export async function getAutoReviewVerdicts(
           .select("id, first_name, last_name, email")
           .in("id", reviewerIds)
       : { data: [], error: null };
-  if (profilesError) return { error: profilesError.message };
+  if (profilesError) return { error: serverErrorCopy("[auto-review-export] leitura dos perfis falhou", profilesError, { generic: AUTO_REVIEW_READ_FAILED }) };
 
   const nameById = new Map(
     (profiles ?? []).map((profile) => [profile.id, reviewerDisplayName(profile)]),

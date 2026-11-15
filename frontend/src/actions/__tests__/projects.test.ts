@@ -26,6 +26,7 @@ vi.mock("@/lib/auth", () => ({
 
 let rpcCalls: RpcCall[];
 let writeCalls: WriteCall[];
+let dbError: { code?: string; message: string } | null;
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
@@ -33,16 +34,21 @@ vi.mock("@/lib/supabase/server", () => ({
       rpcCalls,
       writeCalls,
       rpcResults: {
-        create_project_with_initial_round: { data: "project-1" },
+        create_project_with_initial_round: dbError
+          ? { error: dbError }
+          : { data: "project-1" },
       },
       // updateOrThrow exige ao menos uma linha devolvida pelo UPDATE.
-      tableResults: { projects: { data: [{ id: "project-1" }] } },
+      tableResults: {
+        projects: dbError ? { error: dbError } : { data: [{ id: "project-1" }] },
+      },
     }),
 }));
 
 beforeEach(() => {
   rpcCalls = [];
   writeCalls = [];
+  dbError = null;
   hoisted.redirect.mockClear();
 });
 
@@ -150,5 +156,26 @@ describe("a lista de modos acompanha AUTOMATION_MODES", () => {
     expect(await updateMode("compare_llm")).toEqual({
       error: "Modo de automação inválido.",
     });
+  });
+});
+
+// O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do
+// servidor, com o `code`, e a action devolve a copy do fluxo (#502).
+describe("erro do banco não chega cru ao toast", () => {
+  it.each([
+    ["createProject", async () => (await import("@/actions/projects")).createProject(null, form({ name: "Projeto" })),
+      "Não foi possível criar o projeto. Tente novamente."],
+    ["updateProject", async () => (await import("@/actions/projects")).updateProject("project-1", { name: "Novo" }),
+      "Não foi possível salvar o projeto. Tente novamente."],
+  ])("%s", async (_, run, copy) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    dbError = { code: "57014", message: "canceling statement due to statement timeout" };
+
+    expect(await run()).toEqual({ error: copy });
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[projects\] .* falhou$/),
+      dbError,
+    );
+    consoleError.mockRestore();
   });
 });

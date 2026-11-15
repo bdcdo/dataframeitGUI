@@ -859,11 +859,21 @@ describe("saveResponse — unicidade da resposta corrente (#609)", () => {
   it("falha ao LER a resposta corrente aborta o save — não cria linha nova", async () => {
     // O bug que transformava uma duplicata em série: o erro do SELECT era
     // descartado, `existing` vinha nulo e o save seguia para o INSERT.
+    // E o texto do Postgres vai ao log, não ao toast pt-BR (#502).
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     state.existingResponseError = { message: "timeout ao ler responses" };
     const saveResponse = await loadSaveResponse();
     const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
 
-    expect(r).toEqual({ success: false, error: "timeout ao ler responses" });
+    expect(r).toEqual({
+      success: false,
+      error: "Não foi possível carregar a codificação para salvar. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[responses] leitura da resposta corrente falhou",
+      expect.objectContaining({ message: "timeout ao ler responses" }),
+    );
+    consoleError.mockRestore();
     expect(state.responseInsertPayload).toBeNull();
     expect(state.responseUpdatePayload).toBeNull();
   });

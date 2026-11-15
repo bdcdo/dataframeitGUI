@@ -66,3 +66,26 @@ describe("researcher field order — identidade canônica", () => {
     expect(harness.supabase.writeCalls).toEqual([]);
   });
 });
+
+// O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do
+// servidor, e a action devolve a copy do fluxo (#502).
+describe("researcher field order — erro do banco", () => {
+  const pgError = { code: "57014", message: "canceling statement due to statement timeout" };
+
+  it.each([
+    ["leitura", async (m: typeof import("@/actions/field-order")) => m.getResearcherFieldOrder("project-1"),
+      { order: null, error: "Não foi possível carregar a ordem dos campos." }],
+    ["gravação", async (m: typeof import("@/actions/field-order")) => m.saveResearcherFieldOrder("project-1", ["field_b"]),
+      { success: false, error: "Não foi possível salvar a ordem dos campos. Tente novamente." }],
+  ])("%s: copy pt-BR no retorno, texto cru no log", async (_, run, expected) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    harness.supabase.tableResults!.researcher_field_orders = { error: pgError };
+
+    expect(await run(await import("@/actions/field-order"))).toEqual(expected);
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[field-order\] .* falhou$/),
+      pgError,
+    );
+    consoleError.mockRestore();
+  });
+});

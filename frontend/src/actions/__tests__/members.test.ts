@@ -150,7 +150,18 @@ vi.mock("@/actions/field-reviews", () => ({
 vi.mock("@/actions/comparisons", () => ({
   retryPendingComparisons: hoisted.retryComparisons,
 }));
+// Erro do Postgres, PostgREST ou Auth não vai cru ao toast: o texto vai ao log
+// do servidor, e a action devolve a copy pt-BR do fluxo (#502).
+let consoleError: ReturnType<typeof vi.spyOn>;
+function expectLogged(message: string) {
+  expect(consoleError).toHaveBeenCalledWith(
+    expect.stringMatching(/^\[members\] .* falhou$/),
+    expect.objectContaining({ message }),
+  );
+}
+
 beforeEach(() => {
+  consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
   writeCalls = [];
   filterCalls = [];
   rpcCalls = [];
@@ -367,7 +378,8 @@ describe("setCanArbitrate", () => {
     };
     const set = await loadSet();
     const r = await set("member1", true);
-    expect(r.error).toBe("RLS bloqueou");
+    expect(r.error).toBe("Não foi possível alterar a permissão do membro. Tente novamente.");
+    expectLogged("RLS bloqueou");
     expect(hoisted.retry).not.toHaveBeenCalled();
   });
 
@@ -424,7 +436,8 @@ describe("setCanCompare", () => {
     };
     const set = await loadSetCompare();
 
-    expect(await set("member-1", false)).toEqual({ error: "falha atômica" });
+    expect(await set("member-1", false)).toEqual({ error: "Não foi possível alterar a permissão do membro. Tente novamente." });
+    expectLogged("falha atômica");
     expect(hoisted.retryComparisons).not.toHaveBeenCalled();
   });
 
@@ -513,7 +526,8 @@ describe("setCanResolve", () => {
     clientError = { message: "RLS bloqueou" };
     const set = await loadSetResolve();
     const r = await set("member1", true);
-    expect(r.error).toBe("RLS bloqueou");
+    expect(r.error).toBe("Não foi possível alterar a permissão do membro. Tente novamente.");
+    expectLogged("RLS bloqueou");
   });
 
   it("linha ausente → erro fail-closed", async () => {
@@ -776,8 +790,9 @@ describe("addMember (pré-registro de membro sem conta)", () => {
     const add = await loadAdd();
 
     expect(await add("p1", "novo@exemplo.com", "pesquisador")).toEqual({
-      error: "profiles indisponível",
+      error: "Não foi possível adicionar o membro. Tente novamente.",
     });
+    expectLogged("profiles indisponível");
     expect(hoisted.reconcileClerkEmailOwner).not.toHaveBeenCalled();
     expect(writeCalls).toEqual([]);
   });
@@ -825,8 +840,9 @@ describe("addMember (pré-registro de membro sem conta)", () => {
     const add = await loadAdd();
 
     expect(await add("p1", "novo@exemplo.com", "pesquisador")).toEqual({
-      error: "insert indisponível",
+      error: "Não foi possível adicionar o membro. Tente novamente.",
     });
+    expectLogged("insert indisponível");
     expect(hoisted.revalidatePath).not.toHaveBeenCalled();
     expect(hoisted.revalidateTag).not.toHaveBeenCalled();
   });
@@ -888,7 +904,7 @@ describe("addMember (pré-registro de membro sem conta)", () => {
     hoisted.preregister.mockRejectedValueOnce(new Error("kaboom"));
     const add = await loadAdd();
     const r = await add("p1", "novo@exemplo.com", "pesquisador");
-    expect(r.error).toBe("Erro ao pré-registrar: kaboom");
+    expect(r.error).toBe("Não foi possível pré-registrar o membro. Tente novamente.");
     expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
   });
 });
@@ -938,8 +954,9 @@ describe("updatePendingMemberEmail — lookups fail-closed", () => {
     const update = await loadUpdatePendingEmail();
 
     await expect(update("p1", "member1", "novo@exemplo.com")).resolves.toEqual({
-      error: "Erro ao atualizar e-mail: placeholder reclamado",
+      error: "Não foi possível atualizar o e-mail. Tente novamente.",
     });
+    expectLogged("placeholder reclamado");
     expect(hoisted.revalidatePath).not.toHaveBeenCalled();
   });
 
@@ -999,8 +1016,9 @@ describe("updatePendingMemberEmail — lookups fail-closed", () => {
       const update = await loadUpdatePendingEmail();
 
       expect(await update("p1", "member1", "novo@exemplo.com")).toEqual({
-        error: message,
+        error: "Não foi possível atualizar o e-mail. Tente novamente.",
       });
+      expectLogged(message);
       expect(writeCalls).toEqual([]);
     },
   );
@@ -1037,8 +1055,9 @@ describe("updatePendingMemberEmail — lookups fail-closed", () => {
     const update = await loadUpdatePendingEmail();
 
     expect(await update("p1", "member1", "novo@exemplo.com")).toEqual({
-      error: "mapping indisponível",
+      error: "Não foi possível verificar a identidade do membro. Tente novamente.",
     });
+    expectLogged("mapping indisponível");
     expect(writeCalls).toEqual([]);
   });
 });
@@ -1287,8 +1306,9 @@ describe("linkMemberEmail (vínculo de e-mails adicionais a um membro)", () => {
 
     expect(await link("p1", "target1", "extra@exemplo.com")).toEqual({
       status: "error",
-      error: "preview indisponível",
+      error: "Não foi possível preparar a unificação dos membros. Tente novamente.",
     });
+    expectLogged("preview indisponível");
     expect(writeCalls).toEqual([]);
   });
 

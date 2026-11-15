@@ -7,6 +7,13 @@ import {
   revalidateProjectDocumentsCache,
 } from "@/actions/documents";
 import { revalidatePath } from "next/cache";
+import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+
+// Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
+// copy pt-BR do fluxo (#502).
+function commentServerError(step: string, error: ServerError, generic: string): string {
+  return serverErrorCopy(`[project-comments] ${step} falhou`, error, { generic });
+}
 
 export async function createProjectComment(
   projectId: string,
@@ -30,7 +37,7 @@ export async function createProjectComment(
     kind: "note",
   });
 
-  if (error) return { error: error.message };
+  if (error) return { error: commentServerError("criar comentário", error, "Não foi possível criar o comentário. Tente novamente.") };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   return { success: true };
@@ -112,7 +119,7 @@ export async function requestDocumentExclusion(
     kind: "exclusion_request",
   });
 
-  if (error) return { error: error.message };
+  if (error) return { error: commentServerError("pedir exclusão", error, "Não foi possível registrar o pedido de exclusão. Tente novamente.") };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   // O doc some imediatamente das filas de codificação e da Comparação.
@@ -151,7 +158,7 @@ export async function cancelExclusionRequest(
     .is("rejected_at", null)
     .select("id");
 
-  if (error) return { error: error.message };
+  if (error) return { error: commentServerError("cancelar exclusão", error, "Não foi possível cancelar o pedido de exclusão. Tente novamente.") };
   if (!data || data.length === 0)
     return { error: "Nenhuma sugestão pendente sua para este documento" };
 
@@ -221,7 +228,7 @@ export async function approveExclusionRequest(
     .is("resolved_at", null)
     .is("rejected_at", null);
 
-  if (commentError) return { error: commentError.message };
+  if (commentError) return { error: commentServerError("aprovar exclusão", commentError, "Não foi possível aprovar o pedido de exclusão. Tente novamente.") };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   // Pesquisador codificando esse doc precisa ver a atualizacao.
@@ -279,7 +286,7 @@ export async function rejectExclusionRequest(
     : query.eq("id", target.id);
   const { data, error } = await query.select("id");
 
-  if (error) return { error: error.message };
+  if (error) return { error: commentServerError("rejeitar exclusão", error, "Não foi possível rejeitar o pedido de exclusão. Tente novamente.") };
   if (!data || data.length === 0)
     return { error: "Sem permissão para rejeitar esta sugestão" };
 
@@ -306,7 +313,7 @@ export async function resolveProjectComment(
     .eq("project_id", projectId)
     .select("id");
 
-  if (error) return { error: error.message };
+  if (error) return { error: commentServerError("resolver comentário", error, "Não foi possível resolver o comentário. Tente novamente.") };
   if (!data || data.length === 0) return { error: "Sem permissão para resolver este comentário" };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);
@@ -329,7 +336,7 @@ export async function reopenProjectComment(
     .eq("project_id", projectId)
     .select("id");
 
-  if (error) return { error: error.message };
+  if (error) return { error: commentServerError("reabrir comentário", error, "Não foi possível reabrir o comentário. Tente novamente.") };
   if (!data || data.length === 0) return { error: "Sem permissão para reabrir este comentário" };
 
   revalidatePath(`/projects/${projectId}/reviews/comments`);

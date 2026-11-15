@@ -180,6 +180,24 @@ describe("cancelExclusionRequest", () => {
     const r = await cancelExclusionRequest("p1", "d1");
     expect(r.error).toContain("Nenhuma sugestão pendente");
   });
+
+  // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do
+  // servidor, e a action devolve a copy do fluxo (#502).
+  it("erro do banco → copy pt-BR, texto cru no log", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pgError = { code: "57014", message: "canceling statement due to statement timeout" };
+    tableResults = { project_comments: { error: pgError } };
+    const { cancelExclusionRequest } = await loadActions();
+    const r = await cancelExclusionRequest("p1", "d1");
+    expect(r).toEqual({
+      error: "Não foi possível cancelar o pedido de exclusão. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[project-comments] cancelar exclusão falhou",
+      pgError,
+    );
+    consoleError.mockRestore();
+  });
 });
 
 describe("approveExclusionRequest", () => {

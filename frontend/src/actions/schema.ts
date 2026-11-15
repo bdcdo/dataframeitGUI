@@ -17,7 +17,7 @@ import {
   PROJECT_LOG_FIELD_NAME,
   type SchemaPersistencePlan,
 } from "@/lib/schema-utils";
-import { PostgrestWriteError, updateOrThrow, ZeroRowsError } from "@/lib/supabase/rls-guard";
+import { guardErrorCopy, updateOrThrow } from "@/lib/supabase/rls-guard";
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
 import { errorMessage } from "@/lib/utils";
 import { serverErrorCopy, type ServerError, type ServerErrorCopy } from "@/lib/server-error";
@@ -392,14 +392,6 @@ export async function recoverFieldsFromStoredCode(
 // As actions tratam erros na fronteira: o Next mascara mensagens lançadas em
 // Server Actions em produção, então a copy pt-BR precisa voltar no resultado.
 
-// `updateOrThrow` lança dois tipos de erro: ZeroRowsError, que já traz a copy de
-// permissão do fluxo, e PostgrestWriteError, cujo texto e código vão para o log.
-function projectUpdateFailed(e: unknown, scope: string, generic: string): string {
-  if (e instanceof ZeroRowsError) return e.message;
-  const code = e instanceof PostgrestWriteError ? e.code : undefined;
-  return serverErrorCopy(scope, { code, message: errorMessage(e) }, { generic });
-}
-
 export async function savePrompt(
   projectId: string,
   promptTemplate: string,
@@ -415,7 +407,7 @@ export async function savePrompt(
     );
   } catch (e) {
     return {
-      error: projectUpdateFailed(
+      error: guardErrorCopy(
         e,
         "[schema] save do prompt falhou",
         "Não foi possível salvar o prompt. Tente novamente.",
@@ -947,7 +939,7 @@ export async function saveLlmConfig(
     });
   } catch (e) {
     return {
-      error: projectUpdateFailed(
+      error: guardErrorCopy(
         e,
         "[schema] save da configuração do LLM falhou",
         "Não foi possível salvar a configuração do LLM. Tente novamente.",

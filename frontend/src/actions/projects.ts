@@ -2,7 +2,8 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
-import { updateOrThrow } from "@/lib/supabase/rls-guard";
+import { guardErrorCopy, updateOrThrow } from "@/lib/supabase/rls-guard";
+import { serverErrorCopy } from "@/lib/server-error";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
@@ -43,7 +44,7 @@ export async function createProject(_prev: unknown, formData: FormData) {
     },
   );
 
-  if (error) return { error: error.message };
+  if (error) return { error: serverErrorCopy("[projects] criação do projeto falhou", error, { generic: "Não foi possível criar o projeto. Tente novamente." }) };
   if (!projectId) return { error: "Não foi possível criar o projeto." };
 
   revalidatePath("/dashboard");
@@ -82,7 +83,13 @@ export async function updateProject(
       message: "Sem permissão para alterar as configurações deste projeto.",
     });
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "Erro ao salvar o projeto" };
+    return {
+      error: guardErrorCopy(
+        e,
+        "[projects] atualização do projeto falhou",
+        "Não foi possível salvar o projeto. Tente novamente.",
+      ),
+    };
   }
   revalidatePath(`/projects/${projectId}`);
   return {};

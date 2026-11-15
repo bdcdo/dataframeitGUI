@@ -17,10 +17,21 @@ import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm"
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { propagateValueEquivalenceChange } from "@/lib/value-equivalence-effects";
+import { serverErrorCopy, type ServerError } from "@/lib/server-error";
 import type {
   SelfVerdict,
   ArbitrationVerdict,
 } from "@/lib/types";
+
+// Erro do Postgres ou PostgREST: o texto (em inglês, inclusive o das RPCs de
+// veredito, que só levantam invariantes) vai para o log, e o toast recebe a
+// copy pt-BR do fluxo (#502).
+const AUTO_REVIEW_FAILED = "Não foi possível enviar a auto-revisão. Tente novamente.";
+const ARBITRATION_FAILED = "Não foi possível registrar a arbitragem. Tente novamente.";
+
+function reviewServerError(step: string, error: ServerError, generic: string): string {
+  return serverErrorCopy(`[field-reviews] ${step} falhou`, error, { generic });
+}
 
 type SupabaseDataClient = ReturnType<typeof createSupabaseAdmin>;
 
@@ -187,7 +198,7 @@ export async function submitAutoReview(
       .is("superseded_at", null)
       .in("id", verdicts.map((verdict) => verdict.fieldReviewId));
     if (requestedReviewsError) {
-      return { success: false, error: requestedReviewsError.message };
+      return { success: false, error: reviewServerError("leitura da auto-revisão", requestedReviewsError, AUTO_REVIEW_FAILED) };
     }
     const requestedById = new Map<string, ReviewAnswerSnapshots>(
       (requestedReviews ?? []).map((review) => [review.id, review]),
@@ -202,7 +213,7 @@ export async function submitAutoReview(
       p_reviewer_id: effectiveId,
       p_rows: rpcRows,
     });
-    if (error) return { success: false, error: error.message };
+    if (error) return { success: false, error: reviewServerError("envio da auto-revisão", error, AUTO_REVIEW_FAILED) };
     const result = (data ?? {}) as { arbitrated?: number; no_pool?: boolean };
     const warning = buildNoArbitratorWarning(result.no_pool, verdicts);
 
@@ -364,7 +375,7 @@ export async function submitBlindVerdicts(
     const failedIndices: number[] = [];
     for (let i = 0; i < results.length; i++) {
       const res = results[i];
-      if (res.error) return { success: false, error: res.error.message };
+      if (res.error) return { success: false, error: reviewServerError("veredito cego", res.error, ARBITRATION_FAILED) };
       if (!res.data || res.data.length === 0) {
         failedIndices.push(i);
       }
@@ -530,7 +541,7 @@ export async function submitFinalVerdicts(
       .in("id", choices.map((choice) => choice.fieldReviewId))
       .eq("arbitrator_id", effectiveId)
       .is("superseded_at", null);
-    if (frErr) return { success: false, error: frErr.message };
+    if (frErr) return { success: false, error: reviewServerError("leitura da arbitragem", frErr, ARBITRATION_FAILED) };
 
     const frById = new Map<string, FinalReviewState>(
       (frRows ?? []).map((review) => [review.id as string, review]),
@@ -551,7 +562,7 @@ export async function submitFinalVerdicts(
         p_rows: rpcRows,
       },
     );
-    if (submitError) return { success: false, error: submitError.message };
+    if (submitError) return { success: false, error: reviewServerError("veredito final", submitError, ARBITRATION_FAILED) };
 
     revalidateFinalVerdictSubmission(projectId);
     return { success: true };
@@ -587,7 +598,7 @@ export async function regenerateAutoReviewBacklog(
       "enqueue_auto_review_reconciliation_for_project",
       { p_project_id: projectId },
     );
-    if (enqueueError) return { success: false, error: enqueueError.message };
+    if (enqueueError) return { success: false, error: reviewServerError("regeneração do backlog", enqueueError, "Não foi possível regenerar o backlog. Tente novamente.") };
 
     // A contagem lê com o cliente do usuário: a RLS de responses, field_reviews
     // e do histórico já deixa coordenador e master verem o projeto inteiro, e
@@ -660,7 +671,7 @@ export async function retryPendingArbitrations(
       .is("superseded_at", null)
       .is("arbitrator_id", null);
     if (error)
-      return { success: false, error: error.message, assigned: 0, stillNoPool: 0 };
+      return { success: false, error: reviewServerError("leitura das arbitragens pendentes", error, "Não foi possível redistribuir as arbitragens pendentes. Tente novamente."), assigned: 0, stillNoPool: 0 };
     if (!pending || pending.length === 0)
       return { success: true, assigned: 0, stillNoPool: 0 };
 

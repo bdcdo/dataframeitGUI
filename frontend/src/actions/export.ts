@@ -8,6 +8,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import type { PydanticField } from "@/lib/types";
 import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { serverErrorCopy } from "@/lib/server-error";
 import type { ErrorResolutionRow } from "@/lib/error-resolution";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import { usesAutoReviewSource } from "@/lib/llm-error-metrics";
@@ -28,6 +29,10 @@ export interface ExportOptions {
   /** Ver `AssembleInput.includeDrafts`. */
   includeDrafts?: boolean;
 }
+
+// Erro de leitura do Postgres: o texto vai para o log, e o toast recebe esta
+// copy (#502).
+const EXPORT_READ_FAILED = "Não foi possível carregar os dados da exportação. Tente novamente.";
 
 // Retorna o conjunto completo do projeto (documentos + respostas + gabarito)
 // já montado como planilhas de strings. Gate coordinator-only (fail-closed);
@@ -115,7 +120,7 @@ export async function getExportDataset(
     equivalencesError,
     comparisonsError,
   ].find(Boolean);
-  if (error) return { error: error.message };
+  if (error) return { error: serverErrorCopy("[export] leitura falhou", error, { generic: EXPORT_READ_FAILED }) };
   if (!project) return { error: "Projeto não encontrado." };
 
   // Fora de 'auto_review_llm', `field_reviews` não é materializado e a view
@@ -131,7 +136,7 @@ export async function getExportDataset(
         ["document_id", "field_name"],
       )
     : { data: [], error: null };
-  if (finalAnswers.error) return { error: finalAnswers.error.message };
+  if (finalAnswers.error) return { error: serverErrorCopy("[export] leitura do gabarito falhou", finalAnswers.error, { generic: EXPORT_READ_FAILED }) };
 
   // Projeto sem rodada atual não tem como dizer quem foi atribuído: sem o
   // conjunto, a montagem mantém "aguarda arbitragem".

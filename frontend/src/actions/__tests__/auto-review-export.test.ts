@@ -165,7 +165,7 @@ describe("getAutoReviewVerdicts — leitura", () => {
   it("propaga erro de leitura do histórico", async () => {
     serverTableResults = { ...fixture(), field_review_cycle_history_entries: { error: { message: "sem histórico" } } };
     const getAutoReviewVerdicts = await loadAction();
-    expect(await getAutoReviewVerdicts("p1", { includeArchived: true })).toEqual({ error: "sem histórico" });
+    expect(await getAutoReviewVerdicts("p1", { includeArchived: true })).toEqual({ error: "Não foi possível carregar os vereditos da auto-revisão. Tente novamente." });
   });
 
   it("só o true literal liga a opção vinda do cliente", async () => {
@@ -194,9 +194,16 @@ describe("getAutoReviewVerdicts — leitura", () => {
     expect(selectCalls.some((c) => c.table === "profiles")).toBe(false);
   });
 
-  it("propaga erro de leitura", async () => {
+  // O texto do Postgres ia cru ao toast pt-BR: vai ao log (#502).
+  it("erro de leitura vira copy pt-BR, e o texto cru vai ao log", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     serverTableResults = { ...fixture(), field_reviews: { error: { message: "boom" } } };
     const getAutoReviewVerdicts = await loadAction();
-    expect(await getAutoReviewVerdicts("p1")).toEqual({ error: "boom" });
+    expect(await getAutoReviewVerdicts("p1")).toEqual({ error: "Não foi possível carregar os vereditos da auto-revisão. Tente novamente." });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[auto-review-export] leitura falhou",
+      expect.objectContaining({ message: "boom" }),
+    );
+    consoleError.mockRestore();
   });
 });

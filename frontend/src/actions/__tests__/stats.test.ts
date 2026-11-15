@@ -36,6 +36,8 @@ beforeEach(() => {
   hoisted.getUser.mockResolvedValue({ id: "user1" });
 });
 
+type Stats = typeof import("@/actions/stats");
+
 async function loadStats() {
   return await import("@/actions/stats");
 }
@@ -88,15 +90,34 @@ describe("resolveNote / reopenNote", () => {
     ).toBeNull();
   });
 
-  it("resolveNote: erro do Supabase → error, sem revalidar", async () => {
+  // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do
+  // servidor, e a action devolve a copy do fluxo (#502).
+  it.each([
+    ["resolveNote", "note_resolutions", (m: Stats) => m.resolveNote("p1", "resp1", "nota"),
+      "Não foi possível resolver a anotação. Tente novamente."],
+    ["reopenNote", "note_resolutions", (m: Stats) => m.reopenNote("p1", "resp1"),
+      "Não foi possível reabrir a resolução. Tente novamente."],
+    ["resolveReviewComment", "reviews", (m: Stats) => m.resolveReviewComment("rev1", "p1"),
+      "Não foi possível resolver o comentário. Tente novamente."],
+    ["reopenDuvida", "verdict_acknowledgments", (m: Stats) => m.reopenDuvida("p1", "rev1", "user2"),
+      "Não foi possível atualizar a dúvida. Tente novamente."],
+    ["resolveDifficulty", "difficulty_resolutions", (m: Stats) => m.resolveDifficulty("p1", "resp1", "doc1"),
+      "Não foi possível resolver a dificuldade. Tente novamente."],
+  ])("%s: erro do Supabase → copy pt-BR, texto cru no log, sem revalidar", async (_, table, run, copy) => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     supabaseState.tableResults = {
-      note_resolutions: [{ error: { message: "insert failed" } }],
+      [table]: [{ error: { code: "57014", message: "canceling statement due to statement timeout" } }],
     };
-    const { resolveNote } = await loadStats();
 
-    const r = await resolveNote("p1", "resp1", "nota");
+    const r = await run(await loadStats());
 
-    expect(r).toEqual({ success: false, error: "insert failed" });
+    expect(r).toEqual({ success: false, error: copy });
+    expect(consoleError).toHaveBeenCalledWith(
+      expect.stringMatching(/^\[stats\] .* falhou$/),
+      { code: "57014", message: "canceling statement due to statement timeout" },
+    );
+    expect(hoisted.revalidate).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("reopenNote: sucesso → delete e retorna success", async () => {

@@ -32,6 +32,16 @@ import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField, Round } from "@/lib/types";
 import { decideSelfComparison, planAssignmentCycle, type CycleStep } from "@/lib/assignment-cycle";
 import { z } from "zod";
+import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+
+// Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
+// copy pt-BR do fluxo (#502). As escritas de comparação ficam de fora: os
+// gatilhos de autocomparação levantam copy pt-BR própria.
+const CODING_ASSIGNMENT_FAILED = "Não foi possível alterar a atribuição. Tente novamente.";
+
+function assignmentServerError(step: string, error: ServerError, generic: string): string {
+  return serverErrorCopy(`[assignments] ${step} falhou`, error, { generic });
+}
 
 // --- Status inicial do assignment de codificação (issue #521) ---
 
@@ -229,7 +239,7 @@ async function insertCodingAssignment(
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (responseError) return { error: responseError.message };
+  if (responseError) return { error: assignmentServerError("leitura da codificação", responseError, CODING_ASSIGNMENT_FAILED) };
 
   const statuses = await resolveInitialCodingStatuses(
     supabase,
@@ -246,7 +256,7 @@ async function insertCodingAssignment(
     status: initial?.status ?? "pendente",
     completed_at: initial?.completed_at ?? null,
   });
-  return error ? { error: error.message } : {};
+  return error ? { error: assignmentServerError("inserção da atribuição", error, CODING_ASSIGNMENT_FAILED) } : {};
 }
 
 /**
@@ -515,7 +525,7 @@ export async function clearPendingAssignments(
     .eq("round_id", currentRoundId);
 
   if (error) {
-    return { error: error.message || "Erro ao limpar as atribuições pendentes" };
+    return { error: assignmentServerError("limpeza das pendentes", error, "Não foi possível limpar as atribuições pendentes. Tente novamente.") };
   }
 
   revalidatePath(`/projects/${projectId}/analyze/assignments`);

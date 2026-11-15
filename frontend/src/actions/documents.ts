@@ -11,6 +11,16 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { createHash } from "crypto";
 import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type { DocumentMetadata, PydanticField } from "@/lib/types";
+import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+
+// Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
+// copy pt-BR do fluxo (#502). `replace_and_add_documents` fica de fora: a RPC
+// levanta copy pt-BR própria sobre o texto de documento já respondido.
+const UPLOAD_FAILED = "Não foi possível gravar os documentos. Tente novamente.";
+
+function documentsServerError(step: string, error: ServerError, generic: string): string {
+  return serverErrorCopy(`[documents] ${step} falhou`, error, { generic });
+}
 
 export interface DocumentRow {
   external_id?: string;
@@ -309,7 +319,7 @@ export async function uploadDocuments(
 
     if (rows.length > 0) {
       const { error } = await supabase.from("documents").insert(rows);
-      if (error) return { error: error.message };
+      if (error) return { error: documentsServerError("inserção dos documentos", error, UPLOAD_FAILED) };
     }
 
     if (revalidate) await revalidateProjectDocumentsCache(projectId);
@@ -388,7 +398,7 @@ export async function uploadDocuments(
 
   if (rows.length > 0) {
     const { error } = await supabase.from("documents").insert(rows);
-    if (error) return { error: error.message };
+    if (error) return { error: documentsServerError("inserção dos documentos", error, UPLOAD_FAILED) };
   }
 
   if (revalidate) await revalidateProjectDocumentsCache(projectId);
@@ -608,10 +618,10 @@ export async function getDocumentText(
 // os call sites em useDocumentActions.ts fazem `result?.error` sem narrowing.
 async function finishDocumentsMutation(
   projectId: string,
-  error: { message: string } | null,
+  error: ServerError | null,
   count: number,
 ) {
-  if (error) return { error: error.message };
+  if (error) return { error: documentsServerError("alteração dos documentos", error, "Não foi possível alterar os documentos. Tente novamente.") };
   await revalidateProjectDocumentsCache(projectId);
   return { count };
 }
