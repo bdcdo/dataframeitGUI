@@ -35,6 +35,7 @@ import { createClient } from "@supabase/supabase-js";
 import { acquireFixtureLock, defaultFixtureLockDir, fixtureLockWaitMs } from "../../e2e/fixture-lock";
 import { fieldHashOf } from "../../src/lib/schema-utils";
 import { loadE2eEnvironment } from "../worktree-env/env-contract.mjs";
+import { sameStoredFields } from "./fixture-schema";
 
 // O mesmo ambiente que o playwright.config.ts carrega, inclusive o
 // E2E_ENV_PATH (ver loadE2eEnvironment): a fixture nasce no banco que o spec lê.
@@ -82,8 +83,6 @@ const SCHEMA_STAMP = {
   schema_version_minor: 0,
   schema_version_patch: 0,
 };
-const fieldsSignature = (fields: { name: string; hash?: string }[]) =>
-  fields.map((f) => `${f.name}:${f.hash}`).join();
 const LLM_ANSWERS = { x: "Resposta LLM", other: "Outra LLM" };
 const HUMAN_ANSWERS = { x: "Resposta humana", other: "Outra humana" };
 const LLM_NAME = "LLM";
@@ -107,7 +106,7 @@ async function ensureProject(mode: Mode, coordId: string): Promise<string> {
     // O schema só é gravado na criação: o banco recusa avançar `schema_revision`
     // sem mudança de schema. Se alguém o mudou depois, recusar é melhor que
     // seguir com respostas carimbadas com hashes que o projeto não tem mais.
-    if (fieldsSignature(existing.pydantic_fields ?? []) !== fieldsSignature(FIELDS)) {
+    if (!sameStoredFields(existing.pydantic_fields, FIELDS)) {
       throw new Error(`O schema do projeto "${name}" (${existing.id}) mudou. Apague o projeto e rode de novo.`);
     }
     const { error } = await supabase.from("projects").update({ automation_mode: mode }).eq("id", existing.id);

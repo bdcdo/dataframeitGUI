@@ -29,6 +29,8 @@ if (!url || !key) {
   throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes");
 }
 const supabase = createClient(url, key);
+// O ambiente pode vir do E2E_ENV_PATH: diz em qual banco a fixture nasceu.
+console.log(`Supabase: ${new URL(url).host}`);
 
 const PROJECT_NAME = "Codificação (save path) — teste E2E";
 

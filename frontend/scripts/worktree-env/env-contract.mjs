@@ -78,8 +78,10 @@ export function applyEnvironment(
  * `E2E_ENV_PATH` quando definido (o arquivo do Supabase local) ou o
  * `.env.e2e`. E a mesma precedencia para o Playwright e para os geradores de
  * fixture (`scripts/e2e-fixtures/`): a fixture precisa nascer no banco que o
- * spec vai ler. Ancorado no diretorio do frontend, e nao no cwd: rodar da raiz
- * do repo acharia o contrato e nenhum valor.
+ * spec vai ler. Os dois arquivos padrao sao ancorados no diretorio do
+ * frontend, e nao no cwd: rodar da raiz do repo acharia o contrato e nenhum
+ * valor. O E2E_ENV_PATH relativo resolve pelo cwd, como qualquer caminho de
+ * linha de comando.
  *
  * @param {Record<string, string | undefined>} target
  * @param {string} frontendDirectory

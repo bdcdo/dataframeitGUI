@@ -157,6 +157,15 @@ describe("describeFinalUrl", () => {
     expect(line).not.toContain("segredo");
   });
 
+  it("reconhece o login hospedado do Clerk e redige o token dentro do redirect_url", () => {
+    const line = describeFinalUrl(
+      "https://inst.accounts.dev/sign-in?redirect_url=" +
+        encodeURIComponent("http://localhost:3100/projects/p1?__clerk_db_jwt=segredo"),
+    );
+    expect(line).toContain("tela de login");
+    expect(line).not.toContain("segredo");
+  });
+
   it("página do app sai como veio, sem o aviso de login", () => {
     expect(describeFinalUrl("http://localhost:3100/projects/p1/analyze/code")).toBe(
       "http://localhost:3100/projects/p1/analyze/code",

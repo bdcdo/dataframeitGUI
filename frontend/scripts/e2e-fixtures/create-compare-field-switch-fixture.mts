@@ -52,6 +52,8 @@ if (!COORDINATOR_EMAIL || !MEMBER_EMAIL) {
 }
 
 const supabase = createClient(url, key, { auth: { persistSession: false } });
+// O ambiente pode vir do E2E_ENV_PATH: diz em qual banco a fixture nasceu.
+console.log(`Supabase: ${new URL(url).host}`);
 
 export const PROJECT_NAME = "Comparação campo-trocado — teste E2E";
 const SCHEMA_HASH = "e2e-campotrocado-schema-hash";
@@ -116,11 +118,14 @@ async function main() {
     profileId(MEMBER_EMAIL!),
   ]);
 
-  const { data: existing } = await supabase
+  const { data: existing, error: findError } = await supabase
     .from("projects")
     .select("id, schema_revision, pydantic_fields")
     .eq("name", PROJECT_NAME)
     .maybeSingle();
+  // Sem esta checagem, uma falha de leitura viraria "projeto não existe" e o
+  // script criaria um segundo projeto com o mesmo nome.
+  if (findError) throw new Error(`projects: ${findError.message}`);
 
   let projectId: string;
   const schema = {
@@ -132,7 +137,8 @@ async function main() {
     projectId = existing.id as string;
     // A revisão só avança quando os campos do código diferem dos gravados (ver
     // sameStoredFields): reexecutar com os campos inalterados regrava o resto
-    // e deixa a revisão como está, como no gerador do llm-decisions.
+    // e deixa a revisão como está. Campo mudado no código vai para o banco com
+    // a revisão + 1 (o gerador do llm-decisions, em vez disso, recusa).
     const schemaChanged = !sameStoredFields(existing.pydantic_fields, FIELDS);
     const { error } = await supabase
       .from("projects")

@@ -77,9 +77,12 @@ export function redactUrl(url: string): string {
     return url;
   }
   let changed = false;
-  for (const name of [...u.searchParams.keys()]) {
-    if (CLERK_QUERY_PARAM.test(name)) {
-      u.searchParams.set(name, "<omitido>");
+  for (const [name, value] of [...u.searchParams]) {
+    // O `redirect_url` do login carrega a URL de origem, que pode trazer o
+    // token do Clerk dentro dela.
+    const nested = CLERK_QUERY_PARAM.test(name) ? "<omitido>" : redactUrl(value);
+    if (nested !== value) {
+      u.searchParams.set(name, nested);
       changed = true;
     }
   }
@@ -123,8 +126,9 @@ const ORIGIN_EXPLANATION: Record<NotFoundOrigin, string> = {
   "clerk-protect": "auth.protect() do Clerk reescreveu para 404 (sessão recusada)",
 };
 
-// Rota de login do app (NEXT_PUBLIC_CLERK_SIGN_IN_URL e `requirePageAuthUser`).
-const LOGIN_PATH = /^\/auth\/login(?:\/|$)/;
+// Rota de login do app (NEXT_PUBLIC_CLERK_SIGN_IN_URL e `requirePageAuthUser`)
+// e a do login hospedado do Clerk, para onde vai quem não define aquela.
+const LOGIN_PATH = /^\/(?:auth\/login|sign-in)(?:\/|$)/;
 
 // URL final do frame principal de uma página, para o teste que falhou: é ela
 // que mostra o redirecionamento ao login, que a mensagem do spec ("pergunta
@@ -138,7 +142,7 @@ export function describeFinalUrl(url: string): string {
     // about:blank ou URL malformada: mostra como veio.
   }
   const login = LOGIN_PATH.test(path)
-    ? " — tela de login: a sessão do Clerk não valeu para o servidor"
+    ? " — tela de login: o login do spec não terminou, ou a sessão não valeu para o servidor"
     : "";
   return `${redactUrl(url)}${login}`;
 }
