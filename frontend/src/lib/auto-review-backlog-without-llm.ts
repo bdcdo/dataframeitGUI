@@ -1,4 +1,4 @@
-import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 
 type DataClient = Pick<SupabaseServerClient, "from">;
@@ -74,22 +74,33 @@ export async function fetchDocsWithoutLlmCount(
     return { count: withoutLlm.size, error: null };
   }
 
+  // Só as auto-revisões dos candidatos, não as do projeto inteiro.
+  const candidates = [...withoutLlm];
   const [reviewsResult, historyResult] = await Promise.all([
-    fetchAllPaged<DocRow>(
-      () => client.from("field_reviews").select("id, document_id").eq("project_id", projectId),
-      ["id"],
+    fetchByDocumentChunks(candidates, (ids) =>
+      fetchAllPaged<DocRow>(
+        () =>
+          client
+            .from("field_reviews")
+            .select("id, document_id")
+            .eq("project_id", projectId)
+            .in("document_id", ids),
+        ["id"],
+      ),
     ),
-    fetchAllPaged<DocRow>(
-      () =>
-        client
-          .from("field_review_cycle_history_entries")
-          .select("id, document_id")
-          .eq("project_id", projectId),
-      ["id"],
+    fetchByDocumentChunks(candidates, (ids) =>
+      fetchAllPaged<DocRow>(
+        () =>
+          client
+            .from("field_review_cycle_history_entries")
+            .select("id, document_id")
+            .eq("project_id", projectId)
+            .in("document_id", ids),
+        ["id"],
+      ),
     ),
   ]);
   const reviewError = reviewsResult.error ?? historyResult.error;
   if (reviewError) return { count: null, error: reviewError };
-  const reviewed = docIds([...reviewsResult.data, ...historyResult.data]);
-  return { count: withoutLlm.intersection(reviewed).size, error: null };
+  return { count: docIds([...reviewsResult.data, ...historyResult.data]).size, error: null };
 }

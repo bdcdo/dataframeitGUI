@@ -26,7 +26,7 @@ import {
 } from "@/lib/compare-assignment-status";
 import { versionGate, type ProjectVersionRow } from "@/lib/compare-version";
 import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
-import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
 import { groupBy } from "@/lib/utils";
 
 const PG_UNIQUE_VIOLATION = "23505";
@@ -225,10 +225,6 @@ interface PlannedChange {
   row: AssignmentRow;
 }
 
-// Lote do `.in("document_id", ...)`: uma lista longa de UUIDs vai na URL do
-// PostgREST, e cem ficam bem abaixo do limite.
-const DOCUMENT_CHUNK = 100;
-
 type PagedRead<T> = Promise<{ data: T[]; error: { message: string } | null }>;
 
 // Leitura do projeto inteiro ou, com `documentIds`, só desses documentos, em
@@ -240,14 +236,7 @@ async function readProjectRows<T>(
   fetchChunk: (ids: string[]) => PagedRead<T>,
 ): PagedRead<T> {
   if (documentIds === null) return fetchAll();
-  const chunks: string[][] = [];
-  for (let i = 0; i < documentIds.length; i += DOCUMENT_CHUNK) {
-    chunks.push(documentIds.slice(i, i + DOCUMENT_CHUNK));
-  }
-  const results = await Promise.all(chunks.map(fetchChunk));
-  const failed = results.find((result) => result.error);
-  if (failed) return failed;
-  return { data: results.flatMap((result) => result.data), error: null };
+  return fetchByDocumentChunks(documentIds, fetchChunk);
 }
 
 // Quatro leituras paginadas do projeto em vez de quatro por assignment, para

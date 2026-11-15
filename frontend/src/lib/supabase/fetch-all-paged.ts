@@ -46,3 +46,25 @@ export async function fetchAllPaged<T>(
   }
   return { data: all, error: null };
 }
+
+// Lote do `.in("document_id", ...)`: uma lista longa de UUIDs vai na URL do
+// PostgREST, e cem ficam bem abaixo do limite.
+const DOCUMENT_CHUNK = 100;
+
+type PagedRead<T> = Promise<{ data: T[]; error: { message: string } | null }>;
+
+// Leitura restrita a `documentIds`, um `.in` por lote, em paralelo. A primeira
+// falha vence: um lote faltando daria número errado, não erro.
+export async function fetchByDocumentChunks<T>(
+  documentIds: readonly string[],
+  fetchChunk: (ids: string[]) => PagedRead<T>,
+): PagedRead<T> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < documentIds.length; i += DOCUMENT_CHUNK) {
+    chunks.push(documentIds.slice(i, i + DOCUMENT_CHUNK));
+  }
+  const results = await Promise.all(chunks.map(fetchChunk));
+  const failed = results.find((result) => result.error);
+  if (failed) return failed;
+  return { data: results.flatMap((result) => result.data), error: null };
+}
