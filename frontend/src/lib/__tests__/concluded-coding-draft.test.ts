@@ -7,7 +7,7 @@ const T2 = "2026-11-01T12:00:00.000Z";
 
 function check(
   completedAt: string | null,
-  response: { is_partial: boolean | null; updated_at: string | null } | null,
+  response: { is_partial: boolean | null; updated_at: string } | null,
   active = true,
 ) {
   return concludedCodingDraftViolations({
@@ -22,7 +22,10 @@ describe("concludedCodingDraftViolations", () => {
     expect(check(T1, { is_partial: true, updated_at: T0 })).toHaveLength(1);
   });
 
-  it("promoção pelo #538 com o rascunho (completed_at = updated_at) viola", () => {
+  // O #538 copia `completed_at = updated_at` da response que promove; o guard
+  // de is_partial o impede de promover rascunho, mas um canal que o fizesse
+  // copiando o carimbo tem de seguir acusado.
+  it("promoção que copia o carimbo do rascunho (completed_at = updated_at) viola", () => {
     expect(check(T1, { is_partial: true, updated_at: T1 })).toHaveLength(1);
   });
 
@@ -33,9 +36,8 @@ describe("concludedCodingDraftViolations", () => {
     expect(check(T1, { is_partial: true, updated_at: T2 })).toEqual([]);
   });
 
-  it("sem os dois carimbos não há prova de reenvio: segue violação", () => {
+  it("sem completed_at não há prova de reenvio: segue violação", () => {
     expect(check(null, { is_partial: true, updated_at: T2 })).toHaveLength(1);
-    expect(check(T1, { is_partial: true, updated_at: null })).toHaveLength(1);
   });
 
   it("submetida, legada sem sinal, sem response ou doc excluído não violam", () => {

@@ -16,7 +16,8 @@ interface HumanLatestResponse {
   document_id: string;
   respondent_id: string | null;
   is_partial: boolean | null;
-  updated_at: string | null;
+  /** NOT NULL com DEFAULT now() desde 20260514010000_responses_updated_at. */
+  updated_at: string;
 }
 
 interface Violation {
@@ -41,14 +42,17 @@ export interface ConcludedCodingDraftInput {
  * (`keepCodingAssignmentInProgress`, #626) — estado legítimo. O que o separa
  * do rascunho promovido é a ordem: o saveResponse grava `updated_at` depois do
  * `completed_at` da conclusão. Estrito porque a promoção na criação (#538)
- * copia `completed_at = updated_at` da response que a sustenta. Sem um dos
- * carimbos não há prova de reenvio, e a linha segue como violação.
+ * copia `completed_at = updated_at` da response que a sustenta: hoje só de
+ * response enviada completa (guard de `is_partial` em coding-initial-status),
+ * mas um canal que promovesse rascunho copiando o carimbo dele tem que
+ * continuar acusado. Sem `completed_at` não há prova de reenvio, e a linha
+ * segue como violação.
  */
 function resubmittedAfterConclusion(
   completedAt: string | null,
-  updatedAt: string | null,
+  updatedAt: string,
 ): boolean {
-  if (completedAt === null || updatedAt === null) return false;
+  if (completedAt === null) return false;
   return Date.parse(updatedAt) > Date.parse(completedAt);
 }
 

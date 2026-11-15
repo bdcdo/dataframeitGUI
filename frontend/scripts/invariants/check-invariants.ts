@@ -431,11 +431,12 @@ const invariants: Invariant[] = [
           document_id: string;
           respondent_id: string | null;
           is_partial: boolean | null;
-          updated_at: string | null;
+          updated_at: string;
         }>(
           "responses",
           "document_id, respondent_id, is_partial, updated_at",
-          (q) => q.eq("respondent_type", "humano").eq("is_latest", true),
+          // Só rascunho/incompleta é candidata: a submetida não trafega.
+          (q) => q.eq("respondent_type", "humano").eq("is_latest", true).eq("is_partial", true),
         ),
       ]);
       // A regra (e o envio incompleto pós-conclusão que ela isenta desde o
