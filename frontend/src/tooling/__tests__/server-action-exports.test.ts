@@ -1,19 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { RULE_NAME } from "../../../eslint-rules/server-action-exports.mjs";
-import {
-  frontendEslint,
-  ruleLinter,
-  warmUpEslint,
-} from "@/test-utils/eslint-rule";
+import { frontendEslint, ruleLinter } from "@/test-utils/eslint-rule";
 
-const ruleId = `server-actions/${RULE_NAME}`;
-const defaultFilePath = "src/actions/example.ts";
-const eslint = frontendEslint("eslint.config.mjs");
-const { messagesFor } = ruleLinter(eslint, ruleId, defaultFilePath);
+const { messagesFor, warmUp } = ruleLinter(
+  frontendEslint("eslint.config.mjs"),
+  `server-actions/${RULE_NAME}`,
+  "src/actions/example.ts",
+);
+warmUp();
 
 describe('regra de exports em módulos "use server"', () => {
-  warmUpEslint(eslint, defaultFilePath);
 
   it("permite funções async diretas e exports de tipo", async () => {
     await expect(

@@ -23,8 +23,8 @@ const prelude = `
 describe("regra de locators visíveis nos specs E2E", () => {
   // A carga a frio da config (grafo do eslint-config-next) e o lint da pasta
   // e2e/ inteira ficam no beforeAll, fora do orçamento de CPU por teste
-  // (docs/CODE_QUALITY_TOOLING.md), como o warmUpEslint
-  // de test-cold-imports.test.ts.
+  // (docs/CODE_QUALITY_TOOLING.md), como o warmUp() de
+  // @/test-utils/eslint-rule.
   let e2eFolderResults: ESLint.LintResult[] = [];
   beforeAll(async () => {
     e2eFolderResults = await eslint.lintFiles(["e2e/**/*.ts"]);
