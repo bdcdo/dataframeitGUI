@@ -26,7 +26,7 @@ def limiter(sb, monkeypatch):
 
 
 def test_second_dispatch_in_window_gets_429_with_retry_after(
-    sb, project, make_user, limiter
+    project, make_user, limiter
 ):
     user_id = make_user()
 
@@ -36,16 +36,9 @@ def test_second_dispatch_in_window_gets_429_with_retry_after(
 
     assert rejected.value.status_code == 429
     assert 1 <= int(rejected.value.headers["Retry-After"]) <= 3600
-    bucket = (
-        sb.table("llm_rate_limit_buckets")
-        .select("request_count")
-        .eq("project_id", project["id"])
-        .eq("user_id", user_id)
-        .single()
-        .execute()
-        .data
-    )
-    assert bucket == {"request_count": 1}
+    # O balde não é relido: `llm_rate_limit_buckets` tem REVOKE ALL inclusive
+    # para a service_role (só `consume_llm_rate_limit`, SECURITY DEFINER, o
+    # toca). O 429 da segunda chamada já prova que o balde foi gravado.
 
 
 def test_buckets_are_per_user(project, make_user, limiter):
