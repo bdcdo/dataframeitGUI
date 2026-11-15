@@ -34,13 +34,10 @@ const hoisted = vi.hoisted(() => ({
   // a fila de Atribuições depende do path para não servir do Router Cache um
   // documento já excluído (#664).
   revalidatePath: vi.fn<(path: string) => void>(),
-  revalidateTag: vi.fn<(tag: string, profile?: unknown) => void>(),
 }));
 
 vi.mock("next/cache", () => ({
   revalidatePath: (path: string) => hoisted.revalidatePath(path),
-  revalidateTag: (tag: string, profile?: unknown) =>
-    hoisted.revalidateTag(tag, profile),
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
@@ -97,7 +94,6 @@ beforeEach(() => {
   hoisted.resolveMemberUserId.mockReset();
   hoisted.resolveMemberUserId.mockResolvedValue("canonical-member");
   hoisted.revalidatePath.mockClear();
-  hoisted.revalidateTag.mockClear();
 });
 
 async function loadUpload() {
@@ -742,15 +738,5 @@ describe("revalidateProjectDocumentsCache — rotas invalidadas", () => {
       "/projects/proj-1/config/documents",
       "/projects/proj-1/analyze/assignments",
     ]);
-  });
-
-  // Nenhuma tag de cache do projeto tem produtor: `-documents` perdeu o seu com
-  // o unstable_cache (#664) e `-progress` nunca teve (#668).
-  it("não revalida tag nenhuma, porque nenhuma tem produtor", async () => {
-    const revalidateProjectDocumentsCache = await loadRevalidateCache();
-
-    await revalidateProjectDocumentsCache("proj-1");
-
-    expect(hoisted.revalidateTag).not.toHaveBeenCalled();
   });
 });

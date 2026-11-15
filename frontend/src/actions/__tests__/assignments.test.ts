@@ -20,7 +20,6 @@ let rpcResults: Record<string, TableResult> | undefined;
 
 vi.mock("next/cache", () => ({
   revalidatePath: () => {},
-  revalidateTag: () => {},
 }));
 vi.mock("@/lib/auth", () => ({
   getAuthUser: async () => ({ id: "user-1", isMaster: false }),

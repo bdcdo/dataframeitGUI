@@ -14,14 +14,12 @@ const supabaseState = vi.hoisted(() => ({
   writeCalls: [] as WriteCall[],
   tableResults: undefined as TableResults | undefined,
   revalidatePath: vi.fn(),
-  revalidateTag: vi.fn(),
   rpcCalls: [] as RpcCall[],
   rpcResults: undefined as Record<string, TableResult> | undefined,
 }));
 
 vi.mock("next/cache", () => ({
   revalidatePath: supabaseState.revalidatePath,
-  revalidateTag: supabaseState.revalidateTag,
 }));
 // isProjectCoordinator saiu de @/lib/auth neste branch (identidade canônica);
 // o shape do mock segue o da main (#454), sem o símbolo removido.

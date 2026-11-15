@@ -24,7 +24,7 @@ const fetchMock = vi.hoisted(() => vi.fn());
 const resyncMock = vi.hoisted(() => vi.fn(async () => ({ checked: 0, changes: [] })));
 vi.mock("@/lib/compare-assignment-sync", () => ({ resyncProjectCompareAssignments: resyncMock }));
 
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), revalidateTag: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ getAuthUser: async () => ({ id: "userCoord" }) }));
 vi.mock("@/lib/api-server", () => ({ fetchFastAPIServer: fetchMock }));
 vi.mock("@/lib/supabase/server", () => ({

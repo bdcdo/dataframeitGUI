@@ -44,6 +44,20 @@ const CLERK_COMPONENTS_READING_LOAD_STATE = [
   "Waitlist",
 ];
 
+// APIs de cache com tag do Next. Hoje nenhuma leitura usa cache com tag (as
+// páginas vão direto ao banco e as actions invalidam o Router Cache do cliente
+// por `revalidatePath`), e invalidar tag sem produtor é um no-op que sugere uma
+// garantia de frescor inexistente — foi o caso de `-members` e `-progress`
+// (#668). Quem introduzir um cache com tag tira daqui a API que passar a usar.
+const NEXT_CACHE_TAG_APIS = [
+  "unstable_cache",
+  "cacheTag",
+  "revalidateTag",
+  "updateTag",
+];
+const NEXT_CACHE_TAG_MESSAGE =
+  "O frontend não tem cache com tag (#668): invalide a rota com revalidatePath. Se for criar um cache com tag, ajuste NEXT_CACHE_TAG_APIS em eslint.config.mjs.";
+
 // Sem type-checker, a regra reconhece a página pelo nome da variável. O
 // segundo bloco de seletores abaixo impõe esse nome onde um `Page` nasce ou é
 // recebido, para que renomear não seja um jeito silencioso de escapar.
@@ -180,6 +194,10 @@ const eslintConfig = defineConfig([
   // botões (`SignInButton` etc.) ficam fora: não dependem do carregamento. Um componente novo do Clerk escapa do lint
   // até entrar aqui, então conferir ao atualizar o pacote. `import()` dinâmico
   // também escapa: a regra só vê import estático.
+  //
+  // O mesmo bloco barra as APIs de cache com tag (NEXT_CACHE_TAG_APIS): um
+  // segundo bloco com `no-restricted-imports` nos mesmos arquivos substituiria
+  // as opções deste em vez de somá-las, e o portão do Clerk sumiria calado.
   {
     files: ["src/**/*.{js,jsx,mjs,mts,ts,tsx}"],
     // O teste do portão importa o componente cru (mockado) como controle.
@@ -191,15 +209,31 @@ const eslintConfig = defineConfig([
       "no-restricted-imports": [
         "error",
         {
-          // `@clerk/react` é a origem real dos componentes; o `@clerk/nextjs`
-          // só os reexporta.
-          paths: ["@clerk/nextjs", "@clerk/react"].map((name) => ({
-            name,
-            importNames: CLERK_COMPONENTS_READING_LOAD_STATE,
-            allowTypeImports: true,
-            message:
-              "Use o componente de @/components/auth/clerk-ui (ou acrescente lá um embrulho com o mesmo portão), que só o monta depois da hidratação.",
-          })),
+          paths: [
+            // `@clerk/react` é a origem real dos componentes; o
+            // `@clerk/nextjs` só os reexporta.
+            ...["@clerk/nextjs", "@clerk/react"].map((name) => ({
+              name,
+              importNames: CLERK_COMPONENTS_READING_LOAD_STATE,
+              allowTypeImports: true,
+              message:
+                "Use o componente de @/components/auth/clerk-ui (ou acrescente lá um embrulho com o mesmo portão), que só o monta depois da hidratação.",
+            })),
+            {
+              name: "next/cache",
+              importNames: NEXT_CACHE_TAG_APIS,
+              message: NEXT_CACHE_TAG_MESSAGE,
+            },
+          ],
+        },
+      ],
+      // A outra porta de cache com tag é a opção do fetch do Next.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "Property[key.name='next'] > ObjectExpression > Property[key.name='tags']",
+          message: NEXT_CACHE_TAG_MESSAGE,
         },
       ],
     },

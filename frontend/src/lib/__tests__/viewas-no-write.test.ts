@@ -17,7 +17,6 @@ const harness = createProjectIdentityActionHarness(resolveMemberUserId);
 
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
-  revalidateTag: vi.fn(),
 }));
 // Clerk e supabase/admin são dependências transitivas do módulo real de auth
 // (importado via importOriginal abaixo para manter resolveProjectQueueIdentity

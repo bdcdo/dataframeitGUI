@@ -253,13 +253,10 @@ async function filterActiveExternalIdConflicts<
 export async function revalidateProjectDocumentsCache(projectId: string) {
   try {
     revalidatePath(`/projects/${projectId}/config/documents`);
-    // Sem revalidateTag: a tag `project-${projectId}-documents` saiu junto com
-    // o unstable_cache da página de Atribuições (#664), e a `-progress` nunca
-    // teve produtor (#668). Revalidar tag sem produtor é invalidar nada e
-    // sugerir uma garantia que não existe. A rota entra aqui pelo path,
-    // e não pela tag: a lista passou a ser lida direto do banco, mas o Router
-    // Cache do cliente ainda pode servir uma renderização anterior — é o que
-    // faria um documento recém-excluído seguir aparecendo como atribuível.
+    // A rota de Atribuições entra pelo path: a lista é lida direto do banco
+    // (sem unstable_cache desde o #664), mas o Router Cache do cliente ainda
+    // pode servir uma renderização anterior — é o que faria um documento
+    // recém-excluído seguir aparecendo como atribuível.
     revalidatePath(`/projects/${projectId}/analyze/assignments`);
   } catch (e) {
     console.error("[revalidateProjectDocuments] falha ao revalidar cache", e);
