@@ -212,25 +212,52 @@ assert_wait "API sem resposta" "10 10"
 run_wait FAIL '{"status":"ok","active_jobs":1}' '{"status":"ok","active_jobs":0}'
 assert_wait "Nenhuma run em curso." "10 60"
 
-grep -Fq 'size = "shared-cpu-1x"' "$fly_config"
-grep -Fq 'memory = "512mb"' "$fly_config"
 # Mesma comparação por linha inteira, sem comentários, do contrato do frontend:
-# o arquivo cita em prosa formas que estas asserções rejeitam.
-fly_directives="$(sed 's/#.*//; s/[[:space:]]*$//; s/^[[:space:]]*//' "$fly_config")"
-for directive in 'auto_stop_machines = "off"' 'auto_start_machines = true' 'min_machines_running = 1'; do
-  grep -Fxq "$directive" <<<"$fly_directives" || { echo "backend/fly.toml sem a diretiva esperada: $directive" >&2; exit 1; }
+# o arquivo cita em prosa formas que estas asserções rejeitam, e um grep de
+# substring casaria a documentação em vez da diretiva. A checagem roda em
+# subshell para que o `exit` reprove só a chamada e os casos vermelhos rodem.
+expected_directives=(
+  'size = "shared-cpu-1x"'
+  'memory = "512mb"'
+  'auto_stop_machines = "off"'
+  'auto_start_machines = true'
+  'min_machines_running = 1'
+)
+
+check_fly_config() (
+  fly_directives="$(sed 's/#.*//; s/[[:space:]]*$//; s/^[[:space:]]*//' "$1")"
+  for directive in "${expected_directives[@]}"; do
+    grep -Fxq "$directive" <<<"$fly_directives" \
+      || { echo "backend/fly.toml sem a diretiva esperada: $directive" >&2; exit 1; }
+  done
+  # Nenhuma forma de scale-to-zero: "stop" derrubou o site em 2026-08-10 e
+  # "suspend" em 2026-11-03 (motivos no comentário do auto_stop_machines em
+  # frontend/fly.toml). Toda linha de auto_stop_machines, inclusive num bloco
+  # [[services]] separado que a asserção acima não vê, tem de ser "off" ou false.
+  # Lista do que se aceita, e não do que se proíbe: o flyctl também lê 'stop'
+  # (string literal do TOML) e true (o stop legado), e uma lista de proibidos
+  # deixava as duas passarem.
+  if grep -E '^auto_stop_machines[[:space:]]*=' <<<"$fly_directives" \
+    | grep -Evxq 'auto_stop_machines[[:space:]]*=[[:space:]]*("off"|false)'; then
+    echo "backend/fly.toml com scale-to-zero: todo auto_stop_machines tem de ser \"off\"" >&2
+    exit 1
+  fi
+)
+
+check_fly_config "$fly_config"
+
+# Casos vermelhos: cada diretiva esperada que sobra só num comentário reprova
+# (um grep de substring a aprovaria), e um scale-to-zero num bloco separado
+# também. O awk normaliza a linha como o sed acima para achar a diretiva.
+mutated_config="$tmp_dir/fly.toml"
+for directive in "${expected_directives[@]}"; do
+  awk -v d="$directive" '{ t = $0; sub(/#.*/, "", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t); print (t == d ? "# " : "") $0 }' \
+    "$fly_config" >"$mutated_config"
+  expect_failure check_fly_config "$mutated_config"
 done
-# Nenhuma forma de scale-to-zero: "stop" derrubou o site em 2026-08-10 e
-# "suspend" em 2026-11-03 (motivos no comentário do auto_stop_machines em
-# frontend/fly.toml). Toda linha de auto_stop_machines, inclusive num bloco
-# [[services]] separado que a asserção acima não vê, tem de ser "off" ou false.
-# Lista do que se aceita, e não do que se proíbe: o flyctl também lê 'stop'
-# (string literal do TOML) e true (o stop legado), e uma lista de proibidos
-# deixava as duas passarem.
-if grep -E '^auto_stop_machines[[:space:]]*=' <<<"$fly_directives" \
-  | grep -Evxq 'auto_stop_machines[[:space:]]*=[[:space:]]*("off"|false)'; then
-  echo "backend/fly.toml com scale-to-zero: todo auto_stop_machines tem de ser \"off\"" >&2
-  exit 1
-fi
+for scale_to_zero in '"stop"' "'stop'" '"suspend"' true; do
+  { cat "$fly_config"; printf '\n[[services]]\n  auto_stop_machines = %s\n' "$scale_to_zero"; } >"$mutated_config"
+  expect_failure check_fly_config "$mutated_config"
+done
 
 echo "Contrato de Machines do backend validado."
