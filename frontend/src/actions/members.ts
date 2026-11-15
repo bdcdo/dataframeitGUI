@@ -202,6 +202,11 @@ async function resolvePendingMemberIdentity(
       email,
       error,
     });
+    // Conflito estrutural (e-mail ativado ou reclamado no meio do caminho)
+    // não melhora com insistência: a mensagem própria diz o que está no caminho.
+    if (error instanceof ClerkIdentityConflictError) {
+      return { status: "error", error: error.message };
+    }
     return {
       status: "error",
       error: "Não foi possível pré-registrar o membro. Tente novamente.",

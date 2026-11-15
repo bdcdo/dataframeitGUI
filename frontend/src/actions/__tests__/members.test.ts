@@ -907,6 +907,23 @@ describe("addMember (pré-registro de membro sem conta)", () => {
     expect(r.error).toBe("Não foi possível pré-registrar o membro. Tente novamente.");
     expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
   });
+
+  it("conflito estrutural no pré-registro mantém a mensagem própria, sem retry", async () => {
+    // O e-mail foi ativado (ou reclamado por uma conta Clerk) entre a leitura
+    // local e o pré-registro: "tente novamente" falharia do mesmo jeito.
+    const { ClerkIdentityConflictError } = await import("@/lib/clerk-sync");
+    adminTableResults = {
+      profiles: { data: null },
+      member_email_links: { data: null },
+    };
+    hoisted.preregister.mockRejectedValueOnce(
+      new ClerkIdentityConflictError("Este e-mail já pertence a uma conta ativa"),
+    );
+    const add = await loadAdd();
+    const r = await add("p1", "novo@exemplo.com", "pesquisador");
+    expect(r.error).toBe("Este e-mail já pertence a uma conta ativa");
+    expect(writeCalls.filter((c) => c.op === "insert")).toEqual([]);
+  });
 });
 
 async function loadUpdatePendingEmail() {
