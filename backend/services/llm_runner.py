@@ -7,6 +7,7 @@ Security: o schema Pydantic do projeto é reconstruído a partir do AST validado
 
 import hashlib
 import logging
+import math
 import random
 import re
 import threading
@@ -773,12 +774,24 @@ _ID_BATCH_SIZE = 100
 
 
 # Fração do escopo escolhida a partir da qual a segunda fase de
-# `_load_documents_for_run` lê o escopo paginado e descarta em Python os não
-# escolhidos, em vez de pedir os escolhidos em lotes de `_ID_BATCH_SIZE`. Uma
-# página traz `_SELECT_PAGE_SIZE` linhas e um lote só `_ID_BATCH_SIZE`: com
+# `_load_documents_for_run` pode ler o escopo paginado e descartar em Python os
+# não escolhidos, em vez de pedir os escolhidos em lotes de `_ID_BATCH_SIZE`.
+# Uma página traz `_SELECT_PAGE_SIZE` linhas e um lote só `_ID_BATCH_SIZE`: com
 # 19.999 pendentes de 20 mil, os lotes são 200 requisições, e o escopo, 21. O
-# preço é baixar o texto dos descartados, que aqui é no máximo 10% do escopo.
+# preço é baixar o texto dos descartados, que a fração limita a 10% do escopo.
 _SCOPE_READ_MIN_FRACTION = 0.9
+
+
+def _scope_read_is_cheaper(n_scope: int, n_chosen: int, min_fraction: float) -> bool:
+    """Se ler o escopo inteiro custa menos que pedir os escolhidos em lotes.
+
+    O escopo custa as páginas com linhas mais a vazia que encerra a leitura; os
+    lotes, um pedido cada. Num escopo pequeno, um lote só sai mais barato
+    mesmo com quase tudo escolhido.
+    """
+    scope_requests = math.ceil(n_scope / _SELECT_PAGE_SIZE) + 1
+    batch_requests = math.ceil(n_chosen / _ID_BATCH_SIZE)
+    return n_chosen >= min_fraction * n_scope and scope_requests < batch_requests
 
 
 def _select_all(
@@ -983,9 +996,9 @@ def _load_documents_for_run(
     a amostra ou os pendentes; depois o `text` só dos escolhidos. Uma amostra
     de 10 num projeto de 20 mil documentos não baixa os 20 mil textos.
 
-    Quando os escolhidos são ao menos `scope_read_min_fraction` do escopo, a
-    segunda fase lê o escopo paginado e descarta o resto, o que custa menos
-    requisições que os lotes de ids (ver `_SCOPE_READ_MIN_FRACTION`).
+    Quando os escolhidos são ao menos `scope_read_min_fraction` do escopo e
+    lê-lo custa menos requisições que os lotes de ids, a segunda fase lê o
+    escopo paginado e descarta o resto (ver `_SCOPE_READ_MIN_FRACTION`).
     """
 
     # O escopo de um documento são os dois filtros juntos, e não só o soft
@@ -1038,8 +1051,9 @@ def _load_documents_for_run(
         return _select_all(full_documents, document_ids)
     # Com `document_ids`, a leitura do escopo também iria em lotes de ids, e
     # mais lotes que os dos escolhidos: só sem seleção ela economiza.
-    scope_is_cheaper = len(chosen_ids) >= scope_read_min_fraction * len(candidates)
-    if document_ids is None and scope_is_cheaper:
+    if document_ids is None and _scope_read_is_cheaper(
+        len(candidates), len(chosen_ids), scope_read_min_fraction
+    ):
         rows = _select_all(full_documents)
     else:
         rows = _select_all(full_documents, chosen_ids)

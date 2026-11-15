@@ -401,3 +401,15 @@ def test_com_selecao_de_ids_nao_le_o_escopo():
 
     assert [d["id"] for d in loaded] == pending[:299]
     assert sorted(_texts_read(sb)) == pending[:299]
+
+
+def test_escopo_pequeno_segue_em_lote_mesmo_acima_do_limiar():
+    # 95 de 100: um lote de 95 ids é 1 requisição; o escopo seriam 2 (a página
+    # e a vazia) e ainda baixaria os 5 textos descartados.
+    sb, pending = _pending_run(100, 95)
+
+    loaded = _load(sb, "pending")
+
+    assert [d["id"] for d in loaded] == pending
+    assert _text_requests(sb) == 1
+    assert sorted(_texts_read(sb)) == pending
