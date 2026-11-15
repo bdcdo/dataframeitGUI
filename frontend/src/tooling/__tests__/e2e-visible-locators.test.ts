@@ -1,27 +1,18 @@
-import { fileURLToPath } from "node:url";
-
-import { ESLint } from "eslint";
+import type { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
   HIDDEN_INSENSITIVE_LOCATORS,
   LEGACY_SELECTOR_APIS,
 } from "../../../eslint-rules/e2e-visible-locators.mjs";
+import { frontendEslint, ruleLinter } from "@/test-utils/eslint-rule";
 
-const frontendRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const ruleId = "no-restricted-syntax";
 // A config typed, e não a base, porque é ela que o hook `lint-types` executa: a
 // regra mora na base e só chega ao hook pelo `...base` da typed. Testar pela
 // base deixaria passar o desacoplamento das duas, que tira o gate em silêncio.
-const eslint = new ESLint({
-  cwd: frontendRoot,
-  overrideConfigFile: "eslint.config.typed.mjs",
-});
-
-async function messagesFor(code: string, filePath = "e2e/example.spec.ts") {
-  const [result] = await eslint.lintText(code, { filePath });
-  return result?.messages.filter((message) => message.ruleId === ruleId) ?? [];
-}
+const eslint = frontendEslint("eslint.config.typed.mjs");
+const { messagesFor } = ruleLinter(eslint, ruleId, "e2e/example.spec.ts");
 
 // Os imports só dão ao exemplo a forma de um spec; a regra não depende deles.
 const prelude = `
@@ -32,7 +23,7 @@ const prelude = `
 describe("regra de locators visíveis nos specs E2E", () => {
   // A carga a frio da config (grafo do eslint-config-next) e o lint da pasta
   // e2e/ inteira ficam no beforeAll, fora do orçamento de CPU por teste
-  // (docs/CODE_QUALITY_TOOLING.md), como em test-cold-imports.test.ts.
+  // (docs/CODE_QUALITY_TOOLING.md), como faz warmUpEslint nos outros testes de regra.
   let e2eFolderResults: ESLint.LintResult[] = [];
   beforeAll(async () => {
     e2eFolderResults = await eslint.lintFiles(["e2e/**/*.ts"]);

@@ -1,36 +1,19 @@
-import { fileURLToPath } from "node:url";
-
-import { ESLint } from "eslint";
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { RULE_NAME } from "../../../eslint-rules/server-action-exports.mjs";
+import {
+  frontendEslint,
+  ruleLinter,
+  warmUpEslint,
+} from "@/test-utils/eslint-rule";
 
-const frontendRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const ruleId = `server-actions/${RULE_NAME}`;
-const eslint = new ESLint({
-  cwd: frontendRoot,
-  overrideConfigFile: "eslint.config.mjs",
-});
-
-async function messagesFor(
-  code: string,
-  filePath = "src/actions/example.ts",
-) {
-  const [result] = await eslint.lintText(code, { filePath });
-  return result?.messages.filter((message) => message.ruleId === ruleId) ?? [];
-}
+const defaultFilePath = "src/actions/example.ts";
+const eslint = frontendEslint("eslint.config.mjs");
+const { messagesFor } = ruleLinter(eslint, ruleId, defaultFilePath);
 
 describe('regra de exports em módulos "use server"', () => {
-  // O primeiro lintText carrega eslint.config.mjs e todo o grafo de plugins do
-  // eslint-config-next; os seguintes reaproveitam o cache da instância. Sozinha,
-  // a carga leva perto de 1 s contra 5 ms de uma chamada quente, mas com os
-  // workers da suíte disputando a CPU passa de 5 s e estourava o timeout de
-  // qualquer teste que fosse o primeiro. No hook, com prazo próprio, ela deixa
-  // de contar contra os testes, sem mexer no timeout global. O prazo tem folga
-  // larga porque a carga fria chegou a 20 s com o arquivo isolado e load 65.
-  beforeAll(async () => {
-    await messagesFor('"use server";');
-  }, 60_000);
+  warmUpEslint(eslint, defaultFilePath);
 
   it("permite funções async diretas e exports de tipo", async () => {
     await expect(

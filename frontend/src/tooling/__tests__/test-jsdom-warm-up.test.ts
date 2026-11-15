@@ -5,6 +5,7 @@ import {
   RULE_NAME,
   testJsdomWarmUpPlugin,
 } from "../../../eslint-rules/test-jsdom-warm-up.mjs";
+import { ruleLinter } from "@/test-utils/eslint-rule";
 
 const ruleId = `test-jsdom-warm-up/${RULE_NAME}`;
 
@@ -25,18 +26,11 @@ const eslint = new ESLint({
   ],
 });
 
-async function messagesFor(code: string) {
-  const [result] = await eslint.lintText(code, {
-    filePath: "src/components/__tests__/Example.test.tsx",
-  });
-  const fatal = result?.messages.find((message) => message.fatal);
-  if (fatal) throw new Error(`fixture não parseou: ${fatal.message}`);
-  return result?.messages.filter((message) => message.ruleId === ruleId) ?? [];
-}
-
-async function messageIdsFor(code: string) {
-  return (await messagesFor(code)).map((message) => message.messageId);
-}
+const { messagesFor, messageIdsFor } = ruleLinter(
+  eslint,
+  ruleId,
+  "src/components/__tests__/Example.test.tsx",
+);
 
 // Montado por partes: o Vitest escolhe o ambiente pela primeira ocorrência do
 // pragma em qualquer ponto do texto, e o literal inteiro aqui faria este
