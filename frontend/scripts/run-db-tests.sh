@@ -144,6 +144,25 @@ run_psql() {
   bash scripts/run-sql-test.sh "${TESTS_DIR}/$1.test.sql" >"${LOG_DIR}/$1.log" 2>&1
 }
 
+run_backend_integration() {
+  bash scripts/run-backend-integration.sh >"${LOG_DIR}/$1.log" 2>&1
+}
+
+# No GitHub Actions o database-tests.yml roda tudo num passo só, e o passo por
+# suíte de antes mostrava a saída inteira de cada uma e, num travamento, qual
+# estava rodando. Lá cada suíte vira um grupo, aberto antes de ela rodar e com
+# o log inteiro, e a falha de gate vira anotação.
+in_ci() { [[ ${GITHUB_ACTIONS:-} == true ]]; }
+
+run_suite() {
+  local runner="$1" suite="$2" code
+  in_ci && echo "::group::${suite}"
+  "${runner}" "${suite}"
+  code=$?
+  in_ci && { cat "${LOG_DIR}/${suite}.log"; echo "::endgroup::"; }
+  return "${code}"
+}
+
 tail_log() {
   echo "    ── saída (cauda):"
   tail -n 15 "${LOG_DIR}/$1.log" | sed 's/^/    /'
@@ -163,6 +182,7 @@ report() {
     fi
   elif [[ ${gated} == gate ]]; then
     printf '  FAIL  %s\n' "${suite}"
+    in_ci && echo "::error title=Suíte do banco ${suite}::falhou; saída inteira no grupo ${suite} do passo"
     fail_gate+=("${suite}")
     tail_log "${suite}"
   else
@@ -174,17 +194,16 @@ report() {
 echo "▸ suítes de contrato do banco (varredura completa)"
 
 for s in "${PGTAP_SUITES[@]}"; do
-  run_pgtap "$s"; report "$s" $? gate
+  run_suite run_pgtap "$s"; report "$s" $? gate
 done
 for s in "${GATE_SUITES[@]}"; do
-  run_psql "$s"; report "$s" $? gate
+  run_suite run_psql "$s"; report "$s" $? gate
 done
 for s in "${!KNOWN_RED[@]}"; do
-  run_psql "$s"; report "$s" $? known
+  run_suite run_psql "$s"; report "$s" $? known
 done
 # Contrato do llm_runner em `llm_runs` (#674), pytest contra este mesmo stack.
-bash scripts/run-backend-integration.sh >"${LOG_DIR}/backend_integration.log" 2>&1
-report backend_integration $? gate
+run_suite run_backend_integration backend_integration; report backend_integration $? gate
 
 echo "────────────────────────────────────────"
 printf 'PASS=%d  FAIL(gate)=%d  RED*(conhecida)=%d  VERDE(promover)=%d\n' \
