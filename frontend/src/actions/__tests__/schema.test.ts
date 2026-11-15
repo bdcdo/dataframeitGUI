@@ -774,21 +774,12 @@ describe("erro de servidor não chega cru ao toast", () => {
     expect(result).toEqual({ error: "Projeto não possui código Pydantic armazenado" });
   });
 
-  it("recoverFieldsFromStoredCode com 5xx não repassa o statusText", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    fetchMock.mockRejectedValueOnce(new ApiError("Internal Server Error", 500));
-
-    const result = await recoverFieldsFromStoredCode("p1");
-
-    expect(result).toEqual({
-      error: "Não foi possível recuperar os campos do código armazenado. Tente novamente.",
-    });
-    vi.mocked(console.error).mockRestore();
-  });
-
-  it("recoverFieldsFromStoredCode com falha de rede", async () => {
+  it.each([
+    ["5xx", new ApiError("Internal Server Error", 500)],
+    ["falha de rede", new TypeError("fetch failed")],
+  ])("recoverFieldsFromStoredCode com %s loga e devolve copy pt-BR", async (_, failure) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+    fetchMock.mockRejectedValueOnce(failure);
 
     const result = await recoverFieldsFromStoredCode("p1");
 
@@ -797,7 +788,7 @@ describe("erro de servidor não chega cru ao toast", () => {
     });
     expect(consoleError).toHaveBeenCalledWith(
       "[schema] recuperação dos campos falhou",
-      expect.objectContaining({ message: "fetch failed" }),
+      expect.objectContaining({ message: failure.message }),
     );
     consoleError.mockRestore();
   });
