@@ -57,11 +57,13 @@ interface RoundTripCase {
   case: number;
   fields: PydanticField[];
   code: string;
-  compiled: unknown[];
+  // Os campos que `compile_pydantic` devolveu, ou `{ errors }` quando o código
+  // não compilou (o que reprova nas duas suítes).
+  compiled: unknown;
 }
 
 // Compila todos os códigos numa só chamada ao Python, pelo `compile_pydantic`
-// de verdade. Código que não compila grava `compiled: null` e reprova abaixo.
+// de verdade.
 const COMPILE_ALL = `
 import json, sys
 from services.pydantic_compiler import compile_pydantic
@@ -81,7 +83,7 @@ function regenerateFixture(): void {
       input: JSON.stringify(codes),
       encoding: "utf8",
     }),
-  ) as unknown[][];
+  ) as unknown[];
   const cases: RoundTripCase[] = schemas.map((fields, index) => ({
     case: index,
     fields,
@@ -107,11 +109,25 @@ describe("round-trip generatePydanticCode → compile_pydantic (casos gravados)"
     }
   });
 
-  it("o gerador de casos sorteia toda propriedade de PydanticField", () => {
+  it("o gerador de casos sorteia toda propriedade de PydanticField fora do default", () => {
     // Propriedade nova no schema Zod sem entrada no gerador de casos reprova
-    // aqui: sem ela no sorteio, o round-trip não a testaria.
-    const seen = new Set(CASES.flatMap((c) => c.fields.flatMap(Object.keys)));
-    expect([...PYDANTIC_FIELD_PROPERTY_KEYS].filter((key) => !seen.has(key))).toEqual([]);
+    // aqui: sem ela no sorteio, o round-trip não a testaria. Não basta a chave
+    // aparecer: tirá-la de algum campo tem de mudar o campo canônico, senão
+    // ela só foi sorteada no default (ou falta em `snapshotOf`, regra (c) do
+    // CLAUDE.md) e o caminho que a emite e a lê de volta nunca roda. `hash`
+    // fica de fora do snapshot por ser derivado, e é conferido à parte, abaixo.
+    const exercised = (key: string) =>
+      CASES.some((c) =>
+        c.fields.some((field) => {
+          if (!(key in field)) return false;
+          if (key === "hash") return true;
+          const without = Object.fromEntries(
+            Object.entries(field).filter(([k]) => k !== key),
+          ) as PydanticField;
+          return stableStringify(canonical(field)) !== stableStringify(canonical(without));
+        }),
+      );
+    expect(PYDANTIC_FIELD_PROPERTY_KEYS.filter((key) => !exercised(key))).toEqual([]);
   });
 
   it("o código gravado é o que o gerador emite hoje", () => {
