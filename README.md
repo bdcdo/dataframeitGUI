@@ -20,7 +20,7 @@ Plataforma web para análise de conteúdo com IA, baseada na lib dataframeit.
 
 ### Frontend
 
-Requer Node.js 24.10 ou mais recente.
+Requer Node.js 24.15 ou mais recente.
 
 ```bash
 npm --prefix frontend install
