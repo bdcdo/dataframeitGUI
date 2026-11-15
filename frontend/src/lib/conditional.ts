@@ -72,55 +72,40 @@ export function isFieldVisible(
   return evaluateCondition(field.condition, answers);
 }
 
-// Núcleo compartilhado do ponto-fixo: limpar uma condicional pode esconder
-// outra que dependia dela, então iteramos até estabilizar. Trabalha sobre uma
+// Cliente (estado vivo de codificação): zera para `null` as respostas de
+// condicionais ocultas. É também o núcleo da fronteira abaixo, que lê a
+// visibilidade final nesta mesma view. Ponto-fixo: limpar uma condicional pode
+// esconder outra que dependia dela, então iteramos até estabilizar. Trabalha sobre uma
 // view copy-on-write (clona só na primeira limpeza), marcando cada órfão com
 // valor como `null` para reavaliar a visibilidade em cascata — `null` e chave
 // ausente são equivalentes para `isFieldVisible`. `""` também é zerado: para
-// `not_equals`/`not_in` ele é valor e deixa o dependente visível, enquanto a
-// fronteira omite a chave e o esconde; mantê-lo mostrava na tela uma pergunta
-// cuja resposta o save descartava. Só `null` e ausente ficam de fora, porque
-// zerá-los não muda nada (sem churn). Cada campo entra em `cleared` no máximo
-// uma vez, o que garante terminação em ≤N passes. Não muta a entrada. Retorna
-// a `view` resolvida e o conjunto `cleared` de nomes efetivamente zerados.
-function resolveHiddenConditionals(
+// `not_equals`/`not_in` ele é valor, e mantê-lo deixava visível na view o
+// dependente de um gatilho oculto — a tela mostrava a pergunta e a fronteira,
+// que lê esta mesma view, guardava a resposta dele enquanto omitia o gatilho.
+// Só `null` e ausente ficam de fora: zerá-los não muda nada, e é isso que
+// garante a terminação (cada passada troca ao menos um valor não nulo por
+// `null`). Não muta a entrada e devolve o MESMO objeto quando nada muda,
+// preservando a identidade referencial que o React usa para evitar re-renders.
+export function clearHiddenConditionalAnswers(
   fields: PydanticField[],
   answers: Record<string, unknown>,
-): { view: Record<string, unknown>; cleared: Set<string> } {
-  const cleared = new Set<string>();
+): Record<string, unknown> {
   let view = answers;
   let changed = true;
   while (changed) {
     changed = false;
     for (const f of fields) {
       if (!f.condition) continue;
-      if (cleared.has(f.name)) continue;
       if (isFieldVisible(f, view)) continue;
       const v = Object.hasOwn(view, f.name) ? view[f.name] : undefined;
       if (v !== undefined && v !== null) {
         if (view === answers) view = { ...answers };
         view[f.name] = null;
-        cleared.add(f.name);
         changed = true;
       }
     }
   }
-  return { view, cleared };
-}
-
-// Cliente (estado vivo de codificação): zera as respostas de condicionais
-// ocultas para `null`. Só toca campos com valor (o conjunto `cleared` do
-// ponto-fixo), então retorna o MESMO objeto quando nada muda,
-// preservando a identidade referencial que o React usa para evitar re-renders.
-export function clearHiddenConditionalAnswers(
-  fields: PydanticField[],
-  answers: Record<string, unknown>,
-): Record<string, unknown> {
-  const { cleared } = resolveHiddenConditionals(fields, answers);
-  if (cleared.size === 0) return answers;
-  const next = { ...answers };
-  for (const name of cleared) next[name] = null;
-  return next;
+  return view;
 }
 
 // Fronteira (leitura/escrita de respostas persistidas): OMITE a chave de TODA
@@ -143,7 +128,7 @@ export function dropHiddenConditionals(
   fields: PydanticField[],
   answers: Record<string, unknown>,
 ): Record<string, unknown> {
-  const { view } = resolveHiddenConditionals(fields, answers);
+  const view = clearHiddenConditionalAnswers(fields, answers);
   // Uma chave presente cujo campo condicional segue oculto na view resolvida é
   // órfã, independente de o valor ser vazio.
   const orphans: string[] = [];

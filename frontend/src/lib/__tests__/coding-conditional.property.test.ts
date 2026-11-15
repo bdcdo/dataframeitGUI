@@ -11,8 +11,8 @@ import {
   isFieldVisible,
 } from "@/lib/conditional";
 import { OTHER_PREFIX } from "@/lib/other-option";
-import { resolveRequired, resolveTarget } from "@/lib/pydantic-field";
-import type { ConditionScalar, FieldCondition, PydanticField } from "@/lib/types";
+import { conditionValues, resolveRequired, resolveTarget } from "@/lib/pydantic-field";
+import type { PydanticField } from "@/lib/types";
 import { schemaArbitrary } from "./pydantic-field-arbitrary";
 
 // Propriedades das duas réguas da codificação: `dropHiddenConditionals` (a
@@ -22,14 +22,6 @@ import { schemaArbitrary } from "./pydantic-field-arbitrary";
 // respostas sorteiam, por campo, os valores que mexem nas duas réguas.
 
 type Answers = Record<string, unknown>;
-
-function conditionValues(condition: FieldCondition): ConditionScalar[] {
-  if ("equals" in condition) return [condition.equals];
-  if ("not_equals" in condition) return [condition.not_equals];
-  if ("in" in condition) return condition.in;
-  if ("not_in" in condition) return condition.not_in;
-  return [];
-}
 
 // Uma resposta que `isFieldAnswered` aceita, na forma que a UI grava.
 function validAnswer(field: PydanticField): unknown {

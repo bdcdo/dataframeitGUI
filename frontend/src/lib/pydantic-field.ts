@@ -355,7 +355,7 @@ function validateStorableTexts(
   }
 }
 
-function conditionValues(condition: FieldCondition): ConditionScalar[] {
+export function conditionValues(condition: FieldCondition): ConditionScalar[] {
   if ("equals" in condition) return [condition.equals];
   if ("not_equals" in condition) return [condition.not_equals];
   if ("in" in condition) return condition.in;

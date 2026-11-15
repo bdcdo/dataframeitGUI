@@ -102,6 +102,10 @@ class _RootWithConditionalNested(BaseModel):
     )
 
 
+class _RootWithRequiredParentMixed(BaseModel):
+    doc: _SubFieldsMixed = Field(description="Doc")
+
+
 def test_flatten_unwraps_optional_nested_basemodel():
     """Composto com condição sai do gerador como `Optional[_x_fields]` (#525)."""
     flat, field_map = _flatten_nested_basemodels(_RootWithConditionalNested)
@@ -135,10 +139,6 @@ def test_flatten_makes_subfields_of_optional_parent_optional():
 def test_flatten_keeps_required_subfield_of_required_parent():
     flat, _ = _flatten_nested_basemodels(_RootWithRequiredParentMixed)
     assert flat.model_fields[f"doc{_NESTED_FLATTEN_SEP}part_a"].is_required()
-
-
-class _RootWithRequiredParentMixed(BaseModel):
-    doc: _SubFieldsMixed = Field(description="Doc")
 
 
 def _reconstruct_nested(answers: dict, justifications: dict, field_map: dict):

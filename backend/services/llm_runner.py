@@ -18,7 +18,7 @@ from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -709,8 +709,6 @@ def _optional_field(info):
     herda essa opção: um subcampo `str` obrigatório de um pai oculto obrigaria
     o provider a inventar um valor que a poda condicional jogaria fora.
     """
-    from typing import Optional
-
     optional_info = copy(info)
     optional_info.default = None
     return Optional[info.annotation], optional_info
@@ -1813,7 +1811,6 @@ class _RowPublisher:
         self._prepared_model = prepared_model
         self._partial_coverage_threshold = partial_coverage_threshold
         self._run = run
-        self._field_conditions = prepared_model.field_conditions
         self._expected_llm_fields = _expected_llm_fields(prepared_model.model_class)
         self._partial_warnings: list[str] = []
         self._dfi_error_samples: dict[str, str] = {}
@@ -1835,7 +1832,7 @@ class _RowPublisher:
                 row,
                 self._prepared_model.model_class,
                 self._prepared_model.nested_field_map,
-                self._field_conditions,
+                self._prepared_model.field_conditions,
                 self._expected_llm_fields,
                 self._partial_coverage_threshold,
             )

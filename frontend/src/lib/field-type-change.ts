@@ -1,10 +1,5 @@
 import type { PydanticField } from "@/lib/types";
 
-const CHOICE_TYPES: ReadonlySet<PydanticField["type"]> = new Set([
-  "single",
-  "multi",
-]);
-
 /**
  * O patch que troca o tipo de um campo no editor de schema (FieldCard).
  *
@@ -21,15 +16,12 @@ export function fieldTypeChangePatch(
   type: PydanticField["type"],
 ): Partial<PydanticField> {
   if (type === field.type) return {};
-  const patch: Partial<PydanticField> = { type };
-  if (!CHOICE_TYPES.has(type)) patch.allow_other = undefined;
-  if (type !== "text") {
-    patch.subfields = undefined;
-    patch.subfield_rule = undefined;
-  }
-  if (type === "text") patch.options = null;
-  else if (CHOICE_TYPES.has(type) && !field.options?.length) {
-    patch.options = ["Opção 1"];
-  }
-  return patch;
+  if (type === "text") return { type, options: null, allow_other: undefined };
+  const patch: Partial<PydanticField> = {
+    type,
+    subfields: undefined,
+    subfield_rule: undefined,
+  };
+  if (type === "date") return { ...patch, allow_other: undefined };
+  return field.options?.length ? patch : { ...patch, options: ["Opção 1"] };
 }

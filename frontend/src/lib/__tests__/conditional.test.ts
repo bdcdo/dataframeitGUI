@@ -323,7 +323,7 @@ describe("dropHiddenConditionals", () => {
   // ficava visível), mas a saída omitia esse `""` — e sem a chave q3 fica
   // oculto. A saída guardava a resposta de um campo oculto, e uma segunda
   // passada ainda a removia.
-  it("reavalia a cascata sobre a chave vazia que omitiu", () => {
+  it("omite o dependente not_equals de um gatilho oculto com \"\"", () => {
     const fields = [
       field({ name: "q1" }),
       field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
