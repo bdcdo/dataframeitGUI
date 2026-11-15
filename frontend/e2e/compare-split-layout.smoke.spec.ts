@@ -53,16 +53,32 @@ function skipUnlessConfigured() {
 }
 
 async function measure(page: Page): Promise<SplitBoxes> {
-  // Os painéis da lib expõem o próprio `id` como `data-testid`.
-  return page.evaluate(
-    ([readerId, reviewId]) => {
-      const box = (testId: string) =>
-        document
-          .querySelector(`[data-testid="${testId}"]`)!
-          .getBoundingClientRect();
-      const reader = box(readerId);
-      const review = box(reviewId);
-      const card = document.querySelector("button[data-vote-target]");
+  // Os painéis da lib expõem o próprio `id` como `data-testid`. A medida parte
+  // do que está visível (ver e2e/visivel.ts): um `querySelector` pegaria a
+  // primeira cópia no DOM, e a órfã do <Suspense> só fica depois da visível
+  // por ir para o fim do body. Um único `evaluateAll` lê os três alvos no
+  // mesmo quadro, como o `page.evaluate` de antes, e cada painel tem de ter
+  // exatamente uma cópia visível, para não medir uma qualquer.
+  const targets = visivel(
+    page.locator(
+      `[data-testid="${READER_PANEL_ID}"], [data-testid="${REVIEW_PANEL_ID}"], button[data-vote-target]`,
+    ),
+  );
+  return targets.evaluateAll(
+    (elements, [readerId, reviewId]) => {
+      const panel = (testId: string) => {
+        const copies = elements.filter(
+          (el) => el.getAttribute("data-testid") === testId,
+        );
+        const [only] = copies;
+        if (copies.length !== 1 || !only) {
+          throw new Error(`${copies.length} cópias visíveis do painel ${testId}`);
+        }
+        return only.getBoundingClientRect();
+      };
+      const reader = panel(readerId);
+      const review = panel(reviewId);
+      const card = elements.find((el) => el.matches("button[data-vote-target]"));
       return {
         readerWidth: Math.round(reader.width),
         reviewX: Math.round(review.x),
@@ -70,7 +86,7 @@ async function measure(page: Page): Promise<SplitBoxes> {
         firstCardTop: card ? Math.round(card.getBoundingClientRect().top) : null,
       };
     },
-    [READER_PANEL_ID, REVIEW_PANEL_ID],
+    [READER_PANEL_ID, REVIEW_PANEL_ID] as const,
   );
 }
 
