@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import AppError from "../error";
+import ProjectError from "../projects/[id]/error";
 import { maskedServerError } from "@/test-utils/masked-server-error";
 
 describe("(app)/error (#653)", () => {
@@ -14,6 +15,7 @@ describe("(app)/error (#653)", () => {
     expect(html).toContain("Algo deu errado");
     expect(html).toContain("Código do erro: 1bkm1w6");
     expect(html).toContain("Tentar de novo");
+    // Substitui o layout do projeto: oferece o caminho de volta.
     expect(html).toContain('href="/dashboard"');
     expect(html).not.toContain("Server Components render");
   });
@@ -24,5 +26,17 @@ describe("(app)/error (#653)", () => {
     );
     expect(html).toContain("falha no cliente");
     expect(html).not.toContain("Código do erro");
+  });
+});
+
+describe("projects/[id]/error (#653)", () => {
+  it("mostra o código, e a navegação fica com o layout do projeto", () => {
+    const html = renderToStaticMarkup(
+      <ProjectError error={maskedServerError()} retry={() => {}} />,
+    );
+    expect(html).toContain("Código do erro: 1bkm1w6");
+    expect(html).toContain("Tentar de novo");
+    // O cabeçalho e as abas do projeto continuam na tela: sem link de saída.
+    expect(html).not.toContain("href=");
   });
 });

@@ -68,11 +68,29 @@ export function errorCode(error: unknown): string | null {
   return Number(digest).toString(36).padStart(6, "0");
 }
 
+// Server Action que o servidor não reconhece: a página foi aberta antes de um
+// deploy que mudou os IDs das actions (rotação de
+// NEXT_SERVER_ACTIONS_ENCRYPTION_KEY, ver README). O servidor responde com
+// `x-nextjs-action-not-found` e o cliente do Next lança
+// `UnrecognizedActionError`. Tentar de novo repete o ID antigo e falha igual;
+// só recarregar traz os IDs novos, e é isso que a mensagem precisa dizer.
+//
+// Pelo `name`, e não pelo `unstable_isUnrecognizedActionError` de
+// `next/navigation`: aquele é `instanceof`, e os testes que mockam
+// `next/navigation` sem ele quebrariam no `catch`. O teste deste helper usa a
+// classe real do Next, para acusar se uma atualização trocar o nome.
+export function isStaleActionError(error: unknown): boolean {
+  return error instanceof Error && error.name === "UnrecognizedActionError";
+}
+
+export const STALE_PAGE_ERROR =
+  "O sistema foi atualizado depois que esta página abriu. Recarregue a página para continuar.";
+
 // Mensagem do toast para o `catch` de uma Server Action no cliente: exceção do
 // servidor vira a copy pt-BR do fluxo com o código; erro do próprio cliente
 // mantém a mensagem, como antes.
 export function actionErrorMessage(error: unknown, fallback: string): string {
-  if (errorCode(error)) return withErrorCode(error, fallback);
+  if (isStaleActionError(error) || errorCode(error)) return withErrorCode(error, fallback);
   return errorMessage(error) || fallback;
 }
 
@@ -80,6 +98,7 @@ export function actionErrorMessage(error: unknown, fallback: string): string {
 // exceção veio do servidor, e em erro do navegador (rede, por exemplo) mantém a
 // copy, em vez de trocá-la pela mensagem em inglês como `actionErrorMessage`.
 export function withErrorCode(error: unknown, copy: string): string {
+  if (isStaleActionError(error)) return STALE_PAGE_ERROR;
   const code = errorCode(error);
   return code ? `${copy} — código ${code}` : copy;
 }

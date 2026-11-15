@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { UnrecognizedActionError } from "next/dist/client/components/unrecognized-action-error";
 import {
   actionErrorMessage,
   caughtErrorCopy,
   errorCode,
   errorDetail,
+  isStaleActionError,
+  STALE_PAGE_ERROR,
   withErrorCode,
   serverErrorCopy,
   serverErrorScope,
@@ -142,5 +145,26 @@ describe("withErrorCode", () => {
   it("erro do navegador mantém a copy pt-BR, sem a mensagem em inglês", () => {
     expect(withErrorCode(new TypeError("Failed to fetch"), copy)).toBe(copy);
     expect(withErrorCode(undefined, copy)).toBe(copy);
+  });
+});
+
+// O que o cliente do Next lança quando a aba é anterior ao deploy que trocou os
+// IDs das Server Actions. A classe real, de propósito: se uma atualização do
+// Next trocar o nome, este teste acusa (ver `isStaleActionError`).
+describe("Server Action desconhecida pelo servidor", () => {
+  const stale = new UnrecognizedActionError('Server Action "7f00" was not found on the server.');
+
+  it("é reconhecida pela classe real do Next, e erro comum não", () => {
+    expect(isStaleActionError(stale)).toBe(true);
+    expect(isStaleActionError(new Error("Server Action not found"))).toBe(false);
+    expect(isStaleActionError(maskedServerError())).toBe(false);
+  });
+
+  it("pede para recarregar, nos dois helpers do toast", () => {
+    expect(withErrorCode(stale, "Não foi possível remover o membro. Tente novamente.")).toBe(
+      STALE_PAGE_ERROR,
+    );
+    expect(actionErrorMessage(stale, "Erro ao salvar")).toBe(STALE_PAGE_ERROR);
+    expect(STALE_PAGE_ERROR).toContain("Recarregue a página");
   });
 });
