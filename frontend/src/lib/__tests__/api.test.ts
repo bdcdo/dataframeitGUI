@@ -195,6 +195,43 @@ describe("fetchFastAPI", () => {
     consoleError.mockRestore();
   });
 
+  // Rota inexistente (frontend publicado antes do backend, que tem deploy
+  // próprio): o roteador do Starlette responde com a reason phrase em inglês,
+  // que não é copy escrita para o usuário.
+  it("404/405 padrão do roteador viram copy pt-BR; 404 com copy do backend passa", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "",
+      json: async () => ({ detail: "Not Found" }),
+    });
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toThrow(
+      "O servidor recusou a requisição (HTTP 404).",
+    );
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 405,
+      statusText: "",
+      json: async () => ({ detail: "Method Not Allowed" }),
+    });
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toThrow(
+      "O servidor recusou a requisição (HTTP 405).",
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      "[api] /api/llm/run falhou",
+      expect.objectContaining({ code: "404", message: "Not Found" }),
+    );
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "",
+      json: async () => ({ detail: "Projeto não encontrado" }),
+    });
+    await expect(fetchFastAPI("/api/llm/run")).rejects.toThrow("Projeto não encontrado");
+    consoleError.mockRestore();
+  });
+
   it("devolve o JSON da resposta", async () => {
     fetchMock.mockResolvedValue(okResponse({ job_id: "j1" }));
     await expect(fetchFastAPI("/api/llm/run")).resolves.toEqual({

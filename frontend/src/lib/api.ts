@@ -30,15 +30,34 @@ export class ApiError extends Error {
  * O resto é diagnóstico e vai para o log: o 422 de validação do FastAPI, cujo
  * `detail` é uma lista de objetos; o corpo que não é JSON (HTML de proxy), de
  * que só sobra o `statusText` em inglês; e o 500, que o backend colapsa em
- * "Internal Server Error". */
+ * "Internal Server Error". Também é diagnóstico a reason phrase que o roteador
+ * do Starlette devolve para rota ou método inexistente (frontend publicado antes
+ * do backend, que tem deploy próprio). */
+const ROUTER_DEFAULT_DETAIL: Record<number, string> = {
+  404: "Not Found",
+  405: "Method Not Allowed",
+};
+
 function apiErrorCopy(path: string, status: number, statusText: string, body: unknown): string {
   const detail = (body as { detail?: unknown } | null)?.detail;
-  if (typeof detail === "string" && detail && status !== 500) return detail;
+  if (
+    typeof detail === "string" &&
+    detail &&
+    status !== 500 &&
+    detail !== ROUTER_DEFAULT_DETAIL[status]
+  ) {
+    return detail;
+  }
   return serverErrorCopy(
     `[api] ${path} falhou`,
     {
       code: String(status),
-      message: detail === undefined ? statusText : JSON.stringify(detail),
+      message:
+        detail === undefined || detail === ""
+          ? statusText
+          : typeof detail === "string"
+            ? detail
+            : JSON.stringify(detail),
     },
     {
       generic:
