@@ -138,7 +138,11 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
       // Doc do fixture na fila de Atribuídos, com as duas perguntas do schema.
       await expect(
         visivel(page.getByText("Resumo do documento")),
-        "pergunta 'Resumo do documento' não apareceu — confira o fixture e o reset",
+        // A mensagem não acusa só o fixture: num 404 a culpa pode ser da rota
+        // ou do Clerk, e quem separa os casos é o diagnóstico do base-test.ts.
+        "pergunta 'Resumo do documento' não apareceu — se houve 404, o anexo " +
+          "navegacoes.json diz a origem; se a página abriu sem a pergunta, " +
+          "confira o fixture e o reset",
       ).toBeVisible({ timeout: 30_000 });
       await expect(visivel(page.getByText("Observação livre"))).toBeVisible();
 

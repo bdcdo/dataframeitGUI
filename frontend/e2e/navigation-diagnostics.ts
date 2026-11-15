@@ -1,8 +1,8 @@
 // Diagnóstico de navegação para falha de spec E2E.
 //
 // Um spec que navega para uma página do projeto e não acha o que espera falha
-// com a mensagem do próprio spec ("confira o fixture e o reset"), mas o 404 por
-// trás pode ter três origens que pedem correções diferentes:
+// com a mensagem do próprio spec, mas o 404 por trás pode ter três origens que
+// pedem correções diferentes:
 //
 // - rota não casada: o servidor Next não reconheceu o caminho e serviu a página
 //   `/_not-found`. Nem layout nem página do app rodaram, então o fixture não tem
