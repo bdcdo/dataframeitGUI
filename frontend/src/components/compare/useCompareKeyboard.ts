@@ -13,7 +13,6 @@ import type {
 interface UseCompareKeyboardParams {
   readOnly: boolean;
   isFullscreen: boolean;
-  isCurrentFieldDivergent: boolean;
   currentField: PydanticField | undefined;
   answerGroups: FieldResponse[][];
   // Campo a que pertencem as decisões tomadas pelo teclado. `null` quando não há
@@ -74,7 +73,6 @@ function prepareGroupVote(
 export function useCompareKeyboard({
   readOnly,
   isFullscreen,
-  isCurrentFieldDivergent,
   currentField,
   answerGroups,
   origin,
@@ -119,7 +117,7 @@ export function useCompareKeyboard({
       // os atalhos abaixo preparam ou persistem uma decisão e, portanto,
       // param aqui durante a impersonação master (issue #428) e quando não há
       // campo a que atribuir a decisão.
-      if (readOnly || !isCurrentFieldDivergent || !origin) return;
+      if (readOnly || !origin) return;
 
       const isMultiField =
         currentField?.type === "multi" && currentField.options?.length;
@@ -152,7 +150,6 @@ export function useCompareKeyboard({
     readOnly,
     answerGroups,
     currentField,
-    isCurrentFieldDivergent,
     isFullscreen,
     origin,
     hasPendingVerdict,

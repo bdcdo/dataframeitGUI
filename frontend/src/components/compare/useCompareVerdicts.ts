@@ -24,7 +24,6 @@ interface UseCompareVerdictsParams {
   projectId: string;
   currentDoc: CompareDocument | undefined;
   currentFieldName: string;
-  isCurrentFieldDivergent: boolean;
   allDocDivergent: string[];
   localReviews: ReviewsByDoc;
   fieldResponses: FieldResponse[];
@@ -120,12 +119,11 @@ type CompareWriteBlockReason =
   | "read-only"
   | "no-doc"
   | "no-field"
-  | "not-divergent"
   | "origin-mismatch";
 
 /**
  * Resultado do gate de escrita. Discriminado (e não um booleano) porque as
- * cinco razões de recusa levam a mensagens diferentes: colapsá-las num `false`
+ * quatro razões de recusa levam a mensagens diferentes: colapsá-las num `false`
  * era exatamente o que fazia `handleVerdict` retornar sem dizer nada à revisora
  * (#613, "ruídos adjacentes"). O `doc` viaja no ramo `ok` para preservar o
  * estreitamento de tipo que o antigo type guard dava.
@@ -140,8 +138,6 @@ const COMPARE_WRITE_BLOCK_MESSAGE: Record<CompareWriteBlockReason, string> = {
   "read-only": "Modo somente leitura: nenhuma decisão é registrada.",
   "no-doc": "Nenhum parecer selecionado — recarregue a página.",
   "no-field": "Nenhum campo selecionado — recarregue a página.",
-  "not-divergent":
-    "Este campo não está mais divergente e não aceita veredito. Recarregue a página.",
   // Mesma frase da recusa primária no clique (`ComparePage`): as duas camadas
   // são defesa em profundidade da MESMA condição, então compartilham o texto.
   "origin-mismatch": COMPARE_ORIGIN_MISMATCH_MESSAGE,
@@ -157,16 +153,12 @@ function compareWriteGate(
   readOnly: boolean,
   currentDoc: CompareDocument | undefined,
   currentFieldName: string,
-  isCurrentFieldDivergent: boolean,
   origin: VerdictOrigin,
 ): CompareWriteGate {
   if (readOnly) return { ok: false, reason: "read-only" };
   if (currentDoc === undefined) return { ok: false, reason: "no-doc" };
   if (currentFieldName.length === 0) return { ok: false, reason: "no-field" };
-  // Defesa da fronteira de escrita, não ramo de fluxo: com campo, ele é
-  // sempre divergente (ver `useCompareNavigation`), e sem campo `no-field` já
-  // recusou acima. Só dispara se um caminho novo fugir dessa fila (#616).
-  if (!isCurrentFieldDivergent) return { ok: false, reason: "not-divergent" };
+  // Com campo, ele é sempre divergente (ver `useCompareNavigation`, #616).
   if (
     !verdictOriginMatches(origin, {
       documentId: currentDoc.id,
@@ -212,7 +204,6 @@ export function useCompareVerdicts({
   projectId,
   currentDoc,
   currentFieldName,
-  isCurrentFieldDivergent,
   allDocDivergent,
   localReviews,
   fieldResponses,
@@ -230,7 +221,6 @@ export function useCompareVerdicts({
         readOnly,
         currentDoc,
         currentFieldName,
-        isCurrentFieldDivergent,
         origin,
       );
       if (!gate.ok) {
@@ -298,7 +288,6 @@ export function useCompareVerdicts({
       projectId,
       currentDoc,
       currentFieldName,
-      isCurrentFieldDivergent,
       allDocDivergent,
       localReviews,
       comment,
@@ -323,7 +312,6 @@ export function useCompareVerdicts({
         readOnly,
         currentDoc,
         currentFieldName,
-        isCurrentFieldDivergent,
         origin,
       );
       if (!gate.ok) {
@@ -383,7 +371,6 @@ export function useCompareVerdicts({
       projectId,
       currentDoc,
       currentFieldName,
-      isCurrentFieldDivergent,
       allDocDivergent,
       localReviews,
       comment,

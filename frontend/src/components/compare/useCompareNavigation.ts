@@ -33,7 +33,6 @@ export interface CompareNavigation {
   changeFilter: (value: string) => void;
   currentFieldName: string;
   currentField: PydanticField | undefined;
-  isCurrentFieldDivergent: boolean;
   isCurrentDocComplete: boolean;
   reviewedDocsCount: number;
   hasNextDoc: boolean;
@@ -128,10 +127,6 @@ export function useCompareNavigation({
     () => (currentDoc ? divergentFields[currentDoc.id] || [] : []),
     [currentDoc, divergentFields],
   );
-  const divergentSet = useMemo(
-    () => new Set(allDocDivergent),
-    [allDocDivergent],
-  );
 
   // Memoizado porque alimenta as deps dos callbacks de navegação abaixo: o ramo
   // filtrado produziria array novo a cada render e tiraria a identidade estável
@@ -174,9 +169,8 @@ export function useCompareNavigation({
   const currentField = fields.find((f) => f.name === currentFieldName);
   // Invariante: havendo campo, ele é divergente — `docFields ⊆ allDocDivergent`,
   // que o servidor já entrega filtrado (`computeDivergentFieldNames`), e doc
-  // sem campo divergente sai antes de montar o painel. Este flag só é `false`
-  // quando não há campo; por isso a UI não tem ramo "concordante" (#616).
-  const isCurrentFieldDivergent = divergentSet.has(currentFieldName);
+  // sem campo divergente sai antes de montar o painel. Por isso não há flag
+  // "campo divergente" (seria só "há campo") nem ramo "concordante" na UI (#616).
 
   // Avisa quando a COMPOSIÇÃO da fila de campos muda sob a revisora. Tanto a
   // decisão (com as três supressões que impedem o aviso de virar ruído) quanto o
@@ -292,7 +286,6 @@ export function useCompareNavigation({
     changeFilter,
     currentFieldName,
     currentField,
-    isCurrentFieldDivergent,
     isCurrentDocComplete,
     reviewedDocsCount,
     hasNextDoc,

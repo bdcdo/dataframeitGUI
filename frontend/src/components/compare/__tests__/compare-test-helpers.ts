@@ -105,7 +105,6 @@ export function keyboardParams(over: Partial<KeyboardParams> = {}): KeyboardPara
   return {
     readOnly: false,
     isFullscreen: false,
-    isCurrentFieldDivergent: true,
     currentField: undefined,
     answerGroups: [],
     origin: { documentId: "doc1", fieldName: "q" },

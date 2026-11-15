@@ -80,7 +80,6 @@ function setup(readOnly = false) {
       projectId: "p1",
       currentDoc: DOC,
       currentFieldName: "q1",
-      isCurrentFieldDivergent: true,
       allDocDivergent: ["q1", "q2"],
       localReviews: {},
       fieldResponses: [] as FieldResponse[],

@@ -156,7 +156,6 @@ export function ComparePage({
     changeFilter,
     currentFieldName,
     currentField,
-    isCurrentFieldDivergent,
     isCurrentDocComplete,
     reviewedDocsCount,
     hasNextDoc,
@@ -251,7 +250,6 @@ export function ComparePage({
     projectId,
     currentDoc,
     currentFieldName,
-    isCurrentFieldDivergent,
     allDocDivergent,
     localReviews,
     fieldResponses,
@@ -450,7 +448,6 @@ export function ComparePage({
   useCompareKeyboard({
     readOnly,
     isFullscreen,
-    isCurrentFieldDivergent,
     currentField,
     answerGroups,
     origin: currentOrigin,

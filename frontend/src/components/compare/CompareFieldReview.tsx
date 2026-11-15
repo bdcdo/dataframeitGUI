@@ -74,7 +74,7 @@ interface CompareFieldReviewProps {
 /**
  * Tudo que pertence a UM campo divergente: os cards de resposta (ou a grade de
  * um campo multi), o aviso de quem não respondeu e as ações da divergência.
- * Só campo divergente chega aqui (ver `isCurrentFieldDivergent` em
+ * Só campo divergente chega aqui (ver a invariante de `currentField` em
  * `useCompareNavigation`), por isso não há ramo "concordante" (#616).
  *
  * Existe como componente próprio para que a identidade do campo seja UMA
