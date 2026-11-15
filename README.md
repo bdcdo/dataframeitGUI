@@ -136,7 +136,11 @@ fly secrets set CLERK_SECRET_KEY=sk_... \
   CLERK_WEBHOOK_SECRET=whsec_... \
   AUTO_REVIEW_RECONCILIATION_SECRET=the-same-long-random-secret \
   -a gui-analise-sistematica-frontend
-fly deploy -c fly.toml -a gui-analise-sistematica-frontend   # fallback; o normal é via CI
+# Fallback; o normal é via CI. Sem o SHA e a chave, o build falha (ver
+# "Chave das Server Actions" abaixo, inclusive sobre qual chave usar aqui).
+fly deploy -c fly.toml -a gui-analise-sistematica-frontend \
+  --build-arg NEXT_DEPLOYMENT_ID="$(git rev-parse HEAD)" \
+  --build-secret NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="$NEXT_SERVER_ACTIONS_ENCRYPTION_KEY"
 fly scale count 2 --region gru -a gui-analise-sistematica-frontend   # só se o fallback rodar com menos de duas
 ```
 
@@ -149,6 +153,37 @@ O frontend opera com duas Machines `shared-cpu-1x` de 1 GB, sempre ligadas. Em 2
 Para a Machine que mesmo assim não volte, o vigia agendado (`.github/workflows/fly-vigia.yml`) olha as duas apps a cada 15 minutos e, uma vez por hora, chama o health e confere o relógio de cada Machine iniciada; relógio a mais de 30 s do runner falha o job, sem recriar nada. Machine em estado `failed`, em crash loop ou que, com a sonda vermelha, recusa o start por falta de capacidade no host é clonada em `gru` (o scheduler escolhe outro host) e a original destruída; o job falha de propósito para gerar notificação. Start que falha por outro motivo (erro da API, lease ocupado) não recria nada: o job só falha e avisa.
 
 A separação entre hosts é *best-effort* do scheduler do Fly e não é verificável pela CLI (nem `machine list --json` nem `machine status` expõem o host), então o contrato automatizado cobre a cardinalidade e a saúde, não a anti-afinidade. As duas Machines seguem em `gru`: isto não protege contra queda de região.
+
+#### Chave das Server Actions (`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`)
+
+É um secret do **repositório no GitHub** (`Settings → Secrets and variables → Actions`), não do Fly. O `frontend-fly-deploy.yml` o entrega ao build como BuildKit secret (`--build-secret`), e o Next usa a chave como sal dos IDs das Server Actions e a grava no manifesto server-only da imagem. Como o valor é o mesmo de um build para o outro, os IDs também são, e uma aba aberta durante um deploy continua salvando (#511). Hoje nenhuma Server Action do app captura variáveis de componente (todas vêm de módulos `"use server"` em `frontend/src/actions/`), então a chave só faz esse papel de sal; se uma passar a capturar, a chave também cifra essas variáveis.
+
+O build **falha** se o secret estiver ausente (`required=true`) ou vazio (`test -s`) no `frontend/Dockerfile`. Isso é proposital e não é defeito do pipeline: com a chave vazia, o Next voltaria a sortear uma por build, os IDs voltariam a mudar a cada deploy e o deploy passaria verde. O GitHub não deixa ler o valor de volta, por isso o fallback manual acima só preserva os IDs se a chave estiver guardada em outro lugar. Usar outra chave no fallback equivale a rotacionar. Nesse caso, grave a mesma chave no secret do GitHub, ou o próximo deploy do CI troca de novo.
+
+**Efeito de trocar a chave.** Todos os IDs mudam de uma vez, então o deploy seguinte produz o mesmo descompasso que o #511 corrigiu, agora de forma planejada. Em toda aba aberta antes do deploy, cada chamada de Server Action falha até a página ser recarregada: o servidor responde `Failed to find Server Action` (aparece nos logs do Fly), e a codificação mostra o aviso de que não salvou. "Tentar novamente" não resolve nessa aba. As respostas não salvas ficam no rascunho local do navegador (#608) e voltam a ser oferecidas depois de recarregar. Isso acontece uma única vez por aba, e os deploys seguintes com a chave nova voltam a preservar os IDs. Rotacione quando a chave puder ter vazado, e não por rotina.
+
+**Como rotacionar:**
+
+1. Escolha uma janela de baixo uso e avise quem estiver codificando para salvar antes do deploy e recarregar a página depois dele.
+2. Gere uma chave AES-256 em base64 (32 bytes, o mesmo formato que o Next gera sozinho) e confira o tamanho, que deve sair `32`. O Next não valida o formato no build, só ao usar a chave:
+
+   ```bash
+   KEY="$(openssl rand -base64 32)"
+   printf %s "$KEY" | base64 -d | wc -c
+   ```
+
+3. Anote o ID atual de uma Server Action pública, para comparar depois. A página de login carrega uma, a `invalidateCacheAction` do Clerk:
+
+   ```bash
+   SITE=https://dataframeit.com.br
+   curl -fsS "$SITE/auth/login" | grep -oE '/_next/static/chunks/[^"?]+\.js' | sort -u \
+     | while read -r c; do curl -fsS "$SITE$c"; done \
+     | grep -oE 'createServerReference\)\("[0-9a-f]{42}"' | sort -u
+   ```
+
+4. Atualize o secret em `Settings → Secrets and variables → Actions → NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` (ou `printf %s "$KEY" | gh secret set NEXT_SERVER_ACTIONS_ENCRYPTION_KEY --repo bdcdo/dataframeitGUI`). A troca entra no **próximo deploy do frontend**, seja ele qual for, por isso atualize o secret logo antes do deploy que você quer usar.
+5. Faça o deploy a partir de um commit **ainda não implantado**: o próximo merge que toque `frontend/**`, ou `Run workflow` depois de um commit novo na `main`. Um re-run, ou `Run workflow` sobre o commit já implantado, pode reaproveitar do cache do builder a camada do `npm run build` feita com a chave antiga. O valor do secret não entra na chave de cache do BuildKit ([doc do Docker](https://docs.docker.com/build/cache/invalidation/)), enquanto o SHA, que entra como `NEXT_DEPLOYMENT_ID`, entra.
+6. Com o deploy verde, rode de novo o comando do passo 3. Se o ID mudou, o build usou a chave nova. Se o ID continua igual, a chave antiga continua em uso (o caso de cache do passo 5): repita o deploy a partir de um commit novo. Fora a chave, o ID só muda se o próprio módulo da action mudar, por exemplo numa atualização do `@clerk/nextjs` que mova ou renomeie a action. Portanto evite rotacionar no mesmo deploy de uma atualização do Clerk.
 
 ### Variáveis de ambiente
 
@@ -163,6 +198,7 @@ A separação entre hosts é *best-effort* do scheduler do Fly e não é verific
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Frontend (`fly.toml [build.args]`) | Anon/publishable key |
 | `NEXT_PUBLIC_API_URL` | Frontend (`fly.toml [build.args]`) | URL do backend no Fly.io |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Frontend (`fly.toml [build.args]`) | Publishable key do Clerk |
+| `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` | Frontend (secret do GitHub Actions, só no build) | Chave AES-256 em base64, estável entre builds; sal dos IDs das Server Actions. Rotação em "Chave das Server Actions" |
 | `CLERK_SECRET_KEY` | Frontend (Fly secret) | Secret key do Clerk |
 | `SUPABASE_SERVICE_ROLE_KEY` | Frontend (Fly secret) | Service role (server actions) |
 | `CLERK_WEBHOOK_SECRET` | Frontend (Fly secret) | Signing secret do webhook do Clerk |

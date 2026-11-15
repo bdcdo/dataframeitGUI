@@ -11,6 +11,7 @@ const deployWorkflow = fs.readFileSync(
   `${repositoryRoot}/.github/workflows/frontend-fly-deploy.yml`,
   "utf8",
 );
+const readme = fs.readFileSync(`${repositoryRoot}/README.md`, "utf8");
 
 describe("versionamento do build do frontend", () => {
   it("entrega o SHA e a chave estavel ao build", () => {
@@ -39,6 +40,22 @@ describe("versionamento do build do frontend", () => {
     expect(dockerfile).toContain('test -n "$NEXT_DEPLOYMENT_ID"');
     expect(dockerfile).toContain(
       "test -s /run/secrets/NEXT_SERVER_ACTIONS_ENCRYPTION_KEY",
+    );
+  });
+
+  // O deploy manual do README e o caminho de quem precisa subir sem o CI; se
+  // ele nao passar o que o Dockerfile exige, o build falha no `test` acima
+  // justamente no momento de incidente em que o fallback e usado (#549).
+  it("o deploy manual do README entrega o SHA e a chave ao build", () => {
+    const fallback = readme.match(
+      /^fly deploy -c fly\.toml -a gui-analise-sistematica-frontend(?:.*\\\n)*.*/m,
+    )?.[0];
+    expect(fallback).toBeDefined();
+    expect(fallback).toContain(
+      '--build-arg NEXT_DEPLOYMENT_ID="$(git rev-parse HEAD)"',
+    );
+    expect(fallback).toContain(
+      '--build-secret NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="$NEXT_SERVER_ACTIONS_ENCRYPTION_KEY"',
     );
   });
 
