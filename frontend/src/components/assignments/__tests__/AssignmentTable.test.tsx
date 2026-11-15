@@ -12,7 +12,18 @@ vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 // Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
 beforeAll(() => warmUpJsdom(), 30_000);
 
-afterEach(() => {
+// O React emaranha as transições assíncronas pendentes: uma action que nunca
+// volta prenderia o otimista dos testes seguintes. Toda chamada pendente é
+// resolvida ao fim do teste.
+const pending: ((result: object) => void)[] = [];
+function serverCall() {
+  return new Promise<object>((resolve) => pending.push(resolve));
+}
+
+afterEach(async () => {
+  await act(async () => {
+    for (const resolve of pending.splice(0)) resolve({});
+  });
   cleanup();
   cycleAssignment.mockReset();
 });
@@ -52,14 +63,14 @@ describe("AssignmentTable — estado otimista", () => {
   // #551: a criação pode gravar a codificação já como `concluido` (documento
   // codificado pelo Explorar antes da atribuição), e só o servidor sabe disso.
   it("não afirma um status na célula enquanto a criação não volta do servidor", async () => {
-    cycleAssignment.mockReturnValue(new Promise(() => {}));
+    cycleAssignment.mockReturnValue(serverCall());
     render(table([]));
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Atribuir codificação" }));
     });
 
-    const cell = screen.getByRole("button", { name: "Salvando a atribuição de codificação…" });
+    const cell = screen.getByRole("button", { name: "Salvando a atribuição…" });
     expect(cell.textContent).toBe("C");
     // `bg-brand` é a cor da codificação pendente: a célula não a usa ainda.
     expect(cell.className).not.toMatch(/\bbg-brand\b/);
@@ -70,15 +81,14 @@ describe("AssignmentTable — estado otimista", () => {
   });
 
   it("mostra o status que o servidor gravou quando a linha real chega", async () => {
-    let finish!: (result: object) => void;
-    cycleAssignment.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    cycleAssignment.mockReturnValue(serverCall());
     const { rerender } = render(table([]));
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Atribuir codificação" }));
     });
     await act(async () => {
-      finish({});
+      pending.shift()!({});
       rerender(
         table([{ ...pendingCoding, status: "concluido", completed_at: "2026-11-15T00:00:00Z" }]),
       );
@@ -91,8 +101,11 @@ describe("AssignmentTable — estado otimista", () => {
     expect(cell.getAttribute("aria-busy")).toBeNull();
   });
 
-  it("a troca de codificação pendente por comparação segue otimista como pendente", async () => {
-    cycleAssignment.mockReturnValue(new Promise(() => {}));
+  // #880: só o servidor sabe se o pesquisador codificou o documento. Se
+  // codificou, a action pede a confirmação da autocomparação sem gravar nada:
+  // a célula não pode afirmar "R" nesse meio-tempo.
+  it("a troca de codificação pendente por comparação não afirma o R antes do servidor", async () => {
+    cycleAssignment.mockReturnValue(serverCall());
     render(table([pendingCoding]));
 
     await act(async () => {
@@ -103,10 +116,24 @@ describe("AssignmentTable — estado otimista", () => {
       );
     });
 
-    const cell = screen.getByRole("button", {
-      name: "Atribuição de comparação (clique para remover)",
+    expect(screen.queryByText("R")).toBeNull();
+    const saving = screen.getByRole("button", { name: "Salvando a atribuição…" });
+    expect(saving.textContent).toBe("C");
+    expect(saving.className).not.toMatch(/\bbg-amber-500\b/);
+    expect(saving.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("R: 0/0")).toBeTruthy();
+
+    await act(async () => {
+      pending.shift()!({ needsSelfComparisonConfirmation: true });
     });
-    expect(cell.textContent).toBe("R");
-    expect(cell.className).toMatch(/\bbg-amber-500\b/);
+
+    // A action não gravou: a célula volta à codificação pendente, e o diálogo
+    // de confirmação abre (e, modal, tira a tabela da árvore acessível).
+    const cell = screen.getByRole("button", {
+      name: "Atribuição de codificação (clique para trocar por comparação)",
+      hidden: true,
+    });
+    expect(cell.textContent).toBe("C");
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
   });
 });
