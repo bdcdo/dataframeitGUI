@@ -23,7 +23,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # jq e ruby vêm na imagem ubuntu-latest; os scripts não chamam o Fly.
+      # jq, ruby e python3 (o tomllib, da stdlib desde o 3.11, lê os fly.toml)
+      # vêm na imagem ubuntu-latest; os scripts não chamam o Fly.
       - name: Contrato do frontend
         run: bash .github/scripts/test-frontend-fly-machine-contract.sh
       - name: Contrato do backend

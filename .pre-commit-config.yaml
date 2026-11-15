@@ -99,7 +99,7 @@ repos:
         name: backend Fly machine contract
         entry: .github/scripts/test-backend-fly-machine-contract.sh
         language: system
-        files: ^(\.github/(workflows/fly-deploy\.yml|scripts/(check|test)-backend-fly-machine.*\.sh)|backend/fly\.toml)$
+        files: ^(\.github/(workflows/fly-deploy\.yml|scripts/((check|test)-backend-fly-machine.*\.sh|fly-toml-contract\.py))|backend/fly\.toml)$
         pass_filenames: false
         require_serial: true
 
@@ -113,7 +113,7 @@ repos:
         name: frontend Fly machine contract
         entry: .github/scripts/test-frontend-fly-machine-contract.sh
         language: system
-        files: ^(\.github/(workflows/frontend-fly-deploy\.yml|scripts/(check|test)-frontend-fly-machine.*\.sh)|frontend/fly\.toml)$
+        files: ^(\.github/(workflows/frontend-fly-deploy\.yml|scripts/((check|test)-frontend-fly-machine.*\.sh|fly-toml-contract\.py))|frontend/fly\.toml)$
         pass_filenames: false
         require_serial: true
 
