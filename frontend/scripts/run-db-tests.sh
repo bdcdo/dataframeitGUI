@@ -130,37 +130,40 @@ run_pgtap() {
     local port
     port="$(docker inspect -f '{{(index (index .NetworkSettings.Ports "5432/tcp") 0).HostPort}}' "${CONTAINER}")"
     if [[ ! "$port" =~ ^[0-9]+$ ]]; then
-      echo "container sem porta PostgreSQL publicada" >"${LOG_DIR}/$1.log"
+      echo "container sem porta PostgreSQL publicada"
       return 2
     fi
     PGPASSWORD=postgres npx supabase test db "${TESTS_DIR}/$1.test.sql" \
-      --db-url "postgresql://postgres@127.0.0.1:${port}/${SUPABASE_DB_NAME:-postgres}" >"${LOG_DIR}/$1.log" 2>&1
+      --db-url "postgresql://postgres@127.0.0.1:${port}/${SUPABASE_DB_NAME:-postgres}"
   else
-    npx supabase test db "${TESTS_DIR}/$1.test.sql" --local >"${LOG_DIR}/$1.log" 2>&1
+    npx supabase test db "${TESTS_DIR}/$1.test.sql" --local
   fi
 }
 
 run_psql() {
-  bash scripts/run-sql-test.sh "${TESTS_DIR}/$1.test.sql" >"${LOG_DIR}/$1.log" 2>&1
-}
-
-run_backend_integration() {
-  bash scripts/run-backend-integration.sh >"${LOG_DIR}/$1.log" 2>&1
+  bash scripts/run-sql-test.sh "${TESTS_DIR}/$1.test.sql"
 }
 
 # No GitHub Actions o database-tests.yml roda tudo num passo só, e o passo por
 # suíte de antes mostrava a saída inteira de cada uma e, num travamento, qual
 # estava rodando. Lá cada suíte vira um grupo, aberto antes de ela rodar e com
-# o log inteiro, e a falha de gate vira anotação.
+# a saída inteira enquanto roda, e a falha de gate vira anotação.
 in_ci() { [[ ${GITHUB_ACTIONS:-} == true ]]; }
 
+# Roda uma suíte com a saída no log dela e a reporta: gate|known, suíte, comando.
 run_suite() {
-  local runner="$1" suite="$2" code
-  in_ci && echo "::group::${suite}"
-  "${runner}" "${suite}"
-  code=$?
-  in_ci && { cat "${LOG_DIR}/${suite}.log"; echo "::endgroup::"; }
-  return "${code}"
+  local gated="$1" suite="$2" code
+  shift 2
+  if in_ci; then
+    echo "::group::${suite}"
+    "$@" 2>&1 | tee "${LOG_DIR}/${suite}.log"
+    code=${PIPESTATUS[0]}
+    echo "::endgroup::"
+  else
+    "$@" >"${LOG_DIR}/${suite}.log" 2>&1
+    code=$?
+  fi
+  report "${suite}" "${code}" "${gated}"
 }
 
 tail_log() {
@@ -182,9 +185,12 @@ report() {
     fi
   elif [[ ${gated} == gate ]]; then
     printf '  FAIL  %s\n' "${suite}"
-    in_ci && echo "::error title=Suíte do banco ${suite}::falhou; saída inteira no grupo ${suite} do passo"
     fail_gate+=("${suite}")
-    tail_log "${suite}"
+    if in_ci; then
+      echo "::error title=Suíte do banco ${suite}::falhou; saída inteira no grupo ${suite} do passo"
+    else
+      tail_log "${suite}"
+    fi
   else
     printf '  RED*  %s (conhecida, %s)\n' "${suite}" "${KNOWN_RED[$suite]}"
     fail_known+=("${suite}")
@@ -194,16 +200,16 @@ report() {
 echo "▸ suítes de contrato do banco (varredura completa)"
 
 for s in "${PGTAP_SUITES[@]}"; do
-  run_suite run_pgtap "$s"; report "$s" $? gate
+  run_suite gate "$s" run_pgtap "$s"
 done
 for s in "${GATE_SUITES[@]}"; do
-  run_suite run_psql "$s"; report "$s" $? gate
+  run_suite gate "$s" run_psql "$s"
 done
 for s in "${!KNOWN_RED[@]}"; do
-  run_suite run_psql "$s"; report "$s" $? known
+  run_suite known "$s" run_psql "$s"
 done
 # Contrato do llm_runner em `llm_runs` (#674), pytest contra este mesmo stack.
-run_suite run_backend_integration backend_integration; report backend_integration $? gate
+run_suite gate backend_integration bash scripts/run-backend-integration.sh
 
 echo "────────────────────────────────────────"
 printf 'PASS=%d  FAIL(gate)=%d  RED*(conhecida)=%d  VERDE(promover)=%d\n' \

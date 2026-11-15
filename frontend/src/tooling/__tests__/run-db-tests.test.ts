@@ -17,7 +17,16 @@ const frontend = fileURLToPath(new URL("../../../", import.meta.url));
 const runner = path.join(frontend, "scripts/run-db-tests.sh");
 const suite = (name: string) => path.join(frontend, "supabase/tests", `${name}.test.sql`);
 
-const fakeOutput = 'for i in $(seq 30); do echo "linha $i de $1"; done';
+// Sai com 3 e 30 linhas numeradas se o arquivo de suíte, achado pelo teste
+// `$1 "$file"`, está em FAKE_FAIL_FILES.
+const failIfListed = (test: string) => `IFS=: read -ra failing <<<"$FAKE_FAIL_FILES"
+for file in "\${failing[@]}"; do
+  if ${test} "$file"; then
+    for i in $(seq 30); do echo "linha $i de $(basename "$file")"; done
+    exit 3
+  fi
+done`;
+
 const fakes: Record<string, string> = {
   docker: `#!/usr/bin/env bash
 case "$1" in
@@ -25,26 +34,21 @@ case "$1" in
     case "$*" in
       *State.Running*) echo true ;;
       *Networks*) echo 172.17.0.2 ;;
-    esac
-    exit 0 ;;
+    esac ;;
   exec)
-    input="$(mktemp)"; cat >"$input"
-    IFS=: read -ra failing <<<"$FAKE_FAIL_FILES"
-    for file in "\${failing[@]}"; do
-      if cmp -s "$input" "$file"; then fail() { ${fakeOutput}; }; fail "$(basename "$file")"; exit 3; fi
-    done
-    exit 0 ;;
+    input="$(mktemp -p "$FAKE_BIN")"; cat >"$input"
+    same_sql() { cmp -s "$input" "$1"; }
+    ${failIfListed("same_sql")} ;;
+  *) echo "docker inesperado: $*" >&2; exit 64 ;;
 esac
-echo "docker inesperado: $*" >&2; exit 64
 `,
   npx: `#!/usr/bin/env bash
 case "$*" in
   "supabase status -o env") printf 'API_URL="http://127.0.0.1:54321"\\nSERVICE_ROLE_KEY="chave"\\n' ;;
   "supabase test db "*)
-    IFS=: read -ra failing <<<"$FAKE_FAIL_FILES"
-    for file in "\${failing[@]}"; do
-      if [[ "$(realpath "$4")" == "$file" ]]; then fail() { ${fakeOutput}; }; fail "$(basename "$file")"; exit 3; fi
-    done ;;
+    suite="$(realpath "$4")"
+    same_suite() { [[ $suite == "$1" ]]; }
+    ${failIfListed("same_suite")} ;;
   *) echo "npx inesperado: $*" >&2; exit 64 ;;
 esac
 `,
@@ -67,7 +71,7 @@ afterEach(() => {
 function run(failing: string[], env: Record<string, string> = {}) {
   // O próprio CI define GITHUB_ACTIONS; aqui só o caso que o pede o tem.
   return spawnSync("/bin/bash", [runner], {
-    env: { ...process.env, GITHUB_ACTIONS: "", PATH: `${bin}:${process.env.PATH}`, FAKE_FAIL_FILES: failing.map(suite).join(":"), ...env },
+    env: { ...process.env, GITHUB_ACTIONS: "", PATH: `${bin}:${process.env.PATH}`, FAKE_BIN: bin, FAKE_FAIL_FILES: failing.map(suite).join(":"), ...env },
     encoding: "utf8",
   });
 }
@@ -109,5 +113,7 @@ describe("run-db-tests.sh", () => {
     expect(stdout).toContain("::group::backend_integration\n");
     expect(stdout).toContain(`::group::${knownRed}\n`);
     expect(stdout).not.toContain(`::error title=Suíte do banco ${knownRed}`);
+    // A saída inteira já está no grupo: a cauda não se repete.
+    expect(stdout).not.toContain("saída (cauda)");
   });
 });
