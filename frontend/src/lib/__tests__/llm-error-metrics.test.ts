@@ -9,6 +9,14 @@ import {
   type MetricsReview,
 } from "@/lib/llm-error-metrics";
 import type { PydanticField } from "@/lib/types";
+import {
+  effectiveErrorResolution,
+  errorDecisionSchema,
+  type ErrorDecision,
+  type ErrorResolutionContext,
+  type ErrorResolutionRow,
+} from "@/lib/error-resolution";
+import { isOpenError } from "@/hooks/useLlmErrorFiltering";
 import { resolutionFixture } from "./error-resolution-fixture";
 
 function field(overrides: Partial<PydanticField> = {}): PydanticField {
@@ -845,5 +853,136 @@ describe("rodada não entra na validade do veredito (#758)", () => {
     });
     expect(out.errors).toHaveLength(1);
     expect(out.errors[0]).toMatchObject({ documentId: "doc1", fieldName: "x", resolution: row });
+  });
+});
+
+// Propriedade (#745): toda ação do card que a UI reporta como sucesso precisa
+// mudar a classificação do card na carga seguinte. Os testes acima verificam a
+// escrita ou a classificação, cada uma por si; o defeito do #741 estava na
+// ligação entre as duas — o "=" gravava a equivalência certa, a action dizia
+// "Respostas marcadas como equivalentes" e o card de um campo `multi` ficava na
+// fila, porque aquele caminho desviava antes de consultar as equivalências. A
+// variação por tipo de campo foi o que abriu o buraco, então a parametrização é
+// por tipo. "Em discussão" é a ressalva: por desenho deixa o caso pendente em
+// vez de resolvido, e sai da fila de abertos para a de discussão.
+describe("ação do card com sucesso muda a classificação na carga seguinte (#745)", () => {
+  type Answer = ErrorResolutionContext["llm_value"]["value"];
+  interface Scenario {
+    field: PydanticField;
+    llm: Answer;
+    human: Answer;
+    /** O veredito como a Comparação o grava para a resposta humana. */
+    verdict: string;
+    /** Um terceiro valor do domínio, para "Todos errados". */
+    third: Answer;
+  }
+
+  const scenarios: Record<string, Scenario> = {
+    single: {
+      field: field({ type: "single", options: ["a", "b", "c"] }),
+      llm: "a", human: "b", verdict: "b", third: "c",
+    },
+    multi: {
+      field: field({ type: "multi", options: ["a", "b", "c"] }),
+      llm: ["a"], human: ["a", "b"], verdict: '{"a":true,"b":true}', third: ["c"],
+    },
+    text: {
+      field: field({ type: "text" }),
+      llm: "NI", human: "N/A", verdict: "N/A", third: "Não consta",
+    },
+    date: {
+      field: field({ type: "date" }),
+      llm: "01/02/2026", human: "XX/03/2024", verdict: "XX/03/2024", third: "15/05/2025",
+    },
+    "grupo de subcampos": {
+      field: field({ subfields: [{ key: "anos", label: "Anos" }, { key: "meses", label: "Meses" }] }),
+      llm: { anos: "5", meses: "1" }, human: { anos: "6", meses: "1" },
+      verdict: "anos: 6, meses: 1", third: { anos: "7", meses: "0" },
+    },
+  };
+
+  // O que a fila e a taxa leem de um (documento, campo): o card na lista de
+  // abertos (o filtro padrão, `isOpenError`), na de discussão, e a entrada do
+  // denominador.
+  function classify(out: ReturnType<typeof run>) {
+    const card = out.errors.find((e) => e.documentId === "doc1" && e.fieldName === "x");
+    const entry = out.reviewedEntries.find((e) => e.documentId === "doc1" && e.fieldName === "x");
+    return {
+      open: card !== undefined && isOpenError(card),
+      discussion: card !== undefined && effectiveErrorResolution(card.resolution).status === "discussion",
+      measuredError: entry?.isError ?? null,
+      pending: entry?.isPending ?? false,
+    };
+  }
+
+  // A carga antes de qualquer ação: um erro do LLM pela Comparação, aberto.
+  function load(s: Scenario, overrides: Partial<LlmErrorMetricsInput> = {}) {
+    return run({
+      automationMode: "compare_llm",
+      fields: [s.field],
+      responses: [
+        response({ id: "rllm", respondent_type: "llm", answers: { x: s.llm } }),
+        response({ id: "rh", answers: { x: s.human } }),
+      ],
+      reviews: [review({ verdict: s.verdict, chosen_response_id: "rh", field_hash: s.field.hash ?? null })],
+      ...overrides,
+    });
+  }
+
+  // A linha que `set_error_resolution` grava para a decisão, com o contexto
+  // ainda corrente (a carga seguinte vem logo depois da gravação).
+  function decided(s: Scenario, decision: ErrorDecision): ErrorResolutionRow {
+    const context: ErrorResolutionContext = {
+      project_id: "p1", document_id: "doc1", field_name: "x", round_id: "round1",
+      automation_mode: "compare_llm", field_definition: s.field,
+      llm_response_id: "rllm", human_response_id: "rh",
+      llm_value: { present: true, value: s.llm }, human_value: { present: true, value: s.human },
+      source: { kind: "comparacao", id: "review1", verdict: s.verdict },
+    };
+    const approvedValue = decision === "researchers_correct" ? s.human : decision === "all_wrong" ? s.third : null;
+    return {
+      id: "resolution1", project_id: "p1", document_id: "doc1", field_name: "x",
+      decision, context, current_context: structuredClone(context),
+      resolved_at: "2026-09-14T12:00:00Z", resolved_by: "user1", note: null, approved_value: approvedValue,
+    };
+  }
+
+  const before = { open: true, discussion: false, measuredError: true, pending: false };
+
+  it.each(Object.keys(scenarios))("%s: a carga antes da ação tem o card aberto na fila", (kind) => {
+    const out = load(scenarios[kind]);
+    expect(classify(out)).toEqual(before);
+    // O card oferece o "=" e as decisões: fonte Comparação, sem decisão, com
+    // resposta escolhida e review de origem.
+    expect(out.errors[0]).toMatchObject({ source: "comparacao", chosenResponseId: "rh", sourceId: "review1" });
+    expect(out.errors[0].resolution).toBeUndefined();
+  });
+
+  // `markLlmEquivalent` grava o par (valor da resposta escolhida, valor do LLM)
+  // em `value_equivalences`, sob o hash atual da pergunta.
+  it.each(Object.keys(scenarios))("%s: \"=\" tira o card da fila e o erro da taxa", (kind) => {
+    const s = scenarios[kind];
+    const out = load(s, { equivalences: [equiv("rh", "rllm", s.human, s.llm, { field_hash: s.field.hash! })] });
+    expect(classify(out)).toEqual({ open: false, discussion: false, measuredError: false, pending: false });
+  });
+
+  const decisions: Array<[ErrorDecision, ReturnType<typeof classify>]> = [
+    ["llm_correct", { open: false, discussion: false, measuredError: false, pending: false }],
+    ["researchers_correct", { open: false, discussion: false, measuredError: true, pending: false }],
+    ["both_correct", { open: false, discussion: false, measuredError: false, pending: false }],
+    ["all_wrong", { open: false, discussion: false, measuredError: true, pending: false }],
+    // A ressalva: continua sem veredito, pendente, fora do denominador.
+    ["discussion", { open: false, discussion: true, measuredError: true, pending: true }],
+  ];
+  it("a parametrização cobre todas as decisões do card", () => {
+    expect(decisions.map(([d]) => d).toSorted()).toEqual([...errorDecisionSchema.options].toSorted());
+  });
+
+  describe.each(Object.keys(scenarios))("%s", (kind) => {
+    it.each(decisions)("decisão %s muda a classificação do card", (decision, expected) => {
+      const out = load(scenarios[kind], { errorResolutions: new Map([["doc1:x", decided(scenarios[kind], decision)]]) });
+      expect(classify(out)).toEqual(expected);
+      expect(classify(out)).not.toEqual(before);
+    });
   });
 });

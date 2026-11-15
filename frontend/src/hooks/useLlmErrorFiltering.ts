@@ -44,7 +44,9 @@ interface FilterableError extends ScopeFilterable {
   resolution?: ErrorResolutionRow;
 }
 
-function isOpenError(error: FilterableError): boolean {
+// Exportado para o teste de propriedade da fila (#745), que confere a
+// classificação do card pelo mesmo filtro que a tela usa.
+export function isOpenError(error: Pick<FilterableError, "resolution">): boolean {
   const status = effectiveErrorResolution(error.resolution).status;
   return status === "open" || status === "legacy" || status === "stale";
 }
