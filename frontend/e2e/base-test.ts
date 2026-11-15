@@ -14,7 +14,8 @@ import {
 // contexto (o spec pode abrir outra com `context.newPage()`); quando o teste
 // falha, anexa a lista e imprime as que deram erro, já classificadas por
 // navigation-diagnostics.ts. Sem isso o spec só mostra a própria mensagem,
-// que não tem como saber se o servidor casou a rota. `e2e-base-test-coverage.test.ts` exige este import.
+// que não tem como saber se o servidor casou a rota.
+// `e2e-base-test-coverage.test.ts` exige este import.
 
 function isTracked(response: Response): boolean {
   const request = response.request();
