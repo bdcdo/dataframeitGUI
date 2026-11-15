@@ -13,6 +13,10 @@ import {
   RULE_NAME as JSDOM_WARM_UP_RULE,
   testJsdomWarmUpPlugin,
 } from "./eslint-rules/test-jsdom-warm-up.mjs";
+import {
+  HIDDEN_INSENSITIVE_LOCATORS,
+  LEGACY_SELECTOR_APIS,
+} from "./eslint-rules/e2e-visible-locators.mjs";
 
 const CLERK_COMPONENTS_READING_LOAD_STATE = [
   "APIKeys",
@@ -39,19 +43,6 @@ const CLERK_COMPONENTS_READING_LOAD_STATE = [
   "Waitlist",
 ];
 
-// Seletores E2E que enxergam a cópia órfã e oculta de um segmento de Suspense
-// (mecanismo descrito em `e2e/visivel.ts`). `getByRole` fica de fora porque já
-// exclui o que saiu da árvore de acessibilidade, salvo com `includeHidden`.
-export const HIDDEN_INSENSITIVE_LOCATORS = [
-  "getByAltText",
-  "getByLabel",
-  "getByPlaceholder",
-  "getByTestId",
-  "getByText",
-  "getByTitle",
-  "locator",
-];
-
 // Sem type-checker, a regra reconhece a página pelo nome da variável. O
 // segundo bloco de seletores abaixo impõe esse nome onde um `Page` nasce ou é
 // recebido, para que renomear não seja um jeito silencioso de escapar.
@@ -61,51 +52,10 @@ const PAGE_NAME = "/^(page|.*Page)$/";
 // (`this.page` de um page object).
 const PAGE_RECEIVER = `:matches([callee.object.name=${PAGE_NAME}], [callee.object.property.name=${PAGE_NAME}])`;
 
-// `expect(page.getByText(x)).toHaveCount(0)` fica livre: a cópia órfã só
-// duplica o que o servidor renderizou, então não cria um elemento que o servidor
-// nunca desenhou, e o filtro de visibilidade só enfraqueceria a asserção (um
-// elemento presente e oculto passaria). Se o servidor desenhou o elemento e o
-// cliente o removeu depois, a cópia órfã o guarda e a asserção reprova alto, sem
-// passar em falso; nesse caso, parta de um container achado por `getByRole`.
+// `expect(page.getByText(x)).toHaveCount(0)` fica livre do filtro (o porquê
+// está em `e2e/visivel.ts`).
 const COUNT_ZERO_ARGUMENT =
   'CallExpression[callee.property.name="toHaveCount"][arguments.0.value=0] > MemberExpression.callee > CallExpression.object[callee.name="expect"] > CallExpression.arguments';
-
-// Métodos da página que recebem seletor em vez de partir de um locator. Ações
-// (`click`, `fill`...) e consultas (`isVisible`, `waitForSelector`...) resolvem o
-// seletor contra o DOM inteiro, cópia órfã inclusive.
-export const LEGACY_SELECTOR_APIS = [
-  "\\$",
-  "\\$\\$",
-  "\\$eval",
-  "\\$\\$eval",
-  "check",
-  "click",
-  "dblclick",
-  "dispatchEvent",
-  "dragAndDrop",
-  "fill",
-  "focus",
-  "getAttribute",
-  "hover",
-  "innerHTML",
-  "innerText",
-  "inputValue",
-  "isChecked",
-  "isDisabled",
-  "isEditable",
-  "isEnabled",
-  "isHidden",
-  "isVisible",
-  "press",
-  "selectOption",
-  "setChecked",
-  "setInputFiles",
-  "tap",
-  "textContent",
-  "type",
-  "uncheck",
-  "waitForSelector",
-];
 
 const PAGE_NAME_MESSAGE =
   "Page se chama page ou termina em Page: é pelo nome que a regra de visivel() reconhece a página.";
@@ -121,7 +71,7 @@ const e2eLocatorRules = [
       "Locator que parte da página e não é getByRole enxerga a cópia oculta de um segmento de Suspense. Envolva a chamada direto em visivel(), de ./visivel, antes de .first()/.nth().",
   },
   {
-    selector: `CallExpression${PAGE_RECEIVER}[callee.property.name=/^(${LEGACY_SELECTOR_APIS.join("|")})$/]`,
+    selector: `CallExpression${PAGE_RECEIVER}[callee.property.name=/^(${LEGACY_SELECTOR_APIS.map((name) => name.replaceAll("$", "\\$")).join("|")})$/]`,
     message:
       "API legada da página que recebe seletor enxerga a cópia oculta de um segmento de Suspense. Use um locator com visivel() (ver e2e/visivel.ts).",
   },

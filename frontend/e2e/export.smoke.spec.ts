@@ -57,9 +57,7 @@ test("exportação: card em Documentos, prévia, aba removida e rota 404", async
 
       // (e) A aba "Exportar" não existe mais na navegação de Revisões.
       await page.goto(`/projects/${projectId}/reviews/gabarito`);
-      // Sem visivel(): a cópia órfã de um Suspense só duplica o que o servidor
-      // renderizou, então não cria o link, e o filtro deixaria passar um link
-      // presente e oculto.
+      // Sem visivel(): exceção do toHaveCount(0), ver e2e/visivel.ts.
       await expect(page.locator('a[href$="/reviews/export"]')).toHaveCount(0);
 
       // (f) Acesso direto à rota antiga retorna not-found (404).

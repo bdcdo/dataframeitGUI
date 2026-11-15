@@ -3,7 +3,10 @@ import { fileURLToPath } from "node:url";
 import { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import { HIDDEN_INSENSITIVE_LOCATORS } from "../../../eslint.config.mjs";
+import {
+  HIDDEN_INSENSITIVE_LOCATORS,
+  LEGACY_SELECTOR_APIS,
+} from "../../../eslint-rules/e2e-visible-locators.mjs";
 
 const frontendRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const ruleId = "no-restricted-syntax";
@@ -32,7 +35,6 @@ describe("regra de locators visíveis nos specs E2E", () => {
   // (docs/CODE_QUALITY_TOOLING.md), como em test-cold-imports.test.ts.
   let e2eFolderResults: ESLint.LintResult[] = [];
   beforeAll(async () => {
-    await messagesFor("export {};");
     e2eFolderResults = await eslint.lintFiles(["e2e/**/*.ts"]);
   }, 60_000);
 
@@ -45,6 +47,18 @@ describe("regra de locators visíveis nos specs E2E", () => {
 
       expect(messages).toHaveLength(1);
       expect(messages[0]?.message).toContain("visivel()");
+    },
+  );
+
+  it.each(LEGACY_SELECTOR_APIS)(
+    "bloqueia page.%s, que recebe seletor",
+    async (method) => {
+      const messages = await messagesFor(
+        `${prelude}\ntest("x", async ({ page }) => { await page.${method}("text=a"); });`,
+      );
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.message).toContain("API legada");
     },
   );
 
@@ -97,16 +111,6 @@ describe("regra de locators visíveis nos specs E2E", () => {
       "html filtrado por visivel()",
       `visivel(page.locator(" html ")).locator("p");`,
     ],
-    ["API legada $$", `await page.$$("text=a");`],
-    [
-      "API legada $$eval",
-      `await page.$$eval("[data-testid=a]", (els) => els.length);`,
-    ],
-    ["API legada textContent", `await page.textContent("p");`],
-    ["ação por seletor click", `await page.click("text=a");`],
-    ["ação por seletor fill", `await page.fill("textarea", "x");`],
-    ["consulta por seletor isVisible", `await page.isVisible("text=a");`],
-    ["espera por seletor", `await page.waitForSelector("text=a");`],
   ])("bloqueia %s", async (_caseName, body) => {
     const messages = await messagesFor(
       `${prelude}\ntest("x", async ({ page, context }) => { ${body} });`,
@@ -190,14 +194,13 @@ describe("regra de locators visíveis nos specs E2E", () => {
   // A regra só olha os arquivos tocados no pre-push; mudar a regra sem mexer nos
   // specs passaria sem relintar nenhum deles. Este caso relinta a pasta inteira.
   it("a pasta e2e/ inteira passa na regra", () => {
-    const results = e2eFolderResults;
-    const violations = results.flatMap((result) =>
+    const violations = e2eFolderResults.flatMap((result) =>
       result.messages
         .filter((message) => message.ruleId === ruleId)
         .map((message) => `${result.filePath}:${message.line}`),
     );
 
-    expect(results.length).toBeGreaterThan(0);
+    expect(e2eFolderResults.length).toBeGreaterThan(0);
     expect(violations).toEqual([]);
   });
 });
