@@ -6,7 +6,7 @@ name: Contratos do Fly
 # especial a volta de um scale-to-zero ("stop" ou "suspend") no fly.toml: o
 # postflight do deploy só o veria depois de aplicado às Machines.
 #
-# Sem filtro de `paths`: os três scripts rodam em segundos, e um check que não
+# Sem filtro de `paths`: os passos rodam em segundos, e um check que não
 # dispara fica "Expected" para sempre se um dia virar obrigatório (ver #649).
 on:
   pull_request:
@@ -30,3 +30,15 @@ jobs:
         run: bash .github/scripts/test-backend-fly-machine-contract.sh
       - name: Vigia
         run: bash .github/scripts/test-fly-vigia.sh
+      # O teste do hook `toolchain-pins` (pre-push), que o merge pela web de um
+      # PR do Dependabot pula (#554). Só usa a stdlib, então roda no python3 da
+      # imagem; o pytest carregaria o conftest.py, que importa o backend todo.
+      - name: Pinos da toolchain do backend
+        run: |
+          python3 -c '
+          import sys; sys.path.insert(0, "backend/tests")
+          import test_toolchain_pins as t
+          tests = [f for n, f in vars(t).items() if n.startswith("test_")]
+          assert tests, "nenhum test_* em backend/tests/test_toolchain_pins.py"
+          for f in tests: f()
+          '
