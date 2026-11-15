@@ -451,13 +451,16 @@ function describeFieldIssue(issue: z.core.$ZodIssue): string {
   if (issue.code === "custom") return issue.message;
   const [index, ...property] = issue.path;
   if (typeof index !== "number") return "Formato de schema inválido";
-  const where = issue.code === "unrecognized_keys" ? issue.keys : property;
-  return where.length > 0
-    ? `Campo ${index + 1}: formato inválido em ${where.map(String).join(".")}`
+  const where =
+    issue.code === "unrecognized_keys"
+      ? issue.keys.join(", ")
+      : property.map(String).join(".");
+  return where
+    ? `Campo ${index + 1}: formato inválido em ${where}`
     : `Campo ${index + 1}: formato inválido`;
 }
 
-export type SaveablePydanticFields =
+type SaveablePydanticFields =
   | { fields: PydanticField[]; errors: [] }
   | { fields: null; errors: string[] };
 

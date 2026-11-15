@@ -67,8 +67,17 @@ const SCHEMA_PROJECT_SELECT =
 const PERSISTED_SCHEMA_INVALID =
   "O schema persistido é inválido e precisa ser corrigido antes da edição.";
 
-const PROJECT_READ_FAILED =
-  "Não foi possível ler o schema do projeto. Tente novamente.";
+// Falha de query — timeout num projeto grande, conexão caída — não é "sem
+// permissão". Mesma regra do mapRpcError e da paginação do backfill: o texto do
+// Postgres é diagnóstico de servidor, some do toast, mas não pode sumir do log.
+// Devolve a copy do toast.
+function projectReadFailed(error: { code?: string; message: string }): string {
+  console.error("[schema] leitura do projeto falhou", {
+    code: error.code,
+    message: error.message,
+  });
+  return "Não foi possível ler o schema do projeto. Tente novamente.";
+}
 
 function projectVersion(project: Partial<SchemaProjectRow>): {
   major: number;
@@ -139,19 +148,11 @@ async function loadSchemaSaveContext(
     .select(SCHEMA_PROJECT_SELECT)
     .eq("id", projectId)
     .maybeSingle();
-  // Falha de query — timeout num projeto grande, conexão caída — não é "sem
-  // permissão". Mesma regra do mapRpcError e da paginação do backfill: o texto
-  // do Postgres é diagnóstico de servidor, some do toast, mas não pode sumir do
-  // log.
   if (error) {
-    console.error("[schema] leitura do projeto falhou", {
-      code: error.code,
-      message: error.message,
-    });
     return {
       result: {
         status: "error",
-        message: PROJECT_READ_FAILED,
+        message: projectReadFailed(error),
       },
     };
   }
@@ -715,15 +716,7 @@ async function runBackfill(
     fetchAllResponses(supabase, projectId),
   ]);
 
-  // Mesma regra de loadSchemaSaveContext: falha de query não é "sem
-  // permissão", e o texto do Postgres vai para o log, não para o toast.
-  if (projectError) {
-    console.error("[schema] leitura do projeto falhou", {
-      code: projectError.code,
-      message: projectError.message,
-    });
-    throw new Error(PROJECT_READ_FAILED);
-  }
+  if (projectError) throw new Error(projectReadFailed(projectError));
   if (!project) throw new Error("Projeto não encontrado ou sem permissão");
 
   // O CAS compara contra a revisão que a ABA observou, como em
