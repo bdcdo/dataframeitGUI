@@ -289,6 +289,37 @@ describe("validateGUIFields — nomes que o código gerado não compila", () => 
   );
 });
 
+// `Literal["x", "x"]` vira `Literal["x"]` no Python: a opção repetida sumia na
+// recuperação (#525). Repetida depois de aparada também conta, porque na tela
+// "x" e "x " são a mesma opção.
+describe("validateGUIFields — opções repetidas", () => {
+  it.each(["single", "multi", "date"] as const)(
+    "rejeita opção repetida em campo %s",
+    (type) => {
+      const fields = [baseField({ name: "q", type, options: ["Sim", "Não", "Sim"] })];
+      expect(validateGUIFields(fields)).toEqual([
+        'Campo 1 ("q"): opção "Sim" duplicada',
+      ]);
+    },
+  );
+
+  it("rejeita opção repetida depois de aparada, como o strip() do Python", () => {
+    const fields = [
+      baseField({ name: "q", options: ["Sim", " Sim\x1f", "Não"] }),
+    ];
+    expect(validateGUIFields(fields)).toEqual([
+      'Campo 1 ("q"): opção "Sim" duplicada',
+    ]);
+  });
+
+  it("aceita opções que só diferem por dentro ou na caixa", () => {
+    const fields = [
+      baseField({ name: "q", options: ["Sim", "sim", "S im", "\ufeffSim"] }),
+    ];
+    expect(validateGUIFields(fields)).toEqual([]);
+  });
+});
+
 // #502: erro estrutural do Zod (texto em inglês) vira mensagem pt-BR que
 // nomeia o campo e a propriedade.
 describe("validateGUIFields — erro estrutural", () => {

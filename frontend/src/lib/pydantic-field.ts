@@ -281,10 +281,18 @@ function validateOptions(
   if (isChoice && !field.options?.length) {
     issue(`${label}: campo de escolha precisa de pelo menos uma opção`, ["options"]);
   }
+  // Repetida é barrada porque `Literal["x", "x"]` vira `Literal["x"]` no
+  // Python e a opção some na recuperação; a comparação é depois de aparar,
+  // porque "x" e "x " são a mesma opção para quem lê a tela (#525).
+  const seen = new Set<string>();
   field.options?.forEach((option, index) => {
-    if (!stripLikePython(option)) {
+    const text = stripLikePython(option);
+    if (!text) {
       issue(`${label}: opção ${index + 1} está vazia`, ["options", index]);
+    } else if (seen.has(text)) {
+      issue(`${label}: opção "${text}" duplicada`, ["options", index]);
     }
+    seen.add(text);
   });
 }
 

@@ -53,9 +53,12 @@ const conditionScalar: fc.Arbitrary<ConditionScalar> = fc.oneof(
   fc.boolean(),
 );
 
-// Opções distintas: `Literal["x", "x"]` vira `Literal["x"]` no Python, e a
-// GUI não barra opção repetida — outra lacuna da validação, fora do gerador.
-const options = fc.uniqueArray(nonBlankText, { minLength: 1, maxLength: 4 });
+// Opções distintas depois de aparadas, como a validação exige.
+const options = fc.uniqueArray(nonBlankText, {
+  selector: stripLikePython,
+  minLength: 1,
+  maxLength: 4,
+});
 
 const subfields: fc.Arbitrary<SubfieldDef[]> = fc.uniqueArray(
   fc.record(

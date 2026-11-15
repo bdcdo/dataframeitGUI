@@ -3537,20 +3537,14 @@
           "\t\n ã'",
           "a\""
         ],
-        "description": "\"﻿: '\\﻿'😀",
-        "help_text": "\u0000{",
-        "required": true,
-        "allow_other": false,
-        "condition": {
-          "field": "list",
-          "not_equals": "'}0"
-        },
-        "justification_prompt": "{\u001f}\u0000b\"",
-        "question_revision": 1,
-        "hash": "55a1417bd852"
+        "description": "{",
+        "help_text": ":\r\r'\"",
+        "allow_other": true,
+        "justification_prompt": "ç\u001f\u0000\\",
+        "hash": "b958a0bacb8c"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass Analysis(BaseModel):\n    e9_: list[Literal[\"ç\u001f\\r:b\\x00\"]] = Field(description=\"\u001c{b\\r_. Instrucoes: ã0﻿﻿\", json_schema_extra={\"id\": \"fffffff0-a3dd-2667-a770-8c1f68b7ca43\", \"target\": \"human_only\", \"required\": False, \"help_text\": \"ã0﻿﻿\", \"question_revision\": 7})\n    b48: Optional[str] = Field(default=None, description=\"{﻿\\x00. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"çç {}\\\", \\\"ãZ\\\". Instrucoes: Z\\\\b_a\\r\\n\u001c\\\"\", json_schema_extra={\"id\": \"0000001d-354a-2978-bc00-1dceffffffef\", \"required\": False, \"field_type\": \"date\", \"options\": [\"çç {}\", \"ãZ\"], \"help_text\": \"Z\\\\b_a\\r\\n\u001c\\\"\", \"visible_if\": {\"field\": \"e9_\", \"not_in\": [1.5e-323]}, \"justification_prompt\": \"\\\"😀\u001c\\\"a\", \"question_revision\": 9})\n    list: Optional[Literal[\"\\\\\\r\\r':ãã\u001f\\n\", \"'}0\", \":.\"]] = Field(default=None, description=\"\\rç'\\\\}\\\\:😀. Instrucoes: 😀\u001ca\", json_schema_extra={\"id\": \"4b132f89-fffd-8fff-8000-0015cb4ebe44\", \"target\": \"none\", \"required\": False, \"help_text\": \"😀\u001ca\", \"visible_if\": {\"field\": \"e9_\", \"not_equals\": 485}, \"justification_prompt\": \"😀\", \"question_revision\": 2})\n    v_5d1u: Optional[list[Literal[\"﻿\\\"ã\u001f\u001fZ\\x00\", \"\\\"b\", \"\\t\\n ã'\", \"a\\\"\"]]] = Field(default=None, description=\"\\\"﻿: '\\\\﻿'😀. Instrucoes: \\x00{\", json_schema_extra={\"id\": \"ff4082f0-8de0-1f5b-a443-b352ffffffec\", \"help_text\": \"\\x00{\", \"visible_if\": {\"field\": \"list\", \"not_equals\": \"'}0\"}, \"justification_prompt\": \"{\u001f}\\x00b\\\"\", \"question_revision\": 1})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass Analysis(BaseModel):\n    e9_: list[Literal[\"ç\u001f\\r:b\\x00\"]] = Field(description=\"\u001c{b\\r_. Instrucoes: ã0﻿﻿\", json_schema_extra={\"id\": \"fffffff0-a3dd-2667-a770-8c1f68b7ca43\", \"target\": \"human_only\", \"required\": False, \"help_text\": \"ã0﻿﻿\", \"question_revision\": 7})\n    b48: Optional[str] = Field(default=None, description=\"{﻿\\x00. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"çç {}\\\", \\\"ãZ\\\". Instrucoes: Z\\\\b_a\\r\\n\u001c\\\"\", json_schema_extra={\"id\": \"0000001d-354a-2978-bc00-1dceffffffef\", \"required\": False, \"field_type\": \"date\", \"options\": [\"çç {}\", \"ãZ\"], \"help_text\": \"Z\\\\b_a\\r\\n\u001c\\\"\", \"visible_if\": {\"field\": \"e9_\", \"not_in\": [1.5e-323]}, \"justification_prompt\": \"\\\"😀\u001c\\\"a\", \"question_revision\": 9})\n    list: Optional[Literal[\"\\\\\\r\\r':ãã\u001f\\n\", \"'}0\", \":.\"]] = Field(default=None, description=\"\\rç'\\\\}\\\\:😀. Instrucoes: 😀\u001ca\", json_schema_extra={\"id\": \"4b132f89-fffd-8fff-8000-0015cb4ebe44\", \"target\": \"none\", \"required\": False, \"help_text\": \"😀\u001ca\", \"visible_if\": {\"field\": \"e9_\", \"not_equals\": 485}, \"justification_prompt\": \"😀\", \"question_revision\": 2})\n    v_5d1u: list[Literal[\"﻿\\\"ã\u001f\u001fZ\\x00\", \"\\\"b\", \"\\t\\n ã'\", \"a\\\"\"]] = Field(description=\"{. Instrucoes: :\\r\\r'\\\"\", json_schema_extra={\"id\": \"ff4082f0-8de0-1f5b-a443-b352ffffffec\", \"allowOther\": True, \"help_text\": \":\\r\\r'\\\"\", \"justification_prompt\": \"ç\u001f\\x00\\\\\"})\n",
     "compiled": [
       {
         "id": "fffffff0-a3dd-2667-a770-8c1f68b7ca43",
@@ -3619,16 +3613,12 @@
           "\t\n ã'",
           "a\""
         ],
-        "description": "\"﻿: '\\﻿'😀",
+        "description": "{",
         "target": "all",
-        "hash": "55a1417bd852",
-        "help_text": "\u0000{",
-        "condition": {
-          "field": "list",
-          "not_equals": "'}0"
-        },
-        "justification_prompt": "{\u001f}\u0000b\"",
-        "question_revision": 1
+        "hash": "b958a0bacb8c",
+        "help_text": ":\r\r'\"",
+        "allow_other": true,
+        "justification_prompt": "ç\u001f\u0000\\"
       }
     ]
   },
