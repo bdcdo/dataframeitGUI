@@ -262,7 +262,7 @@ def _build_field_dict(
     # Desembrulhado uma vez aqui: o `Optional` de campo condicional não carrega
     # nada (obrigatoriedade e visibilidade vêm do `json_schema_extra`), e cada
     # leitor da anotação abaixo teria de lembrar de tirá-lo (#525).
-    annotation = _unwrap_optional(field_info.annotation)
+    annotation = unwrap_optional(field_info.annotation)
     parsed_type, parsed_options = _parse_annotation(annotation)
     extra = extract_json_schema_extra(field_info)
 
@@ -790,12 +790,13 @@ def _safe_literal(node: ast.AST):
         raise SchemaError("Valor não literal no schema") from e
 
 
-def _unwrap_optional(annotation: type) -> type:
+def unwrap_optional(annotation: type) -> type:
     """`Optional[X]` -> `X`; qualquer outra anotação volta como está.
 
     Campo com condição de visibilidade sai do gerador como `Optional[...]`
     (`fieldAnnotation` em schema-utils.ts), inclusive o composto
-    `Optional[_<nome>_fields]`.
+    `Optional[_<nome>_fields]`. Usado também pelo achatamento do composto antes
+    do LLM (`_flatten_nested_basemodels` em llm_runner.py).
     """
     if get_origin(annotation) is typing.Union:
         non_none = [a for a in get_args(annotation) if a is not type(None)]

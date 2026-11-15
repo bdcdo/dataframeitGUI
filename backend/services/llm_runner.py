@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
+from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -31,7 +32,11 @@ from supabase import PostgrestAPIError
 
 from services.auto_review_reconciliation import wake_auto_review_reconciliation_sync
 from services.condition_evaluator import evaluate_condition, extract_field_conditions
-from services.pydantic_compiler import build_model_from_code, extract_json_schema_extra
+from services.pydantic_compiler import (
+    build_model_from_code,
+    extract_json_schema_extra,
+    unwrap_optional,
+)
 from services.supabase_client import get_supabase
 
 logger = logging.getLogger(__name__)
@@ -486,6 +491,9 @@ class _RunMetadata:
 class _PreparedLlmModel:
     model_class: object
     nested_field_map: dict
+    # Lidas antes do achatamento: o pai de um composto condicional some do
+    # modelo achatado, mas é por ele que a resposta reconstruída é podada.
+    field_conditions: dict
 
 
 @dataclass(frozen=True)
@@ -662,16 +670,23 @@ def _flatten_nested_basemodels(model_class):
     field_map: dict[str, list[tuple[str, str]]] = {}
 
     for name, info in model_class.model_fields.items():
-        ann = info.annotation
+        # Campo composto com condição sai do gerador como
+        # `Optional[_<nome>_fields] = None` (#525).
+        ann = unwrap_optional(info.annotation)
         if (
             isinstance(ann, type)
             and issubclass(ann, BaseModel)
             and ann is not BaseModel
         ):
+            parent_optional = ann is not info.annotation
             field_map[name] = []
             for sub_name, sub_info in ann.model_fields.items():
                 flat_name = f"{name}{_NESTED_FLATTEN_SEP}{sub_name}"
-                flat_fields[flat_name] = (sub_info.annotation, sub_info)
+                flat_fields[flat_name] = (
+                    _optional_field(sub_info)
+                    if parent_optional and sub_info.is_required()
+                    else (sub_info.annotation, sub_info)
+                )
                 field_map[name].append((flat_name, sub_name))
         else:
             flat_fields[name] = (info.annotation, info)
@@ -685,6 +700,20 @@ def _flatten_nested_basemodels(model_class):
         **flat_fields,
     )
     return flat_model, field_map
+
+
+def _optional_field(info):
+    """`(Optional[X], info com default None)`, sem tocar o FieldInfo original.
+
+    O pai opcional podia vir nulo inteiro do LLM. Achatado, cada subcampo
+    herda essa opção: um subcampo `str` obrigatório de um pai oculto obrigaria
+    o provider a inventar um valor que a poda condicional jogaria fora.
+    """
+    from typing import Optional
+
+    optional_info = copy(info)
+    optional_info.default = None
+    return Optional[info.annotation], optional_info
 
 
 def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
@@ -971,12 +1000,14 @@ def _prepare_llm_model(
     if not model_class:
         raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
     model_class = _filter_model_for_llm(model_class, pydantic_fields)
+    field_conditions = extract_field_conditions(model_class)
     model_class, nested_field_map = _flatten_nested_basemodels(model_class)
     if include_justifications:
         model_class = _extend_model_with_justifications(model_class)
     return _PreparedLlmModel(
         model_class=model_class,
         nested_field_map=nested_field_map,
+        field_conditions=field_conditions,
     )
 
 
@@ -1782,7 +1813,7 @@ class _RowPublisher:
         self._prepared_model = prepared_model
         self._partial_coverage_threshold = partial_coverage_threshold
         self._run = run
-        self._field_conditions = extract_field_conditions(prepared_model.model_class)
+        self._field_conditions = prepared_model.field_conditions
         self._expected_llm_fields = _expected_llm_fields(prepared_model.model_class)
         self._partial_warnings: list[str] = []
         self._dfi_error_samples: dict[str, str] = {}

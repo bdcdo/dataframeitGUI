@@ -60,6 +60,21 @@ class Analysis(BaseModel):
     q5: Doenca = Field(description="Q5")
 """
 
+# Campo composto com condição, como generatePydanticCode o emite: a classe dos
+# subcampos e o pai `Optional[...] = None` com `visible_if` (#525).
+CONDITIONAL_NESTED_PYDANTIC_CODE = """from pydantic import BaseModel, Field
+from typing import Literal, Optional
+
+
+class _doc_fields(BaseModel):
+    part_a: str = Field(description="Parte A")
+    part_b: Optional[str] = Field(default=None, description="Parte B")
+
+class Analysis(BaseModel):
+    has_doc: Literal["Sim", "Não"] = Field(description="Tem documento?")
+    doc: Optional[_doc_fields] = Field(default=None, description="Doc", json_schema_extra={"visible_if": {"field": "has_doc", "equals": "Sim"}})
+"""
+
 SPLIT_PYDANTIC_CODE = """from pydantic import BaseModel, Field
 
 class Analysis(BaseModel):
@@ -1361,6 +1376,40 @@ def test_run_llm_flattens_nested_model_before_adding_justifications(monkeypatch)
     inserted = _published_responses(sb)[0]
     assert inserted["answers"] == {"q5": {"doenca": "AME"}}
     assert inserted["justifications"] == {"q5": "doenca: O documento identifica AME."}
+
+
+def test_run_llm_flattens_conditional_nested_model_and_prunes_hidden_parent(
+    monkeypatch,
+):
+    """O composto condicional (`Optional[_x_fields]`) também é achatado.
+
+    Sem desembrulhar o `Optional`, o pai ia aninhado ao provider — a falha
+    silenciosa do Gemini que o achatamento existe para evitar. Achatado, o
+    subcampo obrigatório não pode obrigar o LLM a inventar valor quando o pai
+    está oculto, e a condição do pai continua podando a resposta (#525).
+    """
+    docs = _docs(2)
+    row_specs = {
+        "doc-0": {"has_doc": "Sim", "doc__part_a": "A", "doc__part_b": "B"},
+        "doc-1": {"has_doc": "Não", "doc__part_a": "inventado"},
+    }
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(
+        _project_row(pydantic_code=CONDITIONAL_NESTED_PYDANTIC_CODE),
+        docs,
+    )
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
+
+    model_fields = dataframeit_calls[0]["model_fields"]
+    answer_fields = {f for f in model_fields if not f.endswith("_justification")}
+    assert answer_fields == {"has_doc", "doc__part_a", "doc__part_b"}
+    by_doc = {r["document_id"]: r for r in _published_responses(sb)}
+    assert by_doc["doc-0"]["answers"] == {
+        "has_doc": "Sim",
+        "doc": {"part_a": "A", "part_b": "B"},
+    }
+    assert by_doc["doc-1"]["answers"] == {"has_doc": "Não"}
 
 
 def test_run_llm_publishes_each_response_atomically_without_bulk_update(monkeypatch):

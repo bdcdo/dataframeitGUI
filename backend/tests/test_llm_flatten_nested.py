@@ -88,6 +88,59 @@ def test_flatten_does_not_leak_reserved_json_schema_keyword():
     assert prop["subfield_required"] is True
 
 
+class _SubFieldsMixed(BaseModel):
+    part_a: str = Field(description="Parte A")
+    part_b: Optional[str] = Field(default=None, description="Parte B")
+
+
+class _RootWithConditionalNested(BaseModel):
+    q2: str = Field(description="campo simples")
+    doc: Optional[_SubFieldsMixed] = Field(
+        default=None,
+        description="Doc",
+        json_schema_extra={"visible_if": {"field": "q2", "equals": "Sim"}},
+    )
+
+
+def test_flatten_unwraps_optional_nested_basemodel():
+    """Composto com condição sai do gerador como `Optional[_x_fields]` (#525)."""
+    flat, field_map = _flatten_nested_basemodels(_RootWithConditionalNested)
+
+    sep = _NESTED_FLATTEN_SEP
+    assert set(flat.model_fields) == {"q2", f"doc{sep}part_a", f"doc{sep}part_b"}
+    assert field_map == {
+        "doc": [(f"doc{sep}part_a", "part_a"), (f"doc{sep}part_b", "part_b")]
+    }
+
+
+def test_flatten_makes_subfields_of_optional_parent_optional():
+    """O pai opcional podia vir nulo inteiro; seus subcampos achatados também.
+
+    Senão um pai oculto com subcampo `str` obrigatório obrigaria o LLM a
+    inventar um valor que a poda condicional jogaria fora.
+    """
+    flat, _ = _flatten_nested_basemodels(_RootWithConditionalNested)
+    part_a = flat.model_fields[f"doc{_NESTED_FLATTEN_SEP}part_a"]
+
+    assert not part_a.is_required()
+    assert part_a.default is None
+    assert part_a.description == "Parte A"
+    assert flat(q2="Não").model_dump() == {
+        "q2": "Não",
+        f"doc{_NESTED_FLATTEN_SEP}part_a": None,
+        f"doc{_NESTED_FLATTEN_SEP}part_b": None,
+    }
+
+
+def test_flatten_keeps_required_subfield_of_required_parent():
+    flat, _ = _flatten_nested_basemodels(_RootWithRequiredParentMixed)
+    assert flat.model_fields[f"doc{_NESTED_FLATTEN_SEP}part_a"].is_required()
+
+
+class _RootWithRequiredParentMixed(BaseModel):
+    doc: _SubFieldsMixed = Field(description="Doc")
+
+
 def _reconstruct_nested(answers: dict, justifications: dict, field_map: dict):
     """Mirror da reconstrução em services.llm_runner.run_llm para permitir
     testar sem montar uma run completa. Manter em sincronia com o runner."""
