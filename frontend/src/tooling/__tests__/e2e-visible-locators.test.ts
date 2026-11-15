@@ -2,6 +2,8 @@ import type { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
+  BROWSER_CALLBACK_METHODS,
+  DOM_QUERY_APIS,
   HIDDEN_INSENSITIVE_LOCATORS,
   LEGACY_SELECTOR_APIS,
 } from "../../../eslint-rules/e2e-visible-locators.mjs";
@@ -141,25 +143,37 @@ describe("regra de locators visíveis nos specs E2E", () => {
 
   // O callback roda no navegador, onde visivel() não alcança: um seletor do DOM
   // ali pega a primeira cópia, que pode ser a órfã do Suspense (desvio do #862).
+  it.each(BROWSER_CALLBACK_METHODS)(
+    "bloqueia document.querySelector no callback de %s",
+    async (method) => {
+      const messages = await messagesFor(
+        `${prelude}\ntest("x", async ({ page }) => { await page.${method}(() => document.querySelector("p")); });`,
+      );
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.message).toContain("dentro do navegador");
+    },
+  );
+
+  it.each(DOM_QUERY_APIS)(
+    "bloqueia document.%s no callback de evaluate",
+    async (api) => {
+      const messages = await messagesFor(
+        `${prelude}\ntest("x", async ({ page }) => { await page.evaluate(() => document.${api}("a")); });`,
+      );
+
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.message).toContain("dentro do navegador");
+    },
+  );
+
   it.each([
     [
-      "querySelector em page.evaluate",
-      `await page.evaluate(() => document.querySelector("[data-testid=a]")!.getBoundingClientRect());`,
+      "window.document no callback",
+      `await page.evaluate(() => window.document.querySelector("p"));`,
     ],
     [
-      "querySelectorAll em page.waitForFunction",
-      `await page.waitForFunction(() => document.querySelectorAll("button").length > 2);`,
-    ],
-    [
-      "getElementById em page.evaluateHandle",
-      `await page.evaluateHandle((id) => document.getElementById(id), "a");`,
-    ],
-    [
-      "querySelector em locator.evaluateAll",
-      `await visivel(page.getByText("a")).evaluateAll(() => document.querySelector("p"));`,
-    ],
-    [
-      "querySelector num helper chamado pelo callback",
+      "helper declarado dentro do callback",
       `await page.evaluate(() => { const box = (s: string) => document.querySelector(s); return box("p"); });`,
     ],
   ])("bloqueia %s", async (_caseName, body) => {
@@ -168,7 +182,6 @@ describe("regra de locators visíveis nos specs E2E", () => {
     );
 
     expect(messages).toHaveLength(1);
-    expect(messages[0]?.message).toContain("dentro do navegador");
   });
 
   it("permite evaluate que não consulta o DOM por seletor", async () => {
