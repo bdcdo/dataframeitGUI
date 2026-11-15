@@ -61,7 +61,8 @@
     "resync:compare": "tsx scripts/compare-assignments/resync.ts",
     "assign:self-comparison": "tsx --conditions=react-server scripts/self-comparison/assign.ts",
     "e2e:fixture:coding": "tsx scripts/e2e-fixtures/create-coding-save-fixture.mts",
-    "e2e:fixture:compare": "tsx scripts/e2e-fixtures/create-compare-field-switch-fixture.mts"
+    "e2e:fixture:compare": "tsx scripts/e2e-fixtures/create-compare-field-switch-fixture.mts",
+    "e2e:fixture:llm-decisions": "tsx scripts/e2e-fixtures/create-llm-decisions-fixture.mts"
   },
   "dependencies": {
     "@clerk/localizations": "^4.24.6",
