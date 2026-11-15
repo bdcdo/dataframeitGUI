@@ -137,9 +137,11 @@ describe("measure-gate-bump.sh pre-commit", () => {
   // O `pre-commit run` de um hook que não existe sai com 1, como o de um hook
   // que achou problema: o resumo não pode registrar isso como medição.
   it("registra o hook ausente num dos lados como ausente, sem rodá-lo", () => {
-    commit({ ".pre-commit-config.yaml": preCommitConfig("antiga", "v1.0.0", { hooks: ["check-merge-conflict"] }) });
-    const head = commit({ ".pre-commit-config.yaml": preCommitConfig("nova", "v2.0.0") });
-    const { status, stdout, calls } = measure(["pre-commit", runGit(["rev-parse", `${head}~1`], repo).trim()]);
+    const antiga = commit({
+      ".pre-commit-config.yaml": preCommitConfig("antiga", "v1.0.0", { hooks: ["check-merge-conflict"] }),
+    });
+    commit({ ".pre-commit-config.yaml": preCommitConfig("nova", "v2.0.0") });
+    const { status, stdout, calls } = measure(["pre-commit", antiga]);
     expect(status).toBe(0);
     expect(calls.filter((call) => call.startsWith("actionlint"))).toEqual(["actionlint lado: nova rev=v2.0.0"]);
     expect(stdout).toContain("actionlint (antiga): ausente na config");
@@ -170,11 +172,10 @@ describe("measure-gate-bump.sh uv", () => {
     expect(status).toBe(0);
     const runs = (lock: string) => [
       `sync ${lock} repo --project P --locked`,
-      `run ${lock} backend --project P --locked ruff --version`,
+      `run ${lock} repo --project P --locked ruff --version`,
+      `run ${lock} repo --project P --locked mypy --version`,
       `run ${lock} backend --project P --locked ruff check --no-cache --config P/pyproject.toml --statistics .`,
-      `run ${lock} backend --project P --locked ruff --version`,
       `run ${lock} backend --project P --locked ruff format --no-cache --config P/pyproject.toml --check .`,
-      `run ${lock} backend --project P --locked mypy --version`,
       `run ${lock} backend --project P --locked mypy --config-file P/pyproject.toml --cache-dir P/.mypy_cache .`,
     ];
     expect(calls).toEqual([...runs("lock-antiga"), ...runs("lock-nova")]);

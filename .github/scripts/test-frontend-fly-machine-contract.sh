@@ -230,56 +230,24 @@ expect_contract_failure() {
 
 check_fly_config "$fly_config"
 
-# Casos vermelhos. O awk acha a linha da diretiva normalizando-a (sem
-# comentário e sem indentação; nenhuma diretiva esperada tem `#`).
+# Casos vermelhos de cada diretiva. As regras que não dependem deste arquivo
+# (tipo, [[vm]] a mais e seus aliases, scale-to-zero em outro bloco, TOML
+# inválido, `#` dentro de string) estão em test-fly-toml-contract.sh. O awk
+# acha a linha da diretiva normalizando-a (sem comentário e sem indentação;
+# nenhuma diretiva esperada tem `#`).
 mutated_config="$tmp_dir/fly.toml"
 for entry in "${expected_directives[@]}"; do
   directive="${entry#* }"
+  line="$(awk -v d="$directive" '{ t = $0; sub(/#.*/, "", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t) } t == d { print NR; exit }' "$fly_config")"
+  [[ -n $line ]] || { echo "$fly_config sem a linha $directive" >&2; exit 1; }
   # A diretiva que sobra só num comentário reprova (um grep de substring a
   # aprovaria)...
-  awk -v d="$directive" '{ t = $0; sub(/#.*/, "", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t); print (t == d ? "# " : "") $0 }' \
-    "$fly_config" >"$mutated_config"
+  sed "${line}s/^/# /" "$fly_config" >"$mutated_config"
   expect_contract_failure "$mutated_config"
   # ...e a que sai do bloco certo também: aqui ela vai para a raiz do arquivo,
   # onde o Fly não a lê, e a linha continua idêntica.
-  { printf '%s\n' "$directive"
-    awk -v d="$directive" '{ t = $0; sub(/#.*/, "", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t); if (t != d) print }' "$fly_config"
-  } >"$mutated_config"
+  { printf '%s\n' "$directive"; sed "${line}d" "$fly_config"; } >"$mutated_config"
   expect_contract_failure "$mutated_config"
 done
-# Uma Machine a mais, ou CPU fora do contrato dentro do único [[vm]].
-{ cat "$fly_config"; printf '\n[[vm]]\n  size = "shared-cpu-1x"\n  memory = "1gb"\n'; } >"$mutated_config"
-expect_contract_failure "$mutated_config"
-for vm_override in 'cpus = 2' 'cpu_kind = "performance"' 'memory_mb = 512'; do
-  sed "/^\[\[vm\]\]/a\\  $vm_override" "$fly_config" >"$mutated_config"
-  expect_contract_failure "$mutated_config"
-done
-# O flyctl junta [[compute]] e [[computes]] ao [[vm]] (patchCompute em
-# internal/appconfig/patches.go): CPU ou Machine a mais por ali também conta, e
-# um elemento que não é tabela reprova pelo contrato.
-for alias in compute computes; do
-  { cat "$fly_config"; printf '\n[[%s]]\n  cpus = 4\n' "$alias"; } >"$mutated_config"
-  expect_contract_failure "$mutated_config"
-done
-{ printf 'compute = ["shared-cpu-1x"]\n'; cat "$fly_config"; } >"$mutated_config"
-expect_contract_failure "$mutated_config"
-for scale_to_zero in '"stop"' "'stop'" '"suspend"' true; do
-  { cat "$fly_config"; printf '\n[[services]]\n  auto_stop_machines = %s\n' "$scale_to_zero"; } >"$mutated_config"
-  expect_contract_failure "$mutated_config"
-done
-# TOML inválido (o marcador de conflito de 2026-08-10) reprova.
-{ cat "$fly_config"; printf '\n=======\n'; } >"$mutated_config"
-expect_contract_failure "$mutated_config"
-
-# Casos verdes: `#` dentro de string não é comentário (o `sed 's/#.*//'` de
-# antes lia a linha abaixo da string como `auto_stop_machines = "stop"` e
-# reprovava a config), e comentário de fim de linha continua ignorado.
-{ printf 'nota = """\nauto_stop_machines = "stop" # derrubou o site em 2026-08-10\n"""\n'
-  sed 's/^\([[:space:]]*auto_stop_machines = "off"\)$/\1 # não "stop"/' "$fly_config"
-} >"$mutated_config"
-grep -q '^[[:space:]]*auto_stop_machines = "off" # não "stop"$' "$mutated_config"
-check_fly_config "$mutated_config"
-{ cat "$fly_config"; printf '\n[[services]]\n  auto_stop_machines = false\n'; } >"$mutated_config"
-check_fly_config "$mutated_config"
 
 echo "Contrato de Machines do frontend validado."

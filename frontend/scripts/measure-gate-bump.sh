@@ -62,24 +62,16 @@ sides=(antiga nova)
 declare -A rev_of=([antiga]="$base" [nova]="$head")
 summary=()
 
-# O hook existe na config deste lado? Um hook ausente faz o `pre-commit run`
-# sair com 1, o mesmo status de um hook que achou problema.
-has_hook() {
+# Da config de um lado: os ids de hook (linha 1) e o repo e o rev do hook
+# gitleaks (linhas 2 e 3). Falha alto se o gitleaks deixou de vir do repositório
+# dele: a troca de entry abaixo depende disso.
+read_hooks() {
   ruby -ryaml -e '
-    config = YAML.safe_load(File.read(ARGV.fetch(0)))
-    exit(config.fetch("repos").any? { |r| r["hooks"]&.any? { |h| h["id"] == ARGV.fetch(1) } })
-  ' "$1" "$2"
-}
-
-# Rev e repo do hook gitleaks na config de um lado. Falha alto se o hook deixou
-# de vir do repositório do gitleaks: a troca de entry abaixo depende disso.
-gitleaks_hook() {
-  ruby -ryaml -e '
-    config = YAML.safe_load(File.read(ARGV.fetch(0)))
-    repo = config.fetch("repos").find { |r| r["hooks"]&.any? { |h| h["id"] == "gitleaks" } }
-    abort("hook gitleaks ausente") unless repo
-    abort("hook gitleaks fora do repo gitleaks/gitleaks: #{repo["repo"]}") unless repo["repo"].to_s.end_with?("gitleaks/gitleaks")
-    puts repo["repo"], repo.fetch("rev")
+    repos = YAML.safe_load(File.read(ARGV.fetch(0))).fetch("repos")
+    gitleaks = repos.find { |r| r["hooks"]&.any? { |h| h["id"] == "gitleaks" } }
+    abort("hook gitleaks ausente") unless gitleaks
+    abort("hook gitleaks fora do repo gitleaks/gitleaks: #{gitleaks["repo"]}") unless gitleaks["repo"].to_s.end_with?("gitleaks/gitleaks")
+    puts repos.flat_map { |r| (r["hooks"] || []).map { |h| h["id"] } }.join(" "), gitleaks["repo"], gitleaks.fetch("rev")
   ' "$1"
 }
 
@@ -96,14 +88,17 @@ measure_pre_commit() {
   canary="ghp_$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n')"
   printf 'token = "%s"\n' "$canary" >"$tree/gate-bump-canary.txt"
 
-  local side config hook status repo_url rev report config_gitleaks total canaries
+  local side config hook hooks status repo_url rev report config_gitleaks counts
   for side in "${sides[@]}"; do
     config="$work/$side.pre-commit-config.yaml"
     git show "${rev_of[$side]}:.pre-commit-config.yaml" >"$config"
+    { read -r hooks; read -r repo_url; read -r rev; } < <(read_hooks "$config") || die "$side: hook gitleaks irreconhecível"
 
     for hook in check-merge-conflict actionlint; do
       echo "== $hook ($side, ${rev_of[$side]:0:9})"
-      if ! has_hook "$config" "$hook"; then
+      # Um hook ausente faz o `pre-commit run` sair com 1, o mesmo status de um
+      # hook que achou problema.
+      if [[ " $hooks " != *" $hook "* ]]; then
         echo "(ausente na .pre-commit-config.yaml deste lado)"
         summary+=("$hook ($side): ausente na config")
         continue
@@ -113,7 +108,6 @@ measure_pre_commit() {
       summary+=("$hook ($side): exit $status")
     done
 
-    { read -r repo_url; read -r rev; } < <(gitleaks_hook "$config") || die "$side: hook gitleaks irreconhecível"
     report="$work/$side.gitleaks.json"
     config_gitleaks="$work/$side.gitleaks-config.yaml"
     cat >"$config_gitleaks" <<EOF
@@ -130,22 +124,22 @@ EOF
     pre-commit run gitleaks --all-files --verbose --config "$config_gitleaks" \
       || die "gitleaks $rev ($side) não rodou"
     [[ -s "$report" ]] || die "gitleaks $rev ($side) não gravou o relatório: nada foi escaneado"
-    canaries="$(jq '[.[] | select(.File | endswith("/gate-bump-canary.txt"))] | length' "$report")"
-    total="$(jq length "$report")"
-    [[ "$canaries" -ge 1 ]] \
+    # Canários achados e o resto dos achados.
+    mapfile -t counts < <(jq 'map(.File | endswith("/gate-bump-canary.txt")) | (map(select(.)) | length), (map(select(not)) | length)' "$report")
+    [[ "${counts[0]}" -ge 1 ]] \
       || die "gitleaks $rev ($side) não achou o canário plantado: a varredura não leu a árvore"
-    summary+=("gitleaks $rev ($side): $((total - canaries)) achado(s)")
+    summary+=("gitleaks $rev ($side): ${counts[1]} achado(s)")
   done
 }
 
-# Roda no backend/ uma ferramenta do projeto temporário do lado: rótulo e
-# comando.
+# Roda no backend/ uma ferramenta de um projeto temporário: projeto, rótulo do
+# resumo e comando.
 run_backend_tool() {
-  local label="$1" status=0
-  shift
-  echo "== $label ($side, $(cd backend && uv run --project "$project" --locked "$1" --version))"
+  local project="$1" label="$2" status=0
+  shift 2
+  echo "== $label"
   (cd backend && uv run --project "$project" --locked "$@") || status=$?
-  summary+=("$label ($side): exit $status")
+  summary+=("$label: exit $status")
 }
 
 measure_uv() {
@@ -159,11 +153,12 @@ measure_uv() {
       git show "${rev_of[$side]}:backend/$file" >"$project/$file"
     done
     uv sync --project "$project" --locked || die "uv sync ($side) falhou"
+    echo "== $side: $(uv run --project "$project" --locked ruff --version), $(uv run --project "$project" --locked mypy --version)"
     # A config vem do lado medido: no backend/ o ruff e o mypy leriam a do
     # worktree, e uma regra nova na config reprovaria a versão antiga.
-    run_backend_tool "ruff check --statistics" ruff check --no-cache --config "$config" --statistics .
-    run_backend_tool "ruff format --check" ruff format --no-cache --config "$config" --check .
-    run_backend_tool "mypy" mypy --config-file "$config" --cache-dir "$project/.mypy_cache" .
+    run_backend_tool "$project" "ruff check --statistics ($side)" ruff check --no-cache --config "$config" --statistics .
+    run_backend_tool "$project" "ruff format --check ($side)" ruff format --no-cache --config "$config" --check .
+    run_backend_tool "$project" "mypy ($side)" mypy --config-file "$config" --cache-dir "$project/.mypy_cache" .
   done
 }
 
