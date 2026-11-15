@@ -7,7 +7,12 @@
 // preservar essa ausência de dependência de Server Actions/React aqui.
 
 import type { UploadDoc, UploadOptions } from "@/actions/documents";
-import { actionErrorMessage, errorCode } from "@/lib/server-error";
+import {
+  STALE_PAGE_ERROR,
+  actionErrorMessage,
+  errorCode,
+  isStaleActionError,
+} from "@/lib/server-error";
 import { errorMessage } from "@/lib/utils";
 
 export interface ColumnMapping {
@@ -50,14 +55,23 @@ export const utf8Bytes = (s: string) => textEncoder.encode(s).length;
 // Fonte única da medição — usada tanto no chunking quanto no fail-early do hook.
 export const docBytes = (doc: UploadDoc) => utf8Bytes(JSON.stringify(doc));
 
-// Recebe a mensagem CRUA do erro, nunca a copy com o código de erro (#653): o
-// código é base 36 e pode conter "413". O `\b` é a segunda trava.
-export function isPayloadTooLarge(msg: string): boolean {
+// Olha a mensagem CRUA do erro, e por isso recebe o erro e não um texto já
+// montado: a copy com o código (#653) é base 36 e pode conter "413". O `\b` é a
+// segunda trava.
+export function isPayloadTooLarge(error: unknown): boolean {
+  const msg = errorMessage(error);
   return (
     msg.includes("Body exceeded") ||
     /\b413\b/.test(msg) ||
     msg.includes("FUNCTION_PAYLOAD_TOO_LARGE")
   );
+}
+
+// Toast de uma etapa do upload que falhou sem nada gravado: payload grande tem
+// copy própria; o resto segue `actionErrorMessage` (código do servidor,
+// recarga da aba desatualizada, ou a mensagem do erro do navegador).
+export function uploadFailureMessage(error: unknown, fallback: string): string {
+  return isPayloadTooLarge(error) ? PAYLOAD_TOO_LARGE_MESSAGE : actionErrorMessage(error, fallback);
 }
 
 // Generic over `{ text: string }` so the lib stays decoupled from UploadDoc.
@@ -193,10 +207,13 @@ export function buildUploadErrorMessage(params: {
   const { totalInserted, totalDocs, mode, deleteResponses, error } = params;
   // Exceção de Server Action chega mascarada em produção: o detalhe vira o
   // código que casa com a linha do log, e não o texto genérico do Next (#653).
-  // A detecção de payload olha a mensagem crua, antes de o código entrar.
-  const tooLarge = isPayloadTooLarge(errorMessage(error));
+  const tooLarge = isPayloadTooLarge(error);
   const code = errorCode(error);
-  const msg = code ? `código ${code}` : errorMessage(error);
+  const msg = isStaleActionError(error)
+    ? STALE_PAGE_ERROR
+    : code
+      ? `código ${code}`
+      : errorMessage(error);
   const destructiveReplace = mode === "replace_and_add" && !!deleteResponses;
 
   if (totalInserted > 0) {
@@ -217,5 +234,5 @@ export function buildUploadErrorMessage(params: {
   if (destructiveReplace) {
     return `A importação falhou, mas respostas/revisões dos documentos duplicados podem já ter sido removidas. Confira a lista.${msg ? ` (${msg})` : ""}`;
   }
-  return tooLarge ? PAYLOAD_TOO_LARGE_MESSAGE : actionErrorMessage(error, "Erro ao importar documentos");
+  return uploadFailureMessage(error, "Erro ao importar documentos");
 }

@@ -1,4 +1,4 @@
-import { isStaleActionError } from "@/lib/server-error";
+import { isStaleActionError, withErrorCode } from "@/lib/server-error";
 import {
   saveResponse,
   type SaveResponseOpts,
@@ -35,7 +35,7 @@ export async function saveCodingResponse(
       success: false,
       error: isStaleActionError(error)
         ? CODING_SAVE_STALE_PAGE_ERROR
-        : CODING_SAVE_TRANSPORT_ERROR,
+        : withErrorCode(error, CODING_SAVE_TRANSPORT_ERROR),
     };
   }
 }

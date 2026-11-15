@@ -6,6 +6,7 @@ import {
   CODING_SAVE_TRANSPORT_ERROR,
   CODING_SAVE_STALE_PAGE_ERROR,
 } from "@/lib/coding-save";
+import { maskedServerError } from "@/test-utils/masked-server-error";
 
 vi.mock("@/actions/responses", () => ({ saveResponse: vi.fn() }));
 
@@ -45,6 +46,20 @@ describe("saveCodingResponse", () => {
     expect(result).toEqual({ success: false, error: CODING_SAVE_STALE_PAGE_ERROR });
     expect(CODING_SAVE_STALE_PAGE_ERROR).toContain("Recarregue a página");
     expect(CODING_SAVE_STALE_PAGE_ERROR).not.toContain("sem recarregar");
+  });
+
+  // Exceção do servidor (mascarada em produção) leva o código do log (#653).
+  it("exceção do servidor leva o código do erro", async () => {
+    mockSave.mockRejectedValue(maskedServerError());
+
+    const result = await saveCodingResponse("p1", "d1", { q: "sim" }, {
+      expectedRoundId: "round-1",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: `${CODING_SAVE_TRANSPORT_ERROR} — código 1bkm1w6`,
+    });
   });
 
   it("devolve a falha do handler sem reescrevê-la como erro de transporte", async () => {

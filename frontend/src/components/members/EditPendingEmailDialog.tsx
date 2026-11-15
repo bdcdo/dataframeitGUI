@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { withErrorCode } from "@/lib/server-error";
 import type { MemberRow } from "./member-list-utils";
 
 interface EditPendingEmailDialogProps {
@@ -53,7 +54,7 @@ export function EditPendingEmailDialog({
       onOpenChange(false);
     } catch (error) {
       console.error("[EditPendingEmailDialog] erro ao corrigir e-mail", error);
-      toast.error("Não foi possível corrigir o e-mail. Tente novamente.");
+      toast.error(withErrorCode(error, "Não foi possível corrigir o e-mail. Tente novamente."));
     } finally {
       setSaving(false);
     }

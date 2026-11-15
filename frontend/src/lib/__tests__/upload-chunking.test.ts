@@ -17,6 +17,7 @@ import {
   remapDuplicateMapToChunk,
   utf8Bytes,
 } from "@/lib/upload-chunking";
+import { STALE_PAGE_ERROR } from "@/lib/server-error";
 import { maskedServerError } from "@/test-utils/masked-server-error";
 
 const doc = (text: string) => ({ text });
@@ -426,6 +427,21 @@ describe("buildUploadErrorMessage", () => {
     expect(
       buildUploadErrorMessage({ ...base, totalInserted: 4, error: maskedServerError() }),
     ).toBe("4 de 10 documentos importados antes de uma falha: código 1bkm1w6");
+  });
+
+  it("aba anterior ao deploy pede recarga também na falha parcial", () => {
+    const stale = Object.assign(new Error("Server Action was not found"), {
+      name: "UnrecognizedActionError",
+    });
+    expect(
+      buildUploadErrorMessage({
+        totalInserted: 4,
+        totalDocs: 10,
+        mode: "add_all",
+        deleteResponses: undefined,
+        error: stale,
+      }),
+    ).toBe(`4 de 10 documentos importados antes de uma falha: ${STALE_PAGE_ERROR}`);
   });
 
   it("código com \"413\" não vira erro de payload", () => {
