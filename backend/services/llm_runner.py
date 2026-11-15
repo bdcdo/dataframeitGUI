@@ -525,6 +525,24 @@ DATAFRAMEIT_PARAMS = {
 }
 
 
+def _pydantic_code_hash(pydantic_code: str) -> str:
+    """O `pydantic_hash` do código: sha256 do texto UTF-8, 16 primeiros hex.
+
+    É a mesma regra que `commit_project_schema` aplica no banco ao salvar o
+    schema. As duas precisam bater: o runner regrava `projects.pydantic_hash` ao
+    fim da run e carimba o hash em cada resposta LLM, e resposta legada sem
+    `answer_field_hashes` só se liga ao schema por ele. O contrato está em
+    tests/integration/test_pydantic_hash_contract.py.
+    """
+    return hashlib.sha256(pydantic_code.encode()).hexdigest()[:16]
+
+
+def _persist_project_pydantic_hash(sb, project_id: str, pydantic_hash: str) -> None:
+    sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq(
+        "id", project_id
+    ).execute()
+
+
 def _build_llm_response_row(
     *,
     run: _RunMetadata,
@@ -2305,7 +2323,7 @@ def run_llm(
             project["prompt_template"],
         )
         llm_kwargs = project["llm_kwargs"] or {}
-        pydantic_hash = hashlib.sha256(pydantic_code.encode()).hexdigest()[:16]
+        pydantic_hash = _pydantic_code_hash(pydantic_code)
 
         # Build per-field hash snapshot for staleness detection
         answer_field_hashes = {
@@ -2376,9 +2394,7 @@ def run_llm(
         outcome = publisher.outcome()
         wake_auto_review_reconciliation_sync()
 
-        sb.table("projects").update({"pydantic_hash": pydantic_hash}).eq(
-            "id", project_id
-        ).execute()
+        _persist_project_pydantic_hash(sb, project_id, pydantic_hash)
 
         _raise_if_publish_failed(outcome)
         _raise_if_run_compromised(
