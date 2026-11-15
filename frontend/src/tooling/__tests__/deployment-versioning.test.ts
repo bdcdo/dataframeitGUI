@@ -25,18 +25,17 @@ const readmeFallback = readme.match(
 // README repetem esses flags a mao; um terceiro flag obrigatorio entra nesta
 // lista sem editar o teste, e o `it.each` no fim do arquivo passa a cobrar dos
 // dois.
-const requiredBuildFlags = [
-  ...[...dockerfile.matchAll(/(?:test|\[) -n "\$\{?(\w+)\}?"/g)].map(([, name]) => ({
-    flag: "--build-arg",
-    name,
-  })),
-  ...[...dockerfile.matchAll(/--mount=type=secret,(\S+)/g)].flatMap(([, options]) => {
+const requiredBuildArgs = [...dockerfile.matchAll(/(?:test|\[) -n "\$\{?(\w+)\}?"/g)].map(
+  ([, name]) => name,
+);
+const requiredBuildSecrets = [...dockerfile.matchAll(/--mount=type=secret,(\S+)/g)].flatMap(
+  ([, options]) => {
     const parts = options.split(",");
     const id = parts.find((part) => part.startsWith("id="))?.slice(3);
     const required = parts.some((part) => part === "required" || part === "required=true");
-    return id && required ? [{ flag: "--build-secret", name: id }] : [];
-  }),
-];
+    return id && required ? [id] : [];
+  },
+);
 
 // O workflow sem as linhas de comentario: um flag comentado nao chega ao build.
 const deployWorkflowCode = deployWorkflow
@@ -47,7 +46,7 @@ const deployWorkflowCode = deployWorkflow
 describe("versionamento do build do frontend", () => {
   it("entrega o SHA e a chave estavel ao build", () => {
     expect(dockerfile).toMatch(/^ARG NEXT_DEPLOYMENT_ID$/m);
-    expect(deployWorkflow).toContain(
+    expect(deployWorkflowCode).toContain(
       '--build-arg "NEXT_DEPLOYMENT_ID=${GITHUB_SHA}"',
     );
     expect(dockerfile).toContain(
@@ -56,10 +55,7 @@ describe("versionamento do build do frontend", () => {
     expect(dockerfile).toContain(
       'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="$(cat /run/secrets/NEXT_SERVER_ACTIONS_ENCRYPTION_KEY)" npm run build',
     );
-    expect(deployWorkflow).toContain(
-      "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY: ${{ secrets.NEXT_SERVER_ACTIONS_ENCRYPTION_KEY }}",
-    );
-    expect(deployWorkflow).toContain(
+    expect(deployWorkflowCode).toContain(
       '--build-secret "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}"',
     );
   });
@@ -94,29 +90,28 @@ describe("versionamento do build do frontend", () => {
   });
 
   it("le do Dockerfile os flags obrigatorios", () => {
-    expect(requiredBuildFlags).toEqual(
-      expect.arrayContaining([
-        { flag: "--build-arg", name: "NEXT_DEPLOYMENT_ID" },
-        { flag: "--build-secret", name: "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY" },
-      ]),
-    );
-    for (const { flag, name } of requiredBuildFlags) {
-      if (flag === "--build-arg") expect(dockerfile).toMatch(new RegExp(`^ARG ${name}(?:=.*)?$`, "m"));
-    }
+    expect(requiredBuildArgs).toContain("NEXT_DEPLOYMENT_ID");
+    expect(requiredBuildSecrets).toContain("NEXT_SERVER_ACTIONS_ENCRYPTION_KEY");
   });
 
-  it.each(requiredBuildFlags)(
-    "o workflow e o deploy manual do README passam $flag $name",
-    ({ flag, name }) => {
+  it.each(requiredBuildArgs)("o workflow e o deploy manual do README passam --build-arg %s", (name) => {
+    expect(dockerfile).toMatch(new RegExp(`^ARG ${name}(?:=.*)?$`, "m"));
+    expect(readmeFallback, "comando de deploy manual nao encontrado no README").toBeDefined();
+    const passed = new RegExp(`--build-arg "?${name}=`);
+    expect(deployWorkflowCode).toMatch(passed);
+    expect(readmeFallback).toMatch(passed);
+  });
+
+  it.each(requiredBuildSecrets)(
+    "o workflow e o deploy manual do README passam --build-secret %s",
+    (name) => {
       expect(readmeFallback, "comando de deploy manual nao encontrado no README").toBeDefined();
-      const passed = new RegExp(`${flag} "?${name}=`);
+      const passed = new RegExp(`--build-secret "?${name}=`);
       expect(deployWorkflowCode).toMatch(passed);
       expect(readmeFallback).toMatch(passed);
       // Secret do build vem do repositorio no GitHub: sem o mapeamento no
       // `env`, a variavel expande vazia e o `required` do mount nao percebe.
-      if (flag === "--build-secret") {
-        expect(deployWorkflowCode).toContain(`${name}: \${{ secrets.${name} }}`);
-      }
+      expect(deployWorkflowCode).toContain(`${name}: \${{ secrets.${name} }}`);
     },
   );
 });
