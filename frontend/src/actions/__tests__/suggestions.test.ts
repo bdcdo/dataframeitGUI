@@ -83,6 +83,59 @@ describe("createSchemaSuggestion", () => {
   });
 });
 
+// #502: o `error.message` do Postgres ia cru, em inglês, para o toast pt-BR.
+describe("erros do Postgres não chegam crus ao toast", () => {
+  const postgresError = {
+    code: "57014",
+    message: "canceling statement due to statement timeout",
+  };
+
+  it("createSchemaSuggestion devolve copy pt-BR e loga o erro", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseState.tableResults = { schema_suggestions: { error: postgresError } };
+
+    const r = await createSchemaSuggestion("p1", "q1", { description: "Nova" }, "Ajuste");
+
+    expect(r.error).toBe("Não foi possível enviar a sugestão. Tente novamente.");
+    expect(consoleError).toHaveBeenCalledWith(
+      "[suggestions] criação da sugestão falhou",
+      expect.objectContaining({ code: "57014" }),
+    );
+    consoleError.mockRestore();
+  });
+
+  it("createSchemaSuggestion barrada pela RLS diz que falta permissão", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseState.tableResults = {
+      schema_suggestions: {
+        error: {
+          code: "42501",
+          message: 'new row violates row-level security policy for table "schema_suggestions"',
+        },
+      },
+    };
+
+    const r = await createSchemaSuggestion("p1", "q1", { description: "Nova" }, "Ajuste");
+
+    expect(r.error).toBe("Sem permissão para sugerir alterações neste projeto.");
+    consoleError.mockRestore();
+  });
+
+  it("rejectSchemaSuggestion devolve copy pt-BR e loga o erro", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    supabaseState.tableResults = { schema_suggestions: { error: postgresError } };
+
+    const r = await rejectSchemaSuggestion("s1", "p1");
+
+    expect(r.error).toBe("Não foi possível rejeitar a sugestão. Tente novamente.");
+    expect(consoleError).toHaveBeenCalledWith(
+      "[suggestions] rejeição da sugestão falhou",
+      expect.objectContaining({ code: "57014" }),
+    );
+    consoleError.mockRestore();
+  });
+});
+
 describe("approveSchemaSuggestionWithEdits", () => {
   it("falha da RPC atômica não produz update paralelo", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});

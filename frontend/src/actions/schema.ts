@@ -67,6 +67,9 @@ const SCHEMA_PROJECT_SELECT =
 const PERSISTED_SCHEMA_INVALID =
   "O schema persistido é inválido e precisa ser corrigido antes da edição.";
 
+const PROJECT_READ_FAILED =
+  "Não foi possível ler o schema do projeto. Tente novamente.";
+
 function projectVersion(project: Partial<SchemaProjectRow>): {
   major: number;
   minor: number;
@@ -148,7 +151,7 @@ async function loadSchemaSaveContext(
     return {
       result: {
         status: "error",
-        message: "Não foi possível ler o schema do projeto. Tente novamente.",
+        message: PROJECT_READ_FAILED,
       },
     };
   }
@@ -441,11 +444,13 @@ function prepareSchemaCommit(
   fields: PydanticField[],
   context: SchemaSaveContext,
 ): PreparedSchema {
-  const parsedFields = parseSaveablePydanticFields(fields);
+  const { fields: parsedFields, errors } = parseSaveablePydanticFields(fields);
   if (!parsedFields) {
+    // As mensagens nomeiam o campo culpado: pelo EditFieldDialog, quem salva
+    // editou outro campo e não teria como achar o legado inválido (#502).
     return { result: {
       status: "error",
-      message: "O schema enviado é inválido. Revise os campos e tente novamente.",
+      message: `O schema enviado é inválido. ${errors.join("; ")}`,
     } };
   }
   const plan = planSchemaPersistence(
@@ -693,18 +698,27 @@ async function runBackfill(
 
   const supabase = await createSupabaseServer();
 
-  const [{ data: project }, log, responses] = await Promise.all([
+  const [{ data: project, error: projectError }, log, responses] = await Promise.all([
     supabase
       .from("projects")
       .select(
         "pydantic_fields, schema_version_major, schema_version_minor, schema_version_patch, schema_revision",
       )
       .eq("id", projectId)
-      .single(),
+      .maybeSingle(),
     fetchAllLogEntries(supabase, projectId),
     fetchAllResponses(supabase, projectId),
   ]);
 
+  // Mesma regra de loadSchemaSaveContext: falha de query não é "sem
+  // permissão", e o texto do Postgres vai para o log, não para o toast.
+  if (projectError) {
+    console.error("[schema] leitura do projeto falhou", {
+      code: projectError.code,
+      message: projectError.message,
+    });
+    throw new Error(PROJECT_READ_FAILED);
+  }
   if (!project) throw new Error("Projeto não encontrado ou sem permissão");
 
   // O CAS compara contra a revisão que a ABA observou, como em

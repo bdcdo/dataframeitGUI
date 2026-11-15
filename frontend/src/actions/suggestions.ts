@@ -38,7 +38,20 @@ export async function createSchemaSuggestion(
     reason: reason || null,
   });
 
-  if (error) return { error: error.message };
+  if (error) {
+    // O texto do Postgres é diagnóstico de servidor, em inglês: vai para o log,
+    // e o toast recebe copy pt-BR (#502), como no mapRpcError de schema.ts.
+    console.error("[suggestions] criação da sugestão falhou", {
+      code: error.code,
+      message: error.message,
+    });
+    return {
+      error:
+        error.code === "42501"
+          ? "Sem permissão para sugerir alterações neste projeto."
+          : "Não foi possível enviar a sugestão. Tente novamente.",
+    };
+  }
   revalidatePath(`/projects/${projectId}/reviews/comments`);
   return {};
 }
@@ -74,7 +87,13 @@ export async function rejectSchemaSuggestion(
     .eq("status", "pending")
     .select("id");
 
-  if (error) return { error: error.message };
+  if (error) {
+    console.error("[suggestions] rejeição da sugestão falhou", {
+      code: error.code,
+      message: error.message,
+    });
+    return { error: "Não foi possível rejeitar a sugestão. Tente novamente." };
+  }
   if (!updated || updated.length === 0) {
     // O filtro status='pending' zera o UPDATE tanto para sugestão inexistente
     // quanto para a já resolvida por outro coordenador (corrida normal) — a

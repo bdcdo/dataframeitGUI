@@ -319,6 +319,51 @@ describe("saveSchemaFromGUI", () => {
     expect(state.rpcs).toHaveLength(0);
   });
 
+  // #502: o superRefine já nomeia o campo culpado, mas a action devolvia só a
+  // copy genérica. Num projeto com um campo legado que passa no contrato de
+  // persistência e falha no de save, editar QUALQUER outro campo pelo
+  // EditFieldDialog falhava sem apontar qual campo corrigir.
+  it("erro de validação do save nomeia o campo culpado", async () => {
+    const legacy = {
+      ...FIELD,
+      id: "00000000-0000-4000-8000-000000000002",
+      name: "q2",
+      description: "",
+    };
+    state.tables = {
+      projects: {
+        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [FIELD, legacy] },
+      },
+    };
+
+    const result = await saveSchemaFromGUI(
+      "p1",
+      [{ ...FIELD, description: "Pergunta 1 revisada" }, legacy],
+      EMPTY_BASELINE,
+    );
+
+    expect(result).toEqual({
+      status: "error",
+      message:
+        "O schema enviado é inválido. Campo 2: descrição não pode ser vazia",
+    });
+    expect(state.rpcs).toHaveLength(0);
+  });
+
+  // Erro estrutural do Zod vem com texto em inglês ("Unrecognized key"): não
+  // vai ao toast pt-BR, mas o número do campo sim.
+  it("erro estrutural nomeia o campo sem expor o texto do Zod", async () => {
+    state.tables = { projects: PROJECT_SELECT };
+    const malformed = [{ ...FIELD, unexpected: "client input" }] as unknown as PydanticField[];
+
+    const result = await saveSchemaFromGUI("p1", malformed, EMPTY_BASELINE);
+
+    expect(result).toEqual({
+      status: "error",
+      message: "O schema enviado é inválido. Campo 1: formato inválido",
+    });
+  });
+
   it("não tenta salvar quando o schema persistido viola o contrato", async () => {
     state.tables = {
       projects: {
@@ -536,6 +581,47 @@ describe("backfillSchemaVersionHistory", () => {
       message: "Não foi possível reconstruir o histórico. Tente novamente.",
     });
     expect(state.rpcs).toHaveLength(0);
+  });
+
+  // #502: o `error` da leitura do projeto era descartado, e um timeout virava
+  // "Projeto não encontrado ou sem permissão", sem log nenhum.
+  it("falha na leitura do projeto não vira copy de permissão", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.tables = {
+      projects: {
+        error: { code: "57014", message: "canceling statement due to statement timeout" },
+      },
+      schema_change_log: { data: [] },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Não foi possível ler o schema do projeto. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[schema] leitura do projeto falhou",
+      expect.objectContaining({ code: "57014" }),
+    );
+    expect(state.rpcs).toHaveLength(0);
+    consoleError.mockRestore();
+  });
+
+  it("projeto ausente ou filtrado pela RLS mantém a copy de permissão", async () => {
+    state.tables = {
+      projects: { data: null },
+      schema_change_log: { data: [] },
+      responses: { data: [] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Projeto não encontrado ou sem permissão",
+    });
   });
 
   // O CAS compara contra a revisão que a ABA observou, como em

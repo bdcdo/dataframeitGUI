@@ -127,9 +127,11 @@ async function applySchemaChanges(
   // vazia, então um decisions.json malformado não chega a apagar o schema com a
   // service role key. A verificação é a mesma de `saveSchemaFromGUI` porque é o
   // mesmo schema Zod — não uma cópia que possa divergir.
-  const validatedFields = parseSaveablePydanticFields(newFields);
+  const { fields: validatedFields, errors } = parseSaveablePydanticFields(newFields);
   if (!validatedFields) {
-    throw new Error("newFields não corresponde ao contrato canônico de PydanticField");
+    throw new Error(
+      `newFields não corresponde ao contrato canônico de PydanticField: ${errors.join("; ")}`,
+    );
   }
 
   const { data: project, error: projErr } = await supabase
