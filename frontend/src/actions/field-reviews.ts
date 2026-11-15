@@ -682,10 +682,9 @@ export async function retryPendingArbitrations(
     }
 
     // Pré-busca em batch: codificadores humanos de todos os docs pendentes
-    // de uma vez. assignArbitrator originalmente faz 1 SELECT em responses
-    // por chamada — em loop de N groups isso vira N queries. Centralizar
-    // num único SELECT mantém a chamada O(1) em queries de responses
-    // independente do tamanho do backlog.
+    // de uma vez, num único SELECT em responses (O(1) queries independente do
+    // tamanho do backlog). assignArbitrator depende deste set: é ele que tira
+    // os codificadores do documento do pool de árbitros.
     const allDocIds = [
       ...new Set([...groups.values()].map((g) => g.documentId)),
     ];
