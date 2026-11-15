@@ -43,22 +43,21 @@ type OptimisticState = { rows: Assignment[]; savingKey: string | null };
 const cellKey = (docId: string, userId: string) => `${docId}:${userId}`;
 
 /**
- * Próximo estado após um ciclo na célula: vazio → codificação → comparação →
- * vazio. Só a remoção é otimista; criação e promoção marcam a célula como
- * salvando. Bloqueia se houver assignment não-pendente.
+ * Próximo estado após um ciclo na célula, pelo mesmo planner da action. Só a
+ * remoção é otimista; criação e promoção marcam a célula como salvando, e a
+ * célula travada (ou a autocomparação, que pede confirmação) fica como está.
  */
 function cycleOptimistic(
   current: OptimisticState,
   { docId, userId }: OptimisticAction,
 ): OptimisticState {
-  const key = cellKey(docId, userId);
-  const inCell = (a: Assignment) => cellKey(a.document_id, a.user_id) === key;
-  const related = current.rows.filter(inCell);
-
-  if (related.some((a) => a.status !== "pendente")) return current;
-  if (!related.some((a) => a.type === "comparacao")) return { ...current, savingKey: key };
-  // comparação só, ou ambas (sorteio): voltar para vazio
-  return { ...current, rows: current.rows.filter((a) => !inCell(a)) };
+  const inCell = (a: Assignment) => a.document_id === docId && a.user_id === userId;
+  const step = planAssignmentCycle(current.rows.filter(inCell));
+  if (step.kind === "insertCoding" || step.kind === "promote") {
+    return { ...current, savingKey: cellKey(docId, userId) };
+  }
+  if (step.kind === "delete") return { ...current, rows: current.rows.filter((a) => !inCell(a)) };
+  return current;
 }
 
 const docLabel = (doc: AssignmentTableProps["documents"][number]) =>
