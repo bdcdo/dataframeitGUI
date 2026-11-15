@@ -2,6 +2,7 @@ import { type Page } from "@playwright/test";
 import { test, expect } from "./base-test";
 import { clerk, setupClerkTestingToken } from "@clerk/testing/playwright";
 import { withClerkCleanup } from "./clerk-cleanup";
+import { visivel } from "./visivel";
 import {
   COMPARE_SPLIT_COOKIE,
   LEGACY_SPLIT_STORAGE_KEY,
@@ -82,7 +83,7 @@ async function measureServerHtml(page: Page, url: string): Promise<SplitBoxes> {
   await page.route("**/*", block);
   try {
     await page.goto(url);
-    await expect(page.getByTestId(REVIEW_PANEL_ID)).toBeVisible({
+    await expect(visivel(page.getByTestId(REVIEW_PANEL_ID))).toBeVisible({
       timeout: 60_000,
     });
     return await measure(page);
