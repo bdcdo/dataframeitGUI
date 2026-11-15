@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { updateProject } from "@/actions/projects";
 import { toast } from "sonner";
+import { actionErrorMessage } from "@/lib/server-error";
 
 interface GeneralFormProps {
   projectId: string;
@@ -45,7 +46,7 @@ export function GeneralForm({
       if (r?.error) toast.error(r.error);
       else toast.success("Projeto atualizado!");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar");
+      toast.error(actionErrorMessage(e, "Erro ao salvar"));
     }
     setSaving(false);
   };

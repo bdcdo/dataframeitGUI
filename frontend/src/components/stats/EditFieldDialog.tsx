@@ -41,6 +41,7 @@ import {
   resolveTarget,
   stripLikePython,
 } from "@/lib/pydantic-field";
+import { actionErrorMessage } from "@/lib/server-error";
 
 export type { PendingSuggestion };
 
@@ -239,9 +240,7 @@ export function EditFieldDialog({
         onOpenChange(false);
         refresh();
       } catch (e) {
-        toast.error(
-          e instanceof Error ? e.message : "Erro ao salvar",
-        );
+        toast.error(actionErrorMessage(e, "Erro ao salvar"));
       }
     });
   };

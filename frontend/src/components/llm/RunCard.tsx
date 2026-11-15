@@ -20,6 +20,7 @@ import {
   type RunFilter,
 } from "./run-filter";
 import type { LlmConfig } from "@/lib/types";
+import { actionErrorMessage } from "@/lib/server-error";
 
 interface RunCardProps {
   projectId: string;
@@ -103,7 +104,7 @@ export function RunCard({
       if (r?.error) toast.error(r.error);
       else toast.success("Configuração salva!");
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar configuração");
+      toast.error(actionErrorMessage(e, "Erro ao salvar configuração"));
     }
   };
 

@@ -21,6 +21,7 @@ import type {
   SchemaSnapshot,
 } from "@/lib/types";
 import type { SchemaDraftConflict } from "@/hooks/useSchemaDraft";
+import { actionErrorMessage } from "@/lib/server-error";
 
 /**
  * As quatro ações de servidor do SchemaEditor — salvar, publicar MAJOR,
@@ -97,8 +98,7 @@ export function useSchemaEditorActions({
         setMajorDialogOpen(false);
         refresh();
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Erro ao publicar MAJOR";
-        toast.error(msg);
+        toast.error(actionErrorMessage(e, "Erro ao publicar MAJOR"));
       }
     });
   };
@@ -130,8 +130,7 @@ export function useSchemaEditorActions({
         setBackfillDialogOpen(false);
         refresh();
       } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : "Erro ao reconstruir";
-        toast.error(msg);
+        toast.error(actionErrorMessage(e, "Erro ao reconstruir"));
       }
     });
   };
@@ -168,7 +167,7 @@ export function useSchemaEditorActions({
         submission.fields,
       );
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
+      toast.error(actionErrorMessage(e, "Erro ao salvar schema"));
       return null;
     }
   };
@@ -210,7 +209,7 @@ export function useSchemaEditorActions({
         markSaved(r.snapshot);
         toast.success("Schema salvo!");
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "Erro ao salvar schema");
+        toast.error(actionErrorMessage(e, "Erro ao salvar schema"));
       }
     });
   };

@@ -25,6 +25,7 @@ import type {
   LlmError,
   ReviewedEntry,
 } from "@/lib/llm-error-metrics";
+import { actionErrorMessage } from "@/lib/server-error";
 
 interface LlmInsightsViewProps {
   projectId: string;
@@ -258,9 +259,7 @@ function RegenerateBacklogPanel({ projectId, onRegenerated }: { projectId: strin
       }
       onRegenerated();
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Falha ao regenerar backlog",
-      );
+      toast.error(actionErrorMessage(err, "Falha ao regenerar backlog"));
     } finally {
       setRegenerating(false);
     }

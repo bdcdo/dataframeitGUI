@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { errorDetail } from "@/lib/server-error";
 
 export default function LlmError({
   error,
@@ -14,6 +15,8 @@ export default function LlmError({
     console.error("Erro na aba LLM:", error);
   }, [error]);
 
+  const detail = errorDetail(error);
+
   return (
     <div className="mx-auto max-w-4xl p-6">
       <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6 space-y-3">
@@ -24,9 +27,9 @@ export default function LlmError({
           Ocorreu um erro ao buscar os dados de LLM. Pode ser uma falha
           temporária de rede ou de permissão de acesso ao projeto.
         </p>
-        {error.message && (
+        {detail && (
           <p className="rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
-            {error.message}
+            {detail}
           </p>
         )}
         <Button size="sm" onClick={reset}>

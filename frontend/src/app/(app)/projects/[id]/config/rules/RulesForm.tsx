@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
+import { actionErrorMessage } from "@/lib/server-error";
 
 interface RulesFormProps {
   projectId: string;
@@ -76,7 +77,7 @@ function useRulesFormState({
           return;
         }
       } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Erro ao salvar as regras");
+        toast.error(actionErrorMessage(e, "Erro ao salvar as regras"));
         return;
       }
       setSaved(true);

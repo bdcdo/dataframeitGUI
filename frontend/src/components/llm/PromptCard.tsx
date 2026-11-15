@@ -14,6 +14,7 @@ import { ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 import { savePrompt } from "@/actions/schema";
 import { usePromptPreview } from "@/hooks/usePromptPreview";
+import { actionErrorMessage } from "@/lib/server-error";
 
 interface PromptCardProps {
   projectId: string;
@@ -43,7 +44,7 @@ export function PromptCard({
       if (r?.error) toast.error(r.error);
       else toast.success("Prompt salvo!");
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : "Erro ao salvar prompt");
+      toast.error(actionErrorMessage(e, "Erro ao salvar prompt"));
     }
     setSavingPrompt(false);
   };

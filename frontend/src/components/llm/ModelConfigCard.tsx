@@ -32,6 +32,7 @@ import {
 import { ModelCombobox } from "./ModelCombobox";
 import { AdvancedParamsSection } from "./AdvancedParamsSection";
 import type { LlmConfig, SchemaBaselineIdentity } from "@/lib/types";
+import { actionErrorMessage } from "@/lib/server-error";
 
 interface ModelConfigCardProps {
   projectId: string;
@@ -136,7 +137,7 @@ export function ModelConfigCard({
             : "Campo de ambiguidades removido",
         );
       } catch (e: unknown) {
-        toast.error(e instanceof Error ? e.message : "Erro ao atualizar campo");
+        toast.error(actionErrorMessage(e, "Erro ao atualizar campo"));
       }
     });
   };
