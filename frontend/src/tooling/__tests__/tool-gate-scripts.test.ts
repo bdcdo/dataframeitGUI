@@ -9,8 +9,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Contrato dos scripts de gate que invocam binário pinado de node_modules
 // (scripts/react-doctor-gate.sh e scripts/fallow-audit-gate.sh, #652): os dois
 // falham fechado com o instalado != pinado pelo mesmo
-// scripts/gates/lib/assert-pinned-version.sh, e o do fallow falha com regra do
-// .fallowrc.jsonc que o fallow não conhece. Cada caso monta um frontend/
+// scripts/gates/lib/assert-pinned-version.sh, e o do fallow falha com qualquer
+// WARN do `fallow config` (regra desconhecida e .fallowrc.jsonc sombreado por
+// outro arquivo são os dois casos medidos). Cada caso monta um frontend/
 // temporário com cópia dos scripts e um binário falso que registra as chamadas.
 
 const realFrontend = fileURLToPath(new URL("../../../", import.meta.url));
@@ -87,8 +88,16 @@ describe.each(GATES)("$script: guarda de versão", (gate) => {
     expect(result.calls).toEqual([]);
   });
 
-  it("instalado == pinado (prefixo ^ descartado) roda a ferramenta", () => {
+  it("pino com faixa (^) falha fechado pedindo versão exata", () => {
     setup(gate, { pinned: "^1.0.0", installed: "1.0.0" });
+    const result = run(gate.script);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`${gate.pkg} pinado como "^1.0.0"`);
+    expect(result.calls).toEqual([]);
+  });
+
+  it("instalado == pinado roda a ferramenta", () => {
+    setup(gate, { pinned: "1.0.0", installed: "1.0.0" });
     const result = run(gate.script);
     expect(result.stderr).toBe("");
     expect(result.status).toBe(0);
@@ -96,7 +105,7 @@ describe.each(GATES)("$script: guarda de versão", (gate) => {
   });
 });
 
-describe("scripts/fallow-audit-gate.sh: regra desconhecida na config", () => {
+describe("scripts/fallow-audit-gate.sh: aviso sobre a config", () => {
   const gate = GATES[1];
 
   it("`unknown rule` no stderr do `fallow config` barra antes do audit", () => {
@@ -117,19 +126,32 @@ describe("scripts/fallow-audit-gate.sh: regra desconhecida na config", () => {
   });
 
   // O binário falso acima imita o aviso; aqui o fallow instalado de verdade, com
-  // uma config sabotada, prova que o aviso tem esse texto e sai no stderr.
-  it("com o fallow instalado, uma regra inexistente derruba o gate", () => {
+  // uma config sabotada, prova o texto do aviso e que ele sai no stderr.
+  function setupRealFallow(configs: Record<string, object>) {
     const version = (JSON.parse(fs.readFileSync(path.join(realFrontend, "node_modules/fallow/package.json"), "utf8")) as { version: string }).version;
     for (const file of [gate.script, LIB]) write(file, fs.readFileSync(path.join(realFrontend, file), "utf8"));
     write("package.json", JSON.stringify({ devDependencies: { fallow: version } }));
-    write(".fallowrc.jsonc", JSON.stringify({ rules: { "misplaced-directive": "error", "regra-inexistente": "error" } }));
+    for (const [file, content] of Object.entries(configs)) write(file, JSON.stringify(content));
     fs.mkdirSync(path.join(frontend, "node_modules/.bin"), { recursive: true });
     fs.symlinkSync(path.join(realFrontend, "node_modules/fallow"), path.join(frontend, "node_modules/fallow"));
     fs.symlinkSync(path.join(realFrontend, "node_modules/.bin/fallow"), path.join(frontend, "node_modules/.bin/fallow"));
+  }
 
+  it("com o fallow instalado, uma regra inexistente derruba o gate", () => {
+    setupRealFallow({ ".fallowrc.jsonc": { rules: { "misplaced-directive": "error", "regra-inexistente": "error" } } });
     const result = run(gate.script);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("unknown rule 'regra-inexistente'");
     expect(result.stderr).not.toContain("misplaced-directive");
+  });
+
+  it("com o fallow instalado, um .fallowrc.json que sombreia o .fallowrc.jsonc derruba o gate", () => {
+    setupRealFallow({
+      ".fallowrc.jsonc": { rules: { "misplaced-directive": "error" } },
+      ".fallowrc.json": { rules: { "misplaced-directive": "warn" } },
+    });
+    const result = run(gate.script);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("ignoring '.fallowrc.jsonc'");
   });
 });

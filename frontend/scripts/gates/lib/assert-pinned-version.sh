@@ -12,11 +12,16 @@ set -euo pipefail
 
 pkg=${1:?uso: assert-pinned-version.sh <pacote>}
 
-# O pino pode estar em devDependencies ou dependencies; ^ e ~ saem para comparar
-# so a versao.
-pinned=$(node -p "const p = require('./package.json'); ((p.devDependencies || {})[process.argv[1]] || (p.dependencies || {})[process.argv[1]] || '').replace(/^[^0-9]*/, '')" "$pkg")
+# O pino pode estar em devDependencies ou dependencies, e tem de ser exato: com
+# ^ ou ~ o pino nao diz qual versao deveria estar instalada, e o npm instala a
+# mais nova da faixa.
+pinned=$(node -p "const p = require('./package.json'); (p.devDependencies || {})[process.argv[1]] || (p.dependencies || {})[process.argv[1]] || ''" "$pkg")
 if [ -z "$pinned" ]; then
   echo "$pkg nao esta pinado em frontend/package.json" >&2
+  exit 1
+fi
+if ! [[ "$pinned" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  echo "$pkg pinado como \"$pinned\" em frontend/package.json; o gate exige versao exata" >&2
   exit 1
 fi
 

@@ -20,7 +20,9 @@ import { isolatedGitEnvironment, runGit } from "@/test-utils/isolated-git";
 //
 // O projeto é montado num diretório temporário, e não versionado no repo, para
 // as violações deliberadas não entrarem no typecheck, no eslint, no
-// react-doctor nem no próprio audit do frontend.
+// react-doctor nem no próprio audit do frontend. Os arquivos ficam em src/, como
+// no frontend, para que uma regra da config escopada por caminho valha aqui
+// como lá.
 
 const frontend = fileURLToPath(new URL("../../../", import.meta.url));
 const fallow = path.join(frontend, "node_modules/.bin/fallow");
@@ -33,7 +35,7 @@ const FIXTURE: Record<string, string> = {
     private: true,
     dependencies: { next: "16.0.0", react: "19.0.0" },
   }),
-  "app/page.tsx": [
+  "src/app/page.tsx": [
     'import { Widget, usedAction } from "../lib";',
     'import { ClientMeta, metadata } from "./client-meta";',
     'import { Late } from "./late";',
@@ -44,29 +46,29 @@ const FIXTURE: Record<string, string> = {
     "",
   ].join("\n"),
   // invalid-client-export: arquivo "use client" exporta nome de servidor.
-  "app/client-meta.tsx": [
+  "src/app/client-meta.tsx": [
     '"use client";',
     'export const metadata = { title: "x" };',
     "export function ClientMeta() { return <span />; }",
     "",
   ].join("\n"),
   // misplaced-directive: a diretiva depois de um import é ignorada.
-  "app/late.tsx": [
+  "src/app/late.tsx": [
     'import { useState } from "react";',
     '"use client";',
     "export function Late() { const [v] = useState(0); return <span>{v}</span>; }",
     "",
   ].join("\n"),
-  "lib/widget.tsx": ['"use client";', "export function Widget() { return <span />; }", ""].join("\n"),
+  "src/lib/widget.tsx": ['"use client";', "export function Widget() { return <span />; }", ""].join("\n"),
   // unused-server-actions: orphanAction não tem consumidor.
-  "lib/actions.ts": [
+  "src/lib/actions.ts": [
     '"use server";',
     "export async function usedAction() {}",
     "export async function orphanAction() {}",
     "",
   ].join("\n"),
   // mixed-client-server-barrel: o barrel reexporta módulo client e server.
-  "lib/index.ts": ['export { Widget } from "./widget";', 'export { usedAction } from "./actions";', ""].join("\n"),
+  "src/lib/index.ts": ['export { Widget } from "./widget";', 'export { usedAction } from "./actions";', ""].join("\n"),
 };
 
 // Regra do .fallowrc.jsonc -> chave da lista de achados em `dead_code` do JSON.
