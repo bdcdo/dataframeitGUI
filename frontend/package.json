@@ -51,6 +51,7 @@
     "test:db:note-resolution": "npm run test:db:psql -- supabase/tests/note_resolution_follows_note.test.sql",
     "test:db:visible-if": "npm run test:db:psql -- supabase/tests/visible_if_no_codigo_pydantic.test.sql",
     "test:db:self-comparison": "npm run test:db:psql -- supabase/tests/self_comparison_exception.test.sql",
+    "test:db:schema-revision-rpcs": "npm run test:db:psql -- supabase/tests/schema_revision_rpcs.test.sql",
     "test:db:psql": "bash scripts/run-sql-test.sh",
     "test:db:llm-runs-contract": "bash scripts/run-backend-integration.sh",
     "test:watch": "vitest",

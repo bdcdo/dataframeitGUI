@@ -364,8 +364,8 @@ repos:
       # (sem parar na primeira, ao contrario do antigo `&&`) e sai !=0 se
       # qualquer suite de GATE falhar. Requer o Supabase local no ar; sem o
       # container o push e barrado com mensagem (gate de verdade, como o
-      # backend-pytest). As orfas schema_revision_* (#571/#572) estao em
-      # KNOWN_RED no runner e sao reportadas sem bloquear ate serem consertadas.
+      # backend-pytest). A orfa schema_revision_serialization (#572) esta em
+      # KNOWN_RED no runner e e reportada sem bloquear ate ser consertada.
       # Escopo por `files`: so roda quando o push toca migrations, suites .sql
       # ou os scripts do runner. O runner tambem roda o contrato do llm_runner
       # (hook seguinte), para que migration nova seja conferida contra ele.

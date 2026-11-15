@@ -79,15 +79,15 @@ GATE_SUITES=(
   remove_project_member_self_identity
   visible_if_no_codigo_pydantic
   self_comparison_exception
+  schema_revision_rpcs
 )
 
-# Órfãs quebradas pela era da migration 20260717120000 (índice único one-latest
-# de LLM e connstr de dblink), fora do escopo da #557 e rastreadas em issues
-# próprias. Rodam e são reportadas, mas NÃO derrubam o gate até serem
-# consertadas. Isto NÃO é silenciamento: cada uma aparece no resumo com sua
-# issue; ao consertar, mover para GATE_SUITES (a guarda 2 força esse passo).
+# Órfã quebrada pela era da migration 20260717120000 (connstr de dblink), fora
+# do escopo da #557 e rastreada em issue própria. Roda e é reportada, mas NÃO
+# derruba o gate até ser consertada. Isto NÃO é silenciamento: aparece no resumo
+# com sua issue; ao consertar, mover para GATE_SUITES (a guarda 2 força esse
+# passo).
 declare -A KNOWN_RED=(
-  [schema_revision_rpcs]="#571"
   [schema_revision_serialization]="#572"
 )
 

@@ -1,8 +1,7 @@
 -- Regressão da revisão monotônica e das RPCs atômicas de schema.
 --
 -- Como rodar depois de `npx supabase start` e `npx supabase db reset`:
---   docker exec -i supabase_db_frontend psql -U postgres -d postgres \
---     -X -v ON_ERROR_STOP=1 < supabase/tests/schema_revision_rpcs.test.sql
+--   npm run test:db:schema-revision-rpcs
 --
 -- O teste inteiro roda em BEGIN ... ROLLBACK. Os GRANTs compensam o ambiente
 -- local e também são revertidos.
@@ -20,6 +19,50 @@ INSERT INTO auth.users (id, email) VALUES
 -- referencia profiles — por isso o INSERT abaixo só funciona depois dos usuários.
 INSERT INTO public.master_users (user_id) VALUES
   ('81000000-0000-0000-0000-000000000004');
+
+-- Identidade canônica (migration 20260716155000, #440): `clerk_uid()` só resolve
+-- o autor quando o JWT carrega `sub` E `supabase_uid` casando com uma linha
+-- ativa de `clerk_user_mapping` (access_sync_version >= 1, não deletada). Sem o
+-- mapeamento, as RPCs devolvem `not_found` para as quatro identidades, e os
+-- caminhos negativos passariam a ser recusados por identidade inexistente em
+-- vez de pela autorização que testam. Por isso todo claim abaixo leva os dois
+-- campos, com `sub` distinto do UUID como em produção (ler o `sub` cru em vez
+-- de `clerk_uid()` reprova aqui).
+INSERT INTO public.clerk_user_mapping
+  (clerk_user_id, supabase_user_id, access_sync_version) VALUES
+  ('user_schema_coordinator', '81000000-0000-0000-0000-000000000001', 1),
+  ('user_schema_researcher', '81000000-0000-0000-0000-000000000002', 1),
+  ('user_schema_outsider', '81000000-0000-0000-0000-000000000003', 1),
+  ('user_schema_master', '81000000-0000-0000-0000-000000000004', 1);
+
+-- Guarda da fixture: se `clerk_uid()` ganhar um requisito novo que o mapeamento
+-- acima não cumpra, os testes negativos continuariam verdes pelo motivo errado
+-- (identidade inexistente). Aqui isso falha alto, antes de qualquer teste.
+DO $$
+DECLARE
+  v_identity record;
+BEGIN
+  FOR v_identity IN
+    SELECT clerk_user_id, supabase_user_id
+    FROM public.clerk_user_mapping
+    WHERE supabase_user_id::text LIKE '81000000-%'
+  LOOP
+    PERFORM set_config(
+      'request.jwt.claims',
+      jsonb_build_object(
+        'sub', v_identity.clerk_user_id,
+        'supabase_uid', v_identity.supabase_user_id
+      )::text,
+      true
+    );
+    IF public.clerk_uid() IS DISTINCT FROM v_identity.supabase_user_id THEN
+      RAISE EXCEPTION 'FALHOU fixture: clerk_uid() não resolve %',
+        v_identity.clerk_user_id;
+    END IF;
+  END LOOP;
+  PERFORM set_config('request.jwt.claims', '', true);
+END;
+$$;
 
 INSERT INTO public.projects (
   id,
@@ -157,6 +200,10 @@ INSERT INTO public.documents (id, project_id, title, text) VALUES
     'texto'
   );
 
+-- `responses_one_latest_llm_per_document` (migration 20260717120000) admite uma
+-- só resposta LLM corrente por documento, então a 02 e a 03 (mais abaixo) são
+-- histórico. A cobertura de `apply_schema_backfill` conta toda resposta do
+-- projeto, corrente ou não, exceto 'live_save'.
 INSERT INTO public.responses (
   id,
   project_id,
@@ -164,7 +211,8 @@ INSERT INTO public.responses (
   respondent_id,
   respondent_type,
   answers,
-  version_inferred_from
+  version_inferred_from,
+  is_latest
 ) VALUES
   (
     '84000000-0000-0000-0000-000000000001',
@@ -173,7 +221,8 @@ INSERT INTO public.responses (
     NULL,
     'llm',
     '{}',
-    'created_at'
+    'created_at',
+    true
   ),
   (
     '84000000-0000-0000-0000-000000000002',
@@ -182,7 +231,8 @@ INSERT INTO public.responses (
     NULL,
     'llm',
     '{}',
-    'live_save'
+    'live_save',
+    false
   );
 
 GRANT SELECT, UPDATE ON public.projects TO authenticated;
@@ -296,7 +346,7 @@ $$;
 -- ----- Commit feliz: projects e histórico entram juntos -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -365,7 +415,7 @@ $$;
 -- ----- CAS stale: retorna conflito e não grava nada -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -424,7 +474,7 @@ $$;
 -- ----- Log inválido: o UPDATE anterior da mesma RPC sofre rollback -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -600,7 +650,7 @@ $$;
 -- ----- RLS: pesquisador recebe forbidden; linha invisível recebe not_found -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}',
+  '{"sub":"user_schema_researcher","supabase_uid":"81000000-0000-0000-0000-000000000002"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -624,7 +674,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000003"}',
+  '{"sub":"user_schema_outsider","supabase_uid":"81000000-0000-0000-0000-000000000003"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -653,7 +703,7 @@ RESET ROLE;
 -- para que a autoria registrada não possa divergir de quem executou.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -715,7 +765,7 @@ $$;
 -- ----- Aprovação de sugestão: schema, log e status são atômicos -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -770,7 +820,7 @@ $$;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -836,7 +886,7 @@ $$;
 -- fila de sugestões perderia o item sem nenhuma mudança correspondente.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}',
+  '{"sub":"user_schema_researcher","supabase_uid":"81000000-0000-0000-0000-000000000002"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -861,7 +911,7 @@ RESET ROLE;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000003"}',
+  '{"sub":"user_schema_outsider","supabase_uid":"81000000-0000-0000-0000-000000000003"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -930,7 +980,7 @@ $$;
 -- `OR is_master()`, o commit para de funcionar aqui em vez de em produção.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000004"}',
+  '{"sub":"user_schema_master","supabase_uid":"81000000-0000-0000-0000-000000000004"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1122,7 +1172,7 @@ $$;
 -- ----- Backfill sem histórico não pode alterar a versão -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1195,7 +1245,7 @@ RESET ROLE;
 -- ----- Backfill feliz: logs, responses e versão do projeto numa transação -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1272,7 +1322,7 @@ $$;
 -- ----- Backfill stale e sem permissão não tocam nenhuma tabela -----
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1304,7 +1354,7 @@ GRANT SELECT ON backfill_forbidden_payload TO authenticated;
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}',
+  '{"sub":"user_schema_researcher","supabase_uid":"81000000-0000-0000-0000-000000000002"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1419,7 +1469,8 @@ INSERT INTO public.responses (
   respondent_id,
   respondent_type,
   answers,
-  version_inferred_from
+  version_inferred_from,
+  is_latest
 ) VALUES (
   '84000000-0000-0000-0000-000000000003',
   '82000000-0000-0000-0000-000000000001',
@@ -1427,12 +1478,13 @@ INSERT INTO public.responses (
   NULL,
   'llm',
   '{}',
-  'created_at'
+  'created_at',
+  false
 );
 
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1529,7 +1581,7 @@ $$;
 -- count(DISTINCT id) com count(*) fecha essa brecha antes das contagens.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1696,7 +1748,7 @@ $$;
 -- Autorização: pesquisador não resolve, e a recusa não pode tocar a sugestão.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000002"}',
+  '{"sub":"user_schema_researcher","supabase_uid":"81000000-0000-0000-0000-000000000002"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1736,7 +1788,7 @@ $$;
 -- marcada como atendida logo depois de o schema deixar de contê-la.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1774,7 +1826,7 @@ $$;
 -- Caminho feliz: aprova sem tocar o schema.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
@@ -1835,7 +1887,7 @@ $$;
 -- P0001 é o que o chamador traduz em copy própria.
 SELECT set_config(
   'request.jwt.claims',
-  '{"supabase_uid":"81000000-0000-0000-0000-000000000001"}',
+  '{"sub":"user_schema_coordinator","supabase_uid":"81000000-0000-0000-0000-000000000001"}',
   true
 );
 SET LOCAL ROLE authenticated;
