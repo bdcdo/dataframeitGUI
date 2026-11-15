@@ -41,7 +41,7 @@ Ao encerrar uma sessão que mudou código ou testes, o agente **deve propor ao m
 
 Tipos de prática que valem proposta (cardápio inicial, com o encaixe concreto neste projeto):
 
-1. **Testes de propriedade** (fast-check no Vitest / hypothesis no pytest) — o round-trip `generatePydanticCode → compile_pydantic → UI` já é um (`schema-roundtrip.property.test.ts` com `backend/tests/test_schema_roundtrip.py`, #525); faltam o ponto-fixo de `dropHiddenConditionals` e a monotonicidade de `isCodingComplete`.
+1. **Testes de propriedade** (fast-check no Vitest / hypothesis no pytest) — o round-trip `generatePydanticCode → compile_pydantic → UI` já é um (`schema-roundtrip.property.test.ts` com `backend/tests/test_schema_roundtrip.py`, #525), e o ponto-fixo de `dropHiddenConditionals` e a monotonicidade de `isCodingComplete` são outro (`coding-conditional.property.test.ts`).
 2. **Testes de contrato entre fronteiras** — para cada regra duplicada TS↔Server Action↔RPC SQL (#486), um teste que roda a MESMA entrada nas duas cópias e compara os resultados, em vez de testar cada cópia isoladamente.
 3. **Testes de corrida** — reproduzir double-submits e corridas manual×automático (#490) com escritas concorrentes contra o banco local; a suíte dblink de `frontend/supabase/tests/` é o precedente.
 4. **Golden tests de export** — snapshot determinístico do CSV/XLSX gerado a partir de fixture fixa; mudança de formato vira diff visível em vez de surpresa para o usuário.

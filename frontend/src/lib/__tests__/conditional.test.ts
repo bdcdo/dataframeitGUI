@@ -80,6 +80,20 @@ describe("clearHiddenConditionalAnswers", () => {
     expect(clearHiddenConditionalAnswers(fields, answers)).toBe(answers);
   });
 
+  // `""` é valor para `not_equals`/`not_in`: mantido num gatilho oculto, ele
+  // deixava visível na tela um dependente que a fronteira de escrita
+  // (`dropHiddenConditionals`) descarta — a resposta digitada sumia no save.
+  it("zera o \"\" de uma condicional oculta, escondendo o dependente not_equals", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", type: "text", options: null, condition: { field: "q1", equals: "sim" } }),
+      field({ name: "q3", type: "text", options: null, condition: { field: "q2", not_equals: "a" } }),
+    ];
+    const result = clearHiddenConditionalAnswers(fields, { q1: "não", q2: "", q3: "x" });
+    expect(result).toEqual({ q1: "não", q2: null, q3: null });
+    expect(clearHiddenConditionalAnswers(fields, result)).toBe(result);
+  });
+
   it("não muta o objeto de entrada", () => {
     const fields = [
       field({ name: "q1" }),
@@ -302,5 +316,21 @@ describe("dropHiddenConditionals", () => {
     const answers = { q1: "não" }; // q2 nunca respondido
     const result = dropHiddenConditionals(fields, answers);
     expect(result).toBe(answers); // nada a omitir → mesma referência
+  });
+
+  // Achado do teste de propriedade: a visibilidade era avaliada com o `""` do
+  // gatilho oculto ainda presente (para `not_equals`, `""` é valor, e q3
+  // ficava visível), mas a saída omitia esse `""` — e sem a chave q3 fica
+  // oculto. A saída guardava a resposta de um campo oculto, e uma segunda
+  // passada ainda a removia.
+  it("reavalia a cascata sobre a chave vazia que omitiu", () => {
+    const fields = [
+      field({ name: "q1" }),
+      field({ name: "q2", condition: { field: "q1", equals: "sim" } }),
+      field({ name: "q3", type: "text", options: null, condition: { field: "q2", not_equals: "a" } }),
+    ];
+    const result = dropHiddenConditionals(fields, { q1: "não", q2: "", q3: "x" });
+    expect(result).toEqual({ q1: "não" });
+    expect(dropHiddenConditionals(fields, result)).toBe(result);
   });
 });
