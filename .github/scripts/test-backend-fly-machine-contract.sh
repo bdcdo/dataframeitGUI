@@ -149,7 +149,8 @@ check_workflow() {
 check_workflow "$workflow"
 # O piso é 245, e não só "acima de 240".
 sed 's/^\( *timeout-minutes:\) 250$/\1 244/' "$workflow" >"$tmp_dir/fly-deploy.yml"
-grep -q '^ *timeout-minutes: 244$' "$tmp_dir/fly-deploy.yml"
+grep -q '^ *timeout-minutes: 244$' "$tmp_dir/fly-deploy.yml" \
+  || { echo "o caso do piso de 245 procura timeout-minutes: 250 em $workflow; ajuste-o ao valor novo" >&2; exit 1; }
 expect_failure check_workflow "$tmp_dir/fly-deploy.yml"
 sed 's/^\( *timeout-minutes:\) 250$/\1 245/' "$workflow" >"$tmp_dir/fly-deploy.yml"
 check_workflow "$tmp_dir/fly-deploy.yml"
@@ -263,6 +264,17 @@ check_fly_config() {
   python3 "$repo_root/.github/scripts/fly-toml-contract.py" "$1" "${expected_directives[@]}"
 }
 
+# Caso vermelho do contrato: reprova, e pela mensagem do contrato
+# ("<arquivo>: ..."), para que um traceback do script não passe por recusa.
+expect_contract_failure() {
+  local output
+  if output="$(check_fly_config "$1" 2>&1)"; then
+    echo "o contrato deveria reprovar $1" >&2
+    exit 1
+  fi
+  [[ $output == "$1: "* ]] || { printf 'o contrato reprovou %s sem a própria mensagem:\n%s\n' "$1" "$output" >&2; exit 1; }
+}
+
 check_fly_config "$fly_config"
 
 # Casos vermelhos. O awk acha a linha da diretiva normalizando-a (sem
@@ -274,28 +286,37 @@ for entry in "${expected_directives[@]}"; do
   # aprovaria)...
   awk -v d="$directive" '{ t = $0; sub(/#.*/, "", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t); print (t == d ? "# " : "") $0 }' \
     "$fly_config" >"$mutated_config"
-  expect_failure check_fly_config "$mutated_config"
+  expect_contract_failure "$mutated_config"
   # ...e a que sai do bloco certo também: aqui ela vai para a raiz do arquivo,
   # onde o Fly não a lê, e a linha continua idêntica.
   { printf '%s\n' "$directive"
     awk -v d="$directive" '{ t = $0; sub(/#.*/, "", t); gsub(/^[[:space:]]+|[[:space:]]+$/, "", t); if (t != d) print }' "$fly_config"
   } >"$mutated_config"
-  expect_failure check_fly_config "$mutated_config"
+  expect_contract_failure "$mutated_config"
 done
 # Uma Machine a mais, ou CPU fora do contrato dentro do único [[vm]].
 { cat "$fly_config"; printf '\n[[vm]]\n  size = "shared-cpu-1x"\n  memory = "512mb"\n'; } >"$mutated_config"
-expect_failure check_fly_config "$mutated_config"
+expect_contract_failure "$mutated_config"
 for vm_override in 'cpus = 2' 'cpu_kind = "performance"' 'memory_mb = 1024'; do
   sed "/^\[\[vm\]\]/a\\  $vm_override" "$fly_config" >"$mutated_config"
-  expect_failure check_fly_config "$mutated_config"
+  expect_contract_failure "$mutated_config"
 done
+# O flyctl junta [[compute]] e [[computes]] ao [[vm]] (patchCompute em
+# internal/appconfig/patches.go): CPU ou Machine a mais por ali também conta, e
+# um elemento que não é tabela reprova pelo contrato.
+for alias in compute computes; do
+  { cat "$fly_config"; printf '\n[[%s]]\n  cpus = 4\n' "$alias"; } >"$mutated_config"
+  expect_contract_failure "$mutated_config"
+done
+{ printf 'compute = ["shared-cpu-1x"]\n'; cat "$fly_config"; } >"$mutated_config"
+expect_contract_failure "$mutated_config"
 for scale_to_zero in '"stop"' "'stop'" '"suspend"' true; do
   { cat "$fly_config"; printf '\n[[services]]\n  auto_stop_machines = %s\n' "$scale_to_zero"; } >"$mutated_config"
-  expect_failure check_fly_config "$mutated_config"
+  expect_contract_failure "$mutated_config"
 done
 # TOML inválido (o marcador de conflito de 2026-08-10) reprova.
 { cat "$fly_config"; printf '\n=======\n'; } >"$mutated_config"
-expect_failure check_fly_config "$mutated_config"
+expect_contract_failure "$mutated_config"
 
 # Casos verdes: `#` dentro de string não é comentário (o `sed 's/#.*//'` de
 # antes lia a linha abaixo da string como `auto_stop_machines = "stop"` e

@@ -7,7 +7,9 @@ min_machines_running = 1` exige a chave nessa tabela, com esse valor e esse
 tipo (`true` não casa com `1`). Uma tabela (`[x]`) confere só as chaves
 listadas. Um array de tabelas (`[[x]]`) tem de ter exatamente um elemento, com
 exatamente as chaves listadas: um `[[vm]]` a mais, ou um `cpus`/`cpu_kind`
-dentro dele, mudaria a Machine sem passar pelo contrato.
+dentro dele, mudaria a Machine sem passar pelo contrato. Os elementos contam
+como o flyctl os junta: `[[compute]]` e `[[computes]]` entram no `[[vm]]`
+(patchCompute em internal/appconfig/patches.go do flyctl).
 
 À parte das diretivas, todo `auto_stop_machines` do arquivo, em qualquer bloco
 (um `[[services]]` separado, por exemplo), tem de ser "off" ou false: "stop"
@@ -24,6 +26,9 @@ string, e nenhum dos dois sabia a que bloco uma linha pertence.
 import re
 import sys
 import tomllib
+
+# Nomes que o flyctl junta num mesmo array de tabelas, na ordem dele.
+ALIASES = {"vm": ("compute", "computes", "vm")}
 
 
 def fail(message: str) -> None:
@@ -66,17 +71,23 @@ except (OSError, tomllib.TOMLDecodeError) as error:
 
 for (is_array, name), wanted in expected.items():
     header = f"[[{name}]]" if is_array else f"[{name}]"
-    block = config.get(name)
     if is_array:
-        count = len(block) if isinstance(block, list) else 0
-        if count != 1:
-            fail(f"precisa de exatamente um {header}, tem {count}")
-        block = block[0]
+        elements = []
+        for alias in ALIASES.get(name, (name,)):
+            value = config.get(alias, [])
+            elements += value if isinstance(value, list) else [value]
+        if len(elements) != 1:
+            fail(f"precisa de exatamente um {header}, tem {len(elements)}")
+        block = elements[0]
+        if not isinstance(block, dict):
+            fail(f"{header} precisa ser tabela, é {block!r}")
         extra = sorted(block.keys() - wanted.keys())
         if extra:
             fail(f"{header} com chave fora do contrato: {', '.join(extra)}")
-    elif not isinstance(block, dict):
-        fail(f"sem a tabela {header}")
+    else:
+        block = config.get(name)
+        if not isinstance(block, dict):
+            fail(f"sem a tabela {header}")
     for key, value in wanted.items():
         if not same(block.get(key), value):
             fail(f"{header} {key} = {block.get(key)!r}, o contrato exige {value!r}")
