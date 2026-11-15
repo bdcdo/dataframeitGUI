@@ -2,7 +2,6 @@ import type { ESLint } from "eslint";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
-  BROWSER_CALLBACK_METHODS,
   DOM_QUERY_APIS,
   HIDDEN_INSENSITIVE_LOCATORS,
   LEGACY_SELECTOR_APIS,
@@ -105,6 +104,18 @@ describe("regra de locators visíveis nos specs E2E", () => {
       "html filtrado por visivel()",
       `visivel(page.locator(" html ")).locator("p");`,
     ],
+    [
+      "seletor do DOM em waitForFunction",
+      `await page.waitForFunction(() => document.querySelectorAll("p").length > 2);`,
+    ],
+    [
+      "window.document em evaluateHandle",
+      `await page.evaluateHandle(() => window.document.querySelector("p"));`,
+    ],
+    [
+      "seletor do DOM em helper passado ao evaluate",
+      `const box = (s: string) => document.querySelector(s); await page.evaluate(box, "p");`,
+    ],
   ])("bloqueia %s", async (_caseName, body) => {
     const messages = await messagesFor(
       `${prelude}\ntest("x", async ({ page, context }) => { ${body} });`,
@@ -143,18 +154,6 @@ describe("regra de locators visíveis nos specs E2E", () => {
 
   // O callback roda no navegador, onde visivel() não alcança: um seletor do DOM
   // ali pega a primeira cópia, que pode ser a órfã do Suspense (desvio do #862).
-  it.each(BROWSER_CALLBACK_METHODS)(
-    "bloqueia document.querySelector no callback de %s",
-    async (method) => {
-      const messages = await messagesFor(
-        `${prelude}\ntest("x", async ({ page }) => { await page.${method}(() => document.querySelector("p")); });`,
-      );
-
-      expect(messages).toHaveLength(1);
-      expect(messages[0]?.message).toContain("dentro do navegador");
-    },
-  );
-
   it.each(DOM_QUERY_APIS)(
     "bloqueia document.%s no callback de evaluate",
     async (api) => {
@@ -163,26 +162,9 @@ describe("regra de locators visíveis nos specs E2E", () => {
       );
 
       expect(messages).toHaveLength(1);
-      expect(messages[0]?.message).toContain("dentro do navegador");
+      expect(messages[0]?.message).toContain("roda no navegador");
     },
   );
-
-  it.each([
-    [
-      "window.document no callback",
-      `await page.evaluate(() => window.document.querySelector("p"));`,
-    ],
-    [
-      "helper declarado dentro do callback",
-      `await page.evaluate(() => { const box = (s: string) => document.querySelector(s); return box("p"); });`,
-    ],
-  ])("bloqueia %s", async (_caseName, body) => {
-    const messages = await messagesFor(
-      `${prelude}\ntest("x", async ({ page }) => { ${body} });`,
-    );
-
-    expect(messages).toHaveLength(1);
-  });
 
   it("permite evaluate que não consulta o DOM por seletor", async () => {
     await expect(

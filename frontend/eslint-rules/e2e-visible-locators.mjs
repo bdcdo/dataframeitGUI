@@ -52,16 +52,10 @@ export const LEGACY_SELECTOR_APIS = [
   "waitForSelector",
 ];
 
-// Métodos cujo callback roda no navegador, fora do alcance de visivel().
-export const BROWSER_CALLBACK_METHODS = [
-  "evaluate",
-  "evaluateAll",
-  "evaluateHandle",
-  "waitForFunction",
-];
-
 // Consultas do DOM por seletor, id, classe ou tag: devolvem as cópias na ordem
-// do documento, a órfã do Suspense inclusive.
+// do documento, a órfã do Suspense inclusive. Num spec, `document` só existe no
+// código que roda no navegador (evaluate, waitForFunction), fora do alcance de
+// visivel().
 export const DOM_QUERY_APIS = [
   "getElementById",
   "getElementsByClassName",
