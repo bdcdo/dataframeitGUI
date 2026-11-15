@@ -62,11 +62,50 @@ const PAGE_NAME = "/^(page|.*Page)$/";
 const PAGE_RECEIVER = `:matches([callee.object.name=${PAGE_NAME}], [callee.object.property.name=${PAGE_NAME}])`;
 
 // `expect(page.getByText(x)).toHaveCount(0)` fica livre: a cópia órfã só
-// duplica o que o servidor renderizou, então nunca cria o elemento que a
-// asserção nega, e o filtro de visibilidade só a enfraqueceria (um elemento
-// presente e oculto passaria).
+// duplica o que o servidor renderizou, então não cria um elemento que o servidor
+// nunca desenhou, e o filtro de visibilidade só enfraqueceria a asserção (um
+// elemento presente e oculto passaria). Se o servidor desenhou o elemento e o
+// cliente o removeu depois, a cópia órfã o guarda e a asserção reprova alto, sem
+// passar em falso; nesse caso, parta de um container achado por `getByRole`.
 const COUNT_ZERO_ARGUMENT =
   'CallExpression[callee.property.name="toHaveCount"][arguments.0.value=0] > MemberExpression.callee > CallExpression.object[callee.name="expect"] > CallExpression.arguments';
+
+// Métodos da página que recebem seletor em vez de partir de um locator. Ações
+// (`click`, `fill`...) e consultas (`isVisible`, `waitForSelector`...) resolvem o
+// seletor contra o DOM inteiro, cópia órfã inclusive.
+export const LEGACY_SELECTOR_APIS = [
+  "\\$",
+  "\\$\\$",
+  "\\$eval",
+  "\\$\\$eval",
+  "check",
+  "click",
+  "dblclick",
+  "dispatchEvent",
+  "dragAndDrop",
+  "fill",
+  "focus",
+  "getAttribute",
+  "hover",
+  "innerHTML",
+  "innerText",
+  "inputValue",
+  "isChecked",
+  "isDisabled",
+  "isEditable",
+  "isEnabled",
+  "isHidden",
+  "isVisible",
+  "press",
+  "selectOption",
+  "setChecked",
+  "setInputFiles",
+  "tap",
+  "textContent",
+  "type",
+  "uncheck",
+  "waitForSelector",
+];
 
 const PAGE_NAME_MESSAGE =
   "Page se chama page ou termina em Page: é pelo nome que a regra de visivel() reconhece a página.";
@@ -82,7 +121,7 @@ const e2eLocatorRules = [
       "Locator que parte da página e não é getByRole enxerga a cópia oculta de um segmento de Suspense. Envolva a chamada direto em visivel(), de ./visivel, antes de .first()/.nth().",
   },
   {
-    selector: `CallExpression${PAGE_RECEIVER}[callee.property.name=/^(\\$|\\$\\$|\\$eval|\\$\\$eval|textContent|innerText|innerHTML|getAttribute|inputValue)$/]`,
+    selector: `CallExpression${PAGE_RECEIVER}[callee.property.name=/^(${LEGACY_SELECTOR_APIS.join("|")})$/]`,
     message:
       "API legada da página que recebe seletor enxerga a cópia oculta de um segmento de Suspense. Use um locator com visivel() (ver e2e/visivel.ts).",
   },

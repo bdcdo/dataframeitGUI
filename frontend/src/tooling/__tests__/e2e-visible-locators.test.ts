@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import { ESLint } from "eslint";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { HIDDEN_INSENSITIVE_LOCATORS } from "../../../eslint.config.mjs";
 
@@ -27,6 +27,15 @@ const prelude = `
 `;
 
 describe("regra de locators visíveis nos specs E2E", () => {
+  // A carga a frio da config (grafo do eslint-config-next) e o lint da pasta
+  // e2e/ inteira ficam no beforeAll, fora do orçamento de CPU por teste
+  // (docs/CODE_QUALITY_TOOLING.md), como em test-cold-imports.test.ts.
+  let e2eFolderResults: ESLint.LintResult[] = [];
+  beforeAll(async () => {
+    await messagesFor("export {};");
+    e2eFolderResults = await eslint.lintFiles(["e2e/**/*.ts"]);
+  }, 60_000);
+
   it.each(HIDDEN_INSENSITIVE_LOCATORS)(
     "bloqueia page.%s sem visivel()",
     async (method) => {
@@ -94,6 +103,10 @@ describe("regra de locators visíveis nos specs E2E", () => {
       `await page.$$eval("[data-testid=a]", (els) => els.length);`,
     ],
     ["API legada textContent", `await page.textContent("p");`],
+    ["ação por seletor click", `await page.click("text=a");`],
+    ["ação por seletor fill", `await page.fill("textarea", "x");`],
+    ["consulta por seletor isVisible", `await page.isVisible("text=a");`],
+    ["espera por seletor", `await page.waitForSelector("text=a");`],
   ])("bloqueia %s", async (_caseName, body) => {
     const messages = await messagesFor(
       `${prelude}\ntest("x", async ({ page, context }) => { ${body} });`,
@@ -176,8 +189,8 @@ describe("regra de locators visíveis nos specs E2E", () => {
 
   // A regra só olha os arquivos tocados no pre-push; mudar a regra sem mexer nos
   // specs passaria sem relintar nenhum deles. Este caso relinta a pasta inteira.
-  it("a pasta e2e/ inteira passa na regra", async () => {
-    const results = await eslint.lintFiles(["e2e/**/*.ts"]);
+  it("a pasta e2e/ inteira passa na regra", () => {
+    const results = e2eFolderResults;
     const violations = results.flatMap((result) =>
       result.messages
         .filter((message) => message.ruleId === ruleId)
@@ -186,5 +199,5 @@ describe("regra de locators visíveis nos specs E2E", () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(violations).toEqual([]);
-  }, 60_000);
+  });
 });

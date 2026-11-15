@@ -17,8 +17,11 @@ import type { Locator } from "@playwright/test";
 // cópia órfã vira strict mode violation e dobra o `toHaveCount(n)`.
 //
 // A exceção é `expect(...).toHaveCount(0)`, que fica sem o filtro: a cópia
-// órfã só duplica o que o servidor renderizou, então não cria o elemento que a
-// asserção nega, e o filtro deixaria passar um elemento presente e oculto.
+// órfã só duplica o que o servidor renderizou, então não cria um elemento que o
+// servidor nunca desenhou, e o filtro deixaria passar um elemento presente e
+// oculto. Se o servidor desenhou o elemento e o cliente o removeu depois (um
+// aviso que some ao salvar), a cópia órfã o guarda e a asserção reprova alto;
+// nesse caso, parta de um container achado por `getByRole`.
 //
 // Não trocar por `.first()`/`.nth()`: a ordem das cópias no DOM é detalhe do
 // streaming, e o índice errado afirmaria sobre um trecho que ninguém vê. Pelo
