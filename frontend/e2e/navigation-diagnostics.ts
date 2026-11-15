@@ -123,6 +123,26 @@ const ORIGIN_EXPLANATION: Record<NotFoundOrigin, string> = {
   "clerk-protect": "auth.protect() do Clerk reescreveu para 404 (sessão recusada)",
 };
 
+// Rota de login do app (NEXT_PUBLIC_CLERK_SIGN_IN_URL e `requirePageAuthUser`).
+const LOGIN_PATH = /^\/auth\/login(?:\/|$)/;
+
+// URL final do frame principal de uma página, para o teste que falhou: é ela
+// que mostra o redirecionamento ao login, que a mensagem do spec ("pergunta
+// não apareceu") não tem como saber (#740). Os parâmetros do Clerk saem
+// redigidos, como nas navegações.
+export function describeFinalUrl(url: string): string {
+  let path = "";
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // about:blank ou URL malformada: mostra como veio.
+  }
+  const login = LOGIN_PATH.test(path)
+    ? " — tela de login: a sessão do Clerk não valeu para o servidor"
+    : "";
+  return `${redactUrl(url)}${login}`;
+}
+
 export function describeNavigation(record: NavigationRecord): string {
   const origin = classifyNotFound(record);
   let path = record.url;

@@ -34,24 +34,12 @@ import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { acquireFixtureLock, defaultFixtureLockDir, fixtureLockWaitMs } from "../../e2e/fixture-lock";
 import { fieldHashOf } from "../../src/lib/schema-utils";
-import {
-  applyEnvironment,
-  readEnvironmentFile,
-  readOptionalEnvironmentFile,
-} from "../worktree-env/env-contract.mjs";
+import { loadE2eEnvironment } from "../worktree-env/env-contract.mjs";
 
-// Mesmos arquivos, na mesma ordem de precedência e com o mesmo E2E_ENV_PATH,
-// que o playwright.config.ts carrega: o projeto precisa nascer no banco que o
-// spec vai ler.
+// O mesmo ambiente que o playwright.config.ts carrega, inclusive o
+// E2E_ENV_PATH (ver loadE2eEnvironment): a fixture nasce no banco que o spec lê.
 const frontendDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-applyEnvironment(process.env, readOptionalEnvironmentFile(join(frontendDir, ".env.local")));
-applyEnvironment(
-  process.env,
-  process.env.E2E_ENV_PATH
-    ? readEnvironmentFile(process.env.E2E_ENV_PATH)
-    : readOptionalEnvironmentFile(join(frontendDir, ".env.e2e")),
-  { override: true },
-);
+loadE2eEnvironment(process.env, frontendDir);
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;

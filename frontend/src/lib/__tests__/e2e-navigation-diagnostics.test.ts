@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyNotFound,
+  describeFinalUrl,
   describeNavigation,
   readRscPayload,
   redactUrl,
@@ -143,5 +144,23 @@ describe("describeNavigation", () => {
 
   it("mostra só status quando não há veredito", () => {
     expect(describeNavigation(record({ status: 500 }))).toBe("GET /projects/p1/analyze/code → 500");
+  });
+});
+
+describe("describeFinalUrl", () => {
+  it("aponta o redirecionamento ao login e redige os parâmetros do Clerk", () => {
+    const line = describeFinalUrl(
+      "http://localhost:3100/auth/login?redirect_url=%2Fprojects%2Fp1&__clerk_db_jwt=segredo",
+    );
+    expect(line).toContain("tela de login");
+    expect(line).toContain("__clerk_db_jwt=%3Comitido%3E");
+    expect(line).not.toContain("segredo");
+  });
+
+  it("página do app sai como veio, sem o aviso de login", () => {
+    expect(describeFinalUrl("http://localhost:3100/projects/p1/analyze/code")).toBe(
+      "http://localhost:3100/projects/p1/analyze/code",
+    );
+    expect(describeFinalUrl("about:blank")).toBe("about:blank");
   });
 });

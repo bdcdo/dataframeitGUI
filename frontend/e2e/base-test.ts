@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { test as base, type Response } from "@playwright/test";
 import {
   classifyNotFound,
+  describeFinalUrl,
   describeNavigation,
   readRscPayload,
   redactUrl,
@@ -12,7 +13,8 @@ import {
 // fixture-lock-test.ts, que estende este). O fixture automático registra as
 // navegações do frame principal e as requests RSC do cliente de toda página do
 // contexto (o spec pode abrir outra com `context.newPage()`); quando o teste
-// falha, anexa a lista e imprime as que deram erro, já classificadas por
+// falha, imprime a URL final de cada página (o login, se a sessão caiu), anexa
+// a lista e imprime as que deram erro, já classificadas por
 // navigation-diagnostics.ts. Sem isso o spec só mostra a própria mensagem,
 // que não tem como saber se o servidor casou a rota.
 // `e2e-base-test-coverage.test.ts` exige este import.
@@ -62,6 +64,16 @@ export const test = base.extend<{ navigationDiagnostics: void }>({
       await provide();
       context.off("response", onResponse);
       if (testInfo.status === testInfo.expectedStatus) return;
+
+      // Antes das navegações, e mesmo quando nenhuma deu erro: o
+      // redirecionamento ao login responde 200 e não aparece na lista abaixo.
+      console.log(
+        `[URL final] ${testInfo.title}\n` +
+          context
+            .pages()
+            .map((page) => `  ${describeFinalUrl(page.url())}`)
+            .join("\n"),
+      );
 
       const records = await Promise.all(pending);
       // Anexo por caminho, e não por `body`: o reporter `list` do pre-push só

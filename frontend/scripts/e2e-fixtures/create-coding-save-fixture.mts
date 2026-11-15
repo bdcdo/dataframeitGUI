@@ -12,24 +12,16 @@
 // no gate sem caminho para destravar.
 //
 // Rodar de frontend/:  npm run e2e:fixture:coding
+// Contra o Supabase local:  E2E_ENV_PATH=<arquivo> npm run e2e:fixture:coding
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
-import {
-  applyEnvironment,
-  readOptionalEnvironmentFile,
-} from "../worktree-env/env-contract.mjs";
+import { loadE2eEnvironment } from "../worktree-env/env-contract.mjs";
 
-// Mesmo par de arquivos, na mesma ordem de precedência, que o
-// playwright.config.ts carrega: as credenciais Supabase vêm de .env.local e os
-// usuários de teste de .env.e2e, que sobrescreve. Ancorado no diretório do
-// próprio script (não no cwd) pelo mesmo motivo documentado lá — rodar da raiz
-// do repo acharia o contrato e nenhum valor.
+// O mesmo ambiente que o playwright.config.ts carrega, inclusive o
+// E2E_ENV_PATH (ver loadE2eEnvironment): a fixture nasce no banco que o spec lê.
 const frontendDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-applyEnvironment(process.env, readOptionalEnvironmentFile(join(frontendDir, ".env.local")));
-applyEnvironment(process.env, readOptionalEnvironmentFile(join(frontendDir, ".env.e2e")), {
-  override: true,
-});
+loadE2eEnvironment(process.env, frontendDir);
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -122,7 +114,11 @@ if (existingProject) {
   console.log(`Projeto criado: ${projectId}`);
 }
 
-// 2. Documentos
+// 2. Documentos. O "Doc E2E save 2" é deliberado e não duplica a pergunta na
+// tela (a "via 1" da #540, nunca reproduzida): só o doc 1 tem assignment, a
+// fila do modo Atribuídos vem dos assignments do membro, e a view renderiza
+// um documento por vez. A pergunta em dobro observada era a cópia órfã do
+// segmento de Suspense, que `visivel()` filtra (#798, #806).
 const LOREM =
   "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.\n\n" +
   "Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.\n\n" +

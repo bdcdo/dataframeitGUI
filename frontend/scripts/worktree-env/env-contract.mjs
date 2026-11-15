@@ -73,6 +73,28 @@ export function applyEnvironment(
   }
 }
 
+/**
+ * Ambiente dos E2E: `.env.local` (credenciais Supabase) e, por cima, o
+ * `E2E_ENV_PATH` quando definido (o arquivo do Supabase local) ou o
+ * `.env.e2e`. E a mesma precedencia para o Playwright e para os geradores de
+ * fixture (`scripts/e2e-fixtures/`): a fixture precisa nascer no banco que o
+ * spec vai ler. Ancorado no diretorio do frontend, e nao no cwd: rodar da raiz
+ * do repo acharia o contrato e nenhum valor.
+ *
+ * @param {Record<string, string | undefined>} target
+ * @param {string} frontendDirectory
+ */
+export function loadE2eEnvironment(target, frontendDirectory) {
+  applyEnvironment(target, readOptionalEnvironmentFile(join(frontendDirectory, ".env.local")));
+  applyEnvironment(
+    target,
+    target.E2E_ENV_PATH
+      ? readEnvironmentFile(target.E2E_ENV_PATH)
+      : readOptionalEnvironmentFile(join(frontendDirectory, ".env.e2e")),
+    { override: true },
+  );
+}
+
 /** @param {string | undefined} value */
 export function hasConfiguredEnvironmentValue(value) {
   return typeof value === "string" && value.trim().length > 0;
