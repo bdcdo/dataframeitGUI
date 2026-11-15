@@ -708,7 +708,7 @@ export async function retryPendingArbitrations(
       // Sem o set, o codificador do documento entraria no pool como árbitro
       // "neutro": falha alto em vez de atribuir errado (P3).
       if (codersError)
-        return { success: false, error: codersError.message, assigned: 0, stillNoPool: 0 };
+        return { success: false, error: reviewServerError("leitura dos codificadores", codersError, "Não foi possível redistribuir as arbitragens pendentes. Tente novamente."), assigned: 0, stillNoPool: 0 };
       for (const c of allCoders ?? []) {
         const docId = c.document_id as string;
         const respId = c.respondent_id as string | null;

@@ -295,10 +295,16 @@ describe("retryPendingArbitrations — erro na pré-busca de codificadores", () 
     // A leitura falha sem linhas, como no PostgREST: sem o set, userB (que
     // pode ter codificado o doc) pareceria neutro.
     queryErrors = { "responses:select": { message: "timeout", code: "57014" } };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const retry = await loadRetry();
     const r = await retry("p1");
     expect(r.success).toBe(false);
+    // O texto do Postgres vai ao log, e o toast recebe copy pt-BR (#502).
+    expect(r.error).toBe(
+      "Não foi possível redistribuir as arbitragens pendentes. Tente novamente.",
+    );
     expect(arbitrationCalls()).toHaveLength(0);
+    consoleError.mockRestore();
   });
 });
 
