@@ -79,6 +79,7 @@ GATE_SUITES=(
   visible_if_no_codigo_pydantic
   self_comparison_exception
   schema_revision_rpcs
+  error_resolution_cycle
 )
 
 # Órfã quebrada pela era da migration 20260717120000 (connstr de dblink), fora
