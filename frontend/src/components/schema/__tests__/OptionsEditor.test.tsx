@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, beforeAll } from "vitest";
+import { describe, it, expect, afterEach, beforeAll, vi } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { useState } from "react";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
@@ -62,5 +62,52 @@ describe("OptionsEditor — keys estáveis (no-array-index-as-key)", () => {
     const last = inputs()[1];
     expect(last.value).toBe("");
     expect(document.activeElement).toBe(last);
+  });
+});
+
+describe("OptionsEditor — opção repetida", () => {
+  it("remover uma cópia de opção repetida não aciona a guarda de remoção", async () => {
+    const user = userEvent.setup();
+    const onBeforeRemove = vi.fn(() => false);
+    function Editor() {
+      const [options, setOptions] = useState(["Sim", "Não", "Sim"]);
+      return (
+        <OptionsEditor
+          options={options}
+          onChange={setOptions}
+          onBeforeRemove={onBeforeRemove}
+        />
+      );
+    }
+    render(<Editor />);
+
+    const removeButtons = screen
+      .getAllByRole("button")
+      .filter((b) => b.querySelector("svg"));
+    await user.click(removeButtons[2]);
+
+    await waitFor(() => {
+      expect(inputs().map((i) => i.value)).toEqual(["Sim", "Não"]);
+    });
+    expect(onBeforeRemove).not.toHaveBeenCalled();
+  });
+
+  it("remover a última cópia de uma opção continua passando pela guarda", async () => {
+    const user = userEvent.setup();
+    const onBeforeRemove = vi.fn(() => false);
+    render(
+      <OptionsEditor
+        options={["Sim", "Não"]}
+        onChange={() => {}}
+        onBeforeRemove={onBeforeRemove}
+      />,
+    );
+
+    const removeButtons = screen
+      .getAllByRole("button")
+      .filter((b) => b.querySelector("svg"));
+    await user.click(removeButtons[0]);
+
+    expect(onBeforeRemove).toHaveBeenCalledWith("Sim");
   });
 });

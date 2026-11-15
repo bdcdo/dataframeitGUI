@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { stripLikePython } from "@/lib/pydantic-field";
+import {
+  parseSaveablePydanticFields,
+  stripLikePython,
+} from "@/lib/pydantic-field";
 import { generatePydanticCode } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 
@@ -54,5 +57,30 @@ describe("generatePydanticCode — textos", () => {
       field({ target: "llm_only", justification_prompt: "﻿" }),
     ]);
     expect(code).toContain('"justification_prompt": "﻿"');
+  });
+});
+
+describe("parseSaveablePydanticFields — texto que o banco não grava", () => {
+  // `pydantic_fields` é jsonb: `\u0000` e surrogate isolado passavam na
+  // validação e só falhavam na RPC de save.
+  it.each([
+    ["description", { description: "a\x00b" }],
+    ["help_text", { help_text: "a\x00b" }],
+    ["opção", { type: "single", options: ["Sim", "N\ud800o"] }],
+    ["subcampo", {
+      subfields: [{ key: "x", label: "\udc00" }],
+    }],
+  ] as const)("recusa %s com NUL ou surrogate isolado", (_, over) => {
+    const { errors } = parseSaveablePydanticFields([
+      field(over as Partial<PydanticField>),
+    ]);
+    expect(errors.join("\n")).toMatch(/caractere inválido/);
+  });
+
+  it("aceita emoji (par de surrogates completo)", () => {
+    const { errors } = parseSaveablePydanticFields([
+      field({ description: "Pergunta 😀" }),
+    ]);
+    expect(errors).toEqual([]);
   });
 });

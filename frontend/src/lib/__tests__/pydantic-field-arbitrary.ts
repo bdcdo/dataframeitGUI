@@ -15,13 +15,13 @@ import {
 // `generatePydanticCode` ↔ `compile_pydantic` (issue #525).
 //
 // Os textos misturam o que o escape do gerador precisa tratar (aspas, barra
-// invertida, quebras de linha, tab, NUL, chaves, acento, emoji), o que o
+// invertida, quebras de linha, tab, chaves, acento, emoji), o que o
 // compilador remove de volta (". " e ":" dos sufixos da description) e os
 // brancos em que o `trim()` do JS e o `strip()` do Python discordam (`\x1c`,
 // `\x1f`, `\x85`, `\ufeff`).
 const TEXT_UNIT = fc.constantFrom(
   "a", "b", "Z", "0", " ", ".", ":", "_", '"', "'", "\\", "\n", "\t", "\r",
-  "\x00", "\x1c", "\x1f", "\x85", "\ufeff",
+  "\x1c", "\x1f", "\x85", "\ufeff",
   "{", "}", "ç", "ã", "😀",
 );
 const anyText = fc.string({ unit: TEXT_UNIT, maxLength: 10 });

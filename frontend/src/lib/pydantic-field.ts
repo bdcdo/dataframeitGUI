@@ -301,7 +301,7 @@ function validateOptions(
 // branco na borda, ou só com branco, o campo recuperado era diferente do salvo
 // e a recuperação acusava mudança. O editor os apara ao sair do campo; a
 // validação barra o que chega ao save sem passar por ele, em vez de reescrever
-// o texto, como faz com a descrição e as opções (#525).
+// o texto: validar nunca reescreve o que a tela mostra (#525).
 const TRIMMED_TEXTS = [
   ["help_text", "das instruções"],
   ["justification_prompt", "do prompt de justificativa"],
@@ -320,6 +320,42 @@ function validateTrimmedTexts(
       issue(`${label}: texto ${of} está em branco`, [key]);
     } else if (stripped !== text) {
       issue(`${label}: espaço em branco no início ou no fim ${of}`, [key]);
+    }
+  }
+}
+
+// Texto que o banco não grava: `pydantic_fields` é `jsonb`, que recusa
+// `\u0000` e surrogate isolado, e este também quebra o `compile()` do Python.
+// Sem esta regra o save passava na validação e falhava na RPC (#525).
+function isStorableText(text: string): boolean {
+  return !text.includes("\0") && text.isWellFormed();
+}
+
+function validateStorableTexts(
+  field: PydanticField,
+  label: string,
+  issue: AddFieldIssue,
+): void {
+  const texts: [string | null | undefined, PropertyKey[]][] = [
+    [field.description, ["description"]],
+    [field.help_text, ["help_text"]],
+    [field.justification_prompt, ["justification_prompt"]],
+    ...(field.options ?? []).map(
+      (option, index): [string, PropertyKey[]] => [option, ["options", index]],
+    ),
+    ...(field.subfields ?? []).map(
+      (subfield, index): [string, PropertyKey[]] => [
+        subfield.label,
+        ["subfields", index, "label"],
+      ],
+    ),
+  ];
+  for (const [text, path] of texts) {
+    if (text && !isStorableText(text)) {
+      issue(
+        `${label}: texto com caractere inválido (nulo ou surrogate isolado)`,
+        path,
+      );
     }
   }
 }
@@ -410,6 +446,7 @@ const saveablePydanticFieldsSchema = pydanticFieldsSchema.superRefine(
       validateSubfields(field, label, issue);
       validateOptions(field, label, issue);
       validateTrimmedTexts(field, label, issue);
+      validateStorableTexts(field, label, issue);
       validateCondition(field, fieldByName, label, issue);
       if (!fieldByName.has(field.name)) fieldByName.set(field.name, field);
     }

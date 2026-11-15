@@ -38,7 +38,11 @@ export function OptionsEditor({
 
   const removeOption = async (index: number) => {
     const opt = options[index];
-    if (onBeforeRemove && opt.trim() !== "") {
+    // Cópia repetida (legado de antes da validação de duplicadas, #525): a
+    // opção continua na lista, então nada que dependa dela é afetado e a
+    // guarda — que remove a opção e as condições que a usam — não entra.
+    const stillListed = options.some((o, i) => i !== index && o === opt);
+    if (onBeforeRemove && opt.trim() !== "" && !stillListed) {
       const ok = await onBeforeRemove(opt);
       if (!ok) return;
     }
