@@ -2,6 +2,7 @@ import fc from "fast-check";
 import { fieldHashOf } from "@/lib/schema-utils";
 import {
   pydanticFieldNameIssue,
+  stripLikePython,
   type ConditionScalar,
   type FieldCondition,
   type PydanticField,
@@ -14,18 +15,21 @@ import {
 // `generatePydanticCode` ↔ `compile_pydantic` (issue #525).
 //
 // Os textos misturam o que o escape do gerador precisa tratar (aspas, barra
-// invertida, quebras de linha, tab, chaves, acento, emoji) com o que o
-// compilador remove de volta (". " e ":" dos sufixos da description).
+// invertida, quebras de linha, tab, NUL, chaves, acento, emoji), o que o
+// compilador remove de volta (". " e ":" dos sufixos da description) e os
+// brancos em que o `trim()` do JS e o `strip()` do Python discordam (`\x1c`,
+// `\x1f`, `\x85`, `\ufeff`).
 const TEXT_UNIT = fc.constantFrom(
   "a", "b", "Z", "0", " ", ".", ":", "_", '"', "'", "\\", "\n", "\t", "\r",
+  "\x00", "\x1c", "\x1f", "\x85", "\ufeff",
   "{", "}", "ç", "ã", "😀",
 );
 const anyText = fc.string({ unit: TEXT_UNIT, maxLength: 10 });
-const nonBlankText = anyText.filter((s) => s.trim().length > 0);
-// `help_text` e `justification_prompt` saem aparados no código (o gerador faz
-// `.trim()`), e é aparados que a GUI os grava; o gerador de casos fica na forma
-// que chega ao save.
-const trimmedText = nonBlankText.map((s) => s.trim());
+const nonBlankText = anyText.filter((s) => stripLikePython(s).length > 0);
+// `help_text` e `justification_prompt` saem aparados no código, como o
+// `strip()` do Python os lê de volta, e é aparados que a GUI os grava; o
+// gerador de casos fica na forma que chega ao save.
+const trimmedText = nonBlankText.map(stripLikePython);
 
 // Nomes que a validação recusa (palavra reservada do Python, `_` inicial,
 // `model_config`...) ficam fora pela própria `pydanticFieldNameIssue`, e não por

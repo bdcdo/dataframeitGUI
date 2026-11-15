@@ -197,6 +197,27 @@ export const RESERVED_NAME_REASON = {
   pydantic: "é reservado pelo Pydantic",
 } as const satisfies Record<Exclude<PydanticFieldNameIssue, "invalid" | null>, string>;
 
+// O que é espaço em branco nas bordas de um texto do schema: o `str.strip()` do
+// Python, que é como `compile_pydantic` apara `help_text` e
+// `justification_prompt` ao ler o código de volta (P7: o Pydantic é a fonte de
+// verdade). O `trim()` do JS discorda dele nos dois sentidos — não remove
+// `\x1c`–`\x1f` nem `\x85`, e remove `\ufeff`, que o Python mantém —, e com
+// um desses na borda o texto gravado e o recuperado divergiam, a ponto de o
+// sufixo ". Instrucoes:" se acumular na description a cada recuperação (#525).
+// A lista é a de `str.isspace()`, a mesma no Python 3.11 e 3.12.
+const PYTHON_WHITESPACE =
+  /[\t\n\v\f\r\x1c-\x20\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/;
+
+// Laço em vez de `replace(/^[...]+|[...]+$/)`: a âncora de fim faz a regex
+// recomeçar em cada posição de uma sequência de brancos interna.
+export function stripLikePython(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && PYTHON_WHITESPACE.test(text[start])) start += 1;
+  while (end > start && PYTHON_WHITESPACE.test(text[end - 1])) end -= 1;
+  return text.slice(start, end);
+}
+
 type AddFieldIssue = (message: string, path?: PropertyKey[]) => void;
 
 function validateFieldIdentity(
@@ -213,7 +234,7 @@ function validateFieldIdentity(
   } else if (nameIssue) {
     issue(`${label}: nome ${RESERVED_NAME_REASON[nameIssue]}`, ["name"]);
   }
-  if (!field.description.trim()) {
+  if (!stripLikePython(field.description)) {
     issue(`${label}: descrição não pode ser vazia`, ["description"]);
   }
 }
@@ -242,7 +263,7 @@ function validateSubfields(
       issue(`${label}: subcampo "${subfield.key}" duplicado`, path);
     }
     keys.add(subfield.key);
-    if (!subfield.label.trim()) {
+    if (!stripLikePython(subfield.label)) {
       issue(
         `${label}: subcampo ${index + 1} tem label vazio`,
         ["subfields", index, "label"],
@@ -261,7 +282,7 @@ function validateOptions(
     issue(`${label}: campo de escolha precisa de pelo menos uma opção`, ["options"]);
   }
   field.options?.forEach((option, index) => {
-    if (!option.trim()) {
+    if (!stripLikePython(option)) {
       issue(`${label}: opção ${index + 1} está vazia`, ["options", index]);
     }
   });

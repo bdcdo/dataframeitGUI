@@ -11,17 +11,23 @@ import {
   resolveSubfieldRequired,
   resolveSubfieldRule,
   resolveTarget,
+  stripLikePython,
 } from "@/lib/pydantic-field";
 
 // ---------- Geração de código Pydantic (pure, client-safe) ----------
 
+// O NUL é o único controle que o Python não aceita cru dentro de um literal
+// ("source code string cannot contain null bytes"); os demais, inclusive
+// `\x1c`–`\x1f` e `\x85`, compilam e voltam iguais. Escapar só ele deixa o
+// texto — e o `pydantic_hash` — byte-idêntico para quem não o usa (#525).
 function escapeString(s: string): string {
   return s
     .replace(/\\/g, "\\\\")
     .replace(/"/g, '\\"')
     .replace(/\n/g, "\\n")
     .replace(/\r/g, "\\r")
-    .replace(/\t/g, "\\t");
+    .replace(/\t/g, "\\t")
+    .replace(/\0/g, "\\x00");
 }
 
 function subfieldClassName(fieldName: string): string {
@@ -132,8 +138,9 @@ function fieldExtra(field: PydanticField): string {
 // `fieldExtra` só para manter a complexidade dele sob o limiar do fallow.
 function trailingExtras(field: PydanticField): string[] {
   const extras: string[] = [];
-  if (field.help_text?.trim()) {
-    extras.push(`"help_text": "${escapeString(field.help_text.trim())}"`);
+  const helpText = stripLikePython(field.help_text ?? "");
+  if (helpText) {
+    extras.push(`"help_text": "${escapeString(helpText)}"`);
   }
   // `visible_if`, e não `condition`: a biblioteca dataframeit usa `condition`
   // em `json_schema_extra` com outro sentido e recusa o modelo que a traz. Ver
@@ -141,10 +148,9 @@ function trailingExtras(field: PydanticField): string[] {
   if (field.condition) {
     extras.push(`"visible_if": ${conditionToPython(field.condition)}`);
   }
-  if (field.justification_prompt?.trim()) {
-    extras.push(
-      `"justification_prompt": "${escapeString(field.justification_prompt.trim())}"`,
-    );
+  const justificationPrompt = stripLikePython(field.justification_prompt ?? "");
+  if (justificationPrompt) {
+    extras.push(`"justification_prompt": "${escapeString(justificationPrompt)}"`);
   }
   // Por último e só quando existe, pelo mesmo motivo de `required`: o texto do
   // código fica byte-idêntico para campo sem revisão. Sem a chave aqui,
@@ -228,8 +234,9 @@ export function generatePydanticCode(
         .join(", ");
       desc += `. Caso não seja possível informar a data, usar um dos seguintes valores: ${sentinelList}`;
     }
-    if (field.help_text?.trim()) {
-      desc += `. Instrucoes: ${escapeString(field.help_text.trim())}`;
+    const helpText = stripLikePython(field.help_text ?? "");
+    if (helpText) {
+      desc += `. Instrucoes: ${escapeString(helpText)}`;
     }
     const extra = fieldExtra(field);
     // Optional[...] sem default=None continua required no Pydantic v2; o
