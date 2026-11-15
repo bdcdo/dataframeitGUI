@@ -225,3 +225,46 @@ describe("FieldChangeDiff — nome no cabeçalho", () => {
     expect(screen.getAllByText("velho").length).toBeGreaterThan(0);
   });
 });
+
+// O snapshot de campo adicionado ou removido omitia `target` e `required`
+// quando o payload não trazia a chave, que é justamente o default ("Todos",
+// obrigatório). O mesmo campo aparecia com ou sem as linhas conforme o default
+// estivesse explícito ou não.
+describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
+  const rowText = (label: string) =>
+    screen.getByText(`${label}:`).parentElement!.textContent;
+
+  it("campo sem `target` nem `required` mostra os defaults", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({ afterValue: { name: "q1", type: "text", description: "d" } })}
+      />,
+    );
+    expect(rowText("alvo")).toBe("alvo:Todos");
+    expect(rowText("obrigatório")).toBe("obrigatório:Sim");
+  });
+
+  it("campo com os defaults explícitos mostra o mesmo", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          beforeValue: { name: "q1", type: "text", description: "d", target: "all", required: true },
+        })}
+      />,
+    );
+    expect(rowText("alvo")).toBe("alvo:Todos");
+    expect(rowText("obrigatório")).toBe("obrigatório:Sim");
+  });
+
+  it("valores não-default continuam aparecendo", () => {
+    render(
+      <FieldChangeDiff
+        entry={entry({
+          beforeValue: { name: "q1", type: "text", description: "d", target: "human_only", required: false },
+        })}
+      />,
+    );
+    expect(rowText("alvo")).toBe("alvo:Só humano");
+    expect(rowText("obrigatório")).toBe("obrigatório:Não");
+  });
+});

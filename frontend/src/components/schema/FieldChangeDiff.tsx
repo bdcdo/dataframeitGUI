@@ -17,7 +17,12 @@ import {
   propertyLabel,
 } from "@/lib/schema-change-format";
 import { isProjectScopedLogEntry } from "@/lib/schema-utils";
-import { resolveSubfieldRequired } from "@/lib/pydantic-field";
+import {
+  resolveRequired,
+  resolveSubfieldRequired,
+  resolveTarget,
+  type PydanticFieldTarget,
+} from "@/lib/pydantic-field";
 import type { SchemaChangeEntry, FieldCondition, SubfieldDef } from "@/lib/types";
 
 interface FieldChangeDiffProps {
@@ -515,9 +520,17 @@ function FieldSnapshot({
   if (data.description)
     rows.push({ label: "descrição", value: String(data.description) });
   if (data.type) rows.push({ label: "tipo", value: formatType(data.type) });
-  if (data.target) rows.push({ label: "alvo", value: formatTarget(data.target) });
-  if (typeof data.required === "boolean")
-    rows.push({ label: "obrigatório", value: yesNo(data.required) });
+  // Alvo e obrigatoriedade têm default implícito: ausente no payload é "all" e
+  // "obrigatório", e não "sem valor". Pelo resolvedor, como no diff de
+  // propriedades, para o campo legado mostrar o mesmo que o explícito.
+  rows.push({
+    label: "alvo",
+    value: formatTarget(resolveTarget(data.target as PydanticFieldTarget | null | undefined)),
+  });
+  rows.push({
+    label: "obrigatório",
+    value: yesNo(resolveRequired(data.required as boolean | null | undefined)),
+  });
   if (data.help_text)
     rows.push({ label: "instruções", value: String(data.help_text) });
   if (Array.isArray(data.options) && (data.options as string[]).length > 0)
@@ -535,8 +548,6 @@ function FieldSnapshot({
       label: "prompt de justificativa",
       value: String(data.justification_prompt),
     });
-
-  if (rows.length === 0) return null;
 
   return (
     <div className={cn("space-y-0.5 rounded border px-2 py-1.5", tone)}>
