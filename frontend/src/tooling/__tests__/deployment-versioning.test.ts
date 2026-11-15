@@ -48,14 +48,14 @@ describe("versionamento do build do frontend", () => {
   // justamente no momento de incidente em que o fallback e usado (#549).
   it("o deploy manual do README entrega o SHA e a chave ao build", () => {
     const fallback = readme.match(
-      /^fly deploy -c fly\.toml -a gui-analise-sistematica-frontend(?:.*\\\n)*.*/m,
+      /^fly deploy -c fly\.toml .*-a gui-analise-sistematica-frontend(?:.*\\\n)*.*/m,
     )?.[0];
     expect(fallback).toBeDefined();
     expect(fallback).toContain(
       '--build-arg NEXT_DEPLOYMENT_ID="$(git rev-parse HEAD)"',
     );
     expect(fallback).toContain(
-      '--build-secret NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="$NEXT_SERVER_ACTIONS_ENCRYPTION_KEY"',
+      '--build-secret NEXT_SERVER_ACTIONS_ENCRYPTION_KEY="${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY:?',
     );
   });
 
