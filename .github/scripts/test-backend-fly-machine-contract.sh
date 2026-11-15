@@ -142,10 +142,11 @@ ruby -ryaml -e '
 ' "$workflow"
 
 # Comportamento da espera: o `run` do passo é extraído do YAML e executado com
-# curl e sleep falsos e o `date` real, na mesma invocação que o Actions usa para
+# curl, sleep e date falsos, na mesma invocação que o Actions usa para
 # `shell: bash`. CURL_RESPONSES é uma linha por chamada: "FAIL" faz o curl sair
 # 22 (a forma do 502 com -f); qualquer outra linha, inclusive vazia, sai no
-# stdout com status 0.
+# stdout com status 0. O relógio é um arquivo: `date +%s` o lê e cada sleep o
+# avança pelos segundos pedidos, para que o prazo de 4 h vença sem esperar.
 wait_script="$tmp_dir/wait-jobs.sh"
 ruby -ryaml -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
@@ -168,13 +169,20 @@ EOF
 cat >"$wait_bin/sleep" <<'EOF'
 #!/usr/bin/env bash
 echo "$1" >>"$WAIT_LOG.sleep"
+echo "$(($(<"$WAIT_LOG.clock") + $1))" >"$WAIT_LOG.clock"
 EOF
-chmod +x "$wait_bin/curl" "$wait_bin/sleep"
+cat >"$wait_bin/date" <<'EOF'
+#!/usr/bin/env bash
+[[ "$*" == "+%s" ]] || { echo "date inesperado: $*" >&2; exit 64; }
+echo "$(<"$WAIT_LOG.clock")"
+EOF
+chmod +x "$wait_bin/curl" "$wait_bin/sleep" "$wait_bin/date"
 
 run_wait() {
   printf '%s\n' "$@" >"$tmp_dir/curl-responses"
   rm -f "$tmp_dir/wait.curl" "$tmp_dir/wait.sleep"
   touch "$tmp_dir/wait.sleep"
+  echo 1700000000 >"$tmp_dir/wait.clock"
   if ! wait_output="$(env "PATH=$wait_bin:$PATH" WAIT_LOG="$tmp_dir/wait" CURL_RESPONSES="$tmp_dir/curl-responses" \
     timeout 20 bash --noprofile --norc -eo pipefail "$wait_script" 2>&1)"; then
     printf 'a espera falhou ou estourou o tempo:\n%s\n' "$wait_output" >&2
@@ -211,6 +219,14 @@ assert_wait "API sem resposta" "10 10"
 # Um 502 transitório não encerra a espera com run ativa.
 run_wait FAIL '{"status":"ok","active_jobs":1}' '{"status":"ok","active_jobs":0}'
 assert_wait "Nenhuma run em curso." "10 60"
+# Run que não termina: cada volta anda 60 s no relógio, e a leitura que
+# completa 4 h faz o passo sair 0 para o deploy seguir. São 240 voltas e 241
+# leituras; sem a checagem do prazo, a leitura seguinte vem vazia e a espera
+# sairia por "API sem resposta", com outra mensagem e mais sleeps.
+endless_run=()
+for _ in $(seq 241); do endless_run+=('{"status":"ok","active_jobs":1}'); done
+run_wait "${endless_run[@]}"
+assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" "$(seq 240 | sed 's/.*/60/' | paste -sd' ')"
 
 # Mesma comparação por linha inteira, sem comentários, do contrato do frontend:
 # o arquivo cita em prosa formas que estas asserções rejeitam, e um grep de
