@@ -354,6 +354,31 @@ describe("mapProjectComments", () => {
     expect(exclusionComments[0].exclusionStatus).toBe("rejected");
     expect(exclusionComments[0].exclusionRejectedReason).toBe("motivo");
   });
+
+  // #680: a ambiguidade saía com o mesmo veredito das anotações e não dava
+  // para isolá-la no filtro de tipo.
+  it("dá a kind='ambiguity' veredito próprio, distinto da anotação", () => {
+    const ambiguityRow: ProjectCommentRow = {
+      ...baseRow,
+      id: "c5",
+      kind: "ambiguity",
+      body: "Campo marcado como ambíguo na revisão (aba Comparar).",
+    };
+
+    const { annotationComments } = mapProjectComments(
+      { exclusionRows: [], noteRows: [baseRow, ambiguityRow] },
+      docMap,
+      new Map(),
+      fieldMap,
+    );
+
+    expect(annotationComments.map((c) => [c.id, c.verdict])).toEqual([
+      ["anotacao-c1", "anotacao"],
+      ["anotacao-c5", "ambiguidade"],
+    ]);
+    // Mesma tabela das anotações: resolve/reabre pelo mesmo caminho.
+    expect(annotationComments[1].source).toBe("anotacao");
+  });
 });
 
 describe("buildOrderedComments", () => {

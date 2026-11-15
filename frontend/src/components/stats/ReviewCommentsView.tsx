@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { PanelLeftClose } from "lucide-react";
 import { CommentCard, type ReviewComment } from "./CommentCard";
+import { commentFilterType } from "./comment-card-utils";
 import { CommentsSplitView } from "./CommentsSplitView";
 import { EditFieldDialog, type PendingSuggestion } from "./EditFieldDialog";
 import { SuggestFieldDialog } from "./SuggestFieldDialog";
@@ -49,29 +50,6 @@ interface ReviewCommentsViewProps {
 // modulo: estavel entre renders, entao nao precisa entrar nas deps do useMemo.
 const splitSources = new Set(["review", "dificuldade"]);
 
-function verdictType(
-  verdict: string,
-):
-  | "answer"
-  | "ambiguo"
-  | "pular"
-  | "nota"
-  | "sugestao"
-  | "dificuldade"
-  | "anotacao"
-  | "duvida"
-  | "exclusao" {
-  if (verdict === "nota") return "nota";
-  if (verdict === "anotacao") return "anotacao";
-  if (verdict === "dificuldade") return "dificuldade";
-  if (verdict === "sugestao") return "sugestao";
-  if (verdict === "exclusao") return "exclusao";
-  if (verdict === "duvida") return "duvida";
-  if (verdict === "ambiguo") return "ambiguo";
-  if (verdict === "pular") return "pular";
-  return "answer";
-}
-
 // Agrupa os filtros (campo, status, tipo, busca) e os estados de dialog/split
 // view desta tela, junto dos derivados que dependem só deles (lista filtrada e
 // contagem de documentos da split view). Extrair para hook mantém o componente
@@ -92,7 +70,7 @@ function useReviewCommentsFilters(comments: ReviewComment[]) {
       if (fieldFilter !== "all" && c.fieldName !== fieldFilter) return false;
       if (statusFilter === "open" && c.resolvedAt) return false;
       if (statusFilter === "resolved" && !c.resolvedAt) return false;
-      if (verdictFilter !== "all" && verdictType(c.verdict) !== verdictFilter)
+      if (verdictFilter !== "all" && commentFilterType(c.verdict) !== verdictFilter)
         return false;
       if (
         searchQuery &&
@@ -288,19 +266,20 @@ export function ReviewCommentsView({
           </SelectContent>
         </Select>
         <Select value={verdictFilter} onValueChange={setVerdictFilter}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-44" aria-label="Filtrar por tipo">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos os tipos</SelectItem>
             <SelectItem value="answer">Resposta escolhida</SelectItem>
-            <SelectItem value="ambiguo">Ambíguo</SelectItem>
+            <SelectItem value="ambiguo">Veredito ambíguo</SelectItem>
             <SelectItem value="pular">Pular</SelectItem>
             <SelectItem value="nota">Notas</SelectItem>
             <SelectItem value="sugestao">Sugestões</SelectItem>
             <SelectItem value="dificuldade">Dificuldade LLM</SelectItem>
             <SelectItem value="duvida">Dúvidas do gabarito</SelectItem>
             <SelectItem value="anotacao">Anotações</SelectItem>
+            <SelectItem value="ambiguidade">Campos ambíguos</SelectItem>
             <SelectItem value="exclusao">Sugestões de exclusão</SelectItem>
           </SelectContent>
         </Select>

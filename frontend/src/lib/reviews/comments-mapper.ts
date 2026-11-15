@@ -272,6 +272,12 @@ export function mapDuvidaComments(
 // exclusao. Para sugestoes aprovadas, o doc esta excluido — o titulo vem de
 // excludedDocTitles (buscado a parte pelo caller, ja que documents exclui
 // registros com excluded_at != null do docMap principal).
+//
+// Ambiguidade (kind='ambiguity') e o comentario que o veredito "Ambiguo" da aba
+// Comparar cria para o campo (`syncAmbiguityComment` em actions/reviews.ts).
+// Mora na mesma tabela das anotacoes e resolve/reabre pelo mesmo caminho (dai
+// `source: "anotacao"`), mas leva veredito proprio para ter rotulo e filtro
+// proprios na aba, em vez de se perder entre as notas (#680).
 export function mapProjectComments(
   rows: { exclusionRows: ProjectCommentRow[]; noteRows: ProjectCommentRow[] },
   docMap: Map<string, string>,
@@ -293,7 +299,7 @@ export function mapProjectComments(
     fieldDescription: c.field_name
       ? fieldMap.get(c.field_name)?.description || c.field_name
       : "Anotação livre",
-    verdict: "anotacao",
+    verdict: c.kind === "ambiguity" ? "ambiguidade" : "anotacao",
     comment: c.body,
     reviewerName: nameFromEmail(c.profiles?.email),
     resolvedAt: c.resolved_at,

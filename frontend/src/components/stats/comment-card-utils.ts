@@ -63,9 +63,42 @@ export interface ReviewComment {
   exclusionRejectedReason?: string | null;
 }
 
+/**
+ * Tipo do comentário para o seletor "tipo" da aba Comentários. Dois tipos com
+ * nome parecido e conteúdo distinto (#680): `ambiguo` casa o comentário que o
+ * revisor escreveu num veredito "Ambíguo" (`reviews.verdict`), e
+ * `ambiguidade` casa o comentário de discussão que esse veredito cria para o
+ * campo (`project_comments.kind = 'ambiguity'`).
+ */
+export type CommentFilterType =
+  | "answer"
+  | "ambiguo"
+  | "ambiguidade"
+  | "pular"
+  | "nota"
+  | "sugestao"
+  | "dificuldade"
+  | "anotacao"
+  | "duvida"
+  | "exclusao";
+
+export function commentFilterType(verdict: string): CommentFilterType {
+  if (verdict === "nota") return "nota";
+  if (verdict === "anotacao") return "anotacao";
+  if (verdict === "ambiguidade") return "ambiguidade";
+  if (verdict === "dificuldade") return "dificuldade";
+  if (verdict === "sugestao") return "sugestao";
+  if (verdict === "exclusao") return "exclusao";
+  if (verdict === "duvida") return "duvida";
+  if (verdict === "ambiguo") return "ambiguo";
+  if (verdict === "pular") return "pular";
+  return "answer";
+}
+
 export function formatVerdictLabel(verdict: string): string {
   if (verdict === "nota") return "Nota do pesquisador";
   if (verdict === "anotacao") return "Anotação";
+  if (verdict === "ambiguidade") return "Campo ambíguo";
   if (verdict === "dificuldade") return "Dificuldade do LLM";
   if (verdict === "sugestao") return "Sugestão";
   if (verdict === "exclusao") return "Sugestão de exclusão";
@@ -81,6 +114,7 @@ export function verdictVariant(
 ): "default" | "secondary" | "destructive" | "outline" {
   if (verdict === "nota") return "secondary";
   if (verdict === "anotacao") return "secondary";
+  if (verdict === "ambiguidade") return "secondary";
   if (verdict === "dificuldade") return "secondary";
   if (verdict === "sugestao") return "outline";
   if (verdict === "exclusao") return "destructive";
