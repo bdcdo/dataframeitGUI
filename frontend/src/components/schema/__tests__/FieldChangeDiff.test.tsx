@@ -154,6 +154,11 @@ describe("FieldChangeDiff — obrigatoriedade de subcampo", () => {
 });
 
 // Corpo de uma propriedade: o rótulo (caixa alta) e o par antes → depois.
+// Linha do snapshot de campo adicionado ou removido, pelo rótulo do diff.
+function rowText(property: Parameters<typeof propertyLabel>[0]) {
+  return screen.getByText(`${propertyLabel(property)}:`).parentElement!.textContent;
+}
+
 function propertySection(property: Parameters<typeof propertyLabel>[0]): string {
   const label = screen
     .getAllByText(propertyLabel(property))
@@ -231,8 +236,6 @@ describe("FieldChangeDiff — nome no cabeçalho", () => {
 // obrigatório). O mesmo campo aparecia com ou sem as linhas conforme o default
 // estivesse explícito ou não.
 describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
-  const rowText = (label: string) =>
-    screen.getByText(`${label}:`).parentElement!.textContent;
 
   it.each([
     ["sem `target` nem `required`", {}],
@@ -243,8 +246,8 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
         entry={entry({ afterValue: { name: "q1", type: "text", description: "d", ...extra } })}
       />,
     );
-    expect(rowText("alvo")).toBe("alvo:Todos");
-    expect(rowText("obrigatoriedade")).toBe("obrigatoriedade:Sim");
+    expect(rowText("target")).toBe("alvo:Todos");
+    expect(rowText("required")).toBe("obrigatoriedade:Sim");
   });
 
   it("valores não-default continuam aparecendo", () => {
@@ -255,8 +258,8 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
         })}
       />,
     );
-    expect(rowText("alvo")).toBe("alvo:Só humano");
-    expect(rowText("obrigatoriedade")).toBe("obrigatoriedade:Não");
+    expect(rowText("target")).toBe("alvo:Só humano");
+    expect(rowText("required")).toBe("obrigatoriedade:Não");
     // O diff abaixo do snapshot não inventa o default do lado removido.
     expect(screen.queryByText("Todos")).toBeNull();
     expect(screen.queryByText("Sim")).toBeNull();
@@ -268,8 +271,6 @@ describe("FieldChangeDiff — snapshot de campo adicionado ou removido", () => {
 // eram o default. E rotulava `required` como "obrigatório", enquanto o diff
 // do mesmo campo dizia "obrigatoriedade".
 describe("FieldChangeDiff — snapshot completo e com os rótulos do diff", () => {
-  const rowText = (property: Parameters<typeof propertyLabel>[0]) =>
-    screen.getByText(`${propertyLabel(property)}:`).parentElement!.textContent;
   const noRow = (property: Parameters<typeof propertyLabel>[0]) =>
     expect(screen.queryByText(`${propertyLabel(property)}:`)).toBeNull();
 

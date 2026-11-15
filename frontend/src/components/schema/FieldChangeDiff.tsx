@@ -23,8 +23,7 @@ import {
   resolveSubfieldRequired,
   resolveSubfieldRule,
   resolveTarget,
-  type PydanticFieldTarget,
-  type PydanticSubfieldRule,
+  type PydanticField,
 } from "@/lib/pydantic-field";
 import type { SchemaChangeEntry, FieldCondition, SubfieldDef } from "@/lib/types";
 
@@ -41,6 +40,7 @@ const SUBFIELD_RULE_LABELS: Record<string, string> = {
 // `null` é o lado vazio de um campo adicionado ou removido (`diffPydanticField`),
 // e não "Não": mostra "—", como `formatType` e `formatTarget`.
 const yesNo = (v: unknown) => (v == null ? "—" : v ? "Sim" : "Não");
+const formatSubfieldRule = (v: unknown) => SUBFIELD_RULE_LABELS[v as string] ?? "—";
 
 // Propriedades de valor curto e enumerável: o diff é um par de pílulas
 // antes → depois, e só o formatador muda.
@@ -51,7 +51,7 @@ const PILL_FORMATTERS: Partial<
   target: formatTarget,
   required: yesNo,
   allow_other: yesNo,
-  subfield_rule: (v) => SUBFIELD_RULE_LABELS[v as string] ?? "—",
+  subfield_rule: formatSubfieldRule,
 };
 
 // Entradas de escopo de projeto — `(ordem)` e `(projeto)` — não descrevem o
@@ -509,6 +509,46 @@ function SubfieldsDiff({
   );
 }
 
+type SnapshotField = Partial<PydanticField>;
+const isChoice = (f: SnapshotField) => f.type === "single" || f.type === "multi";
+// Payload legado não passou pelo Zod: lista só é lista se de fato for array.
+const listOf = <T,>(v: T[] | null | undefined): T[] => (Array.isArray(v) ? v : []);
+
+// Uma entrada por propriedade do diff, na ordem das linhas: propriedade nova em
+// `FieldPropertyDiff` sem entrada aqui não compila — foi assim que o snapshot
+// ficou sem `allow_other`, `subfields` e `subfield_rule`. `null` na entrada é
+// "sem linha" (o nome já está no cabeçalho); `null` no retorno, "linha omitida
+// neste campo". Rótulo de `propertyLabel` e formatadores do diff abaixo do
+// snapshot: a mesma propriedade não ganha dois nomes nem duas grafias. Alvo,
+// obrigatoriedade, "permite outro" e regra de subcampos têm default implícito
+// (ausente no payload é um valor, e não "sem valor"): pelo resolvedor, como no
+// diff de propriedades, para o campo legado mostrar o mesmo que o explícito.
+const SNAPSHOT_ROWS: Record<
+  FieldPropertyDiff["property"],
+  ((f: SnapshotField) => string | null) | null
+> = {
+  name: null,
+  question_revision: null,
+  description: (f) => f.description || null,
+  type: (f) => (f.type ? formatType(f.type) : null),
+  target: (f) => formatTarget(resolveTarget(f.target)),
+  required: (f) => yesNo(resolveRequired(f.required)),
+  help_text: (f) => f.help_text || null,
+  options: (f) => listOf(f.options).join(", ") || null,
+  // "Outro" é controle dos campos de escolha (o editor só o mostra neles), e
+  // num texto livre a linha "Não" seria ruído. Ligado, aparece em qualquer
+  // tipo, como no diff, que não olha o tipo.
+  allow_other: (f) => {
+    const allowOther = resolveAllowOther(f.allow_other);
+    return allowOther || isChoice(f) ? yesNo(allowOther) : null;
+  },
+  subfields: (f) => listOf(f.subfields).map(subfieldText).join(", ") || null,
+  subfield_rule: (f) =>
+    listOf(f.subfields).length > 0 ? formatSubfieldRule(resolveSubfieldRule(f.subfield_rule)) : null,
+  condition: (f) => (f.condition ? formatCondition(f.condition) : null),
+  justification_prompt: (f) => f.justification_prompt || null,
+};
+
 function FieldSnapshot({
   data,
   variant,
@@ -521,41 +561,15 @@ function FieldSnapshot({
       ? "border-green-500/30 bg-green-500/5"
       : "border-red-500/30 bg-red-500/5";
 
-  // Rótulos de `propertyLabel` e formatadores de `PILL_FORMATTERS`, os mesmos
-  // do diff abaixo do snapshot: a mesma propriedade não ganha dois nomes nem
-  // duas grafias na mesma tela.
-  const rows: { label: string; value: string }[] = [];
-  const row = (property: FieldPropertyDiff["property"], value: string) =>
-    rows.push({ label: propertyLabel(property), value });
-  const pillRow = (property: FieldPropertyDiff["property"], value: unknown) =>
-    row(property, PILL_FORMATTERS[property]?.(value) ?? String(value));
-  if (data.description) row("description", String(data.description));
-  if (data.type) pillRow("type", data.type);
-  // Alvo, obrigatoriedade, "permite outro" e regra de subcampos têm default
-  // implícito: ausente no payload é um valor, e não "sem valor". Pelo
-  // resolvedor, como no diff de propriedades, para o campo legado mostrar o
-  // mesmo que o explícito.
-  pillRow("target", resolveTarget(data.target as PydanticFieldTarget | null | undefined));
-  pillRow("required", resolveRequired(data.required as boolean | null | undefined));
-  if (data.help_text) row("help_text", String(data.help_text));
-  if (Array.isArray(data.options) && (data.options as string[]).length > 0)
-    row("options", (data.options as string[]).join(", "));
-  // "Outro" é controle dos campos de escolha (o editor só o mostra neles), e
-  // num texto livre a linha "Não" seria ruído. Ligado, aparece em qualquer
-  // tipo, como no diff, que não olha o tipo.
-  const allowOther = resolveAllowOther(data.allow_other as boolean | null | undefined);
-  if (allowOther || data.type === "single" || data.type === "multi")
-    pillRow("allow_other", allowOther);
-  const subfields = Array.isArray(data.subfields) ? (data.subfields as SubfieldDef[]) : [];
-  if (subfields.length > 0) {
-    row("subfields", subfields.map(subfieldText).join(", "));
-    pillRow(
-      "subfield_rule",
-      resolveSubfieldRule(data.subfield_rule as PydanticSubfieldRule | null | undefined),
-    );
-  }
-  if (data.condition) row("condition", formatCondition(data.condition as FieldCondition));
-  if (data.justification_prompt) row("justification_prompt", String(data.justification_prompt));
+  // O payload gravado é o campo serializado: as chaves que faltam são o
+  // default implícito, que os resolvedores cobrem.
+  const field = data as SnapshotField;
+  const rows = Object.entries(SNAPSHOT_ROWS).flatMap(([property, format]) => {
+    const value = format?.(field);
+    return value == null
+      ? []
+      : [{ label: propertyLabel(property as FieldPropertyDiff["property"]), value }];
+  });
 
   return (
     <div className={cn("space-y-0.5 rounded border px-2 py-1.5", tone)}>
