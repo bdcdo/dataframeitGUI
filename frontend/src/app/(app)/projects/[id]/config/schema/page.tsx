@@ -3,6 +3,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
 import { SchemaEditorSession } from "@/components/schema/SchemaEditor";
 import type { PydanticField } from "@/lib/types";
+import { deriveProjectVersionContext, formatVersion } from "@/lib/compare-version";
 
 export default async function SchemaPage({
   params,
@@ -24,7 +25,7 @@ export default async function SchemaPage({
     .eq("id", id)
     .single();
 
-  const version = `${project?.schema_version_major ?? 0}.${project?.schema_version_minor ?? 1}.${project?.schema_version_patch ?? 0}`;
+  const version = formatVersion(deriveProjectVersionContext(project ?? {}).version);
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
 

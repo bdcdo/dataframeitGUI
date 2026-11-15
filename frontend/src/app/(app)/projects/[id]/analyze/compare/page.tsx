@@ -290,7 +290,7 @@ export default async function ComparePageRoute({
         suggestionCountsByField={suggestionCountsByField}
         availableVersions={availableVersions}
         latestMajorLabel={latestMajorLabel}
-        currentProjectVersion={`${projectVersion.major}.${projectVersion.minor}.${projectVersion.patch}`}
+        currentProjectVersion={formatVersion(projectVersion)}
         equivalencesByField={serializedEquivalences}
         currentUserId={ownMemberUserId}
         canManageAnyPair={isCoordinator}

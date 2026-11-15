@@ -28,6 +28,7 @@ import type { PydanticField } from "@/lib/types";
 import {
   pydanticFieldNameIssue,
   RESERVED_NAME_REASON,
+  resolveAllowOther,
   resolveRequired,
   resolveTarget,
   stripLikePython,
@@ -211,7 +212,7 @@ function FieldAnswerEditors({
           options={options}
           onChange={(options) => updateField({ options })}
           onBeforeRemoveOption={onBeforeRemoveOption}
-          allowOther={field.allow_other === true}
+          allowOther={resolveAllowOther(field.allow_other)}
           onAllowOtherChange={(checked) =>
             updateField({ allow_other: checked ? true : undefined })
           }

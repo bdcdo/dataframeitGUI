@@ -14,6 +14,7 @@ import {
   ORDER_LOG_FIELD_NAME,
   planSchemaPersistence,
   PROJECT_LOG_FIELD_NAME,
+  serializeSchemaFields,
   stableStringify,
 } from "@/lib/schema-utils";
 import { pydanticFieldNameIssue } from "@/lib/pydantic-field";
@@ -426,6 +427,23 @@ describe("snapshotOf", () => {
       allow_other: false,
     });
     expect(snapshotOf(implicito)).toEqual(snapshotOf(explicito));
+  });
+
+  // O dirty do editor compara `serializeSchemaFields` (snapshotOf) e o save
+  // decide pelo `diffFields`. Com `""` persistido e o editor sem a chave, o
+  // primeiro acusava mudança e o segundo não via nenhuma: o editor ficava sujo
+  // para sempre e o save respondia sucesso sem gravar (#503).
+  it("texto opcional vazio e ausente são o mesmo campo para o dirty e para o save", () => {
+    const persistido = baseField({
+      id: "00000000-0000-4000-8000-000000000503",
+      name: "q1",
+      options: ["A"],
+      help_text: "",
+      justification_prompt: "",
+    });
+    const editado = baseField({ id: persistido.id, name: "q1", options: ["A"] });
+    expect(serializeSchemaFields([persistido])).toBe(serializeSchemaFields([editado]));
+    expect(classifyChange([persistido], [editado])).toBeNull();
   });
 });
 

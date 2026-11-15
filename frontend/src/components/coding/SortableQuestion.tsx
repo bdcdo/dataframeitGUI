@@ -5,6 +5,7 @@ import { Check, GripVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FieldHeaderLabel } from "@/components/shared/FieldHeaderLabel";
 import type { PydanticField } from "@/lib/types";
+import { resolveRequired } from "@/lib/pydantic-field";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
@@ -80,7 +81,7 @@ export function SortableQuestion({
             className="mb-1.5"
           >
             {field.description}
-            {field.required === false && (
+            {!resolveRequired(field.required) && (
               <span className="text-xs text-muted-foreground font-normal">(opcional)</span>
             )}
             {isAnswered && <Check className="size-3.5 text-brand shrink-0" />}

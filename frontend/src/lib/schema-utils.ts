@@ -7,6 +7,7 @@ import type {
 import {
   normalizeSubfields,
   resolveAllowOther,
+  resolveOptionalText,
   resolveRequired,
   resolveSubfieldRequired,
   resolveSubfieldRule,
@@ -116,7 +117,7 @@ function fieldExtra(field: PydanticField): string {
       extras.push(`"options": [${opts}]`);
     }
   }
-  if ((field.type === "single" || field.type === "multi") && field.allow_other) {
+  if ((field.type === "single" || field.type === "multi") && resolveAllowOther(field.allow_other)) {
     extras.push(`"allowOther": True`);
   }
   // A guarda de subcampos fica aqui, e não no resolvedor: quem decide se a chave
@@ -603,7 +604,7 @@ export function helpTextChanged(
   before: Pick<PydanticField, "help_text">,
   after: Pick<PydanticField, "help_text">,
 ): boolean {
-  return (before.help_text || "") !== (after.help_text || "");
+  return resolveOptionalText(before.help_text) !== resolveOptionalText(after.help_text);
 }
 
 export type ChangeType = "major" | "minor" | "patch";
@@ -671,7 +672,7 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     name: field.name,
     type: field.type,
     description: field.description,
-    help_text: field.help_text ?? null,
+    help_text: resolveOptionalText(field.help_text),
     options: field.options ?? null,
     target: resolveTarget(field.target),
     required: resolveRequired(field.required),
@@ -679,7 +680,7 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     subfield_rule: resolveSubfieldRule(field.subfield_rule),
     allow_other: resolveAllowOther(field.allow_other),
     condition: field.condition ?? null,
-    justification_prompt: field.justification_prompt ?? null,
+    justification_prompt: resolveOptionalText(field.justification_prompt),
     question_revision: field.question_revision ?? null,
   };
 }
@@ -825,8 +826,8 @@ export function diffFields(
     }
     if (helpTextChanged(old, f)) {
       diffs.push("instruções");
-      before.help_text = old.help_text || null;
-      after.help_text = f.help_text || null;
+      before.help_text = resolveOptionalText(old.help_text);
+      after.help_text = resolveOptionalText(f.help_text);
     }
     const oldOpts = JSON.stringify(old.options ?? null);
     const newOpts = JSON.stringify(f.options ?? null);
@@ -876,10 +877,12 @@ export function diffFields(
       before.condition = old.condition ?? null;
       after.condition = f.condition ?? null;
     }
-    if ((old.justification_prompt || "") !== (f.justification_prompt || "")) {
+    const oldPrompt = resolveOptionalText(old.justification_prompt);
+    const newPrompt = resolveOptionalText(f.justification_prompt);
+    if (oldPrompt !== newPrompt) {
       diffs.push("prompt de justificativa");
-      before.justification_prompt = old.justification_prompt || null;
-      after.justification_prompt = f.justification_prompt || null;
+      before.justification_prompt = oldPrompt;
+      after.justification_prompt = newPrompt;
     }
     // Registrado porque entra no hash: o backfill e a invariante de
     // `answer_field_hashes` reconstroem o hash de cada versão a partir de

@@ -2,6 +2,7 @@ import { stableStringify } from "./schema-utils";
 import {
   normalizeSubfields,
   resolveAllowOther,
+  resolveOptionalText,
   resolveRequired,
   resolveSubfieldRule,
   resolveTarget,
@@ -111,12 +112,10 @@ export function diffPydanticField(
     }
   }
   if (has(before, "help_text") || has(after, "help_text")) {
-    if ((before.help_text ?? null) !== (after.help_text ?? null)) {
-      diffs.push({
-        property: "help_text",
-        before: before.help_text ?? null,
-        after: after.help_text ?? null,
-      });
+    const b = resolveOptionalText(before.help_text as string | null | undefined);
+    const a = resolveOptionalText(after.help_text as string | null | undefined);
+    if (b !== a) {
+      diffs.push({ property: "help_text", before: b, after: a });
     }
   }
   if (has(before, "options") || has(after, "options")) {
@@ -205,15 +204,10 @@ export function diffPydanticField(
     has(before, "justification_prompt") ||
     has(after, "justification_prompt")
   ) {
-    if (
-      (before.justification_prompt ?? null) !==
-      (after.justification_prompt ?? null)
-    ) {
-      diffs.push({
-        property: "justification_prompt",
-        before: before.justification_prompt ?? null,
-        after: after.justification_prompt ?? null,
-      });
+    const b = resolveOptionalText(before.justification_prompt as string | null | undefined);
+    const a = resolveOptionalText(after.justification_prompt as string | null | undefined);
+    if (b !== a) {
+      diffs.push({ property: "justification_prompt", before: b, after: a });
     }
   }
 

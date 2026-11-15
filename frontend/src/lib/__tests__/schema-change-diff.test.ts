@@ -128,6 +128,16 @@ describe("diffPydanticField", () => {
     expect(diffs).toEqual([]);
   });
 
+  // Mesma normalização de `snapshotOf` e `diffFields` (`resolveOptionalText`):
+  // texto vazio e nulo geram o mesmo código, então não são mudança (#503).
+  it("texto vazio e nulo são o mesmo valor em help_text e justification_prompt", () => {
+    const diffs = diffPydanticField(
+      { help_text: "", justification_prompt: "" },
+      { help_text: null, justification_prompt: null },
+    );
+    expect(diffs).toEqual([]);
+  });
+
   it("captura mudança de subfields", () => {
     const diffs = diffPydanticField(
       { subfields: [{ key: "a", label: "A", required: true }] },

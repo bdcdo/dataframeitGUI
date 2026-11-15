@@ -27,6 +27,10 @@ import {
   parseSaveablePydanticFields,
 } from "@/lib/pydantic-field";
 import {
+  deriveProjectVersionContext,
+  formatVersion,
+} from "@/lib/compare-version";
+import {
   buildKwargsForCapabilities,
   getModelCapabilities,
   getModelsForProvider,
@@ -79,22 +83,6 @@ function projectReadFailed(error: ServerError): string {
   });
 }
 
-function projectVersion(project: Partial<SchemaProjectRow>): {
-  major: number;
-  minor: number;
-  patch: number;
-} {
-  return {
-    major: project.schema_version_major ?? 0,
-    minor: project.schema_version_minor ?? 1,
-    patch: project.schema_version_patch ?? 0,
-  };
-}
-
-function versionString(version: { major: number; minor: number; patch: number }): string {
-  return `${version.major}.${version.minor}.${version.patch}`;
-}
-
 function projectSnapshot(
   project: Pick<
     SchemaProjectRow,
@@ -107,7 +95,7 @@ function projectSnapshot(
 ): SchemaSnapshot {
   return {
     fields: project.pydantic_fields,
-    version: versionString(projectVersion(project)),
+    version: formatVersion(deriveProjectVersionContext(project).version),
     revision: project.schema_revision,
   };
 }
@@ -182,7 +170,7 @@ async function loadSchemaSaveContext(
     context: {
       project,
       oldFields: persistedFields,
-      current: projectVersion(project),
+      current: deriveProjectVersionContext(project).version,
     },
   };
 }
@@ -217,7 +205,7 @@ function commitSnapshot(row: SchemaCommitRow): SchemaSnapshot | null {
   return {
     fields,
     revision: row.schema_revision,
-    version: versionString({
+    version: formatVersion({
       major: row.schema_version_major,
       minor: row.schema_version_minor,
       patch: row.schema_version_patch,
@@ -830,7 +818,7 @@ export async function publishMajorVersion(
         "Este projeto ainda não tem um schema salvo para publicar. Salve o schema antes de publicar uma versão MAJOR.",
     };
   }
-  const current = projectVersion(typedProject);
+  const current = deriveProjectVersionContext(typedProject).version;
   const bumped = bumpVersion(current, "major");
   const fields = typedProject.pydantic_fields;
   const { data, error } = await supabase
@@ -845,7 +833,7 @@ export async function publishMajorVersion(
       p_change_type: "major",
       p_log_entries: [{
         field_name: PROJECT_LOG_FIELD_NAME,
-        change_summary: `Nova versão MAJOR publicada: ${versionString(bumped)}`,
+        change_summary: `Nova versão MAJOR publicada: ${formatVersion(bumped)}`,
         before_value: current,
         after_value: bumped,
       }],

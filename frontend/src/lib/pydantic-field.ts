@@ -486,6 +486,13 @@ export function resolveAllowOther(value: boolean | null | undefined): boolean {
   return value ?? false;
 }
 
+// `help_text` e `justification_prompt`: vazio e ausente são o mesmo campo, porque
+// o gerador não emite texto vazio. Normalizar de dois jeitos deixava o editor
+// sujo para sempre com `""` persistido, e o save sem diff não gravava nada (#503).
+export function resolveOptionalText(value: string | null | undefined): string | null {
+  return value || null;
+}
+
 // A quarta, e a que faltava: `_assemble_field_dict` grava `subfield_rule or "all"`
 // sempre que ha subcampos, o `EditFieldDialog` promove `?? "all"` ao salvar, e o
 // gerador omite a chave quando e "all" — tres consumidores concordando que ausente

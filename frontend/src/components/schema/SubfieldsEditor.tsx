@@ -132,7 +132,7 @@ export function SubfieldsEditor({
                 className="flex-1 text-xs h-7"
                 placeholder="Label visível"
               />
-              {subfieldRule !== "at_least_one" && (
+              {resolveSubfieldRule(subfieldRule) === "all" && (
                 <div className="flex items-center gap-1">
                   <Switch
                     checked={resolveSubfieldRequired(sf.required)}

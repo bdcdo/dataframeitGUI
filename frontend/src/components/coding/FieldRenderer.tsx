@@ -37,6 +37,7 @@ import {
   parseDatePartsForUI,
 } from "@/lib/date-parts";
 import {
+  resolveAllowOther,
   resolveSubfieldRequired,
   resolveSubfieldRule,
 } from "@/lib/pydantic-field";
@@ -312,7 +313,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <span className="text-sm">{option}</span>
           </label>
         ))}
-        {field.allow_other && (
+        {resolveAllowOther(field.allow_other) && (
           <div className="space-y-1.5">
             <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1 hover:bg-muted">
               <input
@@ -377,7 +378,7 @@ export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
             <span className="text-sm">{option}</span>
           </label>
         ))}
-        {field.allow_other && (
+        {resolveAllowOther(field.allow_other) && (
           <div className="space-y-1.5">
             <label className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-1 hover:bg-muted">
               <input
