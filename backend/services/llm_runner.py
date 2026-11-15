@@ -15,6 +15,7 @@ import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Any
 
 import pandas as pd
@@ -764,7 +765,18 @@ def _build_prompt(
 _SELECT_PAGE_SIZE = 1000
 
 
-def _select_all(build_query: Callable[[], Any], at_most: int | None = None) -> list:
+# Ids por requisição quando a leitura se restringe a uma lista de ids. O filtro
+# `in` vai inteiro na query string, e uma seleção de milhares de ids estouraria
+# o limite de tamanho de requisição dos proxies na frente do PostgREST (8 KB é
+# comum). 100 UUIDs ocupam cerca de 4 KB.
+_ID_BATCH_SIZE = 100
+
+
+def _select_all(
+    build_query: Callable[[], Any],
+    ids: list[str] | None = None,
+    id_batch_size: int = _ID_BATCH_SIZE,
+) -> list:
     """Todas as linhas de uma leitura, em ordem de `id` e sem o teto do PostgREST.
 
     Sem `.order(...)` o Postgres não garante ordem de retorno, e sem paginação
@@ -780,8 +792,30 @@ def _select_all(build_query: Callable[[], Any], at_most: int | None = None) -> l
     query do zero a cada página porque o builder do postgrest-py é mutável e
     acumula parâmetros.
 
-    `at_most` é o número máximo de linhas que a query pode devolver (o de ids
-    de um filtro `in`). Atingido, a leitura acaba sem pedir a página vazia.
+    Com `ids`, a leitura se restringe a eles, num filtro `in` fatiado em lotes
+    de `id_batch_size`. Os lotes saem dos ids ordenados, então o resultado
+    continua em ordem de `id`. `ids=[]` não lê nada.
+    """
+    if ids is None:
+        return _read_pages(build_query)
+    unique_ids = sorted(set(ids))
+    rows: list = []
+    for start in range(0, len(unique_ids), id_batch_size):
+        batch = unique_ids[start : start + id_batch_size]
+        rows.extend(
+            _read_pages(
+                lambda batch=batch: build_query().in_("id", batch),
+                at_most=len(batch),
+            )
+        )
+    return rows
+
+
+def _read_pages(build_query: Callable[[], Any], at_most: int | None = None) -> list:
+    """O laço de páginas de `_select_all`.
+
+    `at_most` é o máximo de linhas que a query pode devolver (os ids de um
+    lote). Atingido, a leitura acaba sem pedir a página vazia.
     """
     rows: list = []
     while True:
@@ -794,36 +828,6 @@ def _select_all(build_query: Callable[[], Any], at_most: int | None = None) -> l
         rows.extend(page)
         if at_most is not None and len(rows) >= at_most:
             return rows
-
-
-# Ids por requisição quando a leitura se restringe a uma lista de ids. O filtro
-# `in` vai inteiro na query string, e uma seleção de milhares de ids estouraria
-# o limite de tamanho de requisição dos proxies na frente do PostgREST (8 KB é
-# comum). 100 UUIDs ocupam cerca de 4 KB.
-_ID_BATCH_SIZE = 100
-
-
-def _select_all_by_ids(
-    build_query: Callable[[], Any],
-    ids: list[str],
-    batch_size: int = _ID_BATCH_SIZE,
-) -> list:
-    """`_select_all` restrita a `ids`, com o filtro `in` fatiado em lotes.
-
-    Os lotes saem dos ids ordenados, e cada lote volta em ordem de `id`, então
-    o resultado inteiro fica em ordem de `id`, como o de `_select_all`.
-    """
-    unique_ids = sorted(set(ids))
-    rows: list = []
-    for start in range(0, len(unique_ids), batch_size):
-        batch = unique_ids[start : start + batch_size]
-        rows.extend(
-            _select_all(
-                lambda batch=batch: build_query().in_("id", batch),
-                at_most=len(batch),
-            )
-        )
-    return rows
 
 
 def _llm_response_count(candidate: dict) -> int:
@@ -850,8 +854,7 @@ def _choose_document_ids(
             # Semente = job_id, que fica gravado em llm_runs: a amostra de uma
             # run é reproduzível a partir do registro dela, e runs diferentes
             # continuam sorteando amostras diferentes. Depende de `candidates`
-            # vir em ordem de `id`, o que `_select_all` e `_select_all_by_ids`
-            # garantem.
+            # vir em ordem de `id`, o que `_select_all` garante.
             candidates = random.Random(sample_seed).sample(candidates, sample_size)
     return [c["id"] for c in candidates]
 
@@ -989,33 +992,24 @@ def _load_documents_for_run(
             .is_("exclusion_pending_at", "null")
         )
 
-    def read(build_query, ids: list[str] | None) -> list:
-        if ids is None:
-            return _select_all(build_query)
-        return _select_all_by_ids(build_query, ids)
-
-    def full_documents():
-        return in_scope("id, text, title, external_id")
-
+    full_documents = partial(in_scope, "id, text, title, external_id")
     if filter_mode == "all":
-        return read(full_documents, document_ids)
+        return _select_all(full_documents, document_ids)
 
-    counts_responses = filter_mode in ("pending", "max_responses")
-
-    def candidates_query():
-        if not counts_responses:
-            return in_scope("id")
+    candidates_query: Callable[[], Any] = partial(in_scope, "id")
+    if filter_mode in ("pending", "max_responses"):
         # Conta no banco, pelo count embutido do PostgREST, as respostas LLM
         # vigentes de cada documento. Os filtros `responses.*` restringem as
         # linhas contadas, e não os documentos.
-        return (
-            in_scope("id, responses(count)")
-            .eq("responses.project_id", project_id)
-            .eq("responses.respondent_type", "llm")
-            .eq("responses.is_latest", True)
-        )
+        def candidates_query():
+            return (
+                in_scope("id, responses(count)")
+                .eq("responses.project_id", project_id)
+                .eq("responses.respondent_type", "llm")
+                .eq("responses.is_latest", True)
+            )
 
-    candidates = read(candidates_query, document_ids)
+    candidates = _select_all(candidates_query, document_ids)
     chosen_ids = _choose_document_ids(
         candidates,
         filter_mode,
@@ -1024,10 +1018,11 @@ def _load_documents_for_run(
         sample_seed,
     )
     if len(chosen_ids) == len(candidates):
-        # Nada filtrado: uma leitura paginada do escopo custa menos que a
-        # mesma leitura em lotes de ids.
-        return read(full_documents, document_ids)
-    by_id = {d["id"]: d for d in read(full_documents, chosen_ids)}
+        # Nada filtrado: a mesma leitura do modo "all", que pagina o escopo em
+        # vez de pedir os ids em lotes. Um documento criado entre as fases
+        # entra na run por aqui, como entraria numa leitura de fase única.
+        return _select_all(full_documents, document_ids)
+    by_id = {d["id"]: d for d in _select_all(full_documents, chosen_ids)}
     # A ordem é a da escolha: a da amostra sorteada, ou a de `id` nos demais
     # modos.
     return [by_id[i] for i in chosen_ids if i in by_id]

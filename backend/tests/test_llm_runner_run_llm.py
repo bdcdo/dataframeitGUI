@@ -104,9 +104,14 @@ class _FakeQuery:
     Um select de lista devolve só as colunas pedidas, para que um teste veja
     quais colunas a leitura baixa, e entende o count embutido do PostgREST
     (`"id, responses(count)"`): conta as linhas da tabela embutida cuja chave
-    `<tabela no singular>_id` aponta para a linha, filtradas pelos filtros
-    `responses.<coluna>`, que não restringem a tabela de cima.
+    estrangeira (em `_EMBED_FOREIGN_KEYS`) aponta para a linha, filtradas
+    pelos filtros `responses.<coluna>`, que não restringem a tabela de cima.
     """
+
+    # (tabela de cima, tabela embutida) -> coluna da embutida que aponta para
+    # o `id` da de cima. Um par ausente é KeyError: um palpite errado contaria
+    # zero e faria todo documento parecer pendente.
+    _EMBED_FOREIGN_KEYS = {("documents", "responses"): "document_id"}
 
     def __init__(self, data, on_execute=None, max_rows=1000, columns=None, table=None):
         self._data = data
@@ -151,11 +156,11 @@ class _FakeQuery:
         self._single = True
         return self
 
-    def _own_filters(self) -> list[tuple[str, str, Any]]:
-        return [f for f in self._filters if "." not in f[1]]
-
-    def _embedded_filters(self, name: str) -> list[tuple[str, str, Any]]:
-        prefix = f"{name}."
+    def _filters_of(self, embedded: str | None = None) -> list[tuple[str, str, Any]]:
+        """Os filtros da tabela de cima, ou os de uma tabela embutida."""
+        if embedded is None:
+            return [f for f in self._filters if "." not in f[1]]
+        prefix = f"{embedded}."
         return [
             (op, column.removeprefix(prefix), value)
             for op, column, value in self._filters
@@ -170,8 +175,8 @@ class _FakeQuery:
             elif token.endswith("(count)"):
                 assert self._table is not None
                 name = token.removesuffix("(count)")
-                fk = f"{self._table.name.removesuffix('s')}_id"
-                filters = self._embedded_filters(name)
+                fk = self._EMBED_FOREIGN_KEYS[(self._table.name, name)]
+                filters = self._filters_of(name)
                 children = self._table.tables[name].select_data
                 count = sum(
                     1
@@ -179,6 +184,8 @@ class _FakeQuery:
                     if child.get(fk) == row["id"] and self._matches(child, filters)
                 )
                 out[name] = [{"count": count}]
+            elif "(" in token:
+                raise NotImplementedError(f"embed não suportado pelo fake: {token}")
             elif token in row:
                 out[token] = row[token]
         return out
@@ -204,7 +211,7 @@ class _FakeQuery:
         if self._on_execute is not None:
             self._on_execute(list(self._filters))
         if isinstance(self._data, list):
-            own = self._own_filters()
+            own = self._filters_of()
             rows = [r for r in self._data if self._matches(r, own)]
             if self._order is not None:
                 rows.sort(key=lambda r: r[self._order])
@@ -212,7 +219,7 @@ class _FakeQuery:
             if self._columns is not None:
                 rows = [self._project(r) for r in rows]
             if self._table is not None:
-                self._table.reads.append((self._columns, rows))
+                self._table.reads.append((self._columns, list(self._filters), rows))
             if self._single:
                 return SimpleNamespace(data=rows[0] if rows else None)
             return SimpleNamespace(data=rows)
@@ -233,10 +240,10 @@ class _FakeTable:
         self.update_calls: list[dict] = []
         self.name = ""
         # Preenchidos por _FakeSupabase: as tabelas vizinhas, para o count
-        # embutido, e cada leitura feita, como (colunas pedidas, linhas
-        # devolvidas).
+        # embutido, e cada leitura feita, como (colunas pedidas, filtros,
+        # linhas devolvidas).
         self.tables: dict[str, _FakeTable] = {}
-        self.reads: list[tuple[str, list[dict]]] = []
+        self.reads: list[tuple[str, list[tuple[str, str, Any]], list[dict]]] = []
         self.operation_log: list[
             tuple[str, str, dict, list[tuple[str, str, object]]]
         ] = []

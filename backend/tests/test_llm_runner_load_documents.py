@@ -40,13 +40,20 @@ def _supabase(docs: list[dict], responses=None, max_rows: int = 1000):
     return _FakeSupabase(tables)
 
 
-def _load(sb, filter_mode="all", sample_size=None, sample_seed="job-1", ids=None):
+def _load(
+    sb,
+    filter_mode="all",
+    sample_size=None,
+    sample_seed="job-1",
+    ids=None,
+    max_response_count=None,
+):
     return llm_runner._load_documents_for_run(
         sb,
         PROJECT_ID,
         ids,
         filter_mode,
-        None,
+        max_response_count,
         sample_size,
         sample_seed=sample_seed,
     )
@@ -166,9 +173,19 @@ def _texts_read(sb) -> list[str]:
     """Ids dos documentos cujo `text` alguma leitura baixou."""
     return [
         row["id"]
-        for _columns, rows in sb.table("documents").reads
+        for _columns, _filters, rows in sb.table("documents").reads
         for row in rows
         if "text" in row
+    ]
+
+
+def _in_sizes(sb) -> list[int]:
+    """Quantos ids cada requisição a documents levou no filtro `in`."""
+    return [
+        len(values)
+        for _columns, filters, _rows in sb.table("documents").reads
+        for op, _column, values in filters
+        if op == "in"
     ]
 
 
@@ -181,7 +198,7 @@ def test_amostra_baixa_o_texto_so_dos_sorteados():
 
     assert sorted(_texts_read(sb)) == sorted(d["id"] for d in sample)
     assert all(d["text"] for d in sample)
-    candidate_reads = [c for c, _ in sb.table("documents").reads if "text" not in c]
+    candidate_reads = [c for c, _, _ in sb.table("documents").reads if "text" not in c]
     assert candidate_reads and all(c == "id" for c in candidate_reads)
 
 
@@ -233,15 +250,7 @@ def test_max_responses_conta_so_respostas_llm_vigentes_do_projeto():
         _llm_response(5, c, project_id="outro"),
     ]
 
-    chosen = llm_runner._load_documents_for_run(
-        _supabase(docs, responses),
-        PROJECT_ID,
-        None,
-        "max_responses",
-        1,
-        None,
-        sample_seed="job-1",
-    )
+    chosen = _load(_supabase(docs, responses), "max_responses", max_response_count=1)
 
     assert [x["id"] for x in chosen] == [b, c, d]
 
@@ -275,51 +284,35 @@ def test_documento_excluido_entre_as_fases_sai_da_run(monkeypatch):
     assert [d["id"] for d in loaded] == sorted(d["id"] for d in docs)[1:3]
 
 
-def test_selecao_de_ids_vai_em_lotes_no_filtro_in(monkeypatch):
+def test_selecao_de_ids_vai_em_lotes_no_filtro_in():
     # O `in` vai inteiro na URL: uma seleção grande tem de ser fatiada, nos
     # dois modos de leitura (com e sem 2 fases).
     docs = _documents(450)
     wanted = sorted(d["id"] for d in docs)[:430]
-    sizes: list[int] = []
-    original_in = _FakeQuery.in_
+    sb_all, sb_sample = _supabase(docs), _supabase(docs)
 
-    def recording_in(self, column, values):
-        sizes.append(len(values))
-        return original_in(self, column, values)
-
-    monkeypatch.setattr(_FakeQuery, "in_", recording_in)
-
-    loaded = _load(_supabase(docs), ids=wanted)
-    sampled = _load(_supabase(docs), "random_sample", sample_size=420, ids=wanted)
+    loaded = _load(sb_all, ids=wanted)
+    sampled = _load(sb_sample, "random_sample", sample_size=420, ids=wanted)
 
     assert [d["id"] for d in loaded] == wanted
     assert len(sampled) == 420 and set(d["id"] for d in sampled) <= set(wanted)
+    sizes = _in_sizes(sb_all) + _in_sizes(sb_sample)
     assert sizes and max(sizes) <= llm_runner._ID_BATCH_SIZE
 
 
-def test_select_all_by_ids_junta_os_lotes_em_ordem_e_sem_repetir():
+def test_select_all_com_ids_junta_os_lotes_em_ordem_e_sem_repetir():
     docs = _documents(40)
     ids = [d["id"] for d in docs]  # ordem física embaralhada
     wanted = ids[:25] + ids[:3]  # com repetição
-    sizes: list[int] = []
     sb = _supabase(docs)
 
-    def build_query():
-        query = sb.table("documents").select("id")
-        original_in = query.in_
-
-        def recording_in(column, values):
-            sizes.append(len(values))
-            return original_in(column, values)
-
-        query.in_ = recording_in
-        return query
-
-    rows = llm_runner._select_all_by_ids(build_query, wanted, batch_size=10)
+    rows = llm_runner._select_all(
+        lambda: sb.table("documents").select("id"), wanted, id_batch_size=10
+    )
 
     assert [r["id"] for r in rows] == sorted(set(wanted))
     # Um pedido por lote: um lote completo dispensa a página vazia.
-    assert sizes == [10, 10, 5]
+    assert _in_sizes(sb) == [10, 10, 5]
 
 
 def test_lote_incompleto_ainda_pede_a_pagina_seguinte():
@@ -329,27 +322,19 @@ def test_lote_incompleto_ainda_pede_a_pagina_seguinte():
     wanted = sorted(d["id"] for d in docs) + ["doc-inexistente"]
     sb = _supabase(docs, max_rows=7)
 
-    rows = llm_runner._select_all_by_ids(
-        lambda: sb.table("documents").select("id"), wanted, batch_size=31
+    rows = llm_runner._select_all(
+        lambda: sb.table("documents").select("id"), wanted, id_batch_size=31
     )
 
     assert [r["id"] for r in rows] == wanted[:-1]
 
 
-def test_sem_nada_filtrado_le_o_escopo_sem_lotes(monkeypatch):
+def test_sem_nada_filtrado_le_o_escopo_sem_lotes():
     # Amostra maior que o projeto: todos os candidatos ficam, e o texto vem
     # numa leitura paginada só, e não em lotes de ids.
-    in_calls: list[int] = []
-    original_in = _FakeQuery.in_
-
-    def recording_in(self, column, values):
-        in_calls.append(len(values))
-        return original_in(self, column, values)
-
-    monkeypatch.setattr(_FakeQuery, "in_", recording_in)
     sb = _supabase(_documents(150))
 
     loaded = _load(sb, "random_sample", sample_size=500)
 
     assert len(loaded) == 150
-    assert in_calls == []
+    assert _in_sizes(sb) == []
