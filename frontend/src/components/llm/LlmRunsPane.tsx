@@ -135,7 +135,7 @@ export function LlmRunsPane({
                 <StatusBadge status={run.status} />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium truncate">{modelLabel}</div>
-                  <div className="text-xs text-muted-foreground truncate">
+                  <div className="text-xs text-muted-foreground">
                     {formatDateTime(run.started_at)} ·{" "}
                     {formatFilterMode(run.filter_mode)} ·{" "}
                     {run.document_count ?? "—"} docs ·{" "}
