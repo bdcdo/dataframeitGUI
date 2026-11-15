@@ -128,10 +128,10 @@ def test_amostra_muda_entre_runs_diferentes():
     assert {d["id"] for d in first} != {d["id"] for d in other}
 
 
-def test_pendentes_considera_respostas_alem_do_max_rows():
+def test_pendentes_considera_candidatos_alem_do_max_rows():
     # 1200 documentos, todos já com resposta LLM menos o último em ordem de id.
-    # Se a leitura das respostas parasse em 1000, ~200 documentos já
-    # respondidos voltariam a ser processados (e pagos) como pendentes.
+    # A contagem vem embutida em cada documento, e a primeira fase tem de ler
+    # os 1200 candidatos, e não só os 1000 do max_rows, para achar o pendente.
     docs = _documents(1200)
     ids = sorted(d["id"] for d in docs)
     responses = [
@@ -257,8 +257,8 @@ def test_nenhum_pendente_nao_vira_todos_os_documentos():
 
 
 def test_documento_excluido_entre_as_fases_sai_da_run(monkeypatch):
-    docs = _documents(3)
-    first = min(docs, key=lambda d: d["id"])
+    docs = _documents(4)
+    first, *_, last = sorted(docs, key=lambda d: d["id"])
     original = llm_runner._choose_document_ids
 
     def choose_and_exclude(*args, **kwargs):
@@ -268,10 +268,11 @@ def test_documento_excluido_entre_as_fases_sai_da_run(monkeypatch):
 
     monkeypatch.setattr(llm_runner, "_choose_document_ids", choose_and_exclude)
 
-    loaded = _load(_supabase(docs, []), "pending")
+    # `last` já respondido: a escolha não é o escopo todo, e o texto vem da
+    # segunda fase, que reaplica o escopo.
+    loaded = _load(_supabase(docs, [_llm_response(0, last["id"])]), "pending")
 
-    assert first["id"] not in {d["id"] for d in loaded}
-    assert len(loaded) == 2
+    assert [d["id"] for d in loaded] == sorted(d["id"] for d in docs)[1:3]
 
 
 def test_selecao_de_ids_vai_em_lotes_no_filtro_in(monkeypatch):
@@ -317,4 +318,38 @@ def test_select_all_by_ids_junta_os_lotes_em_ordem_e_sem_repetir():
     rows = llm_runner._select_all_by_ids(build_query, wanted, batch_size=10)
 
     assert [r["id"] for r in rows] == sorted(set(wanted))
-    assert sizes == [10, 10, 10, 10, 5, 5]  # 2 páginas (dados + vazia) por lote
+    # Um pedido por lote: um lote completo dispensa a página vazia.
+    assert sizes == [10, 10, 5]
+
+
+def test_lote_incompleto_ainda_pede_a_pagina_seguinte():
+    # Um lote que volta com menos linhas que ids pode ter sido cortado por um
+    # max-rows menor que o lote; só a página vazia prova que acabou.
+    docs = _documents(30)
+    wanted = sorted(d["id"] for d in docs) + ["doc-inexistente"]
+    sb = _supabase(docs, max_rows=7)
+
+    rows = llm_runner._select_all_by_ids(
+        lambda: sb.table("documents").select("id"), wanted, batch_size=31
+    )
+
+    assert [r["id"] for r in rows] == wanted[:-1]
+
+
+def test_sem_nada_filtrado_le_o_escopo_sem_lotes(monkeypatch):
+    # Amostra maior que o projeto: todos os candidatos ficam, e o texto vem
+    # numa leitura paginada só, e não em lotes de ids.
+    in_calls: list[int] = []
+    original_in = _FakeQuery.in_
+
+    def recording_in(self, column, values):
+        in_calls.append(len(values))
+        return original_in(self, column, values)
+
+    monkeypatch.setattr(_FakeQuery, "in_", recording_in)
+    sb = _supabase(_documents(150))
+
+    loaded = _load(sb, "random_sample", sample_size=500)
+
+    assert len(loaded) == 150
+    assert in_calls == []

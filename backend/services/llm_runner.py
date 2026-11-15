@@ -764,7 +764,7 @@ def _build_prompt(
 _SELECT_PAGE_SIZE = 1000
 
 
-def _select_all(build_query: Callable[[], Any]) -> list:
+def _select_all(build_query: Callable[[], Any], at_most: int | None = None) -> list:
     """Todas as linhas de uma leitura, em ordem de `id` e sem o teto do PostgREST.
 
     Sem `.order(...)` o Postgres não garante ordem de retorno, e sem paginação
@@ -779,6 +779,9 @@ def _select_all(build_query: Callable[[], Any]) -> list:
     `_SELECT_PAGE_SIZE` não volte a cortar em silêncio. `build_query` monta a
     query do zero a cada página porque o builder do postgrest-py é mutável e
     acumula parâmetros.
+
+    `at_most` é o número máximo de linhas que a query pode devolver (o de ids
+    de um filtro `in`). Atingido, a leitura acaba sem pedir a página vazia.
     """
     rows: list = []
     while True:
@@ -789,6 +792,8 @@ def _select_all(build_query: Callable[[], Any]) -> list:
         if not page:
             return rows
         rows.extend(page)
+        if at_most is not None and len(rows) >= at_most:
+            return rows
 
 
 # Ids por requisição quando a leitura se restringe a uma lista de ids. O filtro
@@ -812,7 +817,12 @@ def _select_all_by_ids(
     rows: list = []
     for start in range(0, len(unique_ids), batch_size):
         batch = unique_ids[start : start + batch_size]
-        rows.extend(_select_all(lambda batch=batch: build_query().in_("id", batch)))
+        rows.extend(
+            _select_all(
+                lambda batch=batch: build_query().in_("id", batch),
+                at_most=len(batch),
+            )
+        )
     return rows
 
 
@@ -840,7 +850,8 @@ def _choose_document_ids(
             # Semente = job_id, que fica gravado em llm_runs: a amostra de uma
             # run é reproduzível a partir do registro dela, e runs diferentes
             # continuam sorteando amostras diferentes. Depende de `candidates`
-            # vir em ordem estável, o que `_select_all` garante.
+            # vir em ordem de `id`, o que `_select_all` e `_select_all_by_ids`
+            # garantem.
             candidates = random.Random(sample_seed).sample(candidates, sample_size)
     return [c["id"] for c in candidates]
 
@@ -979,9 +990,9 @@ def _load_documents_for_run(
         )
 
     def read(build_query, ids: list[str] | None) -> list:
-        if ids:
-            return _select_all_by_ids(build_query, ids)
-        return _select_all(build_query)
+        if ids is None:
+            return _select_all(build_query)
+        return _select_all_by_ids(build_query, ids)
 
     def full_documents():
         return in_scope("id, text, title, external_id")
@@ -1004,16 +1015,19 @@ def _load_documents_for_run(
             .eq("responses.is_latest", True)
         )
 
+    candidates = read(candidates_query, document_ids)
     chosen_ids = _choose_document_ids(
-        read(candidates_query, document_ids),
+        candidates,
         filter_mode,
         max_response_count,
         sample_size,
         sample_seed,
     )
-    # Direto em `_select_all_by_ids`, e não em `read`: uma escolha vazia não
-    # pode virar "sem restrição de ids".
-    by_id = {d["id"]: d for d in _select_all_by_ids(full_documents, chosen_ids)}
+    if len(chosen_ids) == len(candidates):
+        # Nada filtrado: uma leitura paginada do escopo custa menos que a
+        # mesma leitura em lotes de ids.
+        return read(full_documents, document_ids)
+    by_id = {d["id"]: d for d in read(full_documents, chosen_ids)}
     # A ordem é a da escolha: a da amostra sorteada, ou a de `id` nos demais
     # modos.
     return [by_id[i] for i in chosen_ids if i in by_id]
