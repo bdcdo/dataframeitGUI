@@ -48,9 +48,9 @@ export function callsOf(
 
 // Mock filter-aware: aplica eq/neq/is/in/limit/range às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Linha sem a coluna filtrada não passa
-// em .eq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada linha
-// do teste declara as colunas que a query filtra. Já .neq deixa passar coluna
-// ausente ou null, ao contrário do Postgres (`null <> x` não é verdadeiro).
+// em .eq/.neq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada
+// linha do teste declara as colunas que a query filtra. O .neq também descarta
+// `c: null`, como o Postgres (`null <> x` é NULL, não verdadeiro).
 // `state` deve ser passado como objeto fresco a cada chamada de makeClient()
 // local (não memoizar), para sempre refletir os valores atuais de
 // `let tableData`/`let writeCalls` do arquivo de teste — que são reatribuídos
@@ -125,7 +125,7 @@ export function makeFilterAwareSupabaseMock(state: {
         >;
         const filtered = data.filter((r) => {
           for (const [c, v] of eqs) if (r[c] !== v) return false;
-          for (const [c, v] of neqs) if (r[c] === v) return false;
+          for (const [c, v] of neqs) if (r[c] == null || r[c] === v) return false;
           for (const [c, vals] of ins) if (!vals.includes(r[c])) return false;
           return true;
         });
