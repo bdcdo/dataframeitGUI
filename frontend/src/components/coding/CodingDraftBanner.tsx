@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AlertTriangle, FileClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CODING_DRAFT_NOTES_KEY, type CodingDraftRecovery } from "@/lib/coding-draft";
@@ -78,6 +78,14 @@ function DraftOfferMessage({
   );
 }
 
+// Quanto a região live espera, vazia, depois do mount antes de aceitar a
+// primeira oferta. A oferta chega no primeiro effect após o mount (é ali que o
+// documento é aberto), e uma região criada e preenchida no mesmo frame é, para o
+// leitor de tela, uma região que nasceu populada — o caso do #635 de volta.
+// O atraso só vale para a primeira oferta: depois disso a região já está
+// registrada e as seguintes entram na hora. A faixa visível não espera.
+export const LIVE_REGION_SETTLE_MS = 250;
+
 interface CodingDraftBannerProps {
   recovery: CodingDraftRecovery;
   fields: PydanticField[];
@@ -86,6 +94,10 @@ interface CodingDraftBannerProps {
   /** Instante de referência da idade do rascunho. Injetável para o teste não
    *  depender do relógio real; omitido, é capturado no mount. */
   now?: number;
+  /** Esconde a oferta sem desmontar a região live — em fullscreen, onde a faixa
+   *  não se aplica. Desmontar a faixa ali fazia a região nascer populada ao
+   *  sair do fullscreen com oferta pendente. */
+  suppressed?: boolean;
 }
 
 export function CodingDraftBanner({
@@ -94,6 +106,7 @@ export function CodingDraftBanner({
   onRestore,
   onDiscard,
   now,
+  suppressed = false,
 }: CodingDraftBannerProps) {
   // `Date.now()` no corpo do componente é impuro no render. A idade exibida é
   // uma ordem de grandeza ("há 2 horas"), não um cronômetro: capturar o instante
@@ -101,8 +114,17 @@ export function CodingDraftBanner({
   const [mountedAt] = useState(() => Date.now());
   const reference = now ?? mountedAt;
 
+  const [regionSettled, setRegionSettled] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setRegionSettled(true), LIVE_REGION_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+
   const offer =
-    recovery.kind === "resumable" || recovery.kind === "diverged" ? recovery : null;
+    !suppressed && (recovery.kind === "resumable" || recovery.kind === "diverged")
+      ? recovery
+      : null;
+  const announced = regionSettled ? offer : null;
 
   return (
     <>
@@ -118,11 +140,14 @@ export function CodingDraftBanner({
           - uma região por frase troca o anúncio atômico das duas por dois
             anúncios em ordem imprevisível.
           O preço é o texto duplicado no DOM; `DraftOfferMessage` é a fonte
-          única das duas cópias. Os controles ficam fora daqui pelo mesmo
-          motivo do #634: dentro de live region, botão é ruído reanunciado. */}
+          única das duas cópias, e a visível sai da árvore de acessibilidade
+          (`aria-hidden`) para o leitor não lê-la duas vezes — esta vem logo
+          antes dos botões, que é onde a visível estava. Os controles ficam fora
+          daqui pelo mesmo motivo do #634: dentro de live region, botão é ruído
+          reanunciado. */}
       <div role="status" className="sr-only">
-        {offer && (
-          <DraftOfferMessage offer={offer} fields={fields} reference={reference} />
+        {announced && (
+          <DraftOfferMessage offer={announced} fields={fields} reference={reference} />
         )}
       </div>
 
@@ -130,7 +155,7 @@ export function CodingDraftBanner({
         <div className="border-b bg-amber-50 px-4 py-2.5 text-sm dark:bg-amber-950/30">
           <div className="flex items-start gap-2">
             <FileClock className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
-            <div className="flex flex-1 flex-col gap-2">
+            <div className="flex flex-1 flex-col gap-2" aria-hidden>
               <DraftOfferMessage offer={offer} fields={fields} reference={reference} />
             </div>
 

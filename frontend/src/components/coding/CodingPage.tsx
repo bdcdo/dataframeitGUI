@@ -522,29 +522,31 @@ function CodingPageInner({
       {/* Faixas do rascunho local (#608), abaixo do header e acima das duas
           views: a oferta de recuperação e o aviso de que a cópia local não está
           funcionando. Nenhuma das duas se aplica em fullscreen, onde o header
-          também não aparece. */}
+          também não aparece.
+          Um único indicador para os dois modos, junto das faixas do rascunho:
+          permanente enquanto houver pendência, some quando o envio é
+          confirmado. Fica aqui — e não dentro do painel de perguntas — porque o
+          sinal é da PÁGINA (o documento aberto), e porque duplicá-lo por modo
+          obrigava cada view a repassá-lo. */}
+      {!isFullscreen && activeDocUnsent && (
+        <div className="flex items-center gap-2 border-b px-4 py-1.5">
+          <UnsentChangesBadge visible />
+        </div>
+      )}
+      {/* Montada também em fullscreen, só suprimida: a região live dela tem de
+          existir antes de a oferta chegar, e sair do fullscreen é uma chegada
+          (#635). */}
+      <CodingDraftBanner
+        recovery={drafts.recovery}
+        fields={fields}
+        onRestore={handleRestoreDraft}
+        onDiscard={handleDiscardDraft}
+        suppressed={isFullscreen}
+      />
       {!isFullscreen && (
-        <>
-          {/* Um único indicador para os dois modos, junto das faixas do
-              rascunho: permanente enquanto houver pendência, some quando o envio
-              é confirmado. Fica aqui — e não dentro do painel de perguntas —
-              porque o sinal é da PÁGINA (o documento aberto), e porque duplicá-lo
-              por modo obrigava cada view a repassá-lo. */}
-          {activeDocUnsent && (
-            <div className="flex items-center gap-2 border-b px-4 py-1.5">
-              <UnsentChangesBadge visible />
-            </div>
-          )}
-          <CodingDraftBanner
-            recovery={drafts.recovery}
-            fields={fields}
-            onRestore={handleRestoreDraft}
-            onDiscard={handleDiscardDraft}
-          />
-          <CodingDraftUnavailableBanner
-            visible={!drafts.storageAvailable && activeDocUnsent}
-          />
-        </>
+        <CodingDraftUnavailableBanner
+          visible={!drafts.storageAvailable && activeDocUnsent}
+        />
       )}
 
       {mode === "assigned" && (
