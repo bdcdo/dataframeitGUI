@@ -163,6 +163,9 @@ function compareWriteGate(
   if (readOnly) return { ok: false, reason: "read-only" };
   if (currentDoc === undefined) return { ok: false, reason: "no-doc" };
   if (currentFieldName.length === 0) return { ok: false, reason: "no-field" };
+  // Defesa da fronteira de escrita, não ramo de fluxo: o campo atual sai de
+  // `docFields ⊆ divergentes` e, sem campo, `no-field` já recusou acima. Só
+  // dispara se um caminho novo montar o painel com campo fora da fila (#616).
   if (!isCurrentFieldDivergent) return { ok: false, reason: "not-divergent" };
   if (
     !verdictOriginMatches(origin, {
@@ -193,8 +196,8 @@ function rejectCompareWrite(
 }
 
 /**
- * Handlers de submissão de veredito (regular e por equivalência) + marcar
- * revisado / desfazer equivalência. Extraído de `ComparePage` para tirar ~140
+ * Handlers de submissão de veredito (regular e por equivalência) + desfazer
+ * equivalência. Extraído de `ComparePage` para tirar ~140
  * linhas do container (`no-giant-component`). A escrita otimista vai por
  * `recordReview` (overrides); o avanço de campo por `goNextField` (que já faz
  * o clamp de limite).
