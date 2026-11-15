@@ -645,13 +645,14 @@ describe("saveResponse — gravação pelo envio explícito", () => {
     expect(state.assignmentUpdatePayload).toBeNull();
   });
 
-  it("o envio dispara revalidatePath e revalidateTag das rotas relevantes", async () => {
+  it("o envio dispara revalidatePath das rotas relevantes, sem revalidateTag", async () => {
     const saveResponse = await loadSaveResponse();
     await saveResponse("proj-1", "doc-1", { q1: "a" });
     expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/analyze/code");
     expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/analyze/compare");
     expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/reviews");
-    expect(revalidateTag).toHaveBeenCalledWith("project-proj-1-progress", { expire: 60 });
+    // A tag `-progress` nunca teve produtor (#668): revalidá-la seria um no-op.
+    expect(revalidateTag).not.toHaveBeenCalled();
   });
 
   it("opts.notes serializa em justifications._notes", async () => {

@@ -2,7 +2,7 @@
 
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { resolveProjectMemberActor } from "@/lib/auth";
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { buildPersistedResponseSnapshot } from "@/lib/response-snapshot";
 import { missingRequiredHumanFields } from "@/lib/coding-completeness";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
@@ -334,7 +334,6 @@ function revalidateAfterSave(projectId: string): void {
   revalidatePath(`/projects/${projectId}/analyze/auto-revisao`);
   revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
   revalidatePath(`/projects/${projectId}/reviews`);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
 }
 
 interface BuildSaveWriteParams {

@@ -733,7 +733,7 @@ describe("hardDeleteDocuments", () => {
 // Router Cache inteiro, é o que dá vermelho se a chamada for removida ou
 // trocada por uma revalidação de escopo mais estreito.
 describe("revalidateProjectDocumentsCache — rotas invalidadas", () => {
-  it("revalida config, Atribuições e a tag de progresso", async () => {
+  it("revalida config e Atribuições pelo path", async () => {
     const revalidateProjectDocumentsCache = await loadRevalidateCache();
 
     await revalidateProjectDocumentsCache("proj-1");
@@ -742,19 +742,15 @@ describe("revalidateProjectDocumentsCache — rotas invalidadas", () => {
       "/projects/proj-1/config/documents",
       "/projects/proj-1/analyze/assignments",
     ]);
-    expect(hoisted.revalidateTag).toHaveBeenCalledWith(
-      "project-proj-1-progress",
-      { expire: 60 },
-    );
   });
 
-  it("não revalida a tag `-documents`, que perdeu o produtor com o unstable_cache", async () => {
+  // Nenhuma tag de cache do projeto tem produtor: `-documents` perdeu o seu com
+  // o unstable_cache (#664) e `-progress` nunca teve (#668).
+  it("não revalida tag nenhuma, porque nenhuma tem produtor", async () => {
     const revalidateProjectDocumentsCache = await loadRevalidateCache();
 
     await revalidateProjectDocumentsCache("proj-1");
 
-    expect(hoisted.revalidateTag.mock.calls.map(([t]) => t)).not.toContain(
-      "project-proj-1-documents",
-    );
+    expect(hoisted.revalidateTag).not.toHaveBeenCalled();
   });
 });

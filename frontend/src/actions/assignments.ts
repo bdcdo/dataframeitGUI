@@ -2,7 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, requireCoordinator } from "@/lib/auth";
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import {
   createRng,
   distributeDocs,
@@ -21,7 +21,6 @@ import {
   type LotteryParticipant,
   type LotteryEmptyReason,
 } from "@/lib/lottery-utils";
-import { MEMBERS_TAG_PROFILE, membersTag } from "@/lib/cache";
 import { errorMessage } from "@/lib/utils";
 import {
   resolveInitialCodingStatus,
@@ -1386,7 +1385,6 @@ export async function smartRandomize(
           `[lottery] falha ao persistir peso/limite por membro: ${failed.error.message}`,
         );
       }
-      revalidateTag(membersTag(validatedParams.projectId), MEMBERS_TAG_PROFILE);
     }
 
     revalidatePath(`/projects/${validatedParams.projectId}/analyze/assignments`);

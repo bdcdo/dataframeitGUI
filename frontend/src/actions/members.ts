@@ -11,8 +11,7 @@ import {
 import type { MemberEmailLink } from "@/lib/types";
 import { retryPendingArbitrations } from "@/actions/field-reviews";
 import { retryPendingComparisons } from "@/actions/comparisons";
-import { revalidatePath, revalidateTag } from "next/cache";
-import { MEMBERS_TAG_PROFILE as TAG_PROFILE } from "@/lib/cache";
+import { revalidatePath } from "next/cache";
 import { serverErrorCopy, serverErrorScope, type ServerError } from "@/lib/server-error";
 
 // Erro do Postgres, PostgREST ou Auth: o texto é diagnóstico em inglês e vai
@@ -352,7 +351,6 @@ export async function addMember(
   }
 
   revalidatePath(`/projects/${projectId}`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return { pending: identity.pending };
 }
 
@@ -478,7 +476,6 @@ export async function updatePendingMemberEmail(
     .neq("project_id", projectId);
 
   revalidatePath(`/projects/${projectId}`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return { otherProjectsCount: count ?? 0 };
 }
 
@@ -494,7 +491,6 @@ export async function removeMember(memberId: string) {
   const projectId = removed.project_id;
 
   revalidatePath(`/projects/${projectId}`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
 
 export async function changeRole(
@@ -513,7 +509,6 @@ export async function changeRole(
   if (!member) return { error: "Membro não encontrado ou sem permissão." };
   const projectId = member.project_id;
   revalidatePath(`/projects/${projectId}`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
 }
 
 // Define se um membro pode resolver dificuldades LLM, erros LLM e comentários
@@ -537,7 +532,6 @@ export async function setCanResolve(
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return {};
 }
 
@@ -580,7 +574,6 @@ export async function setCanArbitrate(
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return { retried };
 }
 
@@ -620,7 +613,6 @@ export async function setCanCompare(
 
   revalidatePath(`/projects/${projectId}`);
   revalidatePath(`/projects/${projectId}/config/members`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return { retried };
 }
 
@@ -1180,7 +1172,6 @@ async function finalizeMemberEmailLink(
   if (result.status === "error") return result;
 
   revalidatePath(`/projects/${projectId}/config/members`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return result;
 }
 
@@ -1413,7 +1404,6 @@ export async function unifyMembers(
   revalidatePath(`/projects/${projectId}/config/members`);
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
   revalidatePath(`/projects/${projectId}/analyze/compare`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return {};
 }
 
@@ -1439,6 +1429,5 @@ export async function unlinkMemberEmail(
   if (error) return { error: memberServerError("desvínculo do e-mail", error, "Não foi possível desvincular o e-mail. Tente novamente.") };
 
   revalidatePath(`/projects/${projectId}/config/members`);
-  revalidateTag(`project-${projectId}-members`, TAG_PROFILE);
   return {};
 }

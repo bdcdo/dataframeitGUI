@@ -287,10 +287,8 @@ describe("removeMember", () => {
     expect(hoisted.revalidatePath).toHaveBeenCalledWith(
       "/projects/p-canonical",
     );
-    expect(hoisted.revalidateTag).toHaveBeenCalledWith(
-      "project-p-canonical-members",
-      expect.anything(),
-    );
+    // A tag `-members` não tem produtor (#668): revalidá-la seria um no-op.
+    expect(hoisted.revalidateTag).not.toHaveBeenCalled();
   });
 
   it("linha ausente → erro fail-closed", async () => {
@@ -1865,10 +1863,8 @@ describe("unifyMembers", () => {
     expect(hoisted.revalidatePath).toHaveBeenCalledWith(
       "/projects/p1/analyze/assignments",
     );
-    expect(hoisted.revalidateTag).toHaveBeenCalledWith(
-      "project-p1-members",
-      expect.anything(),
-    );
+    // A tag `-members` não tem produtor (#668): revalidá-la seria um no-op.
+    expect(hoisted.revalidateTag).not.toHaveBeenCalled();
   });
 
   it("pré-registro pendente sem conta Clerk pode ser unificado pelo próprio e-mail", async () => {

@@ -2,7 +2,7 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { fetchFastAPIServer } from "@/lib/api-server";
 import { ApiError } from "@/lib/api";
 import type {
@@ -315,7 +315,6 @@ function revalidateSchemaConsumers(projectId: string): void {
   revalidatePath(`/projects/${projectId}/analyze/compare`);
   revalidatePath(`/projects/${projectId}/reviews`);
   revalidatePath(`/projects/${projectId}/llm/configure`);
-  revalidateTag(`project-${projectId}-progress`, { expire: 60 });
 }
 
 // `fields` é o que o FastAPI devolveu, não um `PydanticField[]` provado: o

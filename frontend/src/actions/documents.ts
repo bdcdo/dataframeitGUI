@@ -7,7 +7,7 @@ import {
   requireCoordinator,
   resolveProjectMemberActor,
 } from "@/lib/auth";
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { createHash } from "crypto";
 import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type { DocumentMetadata, PydanticField } from "@/lib/types";
@@ -247,20 +247,20 @@ async function filterActiveExternalIdConflicts<
 // Exportada (não client-callable — é uma "use server" function, mas seu uso
 // pretendido é só server-to-server) para outras actions deste app que já
 // fizeram o próprio gate de autorização (ex: project-comments.ts) reusarem a
-// mesma invalidação em vez de duplicar revalidatePath/revalidateTag. Chamadas
+// mesma invalidação em vez de duplicar os revalidatePath. Chamadas
 // client-side desautenticadas ainda passam pelo wrapper `revalidateProjectDocuments`
 // abaixo, que faz o gate de acesso antes de delegar aqui.
 export async function revalidateProjectDocumentsCache(projectId: string) {
   try {
     revalidatePath(`/projects/${projectId}/config/documents`);
-    // A tag `project-${projectId}-documents` saiu junto com o unstable_cache da
-    // página de Atribuições (#664): sem produtor, revalidá-la seria invalidar
-    // nada e sugerir uma garantia que não existe. A rota entra aqui pelo path,
+    // Sem revalidateTag: a tag `project-${projectId}-documents` saiu junto com
+    // o unstable_cache da página de Atribuições (#664), e a `-progress` nunca
+    // teve produtor (#668). Revalidar tag sem produtor é invalidar nada e
+    // sugerir uma garantia que não existe. A rota entra aqui pelo path,
     // e não pela tag: a lista passou a ser lida direto do banco, mas o Router
     // Cache do cliente ainda pode servir uma renderização anterior — é o que
     // faria um documento recém-excluído seguir aparecendo como atribuível.
     revalidatePath(`/projects/${projectId}/analyze/assignments`);
-    revalidateTag(`project-${projectId}-progress`, { expire: 60 });
   } catch (e) {
     console.error("[revalidateProjectDocuments] falha ao revalidar cache", e);
   }
