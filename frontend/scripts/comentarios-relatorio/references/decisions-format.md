@@ -53,4 +53,4 @@ O preview roda os mesmos guards de posse (`projectId`) e checagens de existênci
 
 ## Cache da GUI após uma mudança de schema
 
-Este script roda fora do runtime Next (processo `tsx` standalone) e por isso não pode chamar `revalidatePath`/`revalidateTag` como `saveSchemaFromGUI` faz. Depois de um `--yes` que aplica mudança de schema, a GUI pode continuar mostrando o schema/versão anteriores por até ~60s (TTL do cache de `project-{id}-progress`) até o cache expirar naturalmente ou outra mutação pela própria GUI revalidar as mesmas rotas/tag. Se precisar ver o resultado imediatamente numa página específica, recarregue com Ctrl+Shift+R.
+Este script roda fora do runtime Next (processo `tsx` standalone) e por isso não pode chamar `revalidatePath` como `saveSchemaFromGUI` faz. As páginas leem o schema direto do banco a cada requisição (não há cache com tag no frontend, #668), então a próxima navegação ou recarga já mostra a mudança; só uma tela que já estava aberta no navegador segue com o schema/versão anteriores até ser recarregada.

@@ -17,8 +17,8 @@ import {
   type MemberActivationLink,
 } from "@/components/members/member-list-utils";
 
-// Leitura direta, sem unstable_cache: o cache do Next vive no processo, e o
-// revalidateTag da Server Action só invalida a instância que a atendeu. Com
+// Leitura direta, sem unstable_cache: o cache do Next vive no processo, e
+// invalidá-lo por tag numa Server Action só alcança a instância que a atendeu. Com
 // duas Machines (#664), a outra continuaria servindo a lista antiga por até
 // 5 min — um documento excluído seguiria aparecendo como atribuível. A query
 // lê três colunas com filtro indexado por project_id; não cachear custa menos
