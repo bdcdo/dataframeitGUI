@@ -1,17 +1,21 @@
 import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  makeFilterAwareSupabaseMock,
+  type RpcCall,
+  type RpcResult,
+  type WriteCall,
+} from "@/test-utils/supabase-mock";
 
-// Mock minimo do supabase: captura os payloads de .update()/.upsert()/.insert()
-// para validar o que submitAutoReview enviaria ao DB sem subir Postgres.
-// Builder chainable e thenable — `await builder` (ou apos .select()) resolve
-// { data, error }.
-type WriteCall = { table: string; op: string; payload: unknown };
-type RpcCall = { fn: string; args: unknown };
+// Mock filter-aware: aplica os filtros da query às linhas de `tableData`, então
+// cada linha declara as colunas que submitAutoReview/submitFinalVerdicts filtram
+// (projeto, documento, revisor, árbitro, superseded_at). Uma linha de outro
+// ciclo precisa ser descartada como o Postgres descartaria.
 let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
 // Faz uma RPC especifica falhar, por nome — usado para fixar o que sobrevive
 // quando o fechamento da fila cai.
-let rpcErrors: Record<string, string>;
-let tableData: Record<string, unknown>;
+let rpcResults: Record<string, RpcResult>;
+let tableData: Record<string, unknown[]>;
 let projectAccessible: boolean;
 let adminFactoryCalls: number;
 let memberUserId: string;
@@ -22,61 +26,21 @@ const autoSubmitCall = () =>
   rpcCalls.find((call) => call.fn === "submit_auto_review_verdicts");
 
 function makeClient() {
-  return {
-    rpc: async (fn: string, args: unknown) => {
-      rpcCalls.push({ fn, args });
-      const message = rpcErrors[fn];
-      return { data: null, error: message ? { message } : null };
-    },
-    from: (table: string) => {
-      // `limited` distingue a query de "ainda há campo pendente?" (usa .limit)
-      // do UPDATE de field_reviews (usa .select) — ambos batem na mesma tabela.
-      let limited = false;
-      const builder: Record<string, unknown> = {};
-      let op = "select";
-      for (const m of ["select", "eq", "is", "in", "neq", "not"]) {
-        builder[m] = () => builder;
-      }
-      builder.limit = () => {
-        limited = true;
-        return builder;
-      };
-      builder.update = (payload: unknown) => {
-        writeCalls.push({ table, op: "update", payload });
-        op = "update";
-        return builder;
-      };
-      builder.upsert = (payload: unknown) => {
-        writeCalls.push({ table, op: "upsert", payload });
-        op = "upsert";
-        return builder;
-      };
-      builder.insert = (payload: unknown) => {
-        writeCalls.push({ table, op: "insert", payload });
-        op = "insert";
-        return builder;
-      };
-      builder.then = (resolve: (v: unknown) => unknown) => {
-        // A query "ainda ha field_review pendente?" usa .limit em
-        // field_reviews — resolve para a fixture dedicada.
-        if (table === "field_reviews" && limited) {
-          return resolve({
-            data: tableData.field_reviews_pending ?? null,
-            error: null,
-          });
-        }
-        // Resolve por operacao quando ha override `${table}:${op}` — permite um
-        // teste fazer o UPDATE casar 0 linhas mas o SELECT de estado ver a linha
-        // (cenario de retry apos falha parcial). Senao cai no dado generico.
-        return resolve({
-          data: tableData[`${table}:${op}`] ?? tableData[table] ?? null,
-          error: null,
-        });
-      };
-      return builder;
-    },
-  };
+  return makeFilterAwareSupabaseMock({ tableData, writeCalls, rpcCalls, rpcResults });
 }
+
+// Linha de field_reviews do ciclo corrente da auto-revisão de user1 em doc1.
+const autoReview = (overrides: Record<string, unknown> = {}) => ({
+  id: "fr1",
+  project_id: "p1",
+  document_id: "doc1",
+  self_reviewer_id: "user1",
+  superseded_at: null,
+  field_name: "q1",
+  human_response_id: "hr1",
+  llm_response_id: "lr1",
+  ...overrides,
+});
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 // `after()` só existe dentro de uma request do Next: aqui ele guarda a tarefa
@@ -114,33 +78,19 @@ beforeEach(() => {
   propagateValueEquivalenceChange.mockClear();
   writeCalls = [];
   rpcCalls = [];
-  rpcErrors = {};
+  rpcResults = {};
   projectAccessible = true;
   memberUserId = "user1";
   adminFactoryCalls = 0;
   tableData = {
-    // UPDATE de field_reviews retorna a linha tocada (via .select). O SELECT de
-    // estado real (efeitos de equivalente/ambiguo) le esta mesma linha — testes
-    // desses vereditos sobrescrevem `self_verdict` conforme o caso.
+    // O SELECT do ciclo lê os snapshots — testes de equivalente/ambíguo
+    // sobrescrevem a linha conforme o caso.
     field_reviews: [
-      {
-        id: "fr1",
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
+      autoReview({
         human_answer_snapshot: "Adalimumabe",
         llm_answer_snapshot: "adalimumabé",
-      },
+      }),
     ],
-    // Consumida pelo `.limit(1)` de syncArbitragemAssignmentStatus, que ainda
-    // decide o fechamento da ARBITRAGEM no TypeScript (a auto-revisão decide na
-    // RPC). Vazia = nada pendente, o caminho que não explode.
-    field_reviews_pending: [],
-    responses: [],
-    // sem comentarios pre-existentes → check-before-insert nao suprime nada
-    project_comments: [],
-    // pool de arbitragem vazio → assignArbitrator curto-circuita sem erro
-    project_members: [],
   };
 });
 
@@ -174,6 +124,7 @@ describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", ()
 
   it("usa a identidade canônica do membro na RPC", async () => {
     memberUserId = "canonical-reviewer";
+    tableData.field_reviews = [autoReview({ self_reviewer_id: "canonical-reviewer" })];
     const submitAutoReview = await loadSubmit();
 
     const result = await submitAutoReview("p1", "doc1", [
@@ -184,6 +135,28 @@ describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", ()
     expect(autoSubmitCall()?.args).toMatchObject({
       p_reviewer_id: "canonical-reviewer",
     });
+  });
+
+  // Cada filtro do SELECT do ciclo descarta uma linha que o Postgres também
+  // descartaria: sem ele, o veredito seria gravado no ciclo errado.
+  it.each([
+    ["de outro projeto", { project_id: "p2" }],
+    ["de outro documento", { document_id: "doc2" }],
+    ["de outro auto-revisor", { self_reviewer_id: "user2" }],
+    ["de ciclo substituído", { superseded_at: "2026-11-01T00:00:00Z" }],
+  ])("linha %s não vale como ciclo corrente → nenhuma RPC", async (_, overrides) => {
+    tableData.field_reviews = [autoReview(overrides)];
+    const submitAutoReview = await loadSubmit();
+
+    const result = await submitAutoReview("p1", "doc1", [
+      { fieldReviewId: "fr1", fieldName: "q1", verdict: "admite_erro" },
+    ]);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Campo "q1": ciclo de revisão incompatível.',
+    });
+    expect(autoSubmitCall()).toBeUndefined();
   });
 
   it("contesta_llm sem justificativa → erro e nenhum UPDATE", async () => {
@@ -242,16 +215,9 @@ describe("submitAutoReview — justificativa obrigatoria ao contestar o LLM", ()
 
   it("retry de contesta_llm sem árbitro repete apenas a atribuição", async () => {
     const submitAutoReview = await loadSubmit();
-    tableData["field_reviews:update"] = [];
     tableData.field_reviews = [
-      {
-        id: "fr1",
-        field_name: "q1",
-        self_verdict: "contesta_llm",
-        arbitrator_id: null,
-      },
+      autoReview({ self_verdict: "contesta_llm", arbitrator_id: null }),
     ];
-    tableData.project_members = [{ user_id: "arb1", role: "pesquisador" }];
 
     const result = await submitAutoReview("p1", "doc1", [
       {
@@ -276,10 +242,10 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
   it("equivalente agenda a propagação com o campo e os dois snapshots; os demais vereditos não", async () => {
     const submitAutoReview = await loadSubmit();
     tableData.field_reviews = [
-      { id: "fr1", field_name: "q1", human_response_id: "hr1", llm_response_id: "lr1",
-        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" },
-      { id: "fr2", field_name: "q2", human_response_id: "hr1", llm_response_id: "lr1",
-        human_answer_snapshot: "a", llm_answer_snapshot: "b" },
+      autoReview({ id: "fr1", field_name: "q1",
+        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" }),
+      autoReview({ id: "fr2", field_name: "q2",
+        human_answer_snapshot: "a", llm_answer_snapshot: "b" }),
     ];
     const r = await submitAutoReview("p1", "doc1", [
       { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
@@ -300,10 +266,10 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
   it("vários equivalente no mesmo envio agendam uma propagação só", async () => {
     const submitAutoReview = await loadSubmit();
     tableData.field_reviews = [
-      { id: "fr1", field_name: "q1", human_response_id: "hr1", llm_response_id: "lr1",
-        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" },
-      { id: "fr2", field_name: "q2", human_response_id: "hr1", llm_response_id: "lr1",
-        human_answer_snapshot: "a", llm_answer_snapshot: "A." },
+      autoReview({ id: "fr1", field_name: "q1",
+        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" }),
+      autoReview({ id: "fr2", field_name: "q2",
+        human_answer_snapshot: "a", llm_answer_snapshot: "A." }),
     ];
     const r = await submitAutoReview("p1", "doc1", [
       { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
@@ -323,10 +289,10 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
 
   it("submit que falha na RPC não agenda propagação", async () => {
     const submitAutoReview = await loadSubmit();
-    rpcErrors.submit_auto_review_verdicts = "boom";
+    rpcResults.submit_auto_review_verdicts = { error: { message: "boom" } };
     tableData.field_reviews = [
-      { id: "fr1", field_name: "q1", human_response_id: "hr1", llm_response_id: "lr1",
-        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" },
+      autoReview({ id: "fr1", field_name: "q1",
+        human_answer_snapshot: "NI", llm_answer_snapshot: "Não informado" }),
     ];
     const r = await submitAutoReview("p1", "doc1", [
       { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
@@ -338,13 +304,9 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
   it("equivalente → registra a equivalência pela RPC idempotente", async () => {
     const submitAutoReview = await loadSubmit();
     tableData.field_reviews = [
-      {
-        id: "fr1",
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
+      autoReview({
         self_verdict: "equivalente",
-      },
+      }),
     ];
     const r = await submitAutoReview("p1", "doc1", [
       { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
@@ -380,15 +342,11 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
   it("ambiguo → grava self_justification trimada e insere project_comments com o contraste e a justificativa", async () => {
     const submitAutoReview = await loadSubmit();
     tableData.field_reviews = [
-      {
-        id: "fr1",
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
+      autoReview({
         human_answer_snapshot: "Adalimumabe",
         llm_answer_snapshot: "adalimumabé",
         self_verdict: "ambiguo",
-      },
+      }),
     ];
     const r = await submitAutoReview("p1", "doc1", [
       {
@@ -415,25 +373,18 @@ describe("submitAutoReview — vereditos equivalente e ambiguo", () => {
 
   it("equivalente em retry (UPDATE casa 0 linhas) ainda registra a equivalencia", async () => {
     const submitAutoReview = await loadSubmit();
-    // Cenario de retry: um call anterior gravou self_verdict='equivalente' mas
-    // falhou no upsert de response_equivalences. Agora o UPDATE casa 0 linhas
-    // (self_verdict ja nao e NULL), mas o estado real mostra o campo resolvido.
-    tableData["field_reviews:update"] = [];
+    // Cenario de retry: um call anterior ja gravou self_verdict='equivalente'.
+    // A idempotencia e da RPC; o TS reenvia a linha mesmo assim.
     tableData.field_reviews = [
-      {
-        id: "fr1",
-        field_name: "q1",
-        human_response_id: "hr1",
-        llm_response_id: "lr1",
+      autoReview({
         self_verdict: "equivalente",
-      },
+      }),
     ];
     const r = await submitAutoReview("p1", "doc1", [
       { fieldReviewId: "fr1", fieldName: "q1", verdict: "equivalente" },
     ]);
     expect(r.success).toBe(true);
 
-    // Apesar do UPDATE nao ter casado, o efeito colateral roda (idempotente).
     expect(autoSubmitCall()?.args).toMatchObject({ p_rows: [
       { field_name: "q1", field_review_id: "fr1", verdict: "equivalente" },
     ] });
@@ -455,8 +406,7 @@ describe("submitAutoReview — conclusão do assignment", () => {
   });
 
   it("falha da RPC atômica é reportada sem escritas parciais no cliente", async () => {
-    rpcErrors.submit_auto_review_verdicts = "lock timeout";
-    tableData.project_members = [{ user_id: "arb1", role: "pesquisador" }];
+    rpcResults.submit_auto_review_verdicts = { error: { message: "lock timeout" } };
     const submitAutoReview = await loadSubmit();
 
     const r = await submitAutoReview("p1", "doc1", [
@@ -471,6 +421,10 @@ describe("submitAutoReview — conclusão do assignment", () => {
 describe("submitFinalVerdicts — service role somente após os gates", () => {
   const finalReview = (overrides: Record<string, unknown> = {}) => ({
     id: "fr1",
+    project_id: "p1",
+    document_id: "doc1",
+    arbitrator_id: "user1",
+    superseded_at: null,
     field_name: "q1",
     human_response_id: "hr1",
     llm_response_id: "lr1",
@@ -481,6 +435,25 @@ describe("submitFinalVerdicts — service role somente após os gates", () => {
 
   it("linha ausente/RLS falha antes de criar o admin client", async () => {
     tableData.field_reviews = [];
+    const submitFinalVerdicts = await loadSubmitFinal();
+    const result = await submitFinalVerdicts("p1", "doc1", [
+      { fieldReviewId: "fr1", fieldName: "q1", verdict: "humano" },
+    ]);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Campo "q1": linha de revisão não encontrada ou sem permissão.',
+    });
+    expect(adminFactoryCalls).toBe(0);
+  });
+
+  it.each([
+    ["de outro projeto", { project_id: "p2" }],
+    ["de outro documento", { document_id: "doc2" }],
+    ["de outro árbitro", { arbitrator_id: "user2" }],
+    ["de ciclo substituído", { superseded_at: "2026-11-01T00:00:00Z" }],
+  ])("linha %s falha antes de criar o admin client", async (_, overrides) => {
+    tableData.field_reviews = [finalReview(overrides)];
     const submitFinalVerdicts = await loadSubmitFinal();
     const result = await submitFinalVerdicts("p1", "doc1", [
       { fieldReviewId: "fr1", fieldName: "q1", verdict: "humano" },
