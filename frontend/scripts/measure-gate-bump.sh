@@ -23,7 +23,11 @@
 #   no relatório, a varredura não aconteceu e o script falha, em vez de medir
 #   "0 achados" em silêncio.
 # - O hook do ruff roda com --fix. Aqui o ruff roda pelo `uv run` com o lockfile
-#   de cada lado, sem passar pelo hook, e nunca reescreve arquivo.
+#   e a config ([tool.ruff], [tool.mypy]) de cada lado, sem passar pelo hook,
+#   sem cache no worktree e sem reescrever arquivo.
+#
+# A medição é do HEAD: com mudança não commitada em arquivo versionado o script
+# para, porque os hooks e o ruff/mypy leriam o worktree e o gitleaks o HEAD.
 #
 # O npm (react-doctor, fallow, typescript-eslint) não está aqui: a troca é o
 # package.json e o package-lock.json com `npm ci`, descrita no doc.
@@ -49,6 +53,7 @@ else
   base="$(git merge-base origin/main HEAD)" || die "sem merge-base com origin/main; passe a base"
 fi
 head="$(git rev-parse HEAD)"
+git diff --quiet HEAD || die "há mudança não commitada em arquivo versionado: commite ou guarde antes de medir o HEAD"
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
@@ -56,6 +61,15 @@ trap 'rm -rf "$work"' EXIT
 sides=(antiga nova)
 declare -A rev_of=([antiga]="$base" [nova]="$head")
 summary=()
+
+# O hook existe na config deste lado? Um hook ausente faz o `pre-commit run`
+# sair com 1, o mesmo status de um hook que achou problema.
+has_hook() {
+  ruby -ryaml -e '
+    config = YAML.safe_load(File.read(ARGV.fetch(0)))
+    exit(config.fetch("repos").any? { |r| r["hooks"]&.any? { |h| h["id"] == ARGV.fetch(1) } })
+  ' "$1" "$2"
+}
 
 # Rev e repo do hook gitleaks na config de um lado. Falha alto se o hook deixou
 # de vir do repositório do gitleaks: a troca de entry abaixo depende disso.
@@ -72,6 +86,7 @@ gitleaks_hook() {
 measure_pre_commit() {
   command -v pre-commit >/dev/null || die "pre-commit ausente (uv tool install pre-commit)"
   command -v jq >/dev/null || die "jq ausente"
+  command -v ruby >/dev/null || die "ruby ausente (lê a .pre-commit-config.yaml)"
 
   local tree="$work/tree" canary
   mkdir -p "$tree"
@@ -81,13 +96,18 @@ measure_pre_commit() {
   canary="ghp_$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n')"
   printf 'token = "%s"\n' "$canary" >"$tree/gate-bump-canary.txt"
 
-  local side config hook status output repo_url rev report config_gitleaks total canaries
+  local side config hook status repo_url rev report config_gitleaks total canaries
   for side in "${sides[@]}"; do
     config="$work/$side.pre-commit-config.yaml"
     git show "${rev_of[$side]}:.pre-commit-config.yaml" >"$config"
 
     for hook in check-merge-conflict actionlint; do
       echo "== $hook ($side, ${rev_of[$side]:0:9})"
+      if ! has_hook "$config" "$hook"; then
+        echo "(ausente na .pre-commit-config.yaml deste lado)"
+        summary+=("$hook ($side): ausente na config")
+        continue
+      fi
       status=0
       pre-commit run "$hook" --all-files --config "$config" || status=$?
       summary+=("$hook ($side): exit $status")
@@ -118,23 +138,32 @@ EOF
   done
 }
 
+# Roda no backend/ uma ferramenta do projeto temporário do lado: rótulo e
+# comando.
+run_backend_tool() {
+  local label="$1" status=0
+  shift
+  echo "== $label ($side, $(cd backend && uv run --project "$project" --locked "$1" --version))"
+  (cd backend && uv run --project "$project" --locked "$@") || status=$?
+  summary+=("$label ($side): exit $status")
+}
+
 measure_uv() {
   command -v uv >/dev/null || die "uv ausente"
-  local side project status tool
+  local side project file config
   for side in "${sides[@]}"; do
     project="$work/$side.backend"
+    config="$project/pyproject.toml"
     mkdir -p "$project"
     for file in pyproject.toml uv.lock .python-version; do
       git show "${rev_of[$side]}:backend/$file" >"$project/$file"
     done
     uv sync --project "$project" --locked || die "uv sync ($side) falhou"
-    for tool in "ruff check --statistics ." "ruff format --check ." "mypy ."; do
-      echo "== $tool ($side, $(cd backend && uv run --project "$project" --locked ${tool%% *} --version))"
-      status=0
-      # shellcheck disable=SC2086 # o comando é a lista de palavras acima
-      (cd backend && uv run --project "$project" --locked $tool) || status=$?
-      summary+=("${tool% .} ($side): exit $status")
-    done
+    # A config vem do lado medido: no backend/ o ruff e o mypy leriam a do
+    # worktree, e uma regra nova na config reprovaria a versão antiga.
+    run_backend_tool "ruff check --statistics" ruff check --no-cache --config "$config" --statistics .
+    run_backend_tool "ruff format --check" ruff format --no-cache --config "$config" --check .
+    run_backend_tool "mypy" mypy --config-file "$config" --cache-dir "$project/.mypy_cache" .
   done
 }
 

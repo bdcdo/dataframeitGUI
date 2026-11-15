@@ -27,8 +27,13 @@ const fakeToken = (char: string) => `ghp_${char.repeat(36)}`;
 
 const fakes = fileURLToPath(new URL("./measure-gate-bump-fakes/", import.meta.url));
 
-function preCommitConfig(side: string, rev: string, repo = "https://github.com/gitleaks/gitleaks") {
-  return `# lado: ${side}\nrepos:\n  - repo: ${repo}\n    rev: ${rev}\n    hooks:\n      - id: gitleaks\n`;
+function preCommitConfig(
+  side: string,
+  rev: string,
+  { repo = "https://github.com/gitleaks/gitleaks", hooks = ["check-merge-conflict", "actionlint"] } = {},
+) {
+  const local = hooks.map((id) => `      - id: ${id}\n`).join("");
+  return `# lado: ${side}\nrepos:\n  - repo: local\n    hooks:\n${local}  - repo: ${repo}\n    rev: ${rev}\n    hooks:\n      - id: gitleaks\n`;
 }
 
 let dir: string;
@@ -123,10 +128,22 @@ describe("measure-gate-bump.sh pre-commit", () => {
   });
 
   it("falha alto quando o hook do gitleaks deixa de vir do repo do gitleaks", () => {
-    commit({ ".pre-commit-config.yaml": preCommitConfig("nova", "v2.0.0", "local") });
+    commit({ ".pre-commit-config.yaml": preCommitConfig("nova", "v2.0.0", { repo: "local" }) });
     const { status, stderr } = measure(["pre-commit", base]);
     expect(status).not.toBe(0);
     expect(stderr).toContain("hook gitleaks fora do repo gitleaks/gitleaks");
+  });
+
+  // O `pre-commit run` de um hook que não existe sai com 1, como o de um hook
+  // que achou problema: o resumo não pode registrar isso como medição.
+  it("registra o hook ausente num dos lados como ausente, sem rodá-lo", () => {
+    commit({ ".pre-commit-config.yaml": preCommitConfig("antiga", "v1.0.0", { hooks: ["check-merge-conflict"] }) });
+    const head = commit({ ".pre-commit-config.yaml": preCommitConfig("nova", "v2.0.0") });
+    const { status, stdout, calls } = measure(["pre-commit", runGit(["rev-parse", `${head}~1`], repo).trim()]);
+    expect(status).toBe(0);
+    expect(calls.filter((call) => call.startsWith("actionlint"))).toEqual(["actionlint lado: nova rev=v2.0.0"]);
+    expect(stdout).toContain("actionlint (antiga): ausente na config");
+    expect(stdout).toContain("actionlint (nova): exit 0");
   });
 
   it("acha o rev do gitleaks na .pre-commit-config.yaml real do repo", () => {
@@ -144,19 +161,34 @@ describe("measure-gate-bump.sh pre-commit", () => {
 });
 
 describe("measure-gate-bump.sh uv", () => {
-  it("roda ruff e mypy no backend com o lockfile de cada lado, sem --fix", () => {
+  // P é o projeto temporário do lado: o lockfile e a config ([tool.ruff],
+  // [tool.mypy]) vêm de lá, e não do backend/ do worktree, onde os comandos
+  // rodam. Nada de --fix, e nenhum cache gravado no worktree.
+  it("roda ruff e mypy no backend com o lockfile e a config de cada lado, sem --fix", () => {
     const { status, stderr, calls } = measure(["uv", base]);
     expect(stderr).toBe("");
     expect(status).toBe(0);
     const runs = (lock: string) => [
       `sync ${lock} repo --project P --locked`,
       `run ${lock} backend --project P --locked ruff --version`,
-      `run ${lock} backend --project P --locked ruff check --statistics .`,
+      `run ${lock} backend --project P --locked ruff check --no-cache --config P/pyproject.toml --statistics .`,
       `run ${lock} backend --project P --locked ruff --version`,
-      `run ${lock} backend --project P --locked ruff format --check .`,
+      `run ${lock} backend --project P --locked ruff format --no-cache --config P/pyproject.toml --check .`,
       `run ${lock} backend --project P --locked mypy --version`,
-      `run ${lock} backend --project P --locked mypy .`,
+      `run ${lock} backend --project P --locked mypy --config-file P/pyproject.toml --cache-dir P/.mypy_cache .`,
     ];
     expect(calls).toEqual([...runs("lock-antiga"), ...runs("lock-nova")]);
+  });
+});
+
+describe("measure-gate-bump.sh", () => {
+  // Os hooks e o ruff/mypy leem o worktree, e o gitleaks o HEAD: com mudança
+  // não commitada, a medição juntaria duas árvores.
+  it("recusa medir com mudança não commitada em arquivo versionado", () => {
+    write("versionado.txt", "editado\n");
+    const { status, stderr, calls } = measure(["uv", base]);
+    expect(status).toBe(2);
+    expect(stderr).toContain("mudança não commitada");
+    expect(calls).toEqual([]);
   });
 });
