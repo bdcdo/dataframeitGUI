@@ -135,17 +135,22 @@ async function main() {
   };
   if (existing) {
     projectId = existing.id as string;
-    // A revisão só avança quando os campos do código diferem dos gravados (ver
-    // sameStoredFields): reexecutar com os campos inalterados regrava o resto
-    // e deixa a revisão como está. Campo mudado no código vai para o banco com
-    // a revisão + 1 (o gerador do llm-decisions, em vez disso, recusa).
-    const schemaChanged = !sameStoredFields(existing.pydantic_fields, FIELDS);
+    // Os campos só vão no update quando diferem dos gravados (ver
+    // sameStoredFields), e então junto com a revisão + 1. Reexecutar com os
+    // campos inalterados não os reenvia: o banco recusaria avançar a revisão, e
+    // regravá-los sem avançar dependeria de a comparação daqui concordar com a
+    // da trigger. O gerador do llm-decisions, em vez disso, recusa campo mudado.
+    const { pydantic_fields, ...rest } = schema;
+    const schemaChanged = !sameStoredFields(existing.pydantic_fields, pydantic_fields);
     const { error } = await supabase
       .from("projects")
       .update({
-        ...schema,
+        ...rest,
         ...(schemaChanged
-          ? { schema_revision: ((existing.schema_revision as number) ?? 0) + 1 }
+          ? {
+              pydantic_fields,
+              schema_revision: ((existing.schema_revision as number) ?? 0) + 1,
+            }
           : {}),
       })
       .eq("id", projectId);

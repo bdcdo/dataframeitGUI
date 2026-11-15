@@ -80,7 +80,11 @@ export function redactUrl(url: string): string {
   for (const [name, value] of [...u.searchParams]) {
     // O `redirect_url` do login carrega a URL de origem, que pode trazer o
     // token do Clerk dentro dela.
-    const nested = CLERK_QUERY_PARAM.test(name) ? "<omitido>" : redactUrl(value);
+    const nested = CLERK_QUERY_PARAM.test(name)
+      ? "<omitido>"
+      : URL.canParse(value)
+        ? redactUrl(value)
+        : value;
     if (nested !== value) {
       u.searchParams.set(name, nested);
       changed = true;
