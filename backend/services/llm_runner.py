@@ -2205,6 +2205,22 @@ def _run_dataframeit_and_publish(
         _process_and_save_rows(publisher, result)
 
 
+def _require_llm_target(project: dict) -> tuple[str, str]:
+    """Provider e modelo do projeto, ou erro que nomeia a coluna vazia (#827).
+
+    Sem fallback para um modelo default: o registro de modelos vive no frontend
+    (`model-registry.ts`), e uma cópia dele aqui divergiria.
+    """
+    for column, label in (("llm_provider", "provedor"), ("llm_model", "modelo")):
+        if not project.get(column):
+            raise ValueError(
+                f"O projeto está sem {label} de LLM (coluna `{column}` vazia). "
+                "Escolha provedor e modelo em LLM > Configurar e salve antes "
+                "de rodar."
+            )
+    return project["llm_provider"], project["llm_model"]
+
+
 def run_llm(
     job_id: str,
     project_id: str,
@@ -2241,6 +2257,7 @@ def run_llm(
             .execute()
             .data
         )
+        llm_provider, llm_model = _require_llm_target(project)
         pydantic_code = project["pydantic_code"]
         # Versão semver corrente do projeto, gravada em cada resposta para que a
         # aba Comparar consiga separar rodadas por versão (ver B1 do PR de
@@ -2259,8 +2276,6 @@ def run_llm(
             project.get("description"),
             project["prompt_template"],
         )
-        llm_provider = project["llm_provider"]
-        llm_model = project["llm_model"]
         llm_kwargs = project["llm_kwargs"] or {}
         pydantic_hash = hashlib.sha256(pydantic_code.encode()).hexdigest()[:16]
 

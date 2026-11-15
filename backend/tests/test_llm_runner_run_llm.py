@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
+import pytest
 from supabase import PostgrestAPIError
 
 from services.llm_runner import (
@@ -2352,3 +2353,40 @@ def test_run_llm_skips_justifications_when_explicitly_disabled(monkeypatch):
     _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
 
     assert "campo_a_justification" not in dataframeit_calls[0]["model_fields"]
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("llm_provider", None),
+        ("llm_provider", ""),
+        ("llm_model", None),
+        ("llm_model", ""),
+    ],
+)
+def test_run_llm_recusa_provider_ou_modelo_vazio_antes_de_chamar(
+    monkeypatch, column, value
+):
+    """Issue #827: as colunas são TEXT sem NOT NULL, e um valor vazio chegava
+    ao dataframeit, que morria com erro opaco do provider. A run recusa antes
+    de ler documentos, com mensagem que nomeia a coluna."""
+    docs = _docs(2)
+    dataframeit_calls: list[dict] = []
+    sb = _build_supabase(_project_row(**{column: value}), docs)
+
+    _run_llm_sync(
+        monkeypatch,
+        sb,
+        row_specs={d["id"]: {} for d in docs},
+        dataframeit_calls=dataframeit_calls,
+    )
+
+    assert _jobs[JOB_ID]["status"] == "error"
+    assert _jobs[JOB_ID]["error_type"] == "ValueError"
+    assert column in _jobs[JOB_ID]["errors"][0]
+    assert dataframeit_calls == []
+    assert sb.table("documents").reads == []
+    assert _published_responses(sb) == []
+    error_update = _last_update_where(sb.table("llm_runs"), status="error")
+    assert error_update is not None
+    assert column in error_update["error_message"]
