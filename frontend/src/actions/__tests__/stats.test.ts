@@ -1,4 +1,5 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 
 // Caracterização das 10 funções resolve/reopen de stats.ts (5 pares, sobre 5
 // tabelas) — nenhuma tinha teste antes do #385. O objetivo aqui não é repetir
@@ -111,9 +112,9 @@ describe("resolveNote / reopenNote", () => {
 
     const r = await run(await loadStats());
 
-    expect(r).toEqual({ success: false, error: copy });
+    expect(r).toEqual({ success: false, error: copyWithRef(copy) });
     expect(consoleError).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[stats\] .* falhou$/),
+      loggedScope(/^\[stats\] .* falhou$/),
       { code: "57014", message: "canceling statement due to statement timeout" },
     );
     expect(hoisted.revalidate).not.toHaveBeenCalled();

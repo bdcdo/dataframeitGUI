@@ -1,4 +1,5 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 
 // Testa o filtro de conflito com o indice unico parcial
 // documents_project_external_id_active_uniq (migration 20260623130000):
@@ -664,9 +665,9 @@ describe("excludeDocuments", () => {
 
     const r = await excludeDocuments("proj-1", ["doc1"], "motivo");
 
-    expect(r).toEqual({ error: "Não foi possível alterar os documentos. Tente novamente." });
+    expect(r).toEqual({ error: copyWithRef("Não foi possível alterar os documentos. Tente novamente.") });
     expect(consoleError).toHaveBeenCalledWith(
-      "[documents] alteração dos documentos falhou",
+      loggedScope("[documents] alteração dos documentos falhou"),
       expect.objectContaining({ message: "db down" }),
     );
     consoleError.mockRestore();

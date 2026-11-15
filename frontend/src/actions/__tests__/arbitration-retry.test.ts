@@ -1,4 +1,5 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
+import { copyWithRef } from "@/test-utils/error-ref";
 import {
   makeSupabaseAdminModuleMock,
   makeSupabaseServerModuleMock,
@@ -300,8 +301,8 @@ describe("retryPendingArbitrations — erro na pré-busca de codificadores", () 
     const r = await retry("p1");
     expect(r.success).toBe(false);
     // O texto do Postgres vai ao log, e o toast recebe copy pt-BR (#502).
-    expect(r.error).toBe(
-      "Não foi possível redistribuir as arbitragens pendentes. Tente novamente.",
+    expect(r.error).toEqual(
+      copyWithRef("Não foi possível redistribuir as arbitragens pendentes. Tente novamente."),
     );
     expect(arbitrationCalls()).toHaveLength(0);
     consoleError.mockRestore();

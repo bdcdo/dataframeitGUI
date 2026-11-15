@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 import {
   makeSupabaseMock,
   type FilterCall,
@@ -280,10 +281,10 @@ describe("saveSchemaFromGUI", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "Não foi possível salvar o schema. Tente novamente.",
+      message: copyWithRef("Não foi possível salvar o schema. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      "[schema] commit_project_schema falhou",
+      loggedScope("[schema] commit_project_schema falhou"),
       expect.objectContaining({ code: "22023" }),
     );
     consoleError.mockRestore();
@@ -610,7 +611,7 @@ describe("backfillSchemaVersionHistory", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "Não foi possível reconstruir o histórico. Tente novamente.",
+      message: copyWithRef("Não foi possível reconstruir o histórico. Tente novamente."),
     });
     expect(state.rpcs).toHaveLength(0);
   });
@@ -631,10 +632,10 @@ describe("backfillSchemaVersionHistory", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "Não foi possível ler o schema do projeto. Tente novamente.",
+      message: copyWithRef("Não foi possível ler o schema do projeto. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      "[schema] leitura do projeto falhou",
+      loggedScope("[schema] leitura do projeto falhou"),
       expect.objectContaining({ code: "57014" }),
     );
     expect(state.rpcs).toHaveLength(0);
@@ -656,7 +657,7 @@ describe("backfillSchemaVersionHistory", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "Não foi possível ler o schema do projeto. Tente novamente.",
+      message: copyWithRef("Não foi possível ler o schema do projeto. Tente novamente."),
     });
     expect(pagedTables()).toEqual([]);
     consoleError.mockRestore();
@@ -685,10 +686,10 @@ describe("backfillSchemaVersionHistory", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "Não foi possível reconstruir o histórico. Tente novamente.",
+      message: copyWithRef("Não foi possível reconstruir o histórico. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      "[schema] backfill falhou",
+      loggedScope("[schema] backfill falhou"),
       expect.objectContaining({ message: expect.stringMatching(/null/) }),
     );
     expect(state.rpcs).toHaveLength(0);
@@ -788,7 +789,7 @@ describe("erro de servidor não chega cru ao toast", () => {
 
     const result = await run();
 
-    expect(result).toEqual({ error: copy });
+    expect(result).toEqual({ error: copyWithRef(copy) });
     expect(consoleError).toHaveBeenCalledWith(
       expect.stringContaining("falhou"),
       // O `code` do Postgres é o que diferencia timeout de violação no log:
@@ -817,10 +818,10 @@ describe("erro de servidor não chega cru ao toast", () => {
     const result = await recoverFieldsFromStoredCode("p1");
 
     expect(result).toEqual({
-      error: "Não foi possível recuperar os campos do código armazenado. Tente novamente.",
+      error: copyWithRef("Não foi possível recuperar os campos do código armazenado. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      "[schema] recuperação dos campos falhou",
+      loggedScope("[schema] recuperação dos campos falhou"),
       expect.objectContaining({ message: failure.message }),
     );
     consoleError.mockRestore();

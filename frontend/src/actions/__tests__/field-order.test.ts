@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 import { createProjectIdentityActionHarness } from "./project-identity-harness";
 
 const resolveMemberUserId = vi.hoisted(() =>
@@ -74,9 +75,9 @@ describe("researcher field order — erro do banco", () => {
 
   it.each([
     ["leitura", async (m: typeof import("@/actions/field-order")) => m.getResearcherFieldOrder("project-1"),
-      { order: null, error: "Não foi possível carregar a ordem dos campos." }],
+      { order: null, error: copyWithRef("Não foi possível carregar a ordem dos campos.") }],
     ["gravação", async (m: typeof import("@/actions/field-order")) => m.saveResearcherFieldOrder("project-1", ["field_b"]),
-      { success: false, error: "Não foi possível salvar a ordem dos campos. Tente novamente." }],
+      { success: false, error: copyWithRef("Não foi possível salvar a ordem dos campos. Tente novamente.") }],
   ])("%s: copy pt-BR no retorno, texto cru no log", async (_, run, expected) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     harness.supabase.tableResults!.researcher_field_orders = { error: pgError };
@@ -86,7 +87,7 @@ describe("researcher field order — erro do banco", () => {
     // action duplicaria o evento.
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[field-order\] .* falhou$/),
+      loggedScope(/^\[field-order\] .* falhou$/),
       pgError,
     );
     consoleError.mockRestore();

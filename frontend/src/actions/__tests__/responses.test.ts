@@ -1,4 +1,5 @@
 import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 import { revalidatePath } from "next/cache";
 import { isCodingComplete } from "@/lib/coding-completeness";
 import { responseQualifiesForVersion } from "@/lib/compare-version";
@@ -864,10 +865,10 @@ describe("saveResponse — unicidade da resposta corrente (#609)", () => {
 
     expect(r).toEqual({
       success: false,
-      error: "Não foi possível carregar a codificação para salvar. Tente novamente.",
+      error: copyWithRef("Não foi possível carregar a codificação para salvar. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      "[responses] leitura da resposta corrente falhou",
+      loggedScope("[responses] leitura da resposta corrente falhou"),
       expect.objectContaining({ message: "timeout ao ler responses" }),
     );
     consoleError.mockRestore();

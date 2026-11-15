@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 
 // Testa a server action getAutoReviewVerdicts: gate coordinator-only
 // fail-closed, recorte do banco (projeto, veredito preenchido, arbitrados só
@@ -165,7 +166,7 @@ describe("getAutoReviewVerdicts — leitura", () => {
   it("propaga erro de leitura do histórico", async () => {
     serverTableResults = { ...fixture(), field_review_cycle_history_entries: { error: { message: "sem histórico" } } };
     const getAutoReviewVerdicts = await loadAction();
-    expect(await getAutoReviewVerdicts("p1", { includeArchived: true })).toEqual({ error: "Não foi possível carregar os vereditos da auto-revisão. Tente novamente." });
+    expect(await getAutoReviewVerdicts("p1", { includeArchived: true })).toEqual({ error: copyWithRef("Não foi possível carregar os vereditos da auto-revisão. Tente novamente.") });
   });
 
   it("só o true literal liga a opção vinda do cliente", async () => {
@@ -199,9 +200,9 @@ describe("getAutoReviewVerdicts — leitura", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     serverTableResults = { ...fixture(), field_reviews: { error: { message: "boom" } } };
     const getAutoReviewVerdicts = await loadAction();
-    expect(await getAutoReviewVerdicts("p1")).toEqual({ error: "Não foi possível carregar os vereditos da auto-revisão. Tente novamente." });
+    expect(await getAutoReviewVerdicts("p1")).toEqual({ error: copyWithRef("Não foi possível carregar os vereditos da auto-revisão. Tente novamente.") });
     expect(consoleError).toHaveBeenCalledWith(
-      "[auto-review-export] leitura falhou",
+      loggedScope("[auto-review-export] leitura falhou"),
       expect.objectContaining({ message: "boom" }),
     );
     consoleError.mockRestore();

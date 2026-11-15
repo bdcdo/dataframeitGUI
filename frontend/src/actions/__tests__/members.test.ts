@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 
 import {
   makeSupabaseMock,
@@ -153,7 +154,7 @@ vi.mock("@/actions/comparisons", () => ({
 let consoleError: ReturnType<typeof vi.spyOn>;
 function expectLogged(message: string) {
   expect(consoleError).toHaveBeenCalledWith(
-    expect.stringMatching(/^\[members\] .* falhou$/),
+    loggedScope(/^\[members\] .* falhou$/),
     expect.objectContaining({ message }),
   );
 }
@@ -373,7 +374,7 @@ describe("setCanArbitrate", () => {
     };
     const set = await loadSet();
     const r = await set("member1", true);
-    expect(r.error).toBe("Não foi possível alterar a permissão do membro. Tente novamente.");
+    expect(r.error).toEqual(copyWithRef("Não foi possível alterar a permissão do membro. Tente novamente."));
     expectLogged("RLS bloqueou");
     expect(hoisted.retry).not.toHaveBeenCalled();
   });
@@ -431,7 +432,7 @@ describe("setCanCompare", () => {
     };
     const set = await loadSetCompare();
 
-    expect(await set("member-1", false)).toEqual({ error: "Não foi possível alterar a permissão do membro. Tente novamente." });
+    expect(await set("member-1", false)).toEqual({ error: copyWithRef("Não foi possível alterar a permissão do membro. Tente novamente.") });
     expectLogged("falha atômica");
     expect(hoisted.retryComparisons).not.toHaveBeenCalled();
   });
@@ -521,7 +522,7 @@ describe("setCanResolve", () => {
     clientError = { message: "RLS bloqueou" };
     const set = await loadSetResolve();
     const r = await set("member1", true);
-    expect(r.error).toBe("Não foi possível alterar a permissão do membro. Tente novamente.");
+    expect(r.error).toEqual(copyWithRef("Não foi possível alterar a permissão do membro. Tente novamente."));
     expectLogged("RLS bloqueou");
   });
 
@@ -785,7 +786,7 @@ describe("addMember (pré-registro de membro sem conta)", () => {
     const add = await loadAdd();
 
     expect(await add("p1", "novo@exemplo.com", "pesquisador")).toEqual({
-      error: "Não foi possível adicionar o membro. Tente novamente.",
+      error: copyWithRef("Não foi possível adicionar o membro. Tente novamente."),
     });
     expectLogged("profiles indisponível");
     expect(hoisted.reconcileClerkEmailOwner).not.toHaveBeenCalled();
@@ -835,7 +836,7 @@ describe("addMember (pré-registro de membro sem conta)", () => {
     const add = await loadAdd();
 
     expect(await add("p1", "novo@exemplo.com", "pesquisador")).toEqual({
-      error: "Não foi possível adicionar o membro. Tente novamente.",
+      error: copyWithRef("Não foi possível adicionar o membro. Tente novamente."),
     });
     expectLogged("insert indisponível");
     expect(hoisted.revalidatePath).not.toHaveBeenCalled();
@@ -965,7 +966,7 @@ describe("updatePendingMemberEmail — lookups fail-closed", () => {
     const update = await loadUpdatePendingEmail();
 
     await expect(update("p1", "member1", "novo@exemplo.com")).resolves.toEqual({
-      error: "Não foi possível atualizar o e-mail. Tente novamente.",
+      error: copyWithRef("Não foi possível atualizar o e-mail. Tente novamente."),
     });
     expectLogged("placeholder reclamado");
     expect(hoisted.revalidatePath).not.toHaveBeenCalled();
@@ -1027,7 +1028,7 @@ describe("updatePendingMemberEmail — lookups fail-closed", () => {
       const update = await loadUpdatePendingEmail();
 
       expect(await update("p1", "member1", "novo@exemplo.com")).toEqual({
-        error: "Não foi possível atualizar o e-mail. Tente novamente.",
+        error: copyWithRef("Não foi possível atualizar o e-mail. Tente novamente."),
       });
       expectLogged(message);
       expect(writeCalls).toEqual([]);
@@ -1066,7 +1067,7 @@ describe("updatePendingMemberEmail — lookups fail-closed", () => {
     const update = await loadUpdatePendingEmail();
 
     expect(await update("p1", "member1", "novo@exemplo.com")).toEqual({
-      error: "Não foi possível verificar a identidade do membro. Tente novamente.",
+      error: copyWithRef("Não foi possível verificar a identidade do membro. Tente novamente."),
     });
     expectLogged("mapping indisponível");
     expect(writeCalls).toEqual([]);
@@ -1317,7 +1318,7 @@ describe("linkMemberEmail (vínculo de e-mails adicionais a um membro)", () => {
 
     expect(await link("p1", "target1", "extra@exemplo.com")).toEqual({
       status: "error",
-      error: "Não foi possível preparar a unificação dos membros. Tente novamente.",
+      error: copyWithRef("Não foi possível preparar a unificação dos membros. Tente novamente."),
     });
     expectLogged("preview indisponível");
     expect(writeCalls).toEqual([]);

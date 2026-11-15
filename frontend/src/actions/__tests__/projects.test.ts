@@ -1,4 +1,5 @@
 import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
 import { AUTOMATION_MODES } from "@/lib/types";
 import {
   makeSupabaseMock,
@@ -171,9 +172,9 @@ describe("erro do banco não chega cru ao toast", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     dbError = { code: "57014", message: "canceling statement due to statement timeout" };
 
-    expect(await run()).toEqual({ error: copy });
+    expect(await run()).toEqual({ error: copyWithRef(copy) });
     expect(consoleError).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[projects\] .* falhou$/),
+      loggedScope(/^\[projects\] .* falhou$/),
       dbError,
     );
     consoleError.mockRestore();
