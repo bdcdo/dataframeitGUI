@@ -9,7 +9,7 @@
 // otimista só ocorre quando `result.error` é ausente.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, cleanup } from "@testing-library/react";
-import { submitVerdict, markCompareDocReviewed } from "@/actions/reviews";
+import { submitVerdict } from "@/actions/reviews";
 import {
   confirmEquivalentVerdict,
   unmarkEquivalencePair,
@@ -26,7 +26,6 @@ const { toastError, toastSuccess } = vi.hoisted(() => ({
 
 vi.mock("@/actions/reviews", () => ({
   submitVerdict: vi.fn(),
-  markCompareDocReviewed: vi.fn(),
 }));
 vi.mock("@/actions/equivalences", () => ({
   confirmEquivalentVerdict: vi.fn(),
@@ -37,7 +36,6 @@ vi.mock("sonner", () => ({
 }));
 
 const mockSubmitVerdict = vi.mocked(submitVerdict);
-const mockMarkReviewed = vi.mocked(markCompareDocReviewed);
 const mockConfirmEquivalent = vi.mocked(confirmEquivalentVerdict);
 const mockUnmarkPair = vi.mocked(unmarkEquivalencePair);
 
@@ -95,7 +93,7 @@ function setup(readOnly = false) {
 }
 
 describe("modo somente leitura", () => {
-  it("recusa os quatro handlers antes de chamar qualquer Server Action", async () => {
+  it("recusa os três handlers antes de chamar qualquer Server Action", async () => {
     const { result, recordReview, goNextField } = setup(true);
 
     await act(async () => {
@@ -106,13 +104,11 @@ describe("modo somente leitura", () => {
         "r1",
         "fundida",
       );
-      await result.current.handleMarkReviewed();
       await result.current.handleUnmarkPair("pair1");
     });
 
     expect(mockSubmitVerdict).not.toHaveBeenCalled();
     expect(mockConfirmEquivalent).not.toHaveBeenCalled();
-    expect(mockMarkReviewed).not.toHaveBeenCalled();
     expect(mockUnmarkPair).not.toHaveBeenCalled();
     expect(recordReview).not.toHaveBeenCalled();
     expect(goNextField).not.toHaveBeenCalled();
@@ -120,7 +116,7 @@ describe("modo somente leitura", () => {
     // As duas ESCRITAS de veredito passaram a avisar em vez de recusar em
     // silêncio (#613): os controles já nascem `disabled` em somente-leitura, e
     // um deles ter chamado o handler mesmo assim é um bug que queremos ver.
-    // `handleMarkReviewed`/`handleUnmarkPair` seguem silenciosos.
+    // `handleUnmarkPair` segue silencioso.
     expect(toastError).toHaveBeenCalledTimes(2);
     expect(toastError).toHaveBeenCalledWith(
       "Modo somente leitura: nenhuma decisão é registrada.",
@@ -292,21 +288,8 @@ describe("handleUnmarkPair", () => {
   });
 });
 
-describe("handleMarkReviewed", () => {
-  it("markCompareDocReviewed retorna { error } → mostra toast.error", async () => {
-    mockMarkReviewed.mockResolvedValue({ error: "não marcou" });
-    const { result } = setup();
-
-    await act(async () => {
-      await result.current.handleMarkReviewed();
-    });
-
-    expect(toastError).toHaveBeenCalledWith("não marcou");
-  });
-});
-
 describe("rejeição da Server Action (fora do try dela) → toast.error, sem escrita otimista", () => {
-  // Regressão do padrão do PR #417 estendido aos quatro handlers: uma
+  // Regressão do padrão do PR #417 estendido aos handlers: uma
   // rejeição (vs. retorno { error }) era descartada pelo `void` do call site
   // — silêncio total. Cada handler precisa capturar e avisar.
   let consoleError: ReturnType<typeof vi.spyOn>;
@@ -346,18 +329,6 @@ describe("rejeição da Server Action (fora do try dela) → toast.error, sem es
 
     expect(recordReview).not.toHaveBeenCalled();
     expect(goNextField).not.toHaveBeenCalled();
-    expect(toastSuccess).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledTimes(1);
-  });
-
-  it("handleMarkReviewed", async () => {
-    mockMarkReviewed.mockRejectedValue(new Error("rede caiu"));
-    const { result } = setup();
-
-    await act(async () => {
-      await result.current.handleMarkReviewed();
-    });
-
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledTimes(1);
   });

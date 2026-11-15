@@ -28,7 +28,7 @@ function group(id: string, answer: string): FieldResponse[] {
 function setup() {
   const onPrepareVerdict = vi.fn();
   renderHook(() => useCompareKeyboard({
-    readOnly: false, isFullscreen: false, isCurrentDocComplete: false, isCurrentFieldDivergent: true,
+    readOnly: false, isFullscreen: false, isCurrentFieldDivergent: true,
     currentField: FIELD, answerGroups: [group("r1", "Sim"), group("r2", "Talvez")],
     origin: { documentId: "doc1", fieldName: "q" },
     onToggleFullscreen: vi.fn(), onExitFullscreen: vi.fn(), onNextField: vi.fn(), onPrevField: vi.fn(),

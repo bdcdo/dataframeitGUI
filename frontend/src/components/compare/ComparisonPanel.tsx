@@ -49,7 +49,6 @@ interface ComparisonPanelProps {
   /** Veredito do revisor que perdeu a validade; só referência (#758). */
   staleVerdict?: StaleVerdictInfo | null;
   reviewed: boolean[];
-  isDivergent: boolean;
   docStatus: DocStatus;
   onFieldNavigate: (index: number) => void;
   onVerdict: (verdict: string, chosenResponseId?: string) => void;
@@ -58,7 +57,6 @@ interface ComparisonPanelProps {
   onConfirmPendingVerdict: () => void;
   onDiscardPendingVerdict: () => void;
   isSavingVerdict: boolean;
-  onMarkReviewed: () => void;
   comment: string;
   onCommentChange: (value: string) => void;
   commentCount: number;
@@ -100,7 +98,6 @@ export function ComparisonPanel({
   existingVerdict,
   staleVerdict = null,
   reviewed,
-  isDivergent,
   docStatus,
   onFieldNavigate,
   onVerdict,
@@ -109,7 +106,6 @@ export function ComparisonPanel({
   onConfirmPendingVerdict,
   onDiscardPendingVerdict,
   isSavingVerdict,
-  onMarkReviewed,
   comment,
   onCommentChange,
   commentCount,
@@ -222,14 +218,12 @@ export function ComparisonPanel({
                 )}
               </Badge>
             )}
-            {isDivergent && (
-              <KeyboardHints
-                readOnly={readOnly}
-                groupCount={groupCount}
-                isMulti={isMulti}
-                optionCount={isMulti ? displayOptions.length : undefined}
-              />
-            )}
+            <KeyboardHints
+              readOnly={readOnly}
+              groupCount={groupCount}
+              isMulti={isMulti}
+              optionCount={isMulti ? displayOptions.length : undefined}
+            />
           </div>
         </div>
       </div>
@@ -257,11 +251,9 @@ export function ComparisonPanel({
           existingVerdict={existingVerdict}
           staleVerdict={staleVerdict}
           pendingVerdict={pendingVerdict}
-          isDivergent={isDivergent}
           isSavingVerdict={isSavingVerdict}
           onVerdict={onVerdict}
           onPrepareVerdict={onPrepareVerdict}
-          onMarkReviewed={onMarkReviewed}
           comment={comment}
           onCommentChange={onCommentChange}
           equivalence={equivalence}

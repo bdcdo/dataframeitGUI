@@ -153,20 +153,6 @@ describe("ComparisonPanel — confirmação pendente", () => {
   });
 });
 
-describe("ComparisonPanel — modo somente leitura", () => {
-  it("desabilita a conclusão manual de documento concordante", () => {
-    renderPanel({ readOnly: true, isDivergent: false });
-
-    expect(
-      (
-        screen.getByRole("button", {
-          name: "Marcar doc como revisado",
-        }) as HTMLButtonElement
-      ).disabled,
-    ).toBe(true);
-  });
-});
-
 describe("ComparisonPanel — resposta nova (issue #247, ponto 4)", () => {
   it("o input de resposta nova fica oculto até clicar em 'Nenhuma correta'", () => {
     renderPanel();

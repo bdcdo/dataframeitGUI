@@ -17,18 +17,17 @@ import type { ComparisonPanel } from "@/components/compare/ComparisonPanel";
 
 // Mocks dos Server Actions e do toast (efeitos colaterais fora do escopo do
 // teste de lógica do container).
-const { submitVerdict, markCompareDocReviewed } = vi.hoisted(() => ({
+const { submitVerdict } = vi.hoisted(() => ({
   submitVerdict: vi.fn<
     (...args: unknown[]) => Promise<{ error?: string } | void>
   >(async () => {}),
-  markCompareDocReviewed: vi.fn(async () => {}),
 }));
 const { confirmEquivalentVerdict, unmarkEquivalencePair } = vi.hoisted(() => ({
   confirmEquivalentVerdict: vi.fn(async () => {}),
   unmarkEquivalencePair: vi.fn(async () => {}),
 }));
 
-vi.mock("@/actions/reviews", () => ({ submitVerdict, markCompareDocReviewed }));
+vi.mock("@/actions/reviews", () => ({ submitVerdict }));
 vi.mock("@/actions/equivalences", () => ({
   confirmEquivalentVerdict,
   unmarkEquivalencePair,
@@ -67,7 +66,6 @@ interface MockComparisonPanel {
   onDiscardPendingVerdict: () => void;
   isSavingVerdict: boolean;
   onConfirmEquivalent: RealPanelProps["onConfirmEquivalent"];
-  onMarkReviewed: () => void;
   staleVerdict: RealPanelProps["staleVerdict"];
 }
 
@@ -197,12 +195,6 @@ vi.mock("@/components/compare/CompareWorkspace", () => ({
         }
       >
         equiv
-      </button>
-      <button
-        data-testid="mark-reviewed"
-        onClick={() => comparisonPanel.onMarkReviewed()}
-      >
-        mark reviewed
       </button>
     </div>
   ),
@@ -372,7 +364,6 @@ beforeAll(() => warmUpJsdom(), 30_000);
 
 beforeEach(() => {
   submitVerdict.mockClear();
-  markCompareDocReviewed.mockClear();
   confirmEquivalentVerdict.mockClear();
   unmarkEquivalencePair.mockClear();
   vi.mocked(toast.warning).mockClear();
@@ -993,15 +984,6 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
       responseSnapshot: expect.any(Array),
     });
     await waitFor(() => expect(text("field-name")).toBe("campoB"));
-  });
-
-  it("marcar revisado chama markCompareDocReviewed do doc atual", async () => {
-    const user = userEvent.setup();
-    render(<ComparePage {...makeProps()} />);
-
-    await user.click(screen.getByTestId("mark-reviewed"));
-
-    expect(markCompareDocReviewed).toHaveBeenCalledWith("p1", "d1");
   });
 });
 

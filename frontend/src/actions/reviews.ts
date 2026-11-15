@@ -202,34 +202,3 @@ async function removeOrphanAmbiguityComment(
     .eq("kind", "ambiguity");
   if (deleteError) throw new Error(deleteError.message);
 }
-
-// Para docs sem divergência (revisor decide fechar manualmente).
-export async function markCompareDocReviewed(
-  projectId: string,
-  documentId: string,
-): Promise<{ error?: string }> {
-  // Conta vinculada por e-mail fecha o doc como o membro canônico.
-  // Awaits independentes em paralelo.
-  const [actor, supabase] = await Promise.all([
-    resolveProjectMemberActor(projectId),
-    createSupabaseServer(),
-  ]);
-  if (!actor.ok) return { error: actor.error };
-  const effectiveId = actor.memberUserId;
-
-  const { error } = await supabase
-    .from("assignments")
-    .update({ status: "concluido", completed_at: new Date().toISOString() })
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .eq("user_id", effectiveId)
-    .eq("type", "comparacao");
-
-  if (error) {
-    return { error: error.message || "Erro ao marcar o documento como revisado" };
-  }
-
-  revalidatePath(`/projects/${projectId}/analyze/compare`);
-  revalidatePath(`/projects/${projectId}/analyze/assignments`);
-  return {};
-}

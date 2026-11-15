@@ -245,7 +245,6 @@ export function ComparePage({
   const {
     handleVerdict,
     handleConfirmEquivalent,
-    handleMarkReviewed,
     handleUnmarkPair,
   } = useCompareVerdicts({
     readOnly,
@@ -451,7 +450,6 @@ export function ComparePage({
   useCompareKeyboard({
     readOnly,
     isFullscreen,
-    isCurrentDocComplete,
     isCurrentFieldDivergent,
     currentField,
     answerGroups,
@@ -633,7 +631,6 @@ export function ComparePage({
           existingVerdict: currentVerdict,
           staleVerdict: staleVerdictOf(staleReviews, currentDoc.id, currentFieldName),
           reviewed,
-          isDivergent: isCurrentFieldDivergent,
           docStatus: isCurrentDocComplete
             ? { complete: true, hasNextDoc, onNextDoc: nextDoc }
             : { complete: false },
@@ -651,7 +648,6 @@ export function ComparePage({
           onConfirmPendingVerdict: handleConfirmPending,
           onDiscardPendingVerdict: discardPendingVerdict,
           isSavingVerdict,
-          onMarkReviewed: () => void handleMarkReviewed(),
           comment,
           onCommentChange: setComment,
           commentCount: fieldCommentCount,

@@ -4,7 +4,6 @@ import { useCallback } from "react";
 import { toast } from "sonner";
 import {
   submitVerdict,
-  markCompareDocReviewed,
   type ResponseSnapshotEntry,
 } from "@/actions/reviews";
 import {
@@ -48,7 +47,6 @@ export interface CompareVerdicts {
     gabaritoId: string,
     verdictDisplay: string,
   ) => Promise<void>;
-  handleMarkReviewed: () => Promise<void>;
   handleUnmarkPair: (pairId: string) => Promise<void>;
 }
 
@@ -392,18 +390,6 @@ export function useCompareVerdicts({
     ],
   );
 
-  const handleMarkReviewed = useCallback(async () => {
-    if (readOnly || !currentDoc) return;
-    const saved = await actionSucceeded(
-      markCompareDocReviewed(projectId, currentDoc.id),
-      "Failed to mark compare doc reviewed",
-      { projectId, documentId: currentDoc.id },
-      "Não foi possível marcar o documento como revisado. Tente novamente.",
-    );
-    if (!saved) return;
-    toast.success("Documento marcado como revisado.");
-  }, [readOnly, projectId, currentDoc]);
-
   const handleUnmarkPair = useCallback(
     async (pairId: string) => {
       if (readOnly) return;
@@ -422,7 +408,6 @@ export function useCompareVerdicts({
   return {
     handleVerdict,
     handleConfirmEquivalent,
-    handleMarkReviewed,
     handleUnmarkPair,
   };
 }

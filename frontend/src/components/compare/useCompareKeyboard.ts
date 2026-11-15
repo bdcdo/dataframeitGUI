@@ -13,7 +13,6 @@ import type {
 interface UseCompareKeyboardParams {
   readOnly: boolean;
   isFullscreen: boolean;
-  isCurrentDocComplete: boolean;
   isCurrentFieldDivergent: boolean;
   currentField: PydanticField | undefined;
   answerGroups: FieldResponse[][];
@@ -75,7 +74,6 @@ function prepareGroupVote(
 export function useCompareKeyboard({
   readOnly,
   isFullscreen,
-  isCurrentDocComplete,
   isCurrentFieldDivergent,
   currentField,
   answerGroups,
@@ -154,7 +152,6 @@ export function useCompareKeyboard({
     readOnly,
     answerGroups,
     currentField,
-    isCurrentDocComplete,
     isCurrentFieldDivergent,
     isFullscreen,
     origin,

@@ -6,13 +6,7 @@ import { MultiOptionReview } from "./MultiOptionReview";
 import { DivergenceActionsPanel } from "./DivergenceActionsPanel";
 import { UnansweredNotice } from "./UnansweredNotice";
 import { CompareFieldScope } from "./compare-field-scope";
-import { Button } from "@/components/ui/button";
-import { CheckCircle2 } from "lucide-react";
-import {
-  readOnlyTitle,
-  type PendingVerdict,
-  type VerdictOrigin,
-} from "./compare-types";
+import type { PendingVerdict, VerdictOrigin } from "./compare-types";
 import type { StaleVerdictInfo, VerdictInfo } from "@/lib/compare-reviews";
 import type { PydanticField } from "@/lib/types";
 import type { DomainField } from "@/lib/review-validity";
@@ -53,11 +47,9 @@ interface CompareFieldReviewProps {
   /** Veredito do revisor que perdeu a validade; só referência (#758). */
   staleVerdict?: StaleVerdictInfo | null;
   pendingVerdict: PendingVerdict | null;
-  isDivergent: boolean;
   isSavingVerdict: boolean;
   onVerdict: (verdict: string, chosenResponseId?: string) => void;
   onPrepareVerdict: (pending: PendingVerdict) => void;
-  onMarkReviewed: () => void;
   comment: string;
   onCommentChange: (value: string) => void;
   equivalence: EquivalenceConfig;
@@ -82,6 +74,11 @@ interface CompareFieldReviewProps {
 /**
  * Tudo que pertence a UM campo divergente: os cards de resposta (ou a grade de
  * um campo multi), o aviso de quem não respondeu e as ações da divergência.
+ * Só campo divergente chega aqui: a fila de campos do `ComparePage` é
+ * `docFields ⊆ divergentFields`, que o servidor já entrega filtrado
+ * (`computeDivergentFieldNames`), e doc sem campo divergente sai antes de montar
+ * o painel. Por isso não há ramo "concordante" — o que existia era inalcançável
+ * (#616).
  *
  * Existe como componente próprio para que a identidade do campo seja UMA
  * fronteira de montagem, não três keys irmãs coincidentes — que era o desenho
@@ -102,7 +99,7 @@ interface CompareFieldReviewProps {
  * cabeçalho, os ProgressDots, o rodapé de confirmação e o container de scroll —
  * assim a troca de campo não zera o `scrollTop` nem rouba o foco.
  */
-// Cognitive 22 vs. limiar 15, com cyclomatic 3 (dois ternários): a pontuação
+// Cognitive 24 vs. limiar 15, com cyclomatic 6 (medido após a #616): a pontuação
 // vem do encaminhamento de props, que o fallow conta como fiação. É o mesmo
 // débito JSX inerente já rastreado na #580 para ComparePage/CompareMainView.
 //
@@ -127,11 +124,9 @@ export function CompareFieldReview({
   existingVerdict,
   staleVerdict = null,
   pendingVerdict,
-  isDivergent,
   isSavingVerdict,
   onVerdict,
   onPrepareVerdict,
-  onMarkReviewed,
   comment,
   onCommentChange,
   equivalence,
@@ -191,25 +186,21 @@ export function CompareFieldReview({
 
       <UnansweredNotice responses={responses} />
 
-      {isDivergent ? (
-        <DivergenceActionsPanel
-          readOnly={readOnly}
-          projectId={projectId}
-          documentTitle={documentTitle}
-          fieldDescription={fieldDescription}
-          fields={fields}
-          isMulti={isMulti}
-          existingVerdict={existingVerdict}
-          staleVerdict={staleVerdict}
-          pendingVerdict={pendingVerdict}
-          onPrepareVerdict={onPrepareVerdict}
-          comment={comment}
-          onCommentChange={onCommentChange}
-          pendingConfirm={anchoredToCard ? null : pendingConfirm}
-        />
-      ) : (
-        <ConcordantNotice readOnly={readOnly} onMarkReviewed={onMarkReviewed} />
-      )}
+      <DivergenceActionsPanel
+        readOnly={readOnly}
+        projectId={projectId}
+        documentTitle={documentTitle}
+        fieldDescription={fieldDescription}
+        fields={fields}
+        isMulti={isMulti}
+        existingVerdict={existingVerdict}
+        staleVerdict={staleVerdict}
+        pendingVerdict={pendingVerdict}
+        onPrepareVerdict={onPrepareVerdict}
+        comment={comment}
+        onCommentChange={onCommentChange}
+        pendingConfirm={anchoredToCard ? null : pendingConfirm}
+      />
     </CompareFieldScope>
   );
 }
@@ -290,32 +281,5 @@ function SingleAnswerGroup({
       canManageAnyPair={equivalence.canManageAnyPair}
       pendingConfirm={pendingConfirm}
     />
-  );
-}
-
-function ConcordantNotice({
-  readOnly,
-  onMarkReviewed,
-}: {
-  readOnly: boolean;
-  onMarkReviewed: () => void;
-}) {
-  return (
-    <div className="mt-2 flex items-center justify-between gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-xs text-muted-foreground">
-      <div className="flex items-center gap-1.5">
-        <CheckCircle2 className="size-3.5 text-green-600" />
-        Concordante: todos os respondentes concordam.
-      </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-6 text-xs"
-        onClick={onMarkReviewed}
-        disabled={readOnly}
-        title={readOnlyTitle(readOnly)}
-      >
-        Marcar doc como revisado
-      </Button>
-    </div>
   );
 }

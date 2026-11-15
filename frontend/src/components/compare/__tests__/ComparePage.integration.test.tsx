@@ -22,7 +22,6 @@ const compareMocks = vi.hoisted(() => ({
   submitVerdict: vi.fn<
     (...args: unknown[]) => Promise<{ error?: string } | void>
   >(async () => {}),
-  markCompareDocReviewed: vi.fn(async () => {}),
   confirmEquivalentVerdict: vi.fn(async () => {}),
   unmarkEquivalencePair: vi.fn(async () => {}),
   createProjectComment: vi.fn(async () => ({ error: null })),
@@ -40,7 +39,6 @@ const compareMocks = vi.hoisted(() => ({
 
 const {
   submitVerdict,
-  markCompareDocReviewed,
   confirmEquivalentVerdict,
   unmarkEquivalencePair,
   createProjectComment,
@@ -50,7 +48,6 @@ const {
 
 vi.mock("@/actions/reviews", () => ({
   submitVerdict: compareMocks.submitVerdict,
-  markCompareDocReviewed: compareMocks.markCompareDocReviewed,
 }));
 vi.mock("@/actions/equivalences", () => ({
   confirmEquivalentVerdict: compareMocks.confirmEquivalentVerdict,
@@ -264,7 +261,6 @@ afterEach(cleanup);
 function expectNoCompareWrites(): void {
   expect(submitVerdict).not.toHaveBeenCalled();
   expect(confirmEquivalentVerdict).not.toHaveBeenCalled();
-  expect(markCompareDocReviewed).not.toHaveBeenCalled();
   expect(unmarkEquivalencePair).not.toHaveBeenCalled();
   expect(createProjectComment).not.toHaveBeenCalled();
   expect(createSchemaSuggestion).not.toHaveBeenCalled();
