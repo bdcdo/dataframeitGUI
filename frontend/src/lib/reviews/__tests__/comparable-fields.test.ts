@@ -1,78 +1,45 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { fetchReviewBaseData } from "@/lib/reviews/queries";
 import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { isMeasurableField } from "@/lib/llm-error-metrics";
 import type { PydanticField } from "@/lib/types";
-import type { PydanticFieldTarget } from "@/lib/pydantic-field";
 import { makeSupabaseMock } from "@/actions/__tests__/supabase-mock";
 
-// Permite trocar o default de `target` sem mexer no modulo real: e assim que se
-// prova que a Comparacao le o default do resolvedor e nao de uma copia no call
-// site (regra (c2) do CLAUDE.md, issue #500).
-const targetDefault = vi.hoisted(() => ({
-  value: null as PydanticFieldTarget | null,
-}));
-
+// Troca o default de `target` para `human_only`: se algum consumidor da
+// Comparacao ainda re-derivar "ausente = all" no call site, o campo legado
+// continua nele. Prova a regra (c2) do CLAUDE.md (issue #500).
 vi.mock("@/lib/pydantic-field", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/pydantic-field")>();
   return {
     ...actual,
-    resolveTarget: (value: PydanticFieldTarget | null | undefined) =>
-      targetDefault.value !== null && value == null
-        ? targetDefault.value
-        : actual.resolveTarget(value),
+    resolveTarget: (value: Parameters<typeof actual.resolveTarget>[0]) => value ?? "human_only",
   };
 });
 
-afterEach(() => {
-  targetDefault.value = null;
-});
+const legacy = { name: "legado", type: "text", options: null, description: "" } as PydanticField;
+const all = { ...legacy, name: "todos", target: "all" } as PydanticField;
 
-const field = (name: string, target?: PydanticFieldTarget): PydanticField =>
-  ({ name, type: "text", options: null, description: name, ...(target ? { target } : {}) }) as PydanticField;
+describe("o default de `target` da Comparação vem de `resolveTarget` (issue #500)", () => {
+  it("gabarito, fila de divergência e métricas do LLM seguem o resolvedor", async () => {
+    const client = makeSupabaseMock({
+      tableResults: {
+        projects: { data: { pydantic_fields: [legacy, all], pydantic_hash: null, created_by: "owner" } },
+        responses: { data: [] },
+        reviews: { data: [] },
+        documents: { data: [] },
+        profiles: { data: [] },
+      },
+      rpcResults: { read_error_resolutions: { data: [] } },
+    });
+    const ctx = await fetchReviewBaseData(client as never, "p1");
+    expect(ctx.comparableFields.map((f) => f.name)).toEqual(["todos"]);
 
-async function comparableNames(fields: PydanticField[]): Promise<string[]> {
-  const client = makeSupabaseMock({
-    tableResults: {
-      projects: { data: { pydantic_fields: fields, pydantic_hash: null, created_by: "owner" } },
-      responses: { data: [] },
-      reviews: { data: [] },
-      documents: { data: [] },
-      profiles: { data: [] },
-    },
-    rpcResults: { read_error_resolutions: { data: [] } },
-  });
-  const ctx = await fetchReviewBaseData(client as never, "p1");
-  return ctx.comparableFields.map((f) => f.name);
-}
+    const divergent = computeDivergentFieldNames([legacy, all], [
+      { id: "1", answers: { legado: "a", todos: "a" } },
+      { id: "2", answers: { legado: "b", todos: "b" } },
+    ]);
+    expect(divergent).toEqual(["todos"]);
 
-// Os dois lados da Comparacao (gabarito e fila de divergencia) decidem o mesmo
-// conjunto de campos; com o default trocado, nenhum dos dois pode ficar com a
-// copia antiga da regra.
-const divergentNames = (fields: PydanticField[]) =>
-  computeDivergentFieldNames(fields, [
-    { id: "1", answers: Object.fromEntries(fields.map((f) => [f.name, "a"])) },
-    { id: "2", answers: Object.fromEntries(fields.map((f) => [f.name, "b"])) },
-  ]);
-
-describe("comparableFields e computeDivergentFieldNames (issue #500)", () => {
-  it("campo legado sem `target` continua comparável; só `all` entra", async () => {
-    expect(
-      await comparableNames([
-        field("legado"),
-        field("todos", "all"),
-        field("so_llm", "llm_only"),
-        field("so_humano", "human_only"),
-        field("nenhum", "none"),
-      ]),
-    ).toEqual(["legado", "todos"]);
-  });
-
-  it("o default de `target` vem de `resolveTarget`, não do call site", async () => {
-    const fields = [field("legado"), field("todos", "all")];
-    expect(divergentNames(fields)).toEqual(["legado", "todos"]);
-
-    targetDefault.value = "human_only";
-    expect(await comparableNames(fields)).toEqual(["todos"]);
-    expect(divergentNames(fields)).toEqual(["todos"]);
+    expect(isMeasurableField(legacy)).toBe(false);
   });
 });

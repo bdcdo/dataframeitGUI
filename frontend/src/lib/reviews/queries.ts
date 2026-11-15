@@ -12,7 +12,7 @@ import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
 import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
 import { pickValidCellReviews } from "@/lib/review-validity";
 import { stableStringify } from "@/lib/schema-utils";
-import { resolveTarget } from "@/lib/pydantic-field";
+import { isComparedField } from "@/lib/compare-divergence";
 
 /* ── Raw row shapes ── */
 
@@ -308,9 +308,7 @@ export async function fetchReviewBaseData(
 
   const uniqueReviews = gabaritoReviews(reviews as ReviewRow[] | null, fieldMap);
 
-  const comparableFields = fields.filter(
-    (f) => resolveTarget(f.target) === "all",
-  );
+  const comparableFields = fields.filter(isComparedField);
 
   return {
     fields,

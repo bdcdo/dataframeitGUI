@@ -21,13 +21,12 @@ import {
   groupValueEquivalencesByField,
   type ValueEquivalence,
 } from "@/lib/equivalence";
-import { isFieldApplicable } from "@/lib/compare-divergence";
+import { isComparedField, isFieldApplicable } from "@/lib/compare-divergence";
 import {
   multiSelectionSets,
   multiSelectionsAgree,
 } from "@/lib/compare-multi-options";
 import { isCodingComplete } from "@/lib/coding-completeness";
-import { resolveTarget } from "@/lib/pydantic-field";
 import { formatAnswer } from "@/lib/reviews/queries";
 import { formatCardAnswer } from "@/lib/verdict-display";
 import { pickValidCellReviews, reviewValidity, verdictSelection, type ReviewInvalidReason } from "@/lib/review-validity";
@@ -257,14 +256,11 @@ function formatSchemaVersion(response: {
 // acerto fabricado por campo `human_only` por documento codificado, sempre no
 // sentido de deflacionar a taxa.
 //
-// O default de `target` sai de `resolveTarget`, nunca de um `!== x` local
-// (regra (c2) do CLAUDE.md).
+// Os quatro valores de `target` deixam so `all`: e a mesma regra da Comparacao.
 export function isMeasurableField(
   field: PydanticField | undefined,
 ): field is PydanticField {
-  if (!field) return false;
-  const target = resolveTarget(field.target);
-  return target !== "none" && target !== "llm_only" && target !== "human_only";
+  return field !== undefined && isComparedField(field);
 }
 
 // "O LLM acertou este campo?" a partir da proveniência da auto-revisão. O mapa

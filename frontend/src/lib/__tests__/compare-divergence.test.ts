@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeDivergentFieldNames } from "@/lib/compare-divergence";
+import { computeDivergentFieldNames, isComparedField } from "@/lib/compare-divergence";
 import type { ValueEquivalence } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
 
@@ -27,6 +27,18 @@ function field(overrides: Partial<PydanticField>): PydanticField {
 function eq(fieldName: string, valueA: unknown, valueB: unknown, fieldHash = `h-${fieldName}`): ValueEquivalence {
   return { id: `eq-${fieldName}-${String(valueA)}-${String(valueB)}`, field_name: fieldName, field_hash: fieldHash, value_a: valueA, value_b: valueB, reviewer_id: null };
 }
+
+describe("isComparedField (issue #500)", () => {
+  it.each([
+    [undefined, true],
+    ["all", true],
+    ["llm_only", false],
+    ["human_only", false],
+    ["none", false],
+  ] as const)("target %s → %s (campo legado sem target é comparável)", (target, expected) => {
+    expect(isComparedField({ target })).toBe(expected);
+  });
+});
 
 describe("computeDivergentFieldNames", () => {
   it("skips fields with target llm_only / human_only / none", () => {
