@@ -139,6 +139,50 @@ describe("regra de locators visíveis nos specs E2E", () => {
     expect(messages[0]?.message).toContain("includeHidden");
   });
 
+  // O callback roda no navegador, onde visivel() não alcança: um seletor do DOM
+  // ali pega a primeira cópia, que pode ser a órfã do Suspense (desvio do #862).
+  it.each([
+    [
+      "querySelector em page.evaluate",
+      `await page.evaluate(() => document.querySelector("[data-testid=a]")!.getBoundingClientRect());`,
+    ],
+    [
+      "querySelectorAll em page.waitForFunction",
+      `await page.waitForFunction(() => document.querySelectorAll("button").length > 2);`,
+    ],
+    [
+      "getElementById em page.evaluateHandle",
+      `await page.evaluateHandle((id) => document.getElementById(id), "a");`,
+    ],
+    [
+      "querySelector em locator.evaluateAll",
+      `await visivel(page.getByText("a")).evaluateAll(() => document.querySelector("p"));`,
+    ],
+    [
+      "querySelector num helper chamado pelo callback",
+      `await page.evaluate(() => { const box = (s: string) => document.querySelector(s); return box("p"); });`,
+    ],
+  ])("bloqueia %s", async (_caseName, body) => {
+    const messages = await messagesFor(
+      `${prelude}\ntest("x", async ({ page }) => { ${body} });`,
+    );
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.message).toContain("dentro do navegador");
+  });
+
+  it("permite evaluate que não consulta o DOM por seletor", async () => {
+    await expect(
+      messagesFor(`${prelude}
+        test("x", async ({ page }) => {
+          await page.evaluate((key) => localStorage.getItem(key), "k");
+          await page.evaluate(() => document.dispatchEvent(new Event("x")));
+          await visivel(page.getByText("a")).evaluate((el) => el.querySelector("p"));
+        });
+      `),
+    ).resolves.toEqual([]);
+  });
+
   // Sem type-checker, a página é reconhecida pelo nome; estes casos provam que
   // renomear a página não é saída silenciosa da regra principal.
   it.each([

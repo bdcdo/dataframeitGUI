@@ -81,6 +81,15 @@ const e2eLocatorRules = [
     message:
       "body e html contêm a cópia oculta de um segmento de Suspense, mesmo filtrados por visivel(). Parta de getByRole (main, dialog) ou de um locator mais específico.",
   },
+  // Heurística sintática: pega a consulta escrita no próprio callback, não a
+  // que vem de função declarada fora dele nem a que anda pelo DOM
+  // (`document.body.children[...]`).
+  {
+    selector:
+      'CallExpression[callee.property.name=/^(evaluate|evaluateAll|evaluateHandle|waitForFunction)$/] CallExpression[callee.object.name="document"][callee.property.name=/^(querySelector|querySelectorAll|getElementById)$/]',
+    message:
+      "Seletor do DOM dentro do navegador (evaluate, waitForFunction) pega a primeira cópia, que pode ser a órfã de um segmento de Suspense. Ache o elemento com um locator em visivel() e chame evaluate/evaluateAll nele (ver e2e/compare-split-layout.smoke.spec.ts).",
+  },
   {
     selector:
       'CallExpression[callee.property.name="getByRole"] Property[key.name="includeHidden"][value.value=true]',
