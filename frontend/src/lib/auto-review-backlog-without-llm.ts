@@ -3,6 +3,12 @@ import type { SupabaseServerClient } from "@/lib/supabase/server";
 
 type DataClient = Pick<SupabaseServerClient, "from">;
 
+interface DocRow {
+  document_id: string;
+}
+
+const docIds = (rows: DocRow[]) => new Set(rows.map((row) => row.document_id));
+
 // Quantos documentos a regeneração do backlog de auto-revisão deixa de fora
 // por não terem geração LLM corrente (#690). Desde a #670,
 // `enqueue_auto_review_reconciliation_for_project` só enfileira documento com
@@ -20,78 +26,9 @@ type DataClient = Pick<SupabaseServerClient, "from">;
 // Um desvio deliberado da RPC: documento excluído (ou com exclusão pendente)
 // não conta. A RPC não os filtra, mas o runner LLM os pula, e a ressalva manda
 // rodar o LLM — contá-los deixaria um aviso que nenhuma ação apaga.
-export function docsWithoutLlm(
-  humanDocIds: Iterable<string>,
-  llmDocIds: Iterable<string>,
-): Set<string> {
-  const llm = new Set(llmDocIds);
-  return new Set([...humanDocIds].filter((id) => !llm.has(id)));
-}
-
-export function countReviewed(
-  withoutLlm: ReadonlySet<string>,
-  reviewedDocIds: Iterable<string>,
-): number {
-  const reviewed = new Set(reviewedDocIds);
-  return [...withoutLlm].filter((id) => reviewed.has(id)).length;
-}
-
-interface DocRow {
-  document_id: string;
-}
-
-function currentResponses(
-  client: DataClient,
-  projectId: string,
-  respondentType: "humano" | "llm",
-  columns: string,
-) {
-  return client
-    .from("responses")
-    .select(columns)
-    .eq("project_id", projectId)
-    .eq("respondent_type", respondentType)
-    .eq("is_latest", true)
-    .eq("is_partial", false);
-}
-
-// O filtro de exclusão só vai no lado humano: é ele que define os candidatos.
-function fetchHumanDocs(client: DataClient, projectId: string) {
-  return fetchAllPaged<DocRow>(
-    () =>
-      currentResponses(
-        client,
-        projectId,
-        "humano",
-        "id, document_id, documents!inner(excluded_at, exclusion_pending_at)",
-      )
-        .is("documents.excluded_at", null)
-        .is("documents.exclusion_pending_at", null) as never,
-    ["id"],
-  );
-}
-
-function fetchLlmDocs(client: DataClient, projectId: string) {
-  return fetchAllPaged<DocRow>(
-    () => currentResponses(client, projectId, "llm", "id, document_id") as never,
-    ["id"],
-  );
-}
-
-function fetchReviewDocs(
-  client: DataClient,
-  projectId: string,
-  table: "field_reviews" | "field_review_cycle_history_entries",
-) {
-  return fetchAllPaged<DocRow>(
-    () =>
-      client.from(table).select("id, document_id").eq("project_id", projectId) as never,
-    ["id"],
-  );
-}
-
-const docIds = (rows: DocRow[]) => rows.map((row) => row.document_id);
-
+//
+// Mudou o WHERE da RPC? Mude este critério junto: nada amarra os dois.
+//
 // Leitura separada da RPC, sem a trava por documento que ela toma: é uma
 // ressalva informativa, não parte do reparo. Paginada porque o teto de 1000
 // linhas do PostgREST truncaria a contagem em silêncio.
@@ -101,32 +38,58 @@ export async function fetchDocsWithoutLlmCount(
 ): Promise<{ count: number; error: null } | { count: null; error: { message: string } }> {
   const [projectResult, humanResult, llmResult] = await Promise.all([
     client.from("projects").select("automation_mode").eq("id", projectId).single(),
-    fetchHumanDocs(client, projectId),
-    fetchLlmDocs(client, projectId),
+    // O filtro de exclusão só vai no lado humano: é ele que define os candidatos.
+    fetchAllPaged<DocRow>(
+      () =>
+        client
+          .from("responses")
+          .select("id, document_id, documents!inner(excluded_at, exclusion_pending_at)")
+          .eq("project_id", projectId)
+          .eq("respondent_type", "humano")
+          .eq("is_latest", true)
+          .eq("is_partial", false)
+          .is("documents.excluded_at", null)
+          .is("documents.exclusion_pending_at", null),
+      ["id"],
+    ),
+    fetchAllPaged<DocRow>(
+      () =>
+        client
+          .from("responses")
+          .select("id, document_id")
+          .eq("project_id", projectId)
+          .eq("respondent_type", "llm")
+          .eq("is_latest", true)
+          .eq("is_partial", false),
+      ["id"],
+    ),
   ]);
   const firstError = projectResult.error ?? humanResult.error ?? llmResult.error;
   if (firstError) return { count: null, error: firstError };
 
-  const automationMode =
-    (projectResult.data as { automation_mode: string | null } | null)?.automation_mode ?? null;
-  const withoutLlm = docsWithoutLlm(docIds(humanResult.data), docIds(llmResult.data));
+  const withoutLlm = docIds(humanResult.data).difference(docIds(llmResult.data));
   // A segunda fase só é necessária fora do modo de auto-revisão e quando há
   // candidato: no caso comum ela não custa nada.
-  if (automationMode === "auto_review_llm" || withoutLlm.size === 0) {
+  if (projectResult.data?.automation_mode === "auto_review_llm" || withoutLlm.size === 0) {
     return { count: withoutLlm.size, error: null };
   }
 
   const [reviewsResult, historyResult] = await Promise.all([
-    fetchReviewDocs(client, projectId, "field_reviews"),
-    fetchReviewDocs(client, projectId, "field_review_cycle_history_entries"),
+    fetchAllPaged<DocRow>(
+      () => client.from("field_reviews").select("id, document_id").eq("project_id", projectId),
+      ["id"],
+    ),
+    fetchAllPaged<DocRow>(
+      () =>
+        client
+          .from("field_review_cycle_history_entries")
+          .select("id, document_id")
+          .eq("project_id", projectId),
+      ["id"],
+    ),
   ]);
   const reviewError = reviewsResult.error ?? historyResult.error;
   if (reviewError) return { count: null, error: reviewError };
-  return {
-    count: countReviewed(withoutLlm, [
-      ...docIds(reviewsResult.data),
-      ...docIds(historyResult.data),
-    ]),
-    error: null,
-  };
+  const reviewed = docIds([...reviewsResult.data, ...historyResult.data]);
+  return { count: withoutLlm.intersection(reviewed).size, error: null };
 }

@@ -78,7 +78,7 @@ beforeEach(() => {
         respondent_type: "humano",
         is_latest: true,
         is_partial: false,
-        // O mock filter-aware compara a coluna do embed literalmente.
+        // Chaves do embed `documents!inner`: o mock compara a coluna literalmente.
         "documents.excluded_at": null,
         "documents.exclusion_pending_at": null,
         answers: { q1: "a" },
