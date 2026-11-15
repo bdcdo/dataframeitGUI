@@ -622,6 +622,10 @@ export type BackfillSchemaResult =
   | { status: "conflict"; current: SchemaSnapshot }
   | { status: "error"; message: string };
 
+// Falha prevista do backfill, cuja mensagem já é copy pt-BR para o toast. O que
+// não for isto é exceção inesperada: o texto vai para o log, não ao usuário.
+class BackfillFailure extends Error {}
+
 export async function backfillSchemaVersionHistory(
   projectId: string,
   expectedBaseline: SchemaBaselineIdentity,
@@ -629,9 +633,14 @@ export async function backfillSchemaVersionHistory(
   try {
     return await runBackfill(projectId, expectedBaseline);
   } catch (e) {
+    if (e instanceof BackfillFailure) return { status: "error", message: e.message };
     return {
       status: "error",
-      message: errorMessage(e) || "Erro ao reconstruir o histórico de versões",
+      message: serverErrorCopy(
+        "[schema] backfill falhou",
+        { message: errorMessage(e) },
+        { generic: SCHEMA_RPC_COPY.apply_schema_backfill.generic },
+      ),
     };
   }
 }
@@ -658,7 +667,7 @@ async function fetchAllPages<T>(
       // Postgres ao toast pt-BR ("canceling statement due to statement
       // timeout", num projeto grande). Vale a mesma regra do mapRpcError: o
       // texto é diagnóstico de desenvolvedor e vai para o log do servidor.
-      throw new Error(
+      throw new BackfillFailure(
         serverErrorCopy("[schema] paginação do backfill falhou", error, {
           generic: SCHEMA_RPC_COPY.apply_schema_backfill.generic,
         }),
@@ -709,7 +718,7 @@ async function runBackfill(
   expectedBaseline: SchemaBaselineIdentity,
 ): Promise<BackfillSchemaResult> {
   const user = await getAuthUser();
-  if (!user) throw new Error("Não autenticado");
+  if (!user) throw new BackfillFailure("Não autenticado");
 
   const supabase = await createSupabaseServer();
 
@@ -726,8 +735,8 @@ async function runBackfill(
     .eq("id", projectId)
     .maybeSingle();
 
-  if (projectError) throw new Error(projectReadFailed(projectError));
-  if (!project) throw new Error("Projeto não encontrado ou sem permissão");
+  if (projectError) throw new BackfillFailure(projectReadFailed(projectError));
+  if (!project) throw new BackfillFailure("Projeto não encontrado ou sem permissão");
 
   // O CAS compara contra a revisão que a ABA observou, como em
   // publishMajorVersion — não contra a leitura fresca deste request. Ler o

@@ -662,6 +662,39 @@ describe("backfillSchemaVersionHistory", () => {
     consoleError.mockRestore();
   });
 
+  // Exceção inesperada (bug, linha malformada, rede) ia crua ao toast pt-BR,
+  // com o texto do runtime em inglês: vai para o log, e o toast recebe a copy.
+  it("exceção inesperada não chega crua ao toast", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.tables = {
+      projects: {
+        data: {
+          pydantic_fields: [FIELD],
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+          schema_revision: 3,
+        },
+      },
+      schema_change_log: { data: [] },
+      // Linha nula: o casamento de versões lê propriedade de null e lança TypeError.
+      responses: { data: [null] },
+    };
+
+    const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
+
+    expect(result).toEqual({
+      status: "error",
+      message: "Não foi possível reconstruir o histórico. Tente novamente.",
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      "[schema] backfill falhou",
+      expect.objectContaining({ message: expect.stringMatching(/null/) }),
+    );
+    expect(state.rpcs).toHaveLength(0);
+    consoleError.mockRestore();
+  });
+
   it("projeto ausente ou filtrado pela RLS mantém a copy de permissão", async () => {
     state.tables = {
       projects: { data: null },
