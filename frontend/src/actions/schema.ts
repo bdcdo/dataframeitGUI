@@ -440,6 +440,8 @@ type PreparedSchema =
   | { unchanged: true }
   | { result: SchemaSaveResult };
 
+const MAX_TOASTED_ERRORS = 3;
+
 function prepareSchemaCommit(
   fields: PydanticField[],
   context: SchemaSaveContext,
@@ -447,10 +449,13 @@ function prepareSchemaCommit(
   const { fields: parsedFields, errors } = parseSaveablePydanticFields(fields);
   if (!parsedFields) {
     // As mensagens nomeiam o campo culpado: pelo EditFieldDialog, quem salva
-    // editou outro campo e não teria como achar o legado inválido (#502).
+    // editou outro campo e não teria como achar o legado inválido (#502). O
+    // teto mantém o toast legível num projeto legado com muitos campos ruins.
+    const shown = errors.slice(0, MAX_TOASTED_ERRORS).join("; ");
+    const hidden = errors.length - MAX_TOASTED_ERRORS;
     return { result: {
       status: "error",
-      message: `O schema enviado é inválido. ${errors.join("; ")}`,
+      message: `O schema enviado é inválido. ${shown}${hidden > 0 ? ` (e mais ${hidden})` : ""}`,
     } };
   }
   const plan = planSchemaPersistence(

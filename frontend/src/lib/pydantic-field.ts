@@ -445,13 +445,16 @@ export function parsePydanticFields(value: unknown): PydanticField[] | null {
 
 // As regras de negócio (superRefine acima) já nascem em pt-BR e nomeadas
 // ("Campo N: ..."). As estruturais vêm com o texto padrão do Zod, em inglês, e
-// por isso viram "Campo N: formato inválido" — ainda apontam o culpado (#502).
+// por isso viram "Campo N: formato inválido em <propriedade>" — ainda apontam
+// o culpado (#502).
 function describeFieldIssue(issue: z.core.$ZodIssue): string {
   if (issue.code === "custom") return issue.message;
-  const [index] = issue.path;
-  return typeof index === "number"
-    ? `Campo ${index + 1}: formato inválido`
-    : "Formato de schema inválido";
+  const [index, ...property] = issue.path;
+  if (typeof index !== "number") return "Formato de schema inválido";
+  const where = issue.code === "unrecognized_keys" ? issue.keys : property;
+  return where.length > 0
+    ? `Campo ${index + 1}: formato inválido em ${where.map(String).join(".")}`
+    : `Campo ${index + 1}: formato inválido`;
 }
 
 export type SaveablePydanticFields =

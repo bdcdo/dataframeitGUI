@@ -360,7 +360,30 @@ describe("saveSchemaFromGUI", () => {
 
     expect(result).toEqual({
       status: "error",
-      message: "O schema enviado é inválido. Campo 1: formato inválido",
+      message: "O schema enviado é inválido. Campo 1: formato inválido em unexpected",
+    });
+  });
+
+  it("toast lista no máximo três erros e conta o resto", async () => {
+    state.tables = { projects: PROJECT_SELECT };
+    const blank = (n: number): PydanticField => ({
+      ...FIELD,
+      id: `00000000-0000-4000-8000-00000000000${n}`,
+      name: `q${n}`,
+      description: "",
+    });
+
+    const result = await saveSchemaFromGUI(
+      "p1",
+      [1, 2, 3, 4, 5].map(blank),
+      EMPTY_BASELINE,
+    );
+
+    expect(result).toEqual({
+      status: "error",
+      message:
+        "O schema enviado é inválido. Campo 1: descrição não pode ser vazia; " +
+        "Campo 2: descrição não pode ser vazia; Campo 3: descrição não pode ser vazia (e mais 2)",
     });
   });
 

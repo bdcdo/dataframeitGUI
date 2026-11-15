@@ -243,3 +243,25 @@ describe("validateGUIFields — nomes dunder", () => {
     },
   );
 });
+
+// #502: erro estrutural do Zod (texto em inglês) vira mensagem pt-BR que
+// nomeia o campo e a propriedade.
+describe("validateGUIFields — erro estrutural", () => {
+  it("nomeia campo e propriedade", () => {
+    const broken = [
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        name: "q1",
+        type: "text",
+        options: null,
+        description: "Pergunta",
+        target: "todos",
+        extra: 1,
+      },
+    ] as unknown as PydanticField[];
+    expect(validateGUIFields(broken)).toEqual([
+      "Campo 1: formato inválido em target",
+      "Campo 1: formato inválido em extra",
+    ]);
+  });
+});
