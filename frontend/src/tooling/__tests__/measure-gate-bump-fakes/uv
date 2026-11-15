@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+command="$1"; shift
+args=("$@") project=""
+for ((i = 0; i < ${#args[@]}; i++)); do
+  [[ ${args[i]} == --project ]] && project="${args[i + 1]}"
+done
+echo "$command $(cat "$project/uv.lock") $(basename "$PWD") ${args[*]//$project/P}" >>"$FAKE_LOG"
+[[ " ${args[*]} " != *" --version "* ]] || echo "ferramenta 0.0.0"

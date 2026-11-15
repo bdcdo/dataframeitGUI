@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+hook="$2" config=""
+while (($#)); do [[ $1 == --config ]] && config="$2"; shift; done
+rev="$(sed -n 's/^ *rev: *//p' "$config" | paste -sd,)"
+echo "$hook $(grep -o 'lado: [a-z]*' "$config" || echo gerada) rev=$rev" >>"$FAKE_LOG"
+[[ $hook == gitleaks ]] || { echo "$hook....Passed"; exit 0; }
+read -ra words <<<"$(sed -n 's/^ *entry: //p' "$config")"
+[[ "${words[0]} ${words[1]}" == "gitleaks dir" ]] || { echo "entry inesperado: ${words[*]}" >&2; exit 1; }
+for ((i = 0; i < ${#words[@]}; i++)); do
+  [[ ${words[i]} == --report-path ]] && report="${words[i + 1]}"
+done
+dir="${words[-1]}"
+case "${FAKE_GITLEAKS:-}" in
+  noop) exit 0 ;;
+  empty) echo '[]' >"$report" ;;
+  *) { grep -rlE 'ghp_[0-9A-Za-z]{36}' "$dir" || true; } | jq -R . | jq -s 'map({File: ., RuleID: "github-pat"})' >"$report" ;;
+esac

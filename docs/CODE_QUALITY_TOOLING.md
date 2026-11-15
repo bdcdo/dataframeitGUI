@@ -162,48 +162,14 @@ Por isso, antes do merge, todo PR que sobe uma ferramenta de gate exige três pa
 2. **Registrar no corpo do PR** o comando, a contagem em cada versão e o que mudou.
 3. **Se a contagem subir, decidir de forma explícita**: corrigir os achados novos no próprio PR ou suprimi-los pontualmente com o porquê ao lado, no padrão que já existe (allowlist comentada em `.gitleaks.toml`, `-ignore` comentado no hook do actionlint, `# noqa` inline no ruff, `docs/LINT_CONFIG.md` no react-doctor). Não se mergeia sem nomear a diferença.
 
-Como medir, no worktree do PR: a versão antiga é a que a config ou o lockfile do merge-base fixa.
+Como medir, no worktree do PR: `bash frontend/scripts/measure-gate-bump.sh [pre-commit|uv] [base]`. A versão antiga é a que a config ou o lockfile do merge-base (`git merge-base origin/main HEAD`, ou a `base` passada) fixa, e a nova é a do HEAD. O script imprime a saída de cada ferramenta nas duas versões e um resumo no fim, e o teste dele fica em `frontend/src/tooling/__tests__/measure-gate-bump.test.ts`.
 
-```bash
-base=$(git merge-base origin/main HEAD)
+- `pre-commit`: `check-merge-conflict` e `actionlint` com a `.pre-commit-config.yaml` de cada lado, e o gitleaks com o `rev` de cada lado.
+- `uv`: `ruff check --statistics`, `ruff format --check` e `mypy` no `backend/`, com o `pyproject.toml` e o `uv.lock` de cada lado num projeto temporário. São comandos só de leitura, fora do hook, que roda o ruff com `--fix`, e o worktree não é tocado.
 
-# pre-commit-hooks (hook check-merge-conflict) e actionlint
-antiga=$(mktemp)
-git show "$base":.pre-commit-config.yaml > "$antiga"
-pre-commit run actionlint --all-files --config "$antiga"   # antiga
-pre-commit run actionlint --all-files                      # nova
+O gitleaks é a exceção entre os hooks. O hook roda `gitleaks git --pre-commit --staged` e ignora a lista de arquivos, então `pre-commit run gitleaks --all-files` passa sem escanear nada ("scanned ~0 bytes"). Ele continua assim, porque no commit é o diff staged que importa. O script mede a árvore com `gitleaks dir`, trocando o entry do hook, sobre uma cópia só dos arquivos versionados (`git archive HEAD`, então `.venv`, `node_modules` e `.env.local` ficam fora). Na cópia ele planta um token canário gerado na hora: se o canário não aparece no relatório, a varredura não leu a árvore e o script falha, em vez de registrar "0 achados".
 
-# ruff e mypy: lockfile do merge-base, medir, voltar ao do PR e medir de novo.
-# Comandos só de leitura, um por linha: o hook do ruff roda com --fix.
-git checkout "$base" -- backend/pyproject.toml backend/uv.lock
-cd backend && uv sync --locked
-uv run ruff check --statistics .
-uv run ruff format --check .
-uv run mypy .
-cd .. && git checkout HEAD -- backend/pyproject.toml backend/uv.lock
-# ... e repetir de `uv sync --locked` em diante.
-```
-
-O gitleaks é a exceção. O hook roda `gitleaks git --pre-commit --staged` e ignora a lista de arquivos, então `pre-commit run gitleaks --all-files` passa sem escanear nada. A árvore se mede com `gitleaks dir`, trocando o entry do hook, sobre uma cópia só dos arquivos versionados (assim `.venv`, `node_modules` e `.env.local` ficam fora):
-
-```bash
-tree=$(mktemp -d) cfg=$(mktemp)
-trap 'rm -rf "$tree" "$cfg"' EXIT
-git archive HEAD | tar -x -C "$tree"
-for rev in <rev-antiga> <rev-nova>; do
-  cat > "$cfg" <<EOF
-repos:
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: $rev
-    hooks:
-      - id: gitleaks
-        entry: gitleaks dir -v --redact --no-banner --config .gitleaks.toml $tree
-EOF
-  pre-commit run gitleaks --all-files --verbose --config "$cfg"
-done
-```
-
-No `npm`, a troca é a mesma do `uv`: `frontend/package.json` e `frontend/package-lock.json` do merge-base, `npm ci` e o comando completo da ferramenta (o scan completo de `docs/LINT_CONFIG.md`, `npm run fallow`, `npm run lint:types`), depois o mesmo na head do PR. No fallow, compare também a severidade das regras entre os `schema.json` das duas versões (seção do fallow, acima): regra que sobe para `error` muda o gate sem mudar a contagem.
+O `npm` fica fora do script, e a troca é à mão: `frontend/package.json` e `frontend/package-lock.json` do merge-base, `npm ci` e o comando completo da ferramenta (o scan completo de `docs/LINT_CONFIG.md`, `npm run fallow`, `npm run lint:types`), depois o mesmo na head do PR. No fallow, compare também a severidade das regras entre os `schema.json` das duas versões (seção do fallow, acima): regra que sobe para `error` muda o gate sem mudar a contagem.
 
 ## Setup (uma vez por checkout)
 
