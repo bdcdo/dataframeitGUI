@@ -1,0 +1,52 @@
+{
+  "python_keywords": [
+    "and",
+    "as",
+    "assert",
+    "async",
+    "await",
+    "break",
+    "class",
+    "continue",
+    "def",
+    "del",
+    "elif",
+    "else",
+    "except",
+    "finally",
+    "for",
+    "from",
+    "global",
+    "if",
+    "import",
+    "in",
+    "is",
+    "lambda",
+    "nonlocal",
+    "not",
+    "or",
+    "pass",
+    "raise",
+    "return",
+    "try",
+    "while",
+    "with",
+    "yield"
+  ],
+  "pydantic_reserved": [
+    "model_config",
+    "model_dump",
+    "model_dump_json",
+    "model_validate",
+    "model_validate_json",
+    "model_validate_strings"
+  ],
+  "private_examples": [
+    "_",
+    "_x",
+    "__x",
+    "_x_",
+    "__class__",
+    "__init__"
+  ]
+}

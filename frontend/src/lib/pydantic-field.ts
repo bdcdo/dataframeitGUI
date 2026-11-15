@@ -146,16 +146,56 @@ export const pydanticFieldsSchema =
 // Nome de campo e de subcampo. Exportado porque o nome também entra como
 // caminho JSON em queries do PostgREST (value-equivalence-query.ts).
 export const PYTHON_IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
-const isStrictDunder = (name: string): boolean =>
-  name.startsWith("__") && name.endsWith("__");
 
-export type PydanticFieldNameIssue = "invalid" | "reserved" | null;
+// Nomes que casam com PYTHON_IDENTIFIER mas com que o código gerado não
+// compila, como campo e como subcampo. É o conjunto exato que
+// `compile_pydantic` recusa: `backend/tests/test_field_names.py` confere, pelo
+// arquivo `reserved_field_names.json`, que o backend recusa estes nomes e
+// aceita todos os outros candidatos (palavras-chave leves do Python e atributos
+// do `BaseModel`), então uma versão nova do Python ou do Pydantic que reserve
+// mais um nome reprova lá (#525).
+//
+// Palavra reservada do Python: `class: str` é erro de sintaxe. As palavras-
+// chave leves (`match`, `case`, `type`) compilam e ficam de fora.
+export const PYTHON_KEYWORDS: readonly string[] = Object.freeze([
+  "and", "as", "assert", "async", "await", "break", "class", "continue", "def",
+  "del", "elif", "else", "except", "finally", "for", "from", "global", "if",
+  "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise",
+  "return", "try", "while", "with", "yield",
+]);
+// Membros do `BaseModel` que o Pydantic recusa como nome de campo. Os demais
+// atributos dele (`json`, `copy`, `model_fields`...) só geram aviso.
+export const PYDANTIC_RESERVED_NAMES: readonly string[] = Object.freeze([
+  "model_config", "model_dump", "model_dump_json", "model_validate",
+  "model_validate_json", "model_validate_strings",
+]);
+const RESERVED_NAMES = new Map<string, PydanticFieldNameIssue>([
+  ...PYTHON_KEYWORDS.map((name) => [name, "keyword"] as const),
+  ...PYDANTIC_RESERVED_NAMES.map((name) => [name, "pydantic"] as const),
+]);
+
+// "private": o Pydantic recusa nome com `_` inicial, o que inclui os dunders
+// (`__class__`) que a allowlist do compilador também barra por segurança.
+export type PydanticFieldNameIssue =
+  | "invalid"
+  | "private"
+  | "keyword"
+  | "pydantic"
+  | null;
 
 export function pydanticFieldNameIssue(name: string): PydanticFieldNameIssue {
   if (!name || !PYTHON_IDENTIFIER.test(name)) return "invalid";
-  if (isStrictDunder(name)) return "reserved";
-  return null;
+  if (name.startsWith("_")) return "private";
+  return RESERVED_NAMES.get(name) ?? null;
 }
+
+// Complemento de "nome ..." / "subcampo "x" ..." nas mensagens de validação e
+// no aviso do FieldCard.
+export const RESERVED_NAME_REASON = {
+  private: 'não pode começar com "_" (o Pydantic não aceita)',
+  keyword: "é palavra reservada do Python",
+  pydantic: "é reservado pelo Pydantic",
+} as const satisfies Record<Exclude<PydanticFieldNameIssue, "invalid" | null>, string>;
 
 type AddFieldIssue = (message: string, path?: PropertyKey[]) => void;
 
@@ -170,11 +210,8 @@ function validateFieldIdentity(
       `${label}: nome inválido (use letras minúsculas, números e _)`,
       ["name"],
     );
-  } else if (nameIssue === "reserved") {
-    issue(
-      `${label}: nome não pode começar e terminar com "__" (reservado pelo Python)`,
-      ["name"],
-    );
+  } else if (nameIssue) {
+    issue(`${label}: nome ${RESERVED_NAME_REASON[nameIssue]}`, ["name"]);
   }
   if (!field.description.trim()) {
     issue(`${label}: descrição não pode ser vazia`, ["description"]);
@@ -189,14 +226,15 @@ function validateSubfields(
   const keys = new Set<string>();
   field.subfields?.forEach((subfield, index) => {
     const path = ["subfields", index, "key"];
-    if (!subfield.key || !PYTHON_IDENTIFIER.test(subfield.key)) {
+    const keyIssue = pydanticFieldNameIssue(subfield.key);
+    if (keyIssue === "invalid") {
       issue(
         `${label}: subcampo ${index + 1} tem chave inválida "${subfield.key}"`,
         path,
       );
-    } else if (isStrictDunder(subfield.key)) {
+    } else if (keyIssue) {
       issue(
-        `${label}: subcampo "${subfield.key}" não pode começar e terminar com "__" (reservado pelo Python)`,
+        `${label}: subcampo "${subfield.key}" ${RESERVED_NAME_REASON[keyIssue]}`,
         path,
       );
     }

@@ -105,7 +105,7 @@ const canonical = (field: PydanticField) => ({ id: field.id, ...snapshotOf(field
 describe("round-trip generatePydanticCode → compile_pydantic (casos gravados)", () => {
   it("os casos gravados são schemas salváveis", () => {
     for (const c of CASES) {
-      expect(parseSaveablePydanticFields(c.fields), `caso ${c.case}`).not.toBeNull();
+      expect(parseSaveablePydanticFields(c.fields).errors, `caso ${c.case}`).toEqual([]);
     }
   });
 

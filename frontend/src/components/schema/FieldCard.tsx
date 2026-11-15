@@ -26,6 +26,7 @@ import { stripOptionFromConditions } from "@/lib/schema-utils";
 import type { PydanticField } from "@/lib/types";
 import {
   pydanticFieldNameIssue,
+  RESERVED_NAME_REASON,
   resolveRequired,
   resolveTarget,
 } from "@/lib/pydantic-field";
@@ -78,9 +79,9 @@ function FieldNameInput({
           Use apenas letras minúsculas, números e _ (ex: tipo_documento)
         </p>
       )}
-      {nameIssue === "reserved" && (
+      {nameIssue && nameIssue !== "invalid" && (
         <p className="text-xs text-destructive">
-          Nomes que começam e terminam com __ são reservados pelo Python.
+          Nome {RESERVED_NAME_REASON[nameIssue]}.
         </p>
       )}
       {duplicateName && (

@@ -1,11 +1,12 @@
 import fc from "fast-check";
 import { fieldHashOf } from "@/lib/schema-utils";
-import type {
-  ConditionScalar,
-  FieldCondition,
-  PydanticField,
-  PydanticFieldTarget,
-  SubfieldDef,
+import {
+  pydanticFieldNameIssue,
+  type ConditionScalar,
+  type FieldCondition,
+  type PydanticField,
+  type PydanticFieldTarget,
+  type SubfieldDef,
 } from "@/lib/pydantic-field";
 
 // Gerador de schemas arbitrários e salváveis (passam por
@@ -26,17 +27,10 @@ const nonBlankText = anyText.filter((s) => s.trim().length > 0);
 // que chega ao save.
 const trimmedText = nonBlankText.map((s) => s.trim());
 
-// Nomes que `pydanticFieldNameIssue` aceita mas que o código gerado não
-// compila: palavra reservada do Python (`if: str` é erro de sintaxe), nome com
-// `_` inicial (o Pydantic recusa campo privado) e `model_config` (reservado
-// pelo Pydantic). Ficam fora do gerador de propósito — são lacunas da
-// validação da GUI, e não do round-trip, registradas no PR da #525.
-const UNCOMPILABLE_NAMES = new Set([
-  "and", "as", "assert", "async", "await", "break", "class", "continue", "def",
-  "del", "elif", "else", "except", "finally", "for", "from", "global", "if",
-  "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise",
-  "return", "try", "while", "with", "yield", "model_config",
-]);
+// Nomes que a validação recusa (palavra reservada do Python, `_` inicial,
+// `model_config`...) ficam fora pela própria `pydanticFieldNameIssue`, e não por
+// uma lista copiada aqui: o gerador sorteia exatamente os nomes que a GUI salva.
+//
 // Nomes que sombreiam algo que o código gerado usa (`str`, `list`, `Field`
 // minúsculo não colide) ou um atributo do BaseModel: o compilador os aceita, e
 // é bom que o gerador os sorteie com frequência.
@@ -46,7 +40,7 @@ const identifier = fc
     { weight: 4, arbitrary: fc.stringMatching(/^[a-z][a-z0-9_]{0,7}$/) },
     { weight: 1, arbitrary: fc.constantFrom(...TRICKY_NAMES) },
   )
-  .filter((name) => !UNCOMPILABLE_NAMES.has(name));
+  .filter((name) => pydanticFieldNameIssue(name) === null);
 
 const conditionScalar: fc.Arbitrary<ConditionScalar> = fc.oneof(
   nonBlankText,
