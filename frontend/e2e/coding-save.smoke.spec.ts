@@ -51,34 +51,6 @@ function createAdminClient() {
   );
 }
 
-// Devolve o par do membro no documento ao estado inicial: sem response humana e
-// com o assignment de codificação em "pendente". Só recebe ids já resolvidos
-// pelo lookup de título exato de cada teste — é ele o interlock que impede este
-// DELETE de cair num projeto real.
-async function resetCodingFixture(
-  admin: ReturnType<typeof createAdminClient>,
-  projectId: string,
-  documentId: string,
-  memberId: string,
-) {
-  const { error: delErr } = await admin
-    .from("responses")
-    .delete()
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .eq("respondent_id", memberId)
-    .eq("respondent_type", "humano");
-  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
-  const { error: assignErr } = await admin
-    .from("assignments")
-    .update({ status: "pendente", completed_at: null })
-    .eq("project_id", projectId)
-    .eq("document_id", documentId)
-    .eq("user_id", memberId)
-    .eq("type", "codificacao");
-  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
-}
-
 test("codificação: enviar respostas persiste response e conclui assignment", async ({
   page,
   holdFixtureLock,
@@ -134,7 +106,22 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
   // assignment a "pendente" — o run anterior (verde) deixa response
   // submetida + assignment concluído, e sem reset o doc nem apareceria na
   // fila padrão (filtro "current" esconde current_done).
-  await resetCodingFixture(admin, projectId!, documentId, memberId);
+  const { error: delErr } = await admin
+    .from("responses")
+    .delete()
+    .eq("project_id", projectId!)
+    .eq("document_id", documentId)
+    .eq("respondent_id", memberId)
+    .eq("respondent_type", "humano");
+  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
+  const { error: assignErr } = await admin
+    .from("assignments")
+    .update({ status: "pendente", completed_at: null })
+    .eq("project_id", projectId!)
+    .eq("document_id", documentId)
+    .eq("user_id", memberId)
+    .eq("type", "codificacao");
+  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
 
   await setupClerkTestingToken({ page });
   await page.goto("/auth/login");
@@ -267,7 +254,22 @@ test("codificação: editar e sair sem enviar não grava, e o rascunho local ret
   const memberId = member!.id as string;
   const documentId = doc!.id as string;
 
-  await resetCodingFixture(admin, projectId!, documentId, memberId);
+  const { error: delErr } = await admin
+    .from("responses")
+    .delete()
+    .eq("project_id", projectId!)
+    .eq("document_id", documentId)
+    .eq("respondent_id", memberId)
+    .eq("respondent_type", "humano");
+  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
+  const { error: assignErr } = await admin
+    .from("assignments")
+    .update({ status: "pendente", completed_at: null })
+    .eq("project_id", projectId!)
+    .eq("document_id", documentId)
+    .eq("user_id", memberId)
+    .eq("type", "codificacao");
+  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
 
   await setupClerkTestingToken({ page });
   await page.goto("/auth/login");
@@ -425,10 +427,12 @@ function parseActionArgs(body: string | null): unknown[] | null {
 // `keepCodingAssignmentInProgress` (lib/coding-sync.ts), que nunca regride de
 // `concluido`. Afirmar só um dos sinais deixaria passar metade da regressão.
 //
-// Como o envio incompleto chega ao servidor: pela tela não chega, porque o
-// `SubmitBar` barra o clique enquanto houver obrigatória em branco. Em produção
-// ele acontece quando o schema muda entre abrir o formulário e enviar (#519) — o
-// cliente defasado manda um conjunto que o servidor já não considera completo.
+// Como o envio incompleto chega ao servidor: pela tela não chega, porque a
+// validação do painel (`useQuestionValidation`) barra o envio enquanto houver
+// obrigatória em branco. Em produção ele acontece quando o schema muda entre
+// abrir o formulário e enviar (#519) — um campo opcional que vira obrigatório,
+// por exemplo —, e o cliente defasado manda um conjunto que o servidor já não
+// considera completo.
 // Este teste reproduz esse payload na fronteira de rede: a tela envia o
 // formulário completo e a interceptação apaga a resposta de `observacao` antes
 // de a request sair do navegador. O que vem depois é o caminho real de
@@ -466,10 +470,25 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
   const memberId = member!.id as string;
   const documentId = doc!.id as string;
 
-  await resetCodingFixture(admin, projectId!, documentId, memberId);
+  const { error: delErr } = await admin
+    .from("responses")
+    .delete()
+    .eq("project_id", projectId!)
+    .eq("document_id", documentId)
+    .eq("respondent_id", memberId)
+    .eq("respondent_type", "humano");
+  expect(delErr, `reset de responses falhou: ${delErr?.message}`).toBeNull();
+  const { error: assignErr } = await admin
+    .from("assignments")
+    .update({ status: "pendente", completed_at: null })
+    .eq("project_id", projectId!)
+    .eq("document_id", documentId)
+    .eq("user_id", memberId)
+    .eq("type", "codificacao");
+  expect(assignErr, `reset do assignment falhou: ${assignErr?.message}`).toBeNull();
 
-  const readResponse = () =>
-    admin
+  const readResponse = async () => {
+    const { data, error } = await admin
       .from("responses")
       .select("answers, is_latest, is_partial")
       .eq("project_id", projectId!)
@@ -477,8 +496,11 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
       .eq("respondent_id", memberId)
       .eq("respondent_type", "humano")
       .maybeSingle();
-  const readAssignment = () =>
-    admin
+    expect(error, `leitura de responses falhou: ${error?.message}`).toBeNull();
+    return data;
+  };
+  const readAssignment = async () => {
+    const { data, error } = await admin
       .from("assignments")
       .select("status, completed_at")
       .eq("project_id", projectId!)
@@ -486,6 +508,9 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
       .eq("user_id", memberId)
       .eq("type", "codificacao")
       .single();
+    expect(error, `leitura do assignment falhou: ${error?.message}`).toBeNull();
+    return data;
+  };
 
   await setupClerkTestingToken({ page });
   await page.goto("/auth/login");
@@ -494,8 +519,11 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
   // O estado que este teste deixa — assignment `concluido` com response
   // `is_partial = true` — é o que a invariante
   // `codificacao-concluida-response-so-rascunho` (scripts/invariants) lê como
-  // rascunho promovido a concluído. Devolver o fixture ao estado inicial no fim
-  // evita que cada pre-push plante essa violação no banco.
+  // rascunho promovido a concluído. A invariante é que está defasada: ela
+  // nasceu quando `is_partial = true` só podia ser rascunho, e desde o #608 o
+  // mesmo sinal também marca envio incompleto, que este teste fixa como
+  // legítimo. Até ela ser corrigida, devolver o fixture ao estado inicial no fim
+  // evita que cada pre-push plante esse falso positivo no banco.
   try {
     await withClerkCleanup({
       page,
@@ -517,18 +545,15 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
 
         // Pré-condição no banco: sem ela, a asserção final não distingue "não
         // regrediu" de "nunca concluiu".
-        const { data: complete, error: completeErr } = await readResponse();
-        expect(completeErr, `leitura de responses falhou: ${completeErr?.message}`).toBeNull();
+        const [complete, concluded] = await Promise.all([
+          readResponse(),
+          readAssignment(),
+        ]);
         expect(complete?.is_partial, "o primeiro envio, completo, ficou parcial").toBe(false);
-        const { data: concluded, error: concludedErr } = await readAssignment();
-        expect(
-          concludedErr,
-          `leitura do assignment falhou: ${concludedErr?.message}`,
-        ).toBeNull();
         expect(concluded!.status, "o primeiro envio, completo, não concluiu").toBe(
           "concluido",
         );
-        const completedAt = concluded!.completed_at as string;
+        const completedAt = concluded!.completed_at;
         expect(completedAt).toBeTruthy();
 
         // 2. Reabre o documento. Concluído na rodada atual, ele sai da fila de
@@ -538,11 +563,7 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
         const codePage = (url: URL) =>
           url.pathname === `/projects/${projectId}/analyze/code`;
         const blankObservacao = async (route: Route) => {
-          const request = route.request();
-          const args =
-            request.method() === "POST" && request.headers()["next-action"]
-              ? parseActionArgs(request.postData())
-              : null;
+          const args = parseActionArgs(route.request().postData());
           const answers = args?.[2];
           if (
             args?.[0] === projectId &&
@@ -559,12 +580,12 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
           }
           await route.continue();
         };
-        await page.route(codePage, blankObservacao);
 
         await page.goto(`/projects/${projectId}/analyze/code?doc=${documentId}`);
         const reopened = visivel(page.getByPlaceholder("Digite sua resposta..."));
         await expect(reopened.nth(0)).toHaveValue(RESUMO_VALUE, { timeout: 30_000 });
         await expect(reopened.nth(1)).toHaveValue(OBSERVACAO_VALUE);
+        await page.route(codePage, blankObservacao);
         await page.getByRole("button", { name: "Enviar respostas" }).click();
 
         // A reescrita vem antes do aviso: se o formato do corpo mudar, é esta a
@@ -574,7 +595,8 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
           .poll(() => rewrites, {
             message:
               "a interceptação não reescreveu o envio: o corpo da Server Action " +
-              "deixou de ser o array JSON de argumentos que parseActionArgs lê",
+              "deixou de ser o array JSON que parseActionArgs lê, ou a ordem dos " +
+              "argumentos de saveResponse (projectId, documentId, answers) mudou",
             timeout: 15_000,
           })
           .toBe(1);
@@ -589,8 +611,10 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
         ).toBeVisible({ timeout: 15_000 });
 
         // 3. Coração do teste: os dois sinais, no banco.
-        const { data: response, error: respErr } = await readResponse();
-        expect(respErr, `leitura de responses falhou: ${respErr?.message}`).toBeNull();
+        const [response, assignment] = await Promise.all([
+          readResponse(),
+          readAssignment(),
+        ]);
         expect(response, "nenhuma response is_latest depois do envio incompleto").toBeTruthy();
         expect(response!.is_latest).toBe(true);
         const answers = response!.answers as Record<string, unknown>;
@@ -601,11 +625,6 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
           "o conjunto gravado ficou incompleto mas is_partial continuou false",
         ).toBe(true);
 
-        const { data: assignment, error: readAssignErr } = await readAssignment();
-        expect(
-          readAssignErr,
-          `leitura do assignment falhou: ${readAssignErr?.message}`,
-        ).toBeNull();
         expect(
           assignment!.status,
           "envio incompleto regrediu o assignment concluído — o guard de " +
@@ -613,12 +632,34 @@ test("codificação: envio incompleto rebaixa is_partial mas não regride assign
             "segurar a invariante (#636)",
         ).toBe("concluido");
         expect(
-          new Date(assignment!.completed_at as string).getTime(),
+          assignment!.completed_at,
           "o envio incompleto reescreveu completed_at do assignment concluído",
-        ).toBe(new Date(completedAt).getTime());
+        ).toBe(completedAt);
       },
     });
   } finally {
-    await resetCodingFixture(admin, projectId!, documentId, memberId);
+    // Escrita inline, e não num helper: o gate de e2e-fixture-lock-coverage lê
+    // o corpo de cada teste para conferir que o lock vem antes dela.
+    const [{ error: cleanupDelErr }, { error: cleanupAssignErr }] = await Promise.all([
+      admin
+        .from("responses")
+        .delete()
+        .eq("project_id", projectId!)
+        .eq("document_id", documentId)
+        .eq("respondent_id", memberId)
+        .eq("respondent_type", "humano"),
+      admin
+        .from("assignments")
+        .update({ status: "pendente", completed_at: null })
+        .eq("project_id", projectId!)
+        .eq("document_id", documentId)
+        .eq("user_id", memberId)
+        .eq("type", "codificacao"),
+    ]);
+    expect(cleanupDelErr, `limpeza de responses falhou: ${cleanupDelErr?.message}`).toBeNull();
+    expect(
+      cleanupAssignErr,
+      `limpeza do assignment falhou: ${cleanupAssignErr?.message}`,
+    ).toBeNull();
   }
 });
