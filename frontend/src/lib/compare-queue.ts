@@ -18,7 +18,10 @@ import type { CompareFiltersValue } from "@/lib/compare-filters";
 import {
   type ProjectVersionContext,
   type SchemaVersion,
-  parseVersionStr,
+  formatVersion,
+  compareVersions,
+  responseVersionLabel,
+  storedVersion,
 } from "@/lib/compare-version";
 import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
 import { reviewValidity } from "@/lib/review-validity";
@@ -150,28 +153,14 @@ export function buildAvailableVersions(
 ): string[] {
   const versionSet = new Set<string>();
   for (const v of versionLog ?? []) {
-    if (v.version_major !== null && v.version_minor !== null && v.version_patch !== null) {
-      versionSet.add(`${v.version_major}.${v.version_minor}.${v.version_patch}`);
-    }
+    const version = storedVersion(v.version_major, v.version_minor, v.version_patch);
+    if (version) versionSet.add(formatVersion(version));
   }
   for (const r of allResponses ?? []) {
-    if (
-      r.schema_version_major !== null &&
-      r.schema_version_minor !== null &&
-      r.schema_version_patch !== null
-    ) {
-      versionSet.add(
-        `${r.schema_version_major}.${r.schema_version_minor}.${r.schema_version_patch}`,
-      );
-    }
+    const label = responseVersionLabel(r);
+    if (label) versionSet.add(label);
   }
-  return Array.from(versionSet).toSorted((a, b) => {
-    const pa = parseVersionStr(a)!;
-    const pb = parseVersionStr(b)!;
-    if (pa.major !== pb.major) return pb.major - pa.major;
-    if (pa.minor !== pb.minor) return pb.minor - pa.minor;
-    return pb.patch - pa.patch;
-  });
+  return Array.from(versionSet).toSorted((a, b) => compareVersions(b, a));
 }
 
 // Coding-type assignments map per doc (denominator for % atribuídos)

@@ -35,6 +35,7 @@ import {
   blankAnswerFor, effectiveErrorResolution, hasResolutionValue, isBlankAnswer, isConditionalField,
   type EffectiveErrorResolution, type ErrorResolutionRow,
 } from "@/lib/error-resolution";
+import { responseVersionLabel } from "@/lib/compare-version";
 
 /** De qual das duas fontes o veredito veio. A UI usa para decidir affordances. */
 export type LlmErrorSource = "comparacao" | "auto_revisao";
@@ -227,22 +228,6 @@ interface Candidate {
   isError: boolean;
   error: LlmError | null;
   entry: ReviewedEntry;
-}
-
-function formatSchemaVersion(response: {
-  schema_version_major: number | null;
-  schema_version_minor: number | null;
-  schema_version_patch: number | null;
-}): string | null {
-  const { schema_version_major, schema_version_minor, schema_version_patch } =
-    response;
-  if (
-    schema_version_major == null ||
-    schema_version_minor == null ||
-    schema_version_patch == null
-  )
-    return null;
-  return `${schema_version_major}.${schema_version_minor}.${schema_version_patch}`;
 }
 
 // Campos sobre os quais faz sentido perguntar se o LLM acertou: os que o LLM
@@ -689,7 +674,7 @@ function buildComparisonCandidate(
     documentId: review.document_id,
     documentTitle: ctx.titleOf(review.document_id),
     fieldName: review.field_name,
-    schemaVersion: formatSchemaVersion(llmResponse),
+    schemaVersion: responseVersionLabel(llmResponse),
     reviewedAt: review.created_at,
   };
 
@@ -852,7 +837,7 @@ function autoReviewCandidate(
     documentId: row.document_id,
     documentTitle: ctx.titleOf(row.document_id),
     fieldName: row.field_name,
-    schemaVersion: formatSchemaVersion(arbitratedLlm),
+    schemaVersion: responseVersionLabel(arbitratedLlm),
     // Consenso não tem instante de decisão; a data da resposta do LLM é o que
     // situa a entrada no tempo para o filtro de período.
     reviewedAt: decidedAt ?? arbitratedLlm.created_at,

@@ -78,8 +78,72 @@ export function parseVersionStr(s: string): SchemaVersion | null {
   };
 }
 
+// O rótulo "X.Y.Z" de uma versão. Fonte única do formato (#503): a fila, o
+// filtro, as rodadas, as métricas do LLM e o backfill montam a string daqui.
 export function formatVersion(v: SchemaVersion): string {
   return `${v.major}.${v.minor}.${v.patch}`;
+}
+
+// Versão gravada em três colunas que podem vir nulas (`schema_version_*` de
+// responses, `version_*` do schema_change_log), na leitura estrita: só existe
+// com as três. É a regra da fila de versões, das métricas do LLM e das
+// rodadas. A Comparação e o backfill leem de outro jeito
+// (`lenientStoredVersion`), e a versão do PROJETO tem default próprio
+// (`deriveProjectVersionContext`).
+export function storedVersion(
+  major: number | null | undefined,
+  minor: number | null | undefined,
+  patch: number | null | undefined,
+): SchemaVersion | null {
+  if (major == null || minor == null || patch == null) return null;
+  return { major, minor, patch };
+}
+
+// A mesma versão em três colunas, na leitura tolerante: o major decide se há
+// versão, e minor/patch ausentes valem 0. É a regra da Comparação (gate e
+// rótulo do card) e do backfill do schema_change_log, que sempre leram assim.
+export function lenientStoredVersion(
+  major: number | null,
+  minor: number | null,
+  patch: number | null,
+): SchemaVersion | null {
+  if (major === null) return null;
+  return { major, minor: minor ?? 0, patch: patch ?? 0 };
+}
+
+// A versão de uma resposta como a Comparação a lê, no gate de qualificação
+// (`responseQualifiesForVersion`) e no rótulo do card.
+function comparisonResponseVersion(
+  r: Pick<VersionedResponse, "schema_version_major" | "schema_version_minor" | "schema_version_patch">,
+): SchemaVersion | null {
+  return lenientStoredVersion(
+    r.schema_version_major,
+    r.schema_version_minor,
+    r.schema_version_patch,
+  );
+}
+
+// O rótulo do card da Comparação, que segue o gate.
+export function comparisonResponseVersionLabel(
+  r: Pick<VersionedResponse, "schema_version_major" | "schema_version_minor" | "schema_version_patch">,
+): string | null {
+  const v = comparisonResponseVersion(r);
+  return v ? formatVersion(v) : null;
+}
+
+// O rótulo da versão em que uma resposta foi gravada, na leitura estrita, ou
+// null sem ela.
+export function responseVersionLabel(row: {
+  schema_version_major?: number | null;
+  schema_version_minor?: number | null;
+  schema_version_patch?: number | null;
+}): string | null {
+  const v = storedVersion(
+    row.schema_version_major,
+    row.schema_version_minor,
+    row.schema_version_patch,
+  );
+  return v ? formatVersion(v) : null;
 }
 
 // Comparador 3-way ascendente para strings "X.Y.Z" (ordem major > minor >
@@ -231,14 +295,8 @@ export function responseQualifiesForVersion(
   if (!isSubmittedResponse(r)) return false;
   if (!minVersion) return true;
   if (r.pydantic_hash === null) return false;
-  if (r.schema_version_major !== null) {
-    const rv: SchemaVersion = {
-      major: r.schema_version_major ?? 0,
-      minor: r.schema_version_minor ?? 0,
-      patch: r.schema_version_patch ?? 0,
-    };
-    return versionGte(rv, minVersion);
-  }
+  const rv = comparisonResponseVersion(r);
+  if (rv) return versionGte(rv, minVersion);
   if (project.pydanticHash !== null && r.pydantic_hash === project.pydanticHash) {
     return versionGte(project.version, minVersion);
   }

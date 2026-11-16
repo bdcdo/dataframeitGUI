@@ -3,7 +3,7 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { FieldChangeDiff } from "./FieldChangeDiff";
-import { formatRelativeDate, formatVersion } from "@/lib/schema-change-format";
+import { formatRelativeDate, formatHistoryVersion } from "@/lib/schema-change-format";
 import { formatDateTime } from "@/lib/date-format";
 import type { ChangeGroup } from "@/lib/schema-change-grouping";
 import type { SchemaChangeType } from "@/lib/types";
@@ -61,11 +61,11 @@ export function SchemaChangeGroup({ group }: SchemaChangeGroupProps) {
           className="h-5 px-1.5 py-0 font-mono text-[11px]"
           title={
             group.version
-              ? `${formatVersion(group.version)} após esta mudança`
+              ? `${formatHistoryVersion(group.version)} após esta mudança`
               : "Sem versão"
           }
         >
-          {formatVersion(group.version)}
+          {formatHistoryVersion(group.version)}
         </Badge>
         {changeType && (
           <Badge

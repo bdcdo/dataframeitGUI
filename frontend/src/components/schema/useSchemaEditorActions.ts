@@ -22,6 +22,7 @@ import type {
 } from "@/lib/types";
 import type { SchemaDraftConflict } from "@/hooks/useSchemaDraft";
 import { actionErrorMessage } from "@/lib/server-error";
+import { formatHistoryVersion } from "@/lib/schema-change-format";
 
 /**
  * As quatro ações de servidor do SchemaEditor — salvar, publicar MAJOR,
@@ -120,10 +121,9 @@ export function useSchemaEditorActions({
           toast.error("O schema mudou em outra sessão. Revise o conflito antes de reconstruir.");
           return;
         }
-        const v = r.stats.finalVersion;
         const m = r.stats.byMethod;
         toast.success(
-          `v${v.major}.${v.minor}.${v.patch} · ${r.stats.logEntriesUpdated} entradas, ${r.stats.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
+          `${formatHistoryVersion(r.stats.finalVersion)} · ${r.stats.logEntriesUpdated} entradas, ${r.stats.responsesProcessed} respostas — hashes: ${m.hashes}, created_at: ${m.created_at}, fallback: ${m.fallback_created_at}, live_save: ${m.live_save}`,
           { duration: 10000 },
         );
         markSaved(r.snapshot);

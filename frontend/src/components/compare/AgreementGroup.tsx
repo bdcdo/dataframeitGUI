@@ -25,6 +25,7 @@ import {
   type ValueEquivalence,
 } from "@/lib/equivalence";
 import { HelpCircle, Link2 } from "lucide-react";
+import { compareVersions } from "@/lib/compare-version";
 
 interface AgreementResponse {
   id: string;
@@ -38,14 +39,6 @@ interface AgreementResponse {
   schemaVersion?: string | null;
 }
 
-
-function compareVersionsDesc(a: string, b: string): number {
-  const [am, an, ap] = a.split(".").map((n) => Number.parseInt(n, 10));
-  const [bm, bn, bp] = b.split(".").map((n) => Number.parseInt(n, 10));
-  if (am !== bm) return bm - am;
-  if (an !== bn) return bn - an;
-  return bp - ap;
-}
 
 interface ExistingVerdict {
   verdict: string;
@@ -206,7 +199,7 @@ function describeGroup(
           .map((r) => r.schemaVersion)
           .filter((v): v is string => !!v),
       ),
-    ).toSorted(compareVersionsDesc),
+    ).toSorted((a, b) => compareVersions(b, a)),
   };
 }
 

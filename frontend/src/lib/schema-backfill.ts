@@ -11,7 +11,13 @@ import {
   isProjectScopedLogEntry,
   type ChangeType,
 } from "@/lib/schema-utils";
-import { formatVersion, versionGte, type SchemaVersion } from "@/lib/compare-version";
+import {
+  formatVersion,
+  lenientStoredVersion,
+  parseVersionStr,
+  versionGte,
+  type SchemaVersion,
+} from "@/lib/compare-version";
 
 export type FieldSnapshot = Partial<PydanticField> & { name: string };
 
@@ -73,10 +79,6 @@ function cloneSnapshotMap(snap: Map<string, FieldSnapshot>): Map<string, FieldSn
   const out = new Map<string, FieldSnapshot>();
   for (const [k, v] of snap) out.set(k, cloneFieldSnapshot(v));
   return out;
-}
-
-function versionKey(v: { major: number; minor: number; patch: number }) {
-  return `${v.major}.${v.minor}.${v.patch}`;
 }
 
 export function computeHashesFromSnapshot(snap: Map<string, FieldSnapshot>): Record<string, string> {
@@ -216,15 +218,13 @@ function resolveEntryVersion(
   entry: PersistedLogEntryRow,
   synth: Version,
 ): { version: Version; changeType: ChangeType } {
-  if (entry.version_major !== null) {
-    return {
-      version: {
-        major: entry.version_major,
-        minor: entry.version_minor ?? 0,
-        patch: entry.version_patch ?? 0,
-      },
-      changeType: asChangeType(entry.change_type) ?? "patch",
-    };
+  const version = lenientStoredVersion(
+    entry.version_major,
+    entry.version_minor,
+    entry.version_patch,
+  );
+  if (version) {
+    return { version, changeType: asChangeType(entry.change_type) ?? "patch" };
   }
   const changeType =
     asChangeType(entry.change_type) ??
@@ -307,15 +307,15 @@ export function reconstructSnapshotsByVersion(
     currentSnap.set(f.name, cloneFieldSnapshot({ ...f }));
   }
 
-  // Map: versionKey -> snapshot map (fieldName -> snapshot)
+  // Map: formatVersion -> snapshot map (fieldName -> snapshot)
   const snapByVersion = new Map<string, Map<string, FieldSnapshot>>();
-  snapByVersion.set(versionKey(finalVersion), cloneSnapshotMap(currentSnap));
+  snapByVersion.set(formatVersion(finalVersion), cloneSnapshotMap(currentSnap));
 
   // Group entries by version so we revert all at once per version-change
   const versionsDesc: Array<{ key: string; version: Version }> = [];
   const entriesByVersion = new Map<string, EnrichedEntry[]>();
   for (const e of enriched) {
-    const k = versionKey(e.version);
+    const k = formatVersion(e.version);
     if (!entriesByVersion.has(k)) {
       entriesByVersion.set(k, []);
       versionsDesc.push({ key: k, version: e.version });
@@ -366,7 +366,7 @@ export function reconstructSnapshotsByVersion(
     const prev = versionsDesc[idx + 1];
     if (!prev) {
       // 0.1.0 inicial (pré-primeira entry)
-      snapByVersion.set(versionKey({ major: 0, minor: 1, patch: 0 }), cloneSnapshotMap(workingSnap));
+      snapByVersion.set(formatVersion({ major: 0, minor: 1, patch: 0 }), cloneSnapshotMap(workingSnap));
     }
   }
 
@@ -425,7 +425,7 @@ function inferResponseVersion(
     return {
       key:
         chooseVersionByTimestamp(versionTs.keys(), versionTs, responseTs) ??
-        versionKey({ major: 0, minor: 1, patch: 0 }),
+        formatVersion({ major: 0, minor: 1, patch: 0 }),
       method: "created_at",
     };
   }
@@ -453,7 +453,7 @@ function inferResponseVersion(
     key:
       compatibleTimestampMatch ??
       chooseVersionByTimestamp(versionTs.keys(), versionTs, responseTs) ??
-      versionKey({ major: 0, minor: 1, patch: 0 }),
+      formatVersion({ major: 0, minor: 1, patch: 0 }),
     method: "fallback_created_at",
   };
 }
@@ -467,16 +467,16 @@ export function matchResponsesToVersions(
 ): { updates: Map<string, UpdateBucket>; byMethod: BackfillStats["byMethod"] } {
   const versionByKey = new Map<string, Version>();
   for (const k of hashesByVersion.keys()) {
-    const [mj, mn, pt] = k.split(".").map((n) => Number.parseInt(n, 10));
-    versionByKey.set(k, { major: mj, minor: mn, patch: pt });
+    const version = parseVersionStr(k);
+    if (version) versionByKey.set(k, version);
   }
   // Timestamp of each version (from entries; initial version = 0)
   const versionTs = new Map<string, number>();
   for (const e of enriched) {
-    const k = versionKey(e.version);
+    const k = formatVersion(e.version);
     if (!versionTs.has(k)) versionTs.set(k, e.createdAt);
   }
-  versionTs.set(versionKey({ major: 0, minor: 1, patch: 0 }), 0);
+  versionTs.set(formatVersion({ major: 0, minor: 1, patch: 0 }), 0);
 
   const updates = new Map<string, UpdateBucket>();
   const byMethod: BackfillStats["byMethod"] = {

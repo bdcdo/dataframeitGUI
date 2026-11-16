@@ -13,6 +13,7 @@ import type {
   CompareResponse,
   FieldResponse,
 } from "./compare-types";
+import { comparisonResponseVersionLabel } from "@/lib/compare-version";
 
 interface UseCompareFieldDataParams {
   currentDoc: CompareDocument | undefined;
@@ -68,10 +69,6 @@ export function useCompareFieldData({
           currentFieldHashes,
           projectPydanticHash,
         });
-        const version =
-          r.schema_version_major !== null
-            ? `${r.schema_version_major}.${r.schema_version_minor ?? 0}.${r.schema_version_patch ?? 0}`
-            : null;
         return {
           id: r.id,
           respondent_type: r.respondent_type,
@@ -87,7 +84,7 @@ export function useCompareFieldData({
           is_latest: r.is_latest,
           isFieldStale: stale,
           answersCurrentQuestion: answersCurrentQuestion(r.answer_field_hashes, currentField),
-          schemaVersion: version,
+          schemaVersion: comparisonResponseVersionLabel(r),
         };
       }),
     [docResponses, currentFieldName, currentField, currentFieldHashes, projectPydanticHash],

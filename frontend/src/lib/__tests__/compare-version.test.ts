@@ -3,6 +3,10 @@ import {
   versionGte,
   parseVersionStr,
   formatVersion,
+  comparisonResponseVersionLabel,
+  lenientStoredVersion,
+  responseVersionLabel,
+  storedVersion,
   compareVersions,
   latestMajorAnchor,
   resolveMinVersion,
@@ -53,6 +57,43 @@ describe("parseVersionStr", () => {
 describe("formatVersion", () => {
   it("formata em X.Y.Z", () => {
     expect(formatVersion(v(0, 20, 0))).toBe("0.20.0");
+  });
+});
+
+// Fonte única da versão gravada em colunas que podem vir nulas (#503): a fila,
+// a Comparação, as métricas do LLM e as rodadas a tratam do mesmo jeito.
+describe("storedVersion / responseVersionLabel", () => {
+  it("monta a versão só com as três colunas", () => {
+    expect(storedVersion(1, 2, 3)).toEqual(v(1, 2, 3));
+    expect(storedVersion(0, 0, 0)).toEqual(v(0, 0, 0));
+    expect(storedVersion(1, null, 0)).toBeNull();
+    expect(storedVersion(undefined, 1, 0)).toBeNull();
+  });
+
+  it("rótulo da resposta: X.Y.Z, ou null se falta coluna", () => {
+    const row = (major: number | null, minor: number | null, patch: number | null) => ({
+      schema_version_major: major,
+      schema_version_minor: minor,
+      schema_version_patch: patch,
+    });
+    expect(responseVersionLabel(row(0, 3, 1))).toBe("0.3.1");
+    // Leitura estrita (fila de versões, métricas do LLM, rodadas): sem uma das
+    // colunas, não há versão. A Comparação lê tolerante (`lenientStoredVersion`).
+    expect(responseVersionLabel(row(1, null, null))).toBeNull();
+    expect(responseVersionLabel(row(null, null, null))).toBeNull();
+    expect(responseVersionLabel({})).toBeNull();
+  });
+
+  it("leitura tolerante: o major decide, minor/patch ausentes valem 0", () => {
+    expect(lenientStoredVersion(1, null, null)).toEqual(v(1, 0, 0));
+    expect(lenientStoredVersion(null, 2, 3)).toBeNull();
+    expect(
+      comparisonResponseVersionLabel({
+        schema_version_major: 2,
+        schema_version_minor: 1,
+        schema_version_patch: null,
+      }),
+    ).toBe("2.1.0");
   });
 });
 

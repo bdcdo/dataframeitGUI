@@ -5,6 +5,7 @@ import type {
   SchemaChangeEntry,
   SchemaChangeType,
 } from "@/lib/types";
+import { storedVersion } from "@/lib/compare-version";
 
 export default async function SchemaHistoryPage({
   params,
@@ -46,13 +47,11 @@ export default async function SchemaHistoryPage({
     const fullName = [p?.first_name, p?.last_name].filter(Boolean).join(" ");
     const changedBy =
       fullName || p?.email?.split("@")[0] || "Anônimo";
-    const major = c.version_major as number | null;
-    const minor = c.version_minor as number | null;
-    const patch = c.version_patch as number | null;
-    const version =
-      major !== null && minor !== null && patch !== null
-        ? { major, minor, patch }
-        : null;
+    const version = storedVersion(
+      c.version_major as number | null,
+      c.version_minor as number | null,
+      c.version_patch as number | null,
+    );
     return {
       id: c.id as string,
       fieldName: c.field_name as string,

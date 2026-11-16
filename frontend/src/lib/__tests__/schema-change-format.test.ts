@@ -4,7 +4,7 @@ import {
   formatRelativeDate,
   formatTarget,
   formatType,
-  formatVersion,
+  formatHistoryVersion,
   propertyLabel,
 } from "../schema-change-format";
 
@@ -74,10 +74,10 @@ describe("formatRelativeDate", () => {
   });
 });
 
-describe("formatVersion / formatTarget / formatType / propertyLabel", () => {
-  it("formatVersion", () => {
-    expect(formatVersion(null)).toBe("—");
-    expect(formatVersion({ major: 1, minor: 2, patch: 3 })).toBe("v1.2.3");
+describe("formatHistoryVersion / formatTarget / formatType / propertyLabel", () => {
+  it("formatHistoryVersion", () => {
+    expect(formatHistoryVersion(null)).toBe("—");
+    expect(formatHistoryVersion({ major: 1, minor: 2, patch: 3 })).toBe("v1.2.3");
   });
 
   it("formatTarget cobre labels conhecidos e fallback", () => {

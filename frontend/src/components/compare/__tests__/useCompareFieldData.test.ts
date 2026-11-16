@@ -94,6 +94,29 @@ describe("useCompareFieldData: equivalência de valor e versão da pergunta", ()
     expect(data.answerGroups).toHaveLength(1);
   });
 
+  // O rótulo da versão segue o gate da Comparação (`comparisonResponseVersion`,
+  // #503): sem o major não há versão; minor/patch ausentes valem 0.
+  it("rótulo da versão da resposta segue o gate da Comparação", () => {
+    const versions = renderHook(() =>
+      useCompareFieldData({
+        currentDoc: { id: "doc1", title: "Doc", external_id: null, text: "" } as never,
+        currentFieldName: "q",
+        currentField: field,
+        responses: {
+          doc1: [
+            { ...response("r1", "alpha", HASH), schema_version_minor: 3, schema_version_patch: 1 },
+            { ...response("r2", "beta", HASH), schema_version_minor: null, schema_version_patch: null },
+          ],
+        },
+        fields: [field],
+        projectPydanticHash: null,
+        equivalencesByField: {},
+      }),
+    ).result.current.fieldResponses.map((r) => r.schemaVersion);
+
+    expect(versions).toEqual(["1.3.1", "1.0.0"]);
+  });
+
   // O card usa esta marca para oferecer o "=" (a RPC recusa o par com resposta
   // de outra versão). Sem hash, a ausência não invalida.
   it("marca em cada resposta se ela foi dada à versão atual da pergunta", () => {
