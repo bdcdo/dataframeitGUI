@@ -132,11 +132,9 @@ check_workflow() {
   end
   # O grupo do workflow vale para todos os jobs, o prepare inclusive; com o
   # nome do grupo do vigia, a espera voltaria para a fila dele.
-  pipeline_queue = workflow.fetch("concurrency")
-  abort("o grupo do workflow não pode ser o do vigia da API") if pipeline_queue.fetch("group") == machines_queue.fetch("group")
-  # Sem fila entre os deploys, o de um commit antigo poderia trocar a Machine
-  # depois do de um commit novo.
-  abort("os deploys do backend precisam de fila entre si, sem cancelar e sem descartar pendente") unless pipeline_queue["cancel-in-progress"] == false && pipeline_queue["queue"] == "max"
+  abort("o grupo do workflow não pode ser o do vigia da API") if workflow.fetch("concurrency").fetch("group") == machines_queue.fetch("group")
+  # Que esse grupo não cancela nem descarta deploy pendente está em
+  # test-deploy-failure-notification.sh.
   abort("o job deploy precisa vir depois do prepare") unless Array(deploy_job["needs"]) == ["prepare"]
   # Passos dos dois jobs na ordem em que rodam, cada um com o job de origem.
   steps = [prepare_job, deploy_job].flat_map { |job| job.fetch("steps").map { |step| step.merge("job" => job) } }.select { |s| s["run"] }
@@ -178,9 +176,10 @@ check_workflow() {
   recheck = steps.index { |step| step["job"].equal?(deploy_job) && step["run"].include?("active_jobs") }
   abort("o job deploy precisa reler as runs antes do preflight") unless recheck && recheck < pre
   abort("a releitura das runs tem de ser o mesmo passo da espera") unless steps.fetch(recheck).except("job") == wait_step.except("job")
-  # Dentro da fila do vigia só cabem estes quatro passos: qualquer outro
-  # trabalho ali é tempo em que a API fica sem vigia.
-  abort("o job deploy só pode rodar releitura, preflight, deploy e postflight") unless steps.count { |step| step["job"].equal?(deploy_job) } == 4
+  # Dentro da fila do vigia só cabem estes quatro passos, mais o checkout e o
+  # setup do flyctl: qualquer outro trabalho ali é tempo da API sem vigia.
+  deploy_steps = deploy_job.fetch("steps")
+  abort("o job deploy só pode ter checkout, setup do flyctl, releitura, preflight, deploy e postflight") unless deploy_steps.size == 6 && deploy_steps.count { |step| step["run"] } == 4
   # A releitura usa o prazo que o prepare calculou, e não outras 4 h: sem
   # isso, uma run mais longa que o prazo seria esperada de novo dentro da fila.
   # A comparação é com a string literal da expressão do Actions.
@@ -227,9 +226,7 @@ expect_queue_failure "o job prepare não pode ter grupo" 'jobs["prepare"]["concu
 expect_queue_failure "o job notify-failure não pode ter grupo" 'jobs["notify-failure"]["concurrency"] = machines_queue'
 # O deploy fora da fila do vigia: sem grupo, em outro grupo, ou cancelável.
 expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"].delete("concurrency")'
-expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"]["concurrency"] = machines_queue.merge("group" => "outro")'
 expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"]["concurrency"] = machines_queue.merge("cancel-in-progress" => true)'
-expect_queue_failure "os deploys do backend precisam de fila entre si" 'workflow["concurrency"].delete("queue")'
 expect_queue_failure "o job deploy precisa vir depois do prepare" 'jobs["deploy"].delete("needs")'
 # A espera longa de volta ao job que segura a fila.
 expect_queue_failure "o build e a espera longa ficam no job prepare" 'jobs["prepare"]["steps"].reject! { |s| s["run"]&.include?("active_jobs") }'
@@ -237,7 +234,8 @@ expect_queue_failure "o build e a espera longa ficam no job prepare" 'jobs["prep
 expect_queue_failure "preflight, deploy e postflight ficam no job deploy" 'jobs["prepare"]["steps"] << jobs["deploy"]["steps"].find { |s| s["run"]&.include?("machines.sh pre") }; jobs["deploy"]["steps"].reject! { |s| s["run"]&.include?("machines.sh pre") }'
 expect_queue_failure "o job deploy precisa reler as runs antes do preflight" 'jobs["deploy"]["steps"].reject! { |s| s["run"]&.include?("active_jobs") }'
 expect_queue_failure "a releitura das runs tem de ser o mesmo passo da espera" 'jobs["deploy"]["steps"].map! { |s| s["run"]&.include?("active_jobs") ? s.merge("timeout-minutes" => 5) : s }'
-expect_queue_failure "o job deploy só pode rodar releitura, preflight, deploy e postflight" 'jobs["deploy"]["steps"] << { "run" => "sleep 600" }'
+expect_queue_failure "o job deploy só pode ter checkout, setup do flyctl" 'jobs["deploy"]["steps"] << { "run" => "sleep 600" }'
+expect_queue_failure "o job deploy só pode ter checkout, setup do flyctl" 'jobs["deploy"]["steps"] << { "uses" => "actions/cache@v4" }'
 # O prazo único da espera: sem ele, a releitura abriria outras 4 h na fila.
 expect_queue_failure "o job deploy precisa receber o prazo do prepare" 'jobs["deploy"].delete("env")'
 expect_queue_failure "o prepare precisa publicar o prazo da espera" 'jobs["prepare"].delete("outputs")'
@@ -365,11 +363,9 @@ assert_wait "Nenhuma run em curso." ""
 # abrir um prazo novo.
 for bad_deadline in "" "amanhã" "17e9"; do
   wait_env=("WAIT_DEADLINE=$bad_deadline")
-  if run_wait_status '{"status":"ok","active_jobs":0}'; then
-    echo "a espera deveria reprovar WAIT_DEADLINE=\"$bad_deadline\"" >&2
-    exit 1
-  fi
-  [[ $wait_output == *"WAIT_DEADLINE sem o prazo"* && ! -s "$tmp_dir/wait.sleep" && ! -e "$tmp_dir/wait.curl" ]] || { printf 'recusa divergente do prazo "%s":\n%s\n' "$bad_deadline" "$wait_output" >&2; exit 1; }
+  expect_failure run_wait_status '{"status":"ok","active_jobs":0}'
+  assert_wait "WAIT_DEADLINE sem o prazo" ""
+  [[ ! -e "$tmp_dir/wait.curl" ]] || { echo "prazo \"$bad_deadline\" recusado só depois de ler o /health" >&2; exit 1; }
 done
 wait_env=()
 

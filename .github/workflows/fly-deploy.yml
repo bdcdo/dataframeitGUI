@@ -83,9 +83,7 @@ jobs:
             exit 1
           fi
           readonly deadline
-          if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-            echo "deadline=$deadline" >>"$GITHUB_OUTPUT"
-          fi
+          echo "deadline=$deadline" >>"$GITHUB_OUTPUT"
           readonly read_attempts=3
           readonly read_retry_seconds=10
           readonly poll_seconds=60
@@ -148,14 +146,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      # A mesma espera do job `prepare`, repetida já dentro da fila do vigia e
-      # com o mesmo prazo (WAIT_DEADLINE). Entre o fim daquela espera e este
-      # ponto passam a subida do runner e, se houver uma passada do vigia em
-      # curso, a passada inteira; uma run iniciada nesse intervalo morreria na
-      # troca. Quase sempre esta leitura vê zero runs e sai na hora. Run que já
-      # estourou o prazo no `prepare` também sai na hora: o prazo é o mesmo. Só
-      # a run iniciada naquele intervalo é esperada aqui dentro, com o vigia na
-      # fila, e pelo que ainda restar das 4 h: é o caso raro que sobra do #840.
+      # A espera do `prepare`, repetida já dentro da fila do vigia. Entre o fim
+      # daquela e este ponto passam a subida do runner e, se houver, uma passada
+      # do vigia; uma run iniciada nesse intervalo morreria na troca. Só essa
+      # run é esperada aqui dentro, com o vigia na fila, pelo que restar do
+      # prazo: é o caso raro que sobra do #840.
       - *wait_llm_runs
       - name: Recusar cardinalidade divergente antes do deploy
         run: bash .github/scripts/check-backend-fly-machines.sh pre
