@@ -295,18 +295,10 @@ BEGIN
 END $$;
 
 -- ========== 3. Sem campo pendente, o assignment de arbitragem não fica aberto ==========
--- O que X ainda tinha sem veredito final era só de ciclo superado: nada mais
--- na fila dele, e nenhum assignment aberto apontando para esse documento.
+-- O que X ainda tinha sem veredito final era só de ciclo superado (o bloco 2
+-- mostra que nada ficou com ele): nenhum assignment aberto pode sobrar.
 DO $$
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.field_reviews
-    WHERE project_id = '31b00000-0000-0000-0000-000000000001'
-      AND arbitrator_id = '31a00000-0000-0000-0000-000000000003'
-      AND final_verdict IS NULL
-  ) THEN
-    RAISE EXCEPTION 'FALHOU: sobrou campo pendente com o árbitro';
-  END IF;
   IF EXISTS (
     SELECT 1 FROM public.assignments
     WHERE project_id = '31b00000-0000-0000-0000-000000000001'
