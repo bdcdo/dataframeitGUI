@@ -109,13 +109,21 @@ fi
 # serve tráfego, e recriá-la mataria a run de LLM em curso na API por causa de
 # crashes que já passaram. Pausa e retomada (eventos "suspension" e "start")
 # não são "exit" e não entram na conta.
+#
+# Entra também a Machine que já tem clone do vigia (nome `vigia-<id>`): é a
+# original de um conserto cujo destroy falhou (#839). Ela pode não parecer
+# mais presa, porque a recusa de start só aparece com a sonda vermelha, que o
+# clone deixou verde, e os crashes saem da janela; sem esta regra a Machine a
+# mais ficaria para sempre, com o vigia verde.
 now_ms="$(($(date +%s) * 1000))"
 stuck_ids="$(jq -r \
   --argjson since "$((now_ms - crash_window_minutes * 60 * 1000))" \
   --argjson exits "$crash_exits" '
-  .[]
+  [.[].name] as $names
+  | .[]
   | select(
       .state == "failed"
+      or (.id as $id | $names | index("vigia-\($id)") != null)
       or (.state != "started"
           and ([.events[]?
                 | select(.type == "exit"
@@ -199,24 +207,28 @@ fi
 # clone herda a config da origem; quem escolhe o host é o scheduler do Fly, que
 # não põe a Machine nova num host sem capacidade para ela.
 #
-# O clone leva um nome derivado do id da original, e é por esse nome que a
-# passada seguinte o reconhece. Sem isso, clone feito e destroy recusado
-# deixavam a original presa na lista, e cada passada clonava outra vez: uma
-# Machine a mais a cada 15 minutos, com o deploy da API recusado desde a
-# primeira (#839). Com o clone já na app, o vigia só repete o destroy. O nome
-# é único por app no Fly, então um clone repetido seria recusado lá também.
+# O clone leva o nome `vigia-<id da original>`, e é por ele que a passada
+# seguinte sabe que o conserto ficou pela metade (#839): com o clone de pé, só
+# o destroy é repetido; com o clone fora de "started", nada é destruído, porque
+# seria trocar a original por uma Machine que não serve, e o vigia só avisa. O
+# nome é único por app no Fly, então clonar outra vez seria recusado lá.
+# Uma falha no destroy não interrompe o laço: as outras presas ainda são
+# consertadas nesta passada.
 # O `</dev/null` tem o mesmo motivo do laço de start acima.
 while read -r stuck_id; do
   clone_name="vigia-$stuck_id"
-  if jq -e --arg name "$clone_name" 'any(.[]; .name == $name)' >/dev/null <<<"$machines_json"; then
-    summary "$app: Machine $stuck_id presa já tem o clone $clone_name, de passada anterior; destruindo só a original."
-  else
+  clone_state="$(jq -r --arg name "$clone_name" 'first(.[] | select(.name == $name) | .state) // empty' <<<"$machines_json")"
+  if [[ -z "$clone_state" ]]; then
     summary "$app: Machine $stuck_id presa; clonando em $region como $clone_name e destruindo a original."
     flyctl machine clone "$stuck_id" -a "$app" --region "$region" --name "$clone_name" </dev/null
+  elif [[ "$clone_state" == "started" ]]; then
+    summary "$app: Machine $stuck_id já tem o clone $clone_name, de passada anterior; destruindo só a original."
+  else
+    summary "$app: o clone $clone_name da Machine $stuck_id está \"$clone_state\", e não de pé; nada destruído, alguém precisa olhar."
+    continue
   fi
   if ! flyctl machine destroy "$stuck_id" -a "$app" --force </dev/null; then
     summary "$app: o destroy da Machine $stuck_id falhou e a app ficou com uma Machine a mais, o clone $clone_name. A próxima passada repete só o destroy; até lá o deploy pode ser recusado pela contagem de Machines."
-    exit 1
   fi
 done <<<"$stuck_ids"
 

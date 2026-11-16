@@ -21,7 +21,7 @@ mkdir -p "$tmp_dir/bin"
 # Com MACHINES_STATE (arquivo com a lista), o flyctl falso guarda estado entre
 # as passadas: `machine list` lê o arquivo, `machine clone` acrescenta uma
 # Machine iniciada (com o `--name` pedido ou, sem ele, um nome gerado, como o
-# Fly faz) e recusa nome repetido, e `machine destroy` tira a Machine da lista,
+# Fly faz), e `machine destroy` tira a Machine da lista,
 # menos as de DESTROY_FAILS, para as quais falha sem mudar nada.
 cat >"$tmp_dir/bin/flyctl" <<'EOF'
 #!/usr/bin/env bash
@@ -60,16 +60,13 @@ case "${1:-} ${2:-}" in
   "machine clone")
     echo "$*" >>"$CALLS_LOG"
     if [[ -n "${MACHINES_STATE:-}" ]]; then
-      serial="$(jq length "$MACHINES_STATE")"
+      serial="$(($(cat "$MACHINES_STATE.serial" 2>/dev/null || echo 0) + 1))"
+      echo "$serial" >"$MACHINES_STATE.serial"
       name="gerado-$serial"
       args=("$@")
       for ((i = 0; i < ${#args[@]}; i += 1)); do
         [[ "${args[i]}" == "--name" ]] && name="${args[i + 1]}"
       done
-      if jq -e --arg name "$name" 'any(.[]; .name == $name)' "$MACHINES_STATE" >/dev/null; then
-        echo "machine name already in use: $name" >&2
-        exit 1
-      fi
       jq -c --arg id "clone$serial" --arg name "$name" \
         '. + [{id: $id, name: $name, state: "started", region: "gru", events: []}]' \
         "$MACHINES_STATE" >"$MACHINES_STATE.tmp"
@@ -378,11 +375,14 @@ PROBE_OK=1
 
 # Clone feito e destroy recusado (#839), com o estado guardado entre as
 # passadas. A primeira avisa da Machine a mais. A segunda, com o destroy ainda
-# recusado, não clona de novo: a app fica com as duas Machines saudáveis de
-# antes mais o clone, e não ganha outra a cada passada. A terceira, com o
-# destroy aceito, tira a original; a quarta não acha o que fazer.
+# recusado, não clona de novo: a app não ganha outra Machine a cada passada. A
+# terceira, com o destroy aceito, tira a original; a quarta não acha o que
+# fazer.
 MACHINES_STATE="$tmp_dir/machines.json"
-machines "$(machine m1)" "$(machine m2 failed)" >"$MACHINES_STATE"
+set_state() {
+  machines "$@" >"$MACHINES_STATE"
+  rm -f "$MACHINES_STATE.serial"
+}
 state_ids() { jq -r '[.[].id] | join(" ")' "$MACHINES_STATE"; }
 assert_state() {
   if [[ "$(state_ids)" != "$1" ]]; then
@@ -390,23 +390,69 @@ assert_state() {
     exit 1
   fi
 }
+set_state "$(machine m1)" "$(machine m2 failed)"
 DESTROY_FAILS="m2"
 expect_failure
 assert_calls "machine clone m2 -a app-teste --region gru --name vigia-m2
 machine destroy m2 -a app-teste --force"
 assert_contains "$CALLS_LOG.summary" "o destroy da Machine m2 falhou e a app ficou com uma Machine a mais, o clone vigia-m2"
-assert_state "m1 m2 clone2"
+assert_state "m1 m2 clone1"
 expect_failure
 assert_calls "machine destroy m2 -a app-teste --force"
 assert_contains "$CALLS_LOG.summary" "já tem o clone vigia-m2"
-assert_state "m1 m2 clone2"
+assert_state "m1 m2 clone1"
 DESTROY_FAILS=""
 expect_failure
 assert_calls "machine destroy m2 -a app-teste --force"
-assert_state "m1 clone2"
+assert_state "m1 clone1"
 expect_success
 assert_calls ""
+
+# A forma de 2026-08-10 com o destroy recusado: m2 suspensa recusa o start por
+# capacidade, com a sonda vermelha. Na passada seguinte, sem sonda, m2 não tem
+# mais como parecer presa (segue só suspensa), e na horária o clone deixou a
+# sonda verde: é o clone com o nome do vigia que a denuncia, nos dois modos.
+set_state "$(machine m2 suspended)"
+PROBE_OK=0
+START_FAILS="m2"
+DESTROY_FAILS="m2"
+expect_failure probe
+assert_calls "machine start m2 -a app-teste
+machine clone m2 -a app-teste --region gru --name vigia-m2
+machine destroy m2 -a app-teste --force"
+assert_state "m2 clone1"
+PROBE_OK=1
+START_FAILS=""
+expect_failure
+assert_calls "machine destroy m2 -a app-teste --force"
+assert_state "m2 clone1"
+DESTROY_FAILS=""
+expect_failure probe
+assert_calls "machine destroy m2 -a app-teste --force"
+assert_state "clone1"
+expect_success probe
+assert_calls ""
+
+# Duas presas e o destroy da primeira recusado: a segunda é consertada na
+# mesma passada, em vez de esperar a primeira destravar.
+set_state "$(machine m1 failed)" "$(machine m2 failed)"
+DESTROY_FAILS="m1"
+expect_failure
+assert_calls "machine clone m1 -a app-teste --region gru --name vigia-m1
+machine destroy m1 -a app-teste --force
+machine clone m2 -a app-teste --region gru --name vigia-m2
+machine destroy m2 -a app-teste --force"
+assert_state "m1 clone1 clone2"
+DESTROY_FAILS=""
+
+# Clone do vigia que não está de pé (o `machine clone` criou a Machine e
+# falhou antes de iniciá-la): destruir a original seria ficar só com uma
+# Machine que não serve. Nada é destruído nem clonado; o vigia avisa e falha.
 unset MACHINES_STATE
+MACHINES_JSON="$(machines "$(machine m2 failed)" '{"id":"c1","name":"vigia-m2","state":"stopped","region":"gru","events":[]}')"
+expect_failure
+assert_calls ""
+assert_contains "$CALLS_LOG.summary" 'o clone vigia-m2 da Machine m2 está "stopped"'
 
 # Resposta fora do formato: recusa sem agir.
 MACHINES_JSON='{"unexpected":"shape"}'
