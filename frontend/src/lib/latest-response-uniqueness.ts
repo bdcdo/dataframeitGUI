@@ -11,9 +11,12 @@
  *   linha LLM; o modelo (respondent_name) também não entra.
  * - humano: `responses_one_latest_human_per_document`
  *   (project_id, round_id, document_id, respondent_id), recriado em
- *   20260731120000 com round_id. O CHECK de 20260727120000 proíbe humana viva
- *   com respondent_id NULL; se uma passar, ela não colide com nada, como no
- *   índice (NULLS DISTINCT), em vez de ser contada como índice dropado.
+ *   20260731120000 com round_id.
+ *
+ * Linha com NULL em alguma coluna da chave não colide com nada, como no índice
+ * (NULLS DISTINCT), em vez de ser contada como índice dropado: project_id e
+ * document_id são nullable desde 001_initial_schema, e humana viva sem
+ * respondent_id é barrada pelo CHECK de 20260727120000, não pelo índice.
  *
  * Até a #715 a chave era `document_id|respondent_type|respondent_id`, que não
  * era a de nenhum dos dois: em linha LLM o respondent_id NULL caía para o
@@ -24,9 +27,9 @@ import { groupBy } from "@/lib/utils";
 
 export interface LatestResponseRow {
   id: string;
-  project_id: string;
+  project_id: string | null;
   round_id: string;
-  document_id: string;
+  document_id: string | null;
   respondent_type: "humano" | "llm";
   respondent_id: string | null;
 }
@@ -36,17 +39,23 @@ interface Violation {
   detail: string;
 }
 
-function indexKey(r: LatestResponseRow): string {
-  return r.respondent_type === "llm"
-    ? `llm|${r.project_id}|${r.document_id}`
-    : `humano|${r.project_id}|${r.round_id}|${r.document_id}|${r.respondent_id}`;
+/** Chave do índice que cobre a linha, ou null quando alguma coluna dela é NULL. */
+function indexKey(r: LatestResponseRow): string | null {
+  const columns =
+    r.respondent_type === "llm"
+      ? [r.project_id, r.document_id]
+      : [r.project_id, r.round_id, r.document_id, r.respondent_id];
+  return columns.includes(null) ? null : `${r.respondent_type}|${columns.join("|")}`;
 }
 
 export function latestResponseUniquenessViolations(
   rows: readonly LatestResponseRow[],
 ): Violation[] {
-  const indexed = rows.filter((r) => r.respondent_type === "llm" || r.respondent_id !== null);
-  return [...groupBy(indexed, indexKey)]
+  const keyed = rows.flatMap((r) => {
+    const key = indexKey(r);
+    return key === null ? [] : [{ key, id: r.id }];
+  });
+  return [...groupBy(keyed, (r) => r.key)]
     .filter(([, group]) => group.length > 1)
     .map(([key, group]) => ({
       key,

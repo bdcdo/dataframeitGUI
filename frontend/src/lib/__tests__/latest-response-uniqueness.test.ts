@@ -93,6 +93,17 @@ describe("latestResponseUniquenessViolations", () => {
     ).toEqual([]);
   });
 
+  it("não agrupa LLM vivas sem documento ou sem projeto, como o índice", () => {
+    expect(
+      violationDetails([
+        llm("l-a", { document_id: null }),
+        llm("l-b", { document_id: null }),
+        llm("l-c", { project_id: null }),
+        llm("l-d", { project_id: null }),
+      ]),
+    ).toEqual([]);
+  });
+
   it("não confunde humana e LLM no mesmo doc", () => {
     expect(violationDetails([row({ id: "h" }), llm("l")])).toEqual([]);
   });
