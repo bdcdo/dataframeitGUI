@@ -30,6 +30,8 @@ export function useCodingDrafts(params: UseCodingDraftsParams): CodingDraftsApi 
     at: 0,
   });
   const [storageAvailable, setStorageAvailable] = useState(true);
+  const [removedDraftCount, setRemovedDraftCount] = useState(0);
+  const [unreadableDraftCount, setUnreadableDraftCount] = useState(0);
 
   // Sessão criada uma única vez, por inicializador lazy de `useState`: um
   // `ref.current ??= ...` no corpo do componente seria acesso a ref durante o
@@ -40,6 +42,8 @@ export function useCodingDrafts(params: UseCodingDraftsParams): CodingDraftsApi 
       // O instante é lido aqui, no callback da sessão, e não no render.
       onRecovery: (recovery) => setOffer({ recovery, at: Date.now() }),
       onStorageAvailable: setStorageAvailable,
+      onDraftsRemoved: (count) => setRemovedDraftCount((previous) => previous + count),
+      onUnreadableDraft: () => setUnreadableDraftCount((previous) => previous + 1),
     }),
   );
 
@@ -111,5 +115,7 @@ export function useCodingDrafts(params: UseCodingDraftsParams): CodingDraftsApi 
     recovery: offer.recovery,
     recoveryAt: offer.at,
     storageAvailable,
+    removedDraftCount,
+    unreadableDraftCount,
   };
 }

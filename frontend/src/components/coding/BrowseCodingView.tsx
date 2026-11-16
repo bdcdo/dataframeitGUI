@@ -2,11 +2,9 @@
 
 import { Button } from "@/components/ui/button";
 import { DocumentPicker } from "./DocumentPicker";
-import { type ForwardedCodingProps, BrowseDocCoder, type CodingDraft } from "./BrowseDocCoder";
-import type { OutOfScopeConfig } from "./QuestionsPanel";
+import { type ForwardedCodingProps, BrowseDocCoder } from "./BrowseDocCoder";
 import type { CodingDocument } from "@/hooks/useDocumentForCoding";
 import type { BrowseDocument } from "@/actions/documents";
-import type { PydanticField } from "@/lib/types";
 
 interface BrowseCodingViewProps extends ForwardedCodingProps {
   browseLoading: boolean;
