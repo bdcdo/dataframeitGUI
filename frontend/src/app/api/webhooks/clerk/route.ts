@@ -28,11 +28,14 @@ export async function POST(request: Request) {
   let event: WebhookEvent;
 
   try {
-    event = wh.verify(body, {
+    // Desde a svix 2.2.0, `verify` só autentica e devolve undefined. O evento
+    // sai do corpo que acabou de ser verificado.
+    wh.verify(body, {
       "svix-id": svixId,
       "svix-timestamp": svixTimestamp,
       "svix-signature": svixSignature,
-    }) as WebhookEvent;
+    });
+    event = JSON.parse(body) as WebhookEvent;
   } catch {
     return new Response("Invalid signature", { status: 400 });
   }

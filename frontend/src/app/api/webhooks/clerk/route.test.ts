@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const hoisted = vi.hoisted(() => ({
   reconcile: vi.fn(),
   revoke: vi.fn(),
-  verify: vi.fn(),
 }));
 
 // importOriginal preserva a classe REAL de ClerkIdentityConflictError: a rota
@@ -24,11 +23,12 @@ vi.mock("next/headers", () => ({
     }),
 }));
 
+// O dublê do svix imita a 2.x: `verify` só autentica e devolve undefined, e a
+// rota lê o evento do corpo. O contrato com a biblioteca real está em
+// route.signature.test.ts.
 vi.mock("svix", () => ({
   Webhook: class {
-    verify(...args: unknown[]) {
-      return hoisted.verify(...args);
-    }
+    verify() {}
   },
 }));
 
@@ -65,14 +65,15 @@ function userEvent(
   };
 }
 
-function webhookRequest() {
-  return new Request("http://localhost", { body: "{}", method: "POST" });
+function webhookRequest(event: unknown = userEvent()) {
+  return new Request("http://localhost", {
+    body: JSON.stringify(event),
+    method: "POST",
+  });
 }
 
 beforeEach(() => {
   process.env.CLERK_WEBHOOK_SECRET = "test-secret";
-  hoisted.verify.mockReset();
-  hoisted.verify.mockReturnValue(userEvent());
   hoisted.reconcile.mockReset();
   hoisted.reconcile.mockResolvedValue("accountUid");
   hoisted.revoke.mockReset();
@@ -93,10 +94,10 @@ describe("webhook Clerk — reconciliação de acesso", () => {
   });
 
   it("reprocessa user.updated pela mesma reconciliação idempotente", async () => {
-    hoisted.verify.mockReturnValue(userEvent("user.updated"));
+    const event = userEvent("user.updated");
 
-    const firstResponse = await POST(webhookRequest());
-    const retryResponse = await POST(webhookRequest());
+    const firstResponse = await POST(webhookRequest(event));
+    const retryResponse = await POST(webhookRequest(event));
 
     expect(firstResponse.status).toBe(200);
     expect(retryResponse.status).toBe(200);
@@ -107,10 +108,10 @@ describe("webhook Clerk — reconciliação de acesso", () => {
   it.each(["user.created", "user.updated"] as const)(
     "faz ACK 200 em %s quando o estado atual ainda não tem identidade utilizável",
     async (eventType) => {
-      hoisted.verify.mockReturnValue(userEvent(eventType, "unverified"));
+      const event = userEvent(eventType, "unverified");
       hoisted.reconcile.mockResolvedValueOnce(null);
 
-      const response = await POST(webhookRequest());
+      const response = await POST(webhookRequest(event));
 
       expect(response.status).toBe(200);
       await expect(response.text()).resolves.toBe("OK");
@@ -119,20 +120,23 @@ describe("webhook Clerk — reconciliação de acesso", () => {
   );
 
   it("payload atrasado não vira autoridade sobre e-mails nem metadata", async () => {
-    hoisted.verify.mockReturnValue(
-      userEvent("user.updated", "verified", "unverified", "accountUid"),
+    const event = userEvent(
+      "user.updated",
+      "verified",
+      "unverified",
+      "accountUid",
     );
 
-    const response = await POST(webhookRequest());
+    const response = await POST(webhookRequest(event));
 
     expect(response.status).toBe(200);
     expect(hoisted.reconcile).toHaveBeenCalledWith("clerk_1");
   });
 
   it("user.deleted revoga mapping e aliases sem tentar reler a conta", async () => {
-    hoisted.verify.mockReturnValue(userEvent("user.deleted"));
+    const event = userEvent("user.deleted");
 
-    const response = await POST(webhookRequest());
+    const response = await POST(webhookRequest(event));
 
     expect(response.status).toBe(200);
     expect(hoisted.revoke).toHaveBeenCalledWith("clerk_1");
@@ -140,10 +144,10 @@ describe("webhook Clerk — reconciliação de acesso", () => {
   });
 
   it("falha ao revogar user.deleted responde 500 para retry", async () => {
-    hoisted.verify.mockReturnValue(userEvent("user.deleted"));
+    const event = userEvent("user.deleted");
     hoisted.revoke.mockRejectedValueOnce(new Error("database unavailable"));
 
-    const response = await POST(webhookRequest());
+    const response = await POST(webhookRequest(event));
 
     expect(response.status).toBe(500);
   });
@@ -177,12 +181,12 @@ describe("webhook Clerk — reconciliação de acesso", () => {
   });
 
   it("user.deleted sem id é no-op 200, não retry de um evento sem ação possível", async () => {
-    hoisted.verify.mockReturnValueOnce({
+    const event = {
       type: "user.deleted",
       data: {},
-    });
+    };
 
-    const response = await POST(webhookRequest());
+    const response = await POST(webhookRequest(event));
 
     expect(response.status).toBe(200);
     expect(hoisted.revoke).not.toHaveBeenCalled();
