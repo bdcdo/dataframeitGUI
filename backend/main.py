@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: "FastAPI"):
     # Readiness do gate de auth: o boot é fail-closed, mas /health sempre retorna
-    # 200. Sem este aviso, um deploy sem o secret/JWKS sobe "saudável" enquanto
+    # 200. Sem este aviso, um deploy sem o JWKS sobe "saudável" enquanto
     # toda rota autenticada devolve 503, sem nada no log apontando a causa.
-    if not settings.supabase_jwt_secret and not settings.clerk_jwks_url:
+    if not settings.clerk_jwks_url:
         logger.error(
-            "Auth fail-closed: nem SUPABASE_JWT_SECRET nem CLERK_JWKS_URL "
-            "configurados — toda rota autenticada retornará 503."
+            "Auth fail-closed: CLERK_JWKS_URL não configurado — toda rota "
+            "autenticada retornará 503."
         )
     # JWKS sem issuer derruba o boot em vez de avisar: o processo morre, /health
     # nunca fica verde e o Fly não transfere tráfego para a máquina nova. É o que
