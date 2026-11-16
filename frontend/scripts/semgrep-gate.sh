@@ -17,10 +17,12 @@ cd "$(dirname "$0")/../.." # raiz do repositório
 # Engine pinado: reprodutibilidade, e fuga da regressão da série 1.12x, que
 # saía com exit 2 em execução limpa.
 SEMGREP_VERSION=1.168.0
-ATTEMPTS=3
 UVX="${SEMGREP_UVX:-uvx}"
 RETRY_SLEEP="${SEMGREP_RETRY_SLEEP:-15}"
 fail_open="${GATE_FAIL_OPEN:-1}"
+# Só o fail-closed tenta de novo: o push offline não espera três tentativas.
+attempts=1
+[[ "$fail_open" == 0 ]] && attempts=3
 
 infra_failure() {
   if [[ "$fail_open" == 0 ]]; then
@@ -57,12 +59,11 @@ while :; do
     echo "semgrep achou problema novo — corrija ou marque com nosemgrep" >&2
     exit 1
   fi
-  # Sem fail-closed não há nova tentativa: o push offline não espera três.
-  if [[ "$fail_open" != 0 || "$attempt" -ge "$ATTEMPTS" ]]; then
+  if [[ "$attempt" -ge "$attempts" ]]; then
     echo "$out" | tail -n 20 >&2
     infra_failure "exit $code, tentativa $attempt"
   fi
-  echo "semgrep saiu com $code (tentativa $attempt de $ATTEMPTS); tentando de novo em ${RETRY_SLEEP}s" >&2
+  echo "semgrep saiu com $code (tentativa $attempt de $attempts); tentando de novo em ${RETRY_SLEEP}s" >&2
   sleep "$RETRY_SLEEP"
   attempt=$((attempt + 1))
 done

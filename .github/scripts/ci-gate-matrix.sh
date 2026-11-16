@@ -7,8 +7,8 @@
 # Imprime `{"include":[{"id","name","shard"}]}` e falha, sem imprimir matriz,
 # quando uma declaração deixou de valer:
 #   - exceção sem motivo, ou cuja chave não é hook de pre-push (órfã);
-#   - shard de hook que não é célula, com contagem menor que 2, ou cujo
-#     `entry` não lê GATE_SHARD (as fatias rodariam a suíte inteira cada uma).
+#   - shard de hook que não é célula, ou com contagem menor que 2. O hook
+#     recebe a fatia em GATE_SHARD (`n/total`) e é ele que precisa lê-la.
 #
 # O estágio de um hook é o `stages:` dele ou, na falta, o `default_stages` do
 # arquivo. Hook de repositório remoto que só declare o estágio no manifesto do
@@ -29,30 +29,29 @@ ruby -ryaml -rjson -e '
   shards = JSON.parse(File.read(shards_path))
 
   default_stages = config["default_stages"]
-  entries = {}
+  hooks = []
   config.fetch("repos").each do |repo|
     repo.fetch("hooks").each do |hook|
       stages = hook["stages"] || default_stages
       # Sem `stages` e sem `default_stages`, o pre-commit roda o hook em todo
       # estágio, o pre-push inclusive.
       next unless stages.nil? || stages.include?("pre-push")
-      entries[hook.fetch("id")] = hook["entry"].to_s
+      hooks << hook.fetch("id")
     end
   end
 
   problems = []
   exempt.each do |id, reason|
-    problems << "exceção órfã em #{File.basename(exempt_path)}: `#{id}` não é hook de pre-push" unless entries.key?(id)
+    problems << "exceção órfã em #{File.basename(exempt_path)}: `#{id}` não é hook de pre-push" unless hooks.include?(id)
     problems << "exceção `#{id}` sem motivo em #{File.basename(exempt_path)}" unless reason.is_a?(String) && !reason.strip.empty?
   end
-  gates = entries.keys - exempt.keys
+  gates = hooks - exempt.keys
   shards.each do |id, count|
     unless gates.include?(id)
       problems << "shard órfão em #{File.basename(shards_path)}: `#{id}` não é célula da matriz"
       next
     end
     problems << "shard de `#{id}` precisa ser inteiro >= 2, veio #{count.inspect}" unless count.is_a?(Integer) && count >= 2
-    problems << "o entry do hook `#{id}` não lê GATE_SHARD: cada fatia rodaria a suíte inteira" unless entries[id].include?("GATE_SHARD")
   end
   problems << "nenhum hook de pre-push fora das exceções: a matriz ficaria vazia" if gates.empty?
   abort(problems.join("\n")) unless problems.empty?

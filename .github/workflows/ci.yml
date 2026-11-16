@@ -73,6 +73,9 @@ jobs:
           version: "0.9.18"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
+          # Cada hook enche o cache com coisa diferente (só o pre-commit, o
+          # backend inteiro, o semgrep): com uma chave só, vale o primeiro.
+          cache-suffix: ${{ matrix.id }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
@@ -92,8 +95,8 @@ jobs:
           # Gate que no push local libera em erro de infra (semgrep) reprova aqui.
           GATE_FAIL_OPEN: "0"
 
-  # Fora da matriz porque não são hooks de pre-push: o ruff roda no pre-commit
-  # só nos arquivos alterados, e o eslint não tem hook.
+  # Fora da matriz porque não são hooks de pre-push: o ruff é hook de
+  # pre-commit, e o eslint não tem hook.
   lint:
     name: Lint (ruff e eslint)
     runs-on: ubuntu-latest
@@ -107,11 +110,12 @@ jobs:
           version: "0.9.18"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
+      # Os hooks do ruff, e não o comando reescrito aqui. O `--fix` e o format
+      # reprovam do mesmo jeito: o pre-commit falha quando o hook altera arquivo.
       - name: Backend — ruff
-        working-directory: backend
         run: |
-          uv run --locked ruff check .
-          uv run --locked ruff format --check .
+          uvx pre-commit@4.7.0 run --all-files ruff-check
+          uvx pre-commit@4.7.0 run --all-files ruff-format
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc

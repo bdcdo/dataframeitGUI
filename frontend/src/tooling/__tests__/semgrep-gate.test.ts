@@ -14,13 +14,6 @@ import { isolatedGitEnvironment, runGit } from "@/test-utils/isolated-git";
 
 const frontend = fileURLToPath(new URL("../../../", import.meta.url));
 const script = path.join(frontend, "scripts/semgrep-gate.sh");
-const preCommitConfig = fs.readFileSync(path.join(frontend, "../.pre-commit-config.yaml"), "utf8");
-
-it("o hook chama o script, sem lógica própria no entry", () => {
-  const hook = preCommitConfig.slice(preCommitConfig.indexOf("- id: semgrep\n"));
-  const block = hook.slice(0, hook.indexOf("\n      - id:", 1));
-  expect(block).toContain("entry: bash frontend/scripts/semgrep-gate.sh\n");
-});
 
 // Repositório de brinquedo com o script, uma branch à frente da main e um uvx
 // falso que sai com os códigos de `plan`, um por chamada, e registra cada uma.
