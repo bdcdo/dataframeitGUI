@@ -183,6 +183,7 @@ describe("AnalyzeLayout — arbitragem fora da fila", () => {
     ["o campo é de ciclo superado", {}, { superseded_at: "2026-11-01T00:00:00Z" }],
     ["o campo já tem veredito final", {}, { final_verdict: "humano" }],
     ["o campo está com outro árbitro", {}, { arbitrator_id: "outro" }],
+    ["o campo pendente é de outro documento", {}, { document_id: "doc-2" }],
   ])("esconde a aba quando %s", async (_, assignment, fieldReview) => {
     expect(await showArbitragem(assignment, fieldReview)).toBe(false);
   });
