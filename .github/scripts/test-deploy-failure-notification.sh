@@ -48,11 +48,12 @@ ruby -ryaml -e '
     # e na condição: no backend o deploy tem dois jobs, e a falha do primeiro
     # deixa o segundo "skipped", que não é "failure".
     watched = workflow.fetch("jobs").keys - ["notify-failure"]
-    abort("caller sem dependência de todos os jobs do deploy: #{path}") unless Array(caller["needs"]).sort == watched.sort
-    watched.each do |job|
-      abort("caller sem condição de failure do job #{job}: #{path}") unless caller.fetch("if").include?("needs.#{job}.result == \u0027failure\u0027")
-    end
-    abort("caller precisa rodar depois de job que falhou: #{path}") unless caller.fetch("if").include?("always()")
+    abort("caller sem dependência de todos os jobs do deploy: #{path}") unless Array(caller["needs"]) == watched
+    # A expressão inteira é comparada: com `&&` no lugar de `||` cada nome de
+    # job continuaria presente e a condição nunca seria verdadeira.
+    failures = watched.map { |job| "needs.#{job}.result == \u0027failure\u0027" }
+    any_failure = failures.one? ? failures.first : "(#{failures.join(" || ")})"
+    abort("caller sem condição de failure de cada job do deploy: #{path}") unless caller.fetch("if") == "${{ always() && #{any_failure} }}"
     abort("caller não usa workflow canônico: #{path}") unless caller["uses"] == "./.github/workflows/notify-deploy-failure.yml"
     abort("caller precisa somente de issues: write: #{path}") unless caller.fetch("permissions") == { "issues" => "write" }
 

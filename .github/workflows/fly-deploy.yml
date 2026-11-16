@@ -28,6 +28,8 @@ jobs:
   prepare:
     name: build e espera das runs
     runs-on: ubuntu-latest
+    outputs:
+      wait_deadline: ${{ steps.wait_llm_runs.outputs.deadline }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Pin a SHA (tag 1.6) por supply-chain safety — @master é floating ref.
@@ -45,6 +47,7 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
       - &wait_llm_runs
         name: Esperar as runs de LLM em curso terminarem
+        id: wait_llm_runs
         # Trocar a Machine no meio de uma run mata o job, e o kill_timeout de
         # 5 min não cobre runs de horas. O /health informa quantas runs estão
         # ativas; o deploy espera zerar, por até 4 h, e segue se a API não
@@ -61,11 +64,28 @@ jobs:
         # prazo cabe no máximo mais uma volta (60 s de sleep e três leituras de
         # até 60 s com 10 s entre elas, cerca de 4,5 min), e o timeout do passo
         # fica acima dessa soma.
+        #
+        # O passo roda nos dois jobs com um prazo só. O `prepare`, sem
+        # WAIT_DEADLINE, calcula o prazo e o publica; o `deploy` o recebe na
+        # variável e não abre outras 4 h dentro da fila do vigia.
         timeout-minutes: 250
         shell: bash
         run: |
           readonly health_url="https://gui-analise-sistematica-api.fly.dev/health"
-          readonly deadline=$(($(date +%s) + 4 * 60 * 60))
+          if [[ -z "${WAIT_DEADLINE+x}" ]]; then
+            deadline=$(($(date +%s) + 4 * 60 * 60))
+          elif [[ "$WAIT_DEADLINE" =~ ^[0-9]+$ ]]; then
+            deadline="$WAIT_DEADLINE"
+          else
+            # Seguir com um prazo novo esconderia o defeito e seguraria a fila
+            # do vigia por até 4 h.
+            echo "::error::WAIT_DEADLINE sem o prazo calculado pelo job prepare: \"$WAIT_DEADLINE\"" >&2
+            exit 1
+          fi
+          readonly deadline
+          if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+            echo "deadline=$deadline" >>"$GITHUB_OUTPUT"
+          fi
           readonly read_attempts=3
           readonly read_retry_seconds=10
           readonly poll_seconds=60
@@ -123,15 +143,19 @@ jobs:
       group: fly-deploy-backend
       cancel-in-progress: false
       queue: max
+    env:
+      WAIT_DEADLINE: ${{ needs.prepare.outputs.wait_deadline }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
-      # A mesma espera do job `prepare`, repetida já dentro da fila do vigia.
-      # Entre o fim daquela espera e este ponto passam a subida do runner e, se
-      # houver uma passada do vigia em curso, a passada inteira; uma run
-      # iniciada nesse intervalo morreria na troca. Quase sempre esta leitura
-      # vê zero runs e sai na hora. Se vir uma run, espera por ela aqui dentro,
-      # com o vigia na fila: é o caso raro que sobra do #840.
+      # A mesma espera do job `prepare`, repetida já dentro da fila do vigia e
+      # com o mesmo prazo (WAIT_DEADLINE). Entre o fim daquela espera e este
+      # ponto passam a subida do runner e, se houver uma passada do vigia em
+      # curso, a passada inteira; uma run iniciada nesse intervalo morreria na
+      # troca. Quase sempre esta leitura vê zero runs e sai na hora. Run que já
+      # estourou o prazo no `prepare` também sai na hora: o prazo é o mesmo. Só
+      # a run iniciada naquele intervalo é esperada aqui dentro, com o vigia na
+      # fila, e pelo que ainda restar das 4 h: é o caso raro que sobra do #840.
       - *wait_llm_runs
       - name: Recusar cardinalidade divergente antes do deploy
         run: bash .github/scripts/check-backend-fly-machines.sh pre
