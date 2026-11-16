@@ -4,21 +4,22 @@ import type { AutomationMode } from "@/lib/types";
 // automação do projeto e do trabalho ativo do usuário. Pura — testável sem DB.
 //
 // Regra: o coordenador vê as abas do mecanismo ATIVO no projeto (modo); o
-// pesquisador vê Auto-revisão enquanto tiver um ciclo pendente em field_reviews;
-// as demais filas continuam materializadas em assignments. Atribuições e
+// pesquisador vê Auto-revisão enquanto tiver um ciclo pendente em field_reviews,
+// Arbitragem enquanto tiver assignment aberto e campo contestado sem veredito
+// final, e Comparação enquanto tiver assignment. Atribuições e
 // Codificar são sempre visíveis (não passam por aqui).
 export function computeAnalyzeTabVisibility(opts: {
   mode: AutomationMode | null | undefined;
   isCoordinator: boolean;
   hasPendingAutoReview: boolean;
-  hasArbitragemAssignment: boolean;
+  hasPendingArbitragem: boolean;
   hasComparacaoAssignment: boolean;
 }): { showAutoReview: boolean; showArbitragem: boolean; showCompare: boolean } {
   const {
     mode,
     isCoordinator,
     hasPendingAutoReview,
-    hasArbitragemAssignment,
+    hasPendingArbitragem,
     hasComparacaoAssignment,
   } = opts;
 
@@ -28,7 +29,7 @@ export function computeAnalyzeTabVisibility(opts: {
 
   return {
     showAutoReview: coordSeesAutoReview || hasPendingAutoReview,
-    showArbitragem: coordSeesAutoReview || hasArbitragemAssignment,
+    showArbitragem: coordSeesAutoReview || hasPendingArbitragem,
     showCompare: coordSeesCompare || hasComparacaoAssignment,
   };
 }

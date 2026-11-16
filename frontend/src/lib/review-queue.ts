@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  fetchAllAfterId,
+  fetchByDocumentChunks,
+  type PagedRead,
+} from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 
 export interface ReviewQueueDocumentRow {
@@ -17,18 +22,17 @@ export interface ReviewQueueDocument<TField> {
   fields: TField[];
 }
 
-interface RowsResult<TRow> {
-  data: TRow[] | null;
-}
-
 /**
  * Carrega a base comum das filas de revisão sem consultar o Supabase quando a
- * fila já está vazia. A query específica de ciclos permanece no chamador.
+ * fila já está vazia. A query específica de ciclos permanece no chamador, que
+ * a restringe aos documentos do lote recebido: a lista inteira num `.in()` só
+ * vai na URL do PostgREST e estoura com fila grande. Leitura que falha lança,
+ * em vez de abrir a fila sem os documentos do lote (P3).
  */
 export async function loadReviewQueueRows<TFieldReview>(
   supabase: SupabaseServerClient,
   documentIds: string[],
-  loadFieldReviews: () => PromiseLike<RowsResult<TFieldReview>>,
+  loadFieldReviews: (documentIds: string[]) => PagedRead<TFieldReview>,
 ): Promise<{
   documents: ReviewQueueDocumentRow[];
   fieldReviews: TFieldReview[];
@@ -38,18 +42,28 @@ export async function loadReviewQueueRows<TFieldReview>(
   }
 
   const [documentsResult, fieldReviewsResult] = await Promise.all([
-    supabase
-      .from("documents")
-      .select("id, title, external_id, text")
-      .in("id", documentIds)
-      .is("excluded_at", null)
-      .is("exclusion_pending_at", null),
-    loadFieldReviews(),
+    fetchByDocumentChunks<ReviewQueueDocumentRow>(documentIds, (ids) =>
+      fetchAllAfterId<ReviewQueueDocumentRow>(() =>
+        supabase
+          .from("documents")
+          .select("id, title, external_id, text")
+          .in("id", ids)
+          .is("excluded_at", null)
+          .is("exclusion_pending_at", null),
+      ),
+    ),
+    fetchByDocumentChunks(documentIds, loadFieldReviews),
   ]);
+  const error = documentsResult.error ?? fieldReviewsResult.error;
+  if (error) {
+    throw new Error(
+      `Não foi possível carregar a fila de revisão: ${error.message}`,
+    );
+  }
 
   return {
-    documents: (documentsResult.data ?? []) as ReviewQueueDocumentRow[],
-    fieldReviews: fieldReviewsResult.data ?? [],
+    documents: documentsResult.data,
+    fieldReviews: fieldReviewsResult.data,
   };
 }
 

@@ -4,7 +4,7 @@ import { computeAnalyzeTabVisibility } from "@/lib/analyze-tabs";
 const base = {
   isCoordinator: false,
   hasPendingAutoReview: false,
-  hasArbitragemAssignment: false,
+  hasPendingArbitragem: false,
   hasComparacaoAssignment: false,
 };
 

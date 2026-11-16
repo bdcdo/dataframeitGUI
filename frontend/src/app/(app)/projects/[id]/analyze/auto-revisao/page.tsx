@@ -153,7 +153,7 @@ export default async function AutoReviewRoute({
   const { documents: docs, fieldReviews } = await loadReviewQueueRows(
     supabase,
     docIds,
-    () =>
+    (ids) =>
       fetchAllAfterId<AutoReviewFieldReviewRow>(() =>
         supabase
           .from("field_reviews")
@@ -161,7 +161,7 @@ export default async function AutoReviewRoute({
             "id, document_id, field_name, human_answer_snapshot, llm_answer_snapshot, llm_justification_snapshot, self_verdict, self_justification",
           )
           .eq("project_id", id)
-          .in("document_id", docIds)
+          .in("document_id", ids)
           .eq("self_reviewer_id", queueUserId)
           .is("superseded_at", null),
       ),

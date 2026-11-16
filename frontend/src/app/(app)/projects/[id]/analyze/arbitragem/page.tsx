@@ -10,12 +10,20 @@ import {
   type ArbitrationField,
 } from "@/components/arbitration/ArbitrationPage";
 import { assignOrder } from "@/lib/arbitration-order";
+import {
+  openArbitrationAssignmentsQuery,
+  pendingArbitrationFieldsQuery,
+} from "@/lib/arbitration-queue";
 import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import {
   buildReviewQueueDocumentMap,
   loadReviewQueueRows,
 } from "@/lib/review-queue";
+import {
+  fetchAllAfterId,
+  fetchByDocumentChunks,
+} from "@/lib/supabase/fetch-all-paged";
 import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 
 // Server-side A/B embaralhamento da fase cega — o navegador nunca recebe os
@@ -25,12 +33,22 @@ import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 
 interface ArbitrationFieldReviewRow {
   id: string;
+  document_id: string;
   field_name: string;
+  human_response_id: string;
+  llm_response_id: string;
   human_answer_snapshot: unknown;
   llm_answer_snapshot: unknown;
   llm_justification_snapshot: unknown;
   blind_verdict: string | null;
   self_justification: string | null;
+}
+
+interface ArbitrationResponseRow {
+  id: string;
+  respondent_type: string;
+  respondent_id: string | null;
+  respondent_name: string | null;
 }
 
 function buildArbitrationField(
@@ -93,38 +111,46 @@ export default async function ArbitrationRoute({
   );
   const { queueUserId } = resolveProjectQueueIdentity(access, sp.viewAsUser);
 
-  const [{ data: project }, { data: assignments }, profileNames] =
+  const [{ data: project }, assignmentsRead, profileNames] =
     await Promise.all([
       supabase
         .from("projects")
         .select("pydantic_fields, name, arbitration_blind")
         .eq("id", id)
         .single(),
-      supabase
-        .from("assignments")
-        .select("document_id, status")
-        .eq("project_id", id)
-        .eq("user_id", queueUserId)
-        .eq("type", "arbitragem")
-        .neq("status", "concluido"),
+      fetchAllAfterId<{ id: string; document_id: string }>(() =>
+        openArbitrationAssignmentsQuery(supabase, id, queueUserId),
+      ),
       fetchProfileNames(supabase, id),
     ]);
+  // Leitura que falha derruba a página em vez de abrir a fila vazia, como na
+  // auto-revisão (P3).
+  if (assignmentsRead.error) {
+    throw new Error(
+      `Não foi possível carregar a fila de arbitragem: ${assignmentsRead.error.message}`,
+    );
+  }
 
-  const docIds = (assignments ?? []).map((a) => a.document_id);
+  // Sem repetição: o mesmo documento em dois lotes traria os campos dele duas
+  // vezes.
+  const docIds = Array.from(
+    new Set(assignmentsRead.data.map((a) => a.document_id)),
+  );
   const { documents: docs, fieldReviews } = await loadReviewQueueRows(
     supabase,
     docIds,
-    () =>
-      supabase
-        .from("field_reviews")
-        .select(
-          "id, document_id, field_name, human_response_id, llm_response_id, human_answer_snapshot, llm_answer_snapshot, llm_justification_snapshot, blind_verdict, final_verdict, self_justification",
+    (ids) =>
+      fetchAllAfterId<ArbitrationFieldReviewRow>(() =>
+        pendingArbitrationFieldsQuery(
+          supabase,
+          id,
+          queueUserId,
+          "id, document_id, field_name, human_response_id, llm_response_id, human_answer_snapshot, llm_answer_snapshot, llm_justification_snapshot, blind_verdict, self_justification",
         )
-        .in("document_id", docIds)
-        .eq("arbitrator_id", queueUserId)
-        .eq("self_verdict", "contesta_llm")
-        .is("superseded_at", null)
-        .is("final_verdict", null),
+          .in("document_id", ids)
+          // A projeção é `string`: o tipo da linha é declarado aqui.
+          .returns<ArbitrationFieldReviewRow[]>() as never,
+      ),
   );
 
   const responseIdSet = new Set<string>();
@@ -132,16 +158,23 @@ export default async function ArbitrationRoute({
     responseIdSet.add(fr.human_response_id);
     responseIdSet.add(fr.llm_response_id);
   }
-  const responseIds = Array.from(responseIdSet);
-  const { data: responses } =
-    responseIds.length > 0
-      ? await supabase
+  // Em lotes pelo mesmo motivo dos documentos: são dois ids por campo.
+  const responsesRead = await fetchByDocumentChunks(
+    Array.from(responseIdSet),
+    (ids) =>
+      fetchAllAfterId<ArbitrationResponseRow>(() =>
+        supabase
           .from("responses")
-          .select(
-            "id, document_id, respondent_type, respondent_id, respondent_name, answers, justifications",
-          )
-          .in("id", responseIds)
-      : { data: [] };
+          .select("id, respondent_type, respondent_id, respondent_name")
+          .in("id", ids),
+      ),
+  );
+  if (responsesRead.error) {
+    throw new Error(
+      `Não foi possível carregar a fila de arbitragem: ${responsesRead.error.message}`,
+    );
+  }
+  const responses = responsesRead.data;
 
   const responsesById = new Map(
     withProfileNames(responses, profileNames).map((r) => [r.id, r]),

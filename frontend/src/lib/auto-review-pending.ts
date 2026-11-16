@@ -33,7 +33,8 @@ export type PendingAutoReviewsResult =
 // contador abaixo partem todos daqui; cada um só acrescenta o dono e o
 // recorte. A projeção é fixa (literal) para o postgrest-js tipar a linha.
 // `loadReviewQueueRows` (lib/review-queue.ts) repete o filtro de exclusão ao
-// carregar os documentos, porque a fila de arbitragem só passa por lá.
+// carregar os documentos: entre a leitura dos ids e a dos documentos, um deles
+// pode ter sido excluído.
 export function pendingAutoReviewsQuery(
   client: SupabaseServerClient,
   projectId: string,
