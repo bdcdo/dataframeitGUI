@@ -199,15 +199,17 @@ def _persist_run_insert(sb, job_id: str, project_id: str, filter_mode: str) -> N
     ).execute()
 
 
-def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
+def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> bool:
     """Persistir snapshot de counters + heartbeat em llm_runs.
 
     Chamado periodicamente pelo save loop (throttle 2s). Erros aqui são
     logados, não re-lançados: a run principal não deve abortar só porque uma
-    atualização de progresso falhou. O próximo tick tenta de novo.
+    atualização de progresso falhou. Devolve se a gravação saiu, para o
+    throttle só contar a que saiu: a que falhou é tentada de novo na linha
+    seguinte.
 
-    O `total` não entra aqui: é constante durante a run e sai uma vez, em
-    `_persist_run_snapshot`.
+    O `total` não entra aqui: é constante durante a run, e quem o grava é
+    `_persist_run_snapshot` (o fecho da run o repete).
     """
     payload = {
         "processed_complete": jobs_state.get("processed_complete", 0),
@@ -223,7 +225,7 @@ def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
     phase = jobs_state.get("phase")
     if phase is None:
         logger.error(
-            "Estado do job %s sem fase: progresso gravado sem atualizar a fase",
+            "Estado do job %s sem fase: o progresso segue sem atualizar a fase",
             job_id,
         )
     else:
@@ -237,6 +239,8 @@ def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
         ).execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs progress for job %s", job_id)
+        return False
+    return True
 
 
 def mark_stale_runs_as_error(sb, project_id: str) -> int:
@@ -381,6 +385,10 @@ def _persist_run_error(
             payload["processed_complete"] = counters.get("processed_complete", 0)
             payload["processed_partial"] = counters.get("processed_partial", 0)
             payload["processed_empty"] = counters.get("processed_empty", 0)
+            # O progresso fecha junto: a última gravação dele pode ter ficado
+            # para trás no throttle, e a linha diria "0/N" com um processado.
+            if "progress" in counters:
+                payload["progress"] = counters["progress"]
         sb.table("llm_runs").update(payload).eq("job_id", job_id).execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs error for job %s", job_id)
@@ -1939,8 +1947,8 @@ def _persist_run_progress_now(sb, job_id: str, jobs_state: dict) -> None:
     Para a mudança de fase, que não pode esperar 2 s. Sem acertar o relógio, a
     linha seguinte regravava o mesmo progresso logo depois.
     """
-    _persist_run_progress(sb, job_id, jobs_state)
-    jobs_state["last_progress_persist"] = time.time()
+    if _persist_run_progress(sb, job_id, jobs_state):
+        jobs_state["last_progress_persist"] = time.time()
 
 
 class _RowPublisher:
