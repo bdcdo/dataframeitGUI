@@ -907,8 +907,7 @@ describe("saveResponse — unicidade da resposta corrente (#609)", () => {
 });
 
 describe("saveResponse — falha ao sincronizar o assignment de codificação", () => {
-  // A resposta já foi gravada quando o sync roda: o toast diz isso em pt-BR, e
-  // o texto do PostgREST vai só ao log, com o código que liga os dois (#502).
+  // Copy pt-BR no toast e texto do PostgREST só no log (#502).
   const SYNC_FAILED =
     "Resposta salva, mas o status da codificação não pôde ser atualizado. Tente salvar novamente.";
 
