@@ -93,9 +93,10 @@ interface CodingDraftBannerProps {
   fields: PydanticField[];
   onRestore: () => void;
   onDiscard: () => void;
-  /** Instante em que a oferta chegou (`recoveryAt` de `useCodingDrafts`): a
-   *  idade do rascunho é medida dele, e não do mount da página, que pode ter
-   *  sido horas antes de a pesquisadora abrir este documento. */
+  /** Instante em que a oferta chegou à tela (`recoveryAt` de
+   *  `useCodingDrafts`, ou a saída do fullscreen, se posterior): a idade do
+   *  rascunho é medida dele, e não do mount da página, que pode ter sido horas
+   *  antes de a pesquisadora abrir este documento. */
   offeredAt: number;
 }
 

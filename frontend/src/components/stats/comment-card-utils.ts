@@ -33,8 +33,9 @@ export interface ReviewComment {
   verdictInvalidReason?: ReviewInvalidReason;
   /**
    * Só em comentário de review com veredito "Ambíguo" cujo texto o comentário
-   * kind='ambiguity' da célula repete: o card da ambiguidade sai da lista, e
-   * este responde também pelo filtro "Campos ambíguos" (`buildOrderedComments`).
+   * kind='ambiguity' da célula repete, no mesmo estado (aberto ou resolvido):
+   * o card da ambiguidade sai da lista, e este responde também pelo filtro
+   * "Campos ambíguos" (`buildOrderedComments`).
    */
   coversAmbiguityComment?: true;
   source:

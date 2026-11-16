@@ -368,6 +368,38 @@ describe("região live da oferta atravessa o fullscreen", () => {
   });
 });
 
+// Em fullscreen a faixa fica sem oferta; a saída é a chegada dela à tela, e a
+// idade é medida dali. Medida do instante em que a oferta chegou ao hook (a
+// abertura do documento), ela ficava parada no valor daquele momento, e horas
+// em fullscreen sumiam da frase. Só o `Date` é falso: os timers da região live
+// e do `waitFor` seguem reais.
+describe("idade do rascunho depois do fullscreen", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("conta o tempo passado em fullscreen, na faixa e na região live", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-16T09:00:00Z"));
+    const user = userEvent.setup();
+    plantDraft({ q1: "do rascunho" });
+    renderPage({ [DOC]: { q1: "do servidor" } });
+
+    await waitFor(() => expect(offerRegion()?.textContent).toMatch(/há 5 minutos/));
+
+    await user.keyboard("{Control>}{Shift>}F{/Shift}{/Control}");
+    vi.setSystemTime(new Date("2026-11-16T12:00:00Z"));
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(offerRegion()?.textContent).toMatch(/há 3 horas/));
+    // A cópia visível (`aria-hidden`) diz o mesmo que a região live.
+    const visible = screen
+      .getAllByText(/salvas neste navegador há 3 horas/)
+      .filter((el) => !offerRegion()?.contains(el));
+    expect(visible).toHaveLength(1);
+  });
+});
+
 describe("envio confirmado", () => {
   // Mutação vermelha: preservar o rascunho quando ainda faltam obrigatórias. A
   // escrita aconteceu; manter o envelope deixaria o indicador aceso sobre

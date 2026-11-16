@@ -487,4 +487,37 @@ describe("buildOrderedComments — veredito ambíguo e comentário de ambiguidad
       expect(ids.sort()).toEqual(["anotacao-a1", "r1"]);
     }
   });
+
+  // A resolução dos dois é separada: a do card da revisão em `reviews`, a do
+  // comentário em `project_comments`, com permissões próprias (`can_resolve`).
+  // A Comparação conta o comentário aberto na célula (`buildCountsByKey`), então
+  // ele não pode sumir da aba enquanto o card que o cobria está resolvido.
+  const RESOLVED = "2026-11-16T10:00:00Z";
+
+  it("revisão resolvida não esconde o comentário de ambiguidade aberto", () => {
+    const result = build([{ ...base, resolvedAt: RESOLVED }], [note]);
+    expect(result.map((c) => c.id).sort()).toEqual(["anotacao-a1", "r1"]);
+    expect(result.find((c) => c.id === "r1")?.coversAmbiguityComment).toBeUndefined();
+    expect(result.find((c) => c.id === "anotacao-a1")?.resolvedAt).toBeNull();
+  });
+
+  it("comentário resolvido à parte não faz a revisão aberta responder por ele", () => {
+    const result = build([base], [{ ...note, resolvedAt: RESOLVED }]);
+    expect(result.map((c) => c.id).sort()).toEqual(["anotacao-a1", "r1"]);
+    expect(result.find((c) => c.id === "r1")?.coversAmbiguityComment).toBeUndefined();
+  });
+
+  it("os dois resolvidos seguem num card só", () => {
+    const result = build([{ ...base, resolvedAt: RESOLVED }], [{ ...note, resolvedAt: RESOLVED }]);
+    expect(result.map((c) => c.id)).toEqual(["r1"]);
+    expect(result[0].coversAmbiguityComment).toBe(true);
+  });
+
+  it("com a mesma nota, cobre só o revisor no mesmo estado do comentário", () => {
+    const resolved = { ...base, id: "r2", resolvedAt: RESOLVED };
+    const result = build([base, resolved], [note]);
+    expect(result.map((c) => c.id).sort()).toEqual(["r1", "r2"]);
+    expect(result.find((c) => c.id === "r1")?.coversAmbiguityComment).toBe(true);
+    expect(result.find((c) => c.id === "r2")?.coversAmbiguityComment).toBeUndefined();
+  });
 });

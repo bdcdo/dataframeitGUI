@@ -254,7 +254,7 @@ function CodingPageInner({
   const [mode, setMode] = useState<"assigned" | "browse">(initial.mode);
   const [submitting, setSubmitting] = useState(false);
 
-  const { isFullscreen, toggleFullscreen } = useFullscreen();
+  const { isFullscreen, exitedAt: exitedFullscreenAt, toggleFullscreen } = useFullscreen();
 
   // Ordem custom de perguntas do pesquisador (debounce/flush/guard no hook).
   const { fieldOrder, handleReorder } = useFieldOrder(projectId);
@@ -535,10 +535,12 @@ function CodingPageInner({
       <UnsentChangesBadge visible={!isFullscreen && activeDocUnsent} />
       {/* Em fullscreen a faixa fica sem oferta, mas montada: sair do
           fullscreen é uma chegada, e a região live dela tem de existir antes
-          (#635). */}
+          (#635). Por ser chegada, a idade do rascunho é medida da saída quando
+          a oferta é anterior a ela; medida da oferta, horas em fullscreen
+          sumiam da frase. */}
       <CodingDraftBanner
         recovery={isFullscreen ? NO_RECOVERY : drafts.recovery}
-        offeredAt={drafts.recoveryAt}
+        offeredAt={Math.max(drafts.recoveryAt, exitedFullscreenAt)}
         fields={fields}
         onRestore={handleRestoreDraft}
         onDiscard={handleDiscardDraft}

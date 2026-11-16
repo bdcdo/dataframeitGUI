@@ -346,7 +346,11 @@ export function mapProjectComments(
 // respostas, a validade do veredito, a resolução própria e entra na revisão
 // por documento; ele passa a responder também pelo filtro "Campos ambíguos".
 // O comentário de ambiguidade só sai quando algum card da revisão na célula
-// tem exatamente o texto dele; senão, segue como card próprio.
+// tem exatamente o texto dele e o mesmo estado (os dois abertos ou os dois
+// resolvidos); senão, segue como card próprio. A resolução de cada um é
+// separada (`reviews` e `project_comments`, com permissões próprias), e a
+// Comparação conta o comentário aberto da célula: escondido sob um card já
+// resolvido, ele ficaria aberto sem card na aba para resolvê-lo.
 function cellKey(c: ReviewComment): string {
   return `${c.documentId}\u0000${c.fieldName}`;
 }
@@ -355,16 +359,18 @@ function mergeAmbiguityRepeats(
   reviewComments: ReviewComment[],
   annotationComments: ReviewComment[],
 ): { reviewComments: ReviewComment[]; annotationComments: ReviewComment[] } {
-  const ambiguityBodies = new Map(
+  const ambiguityComments = new Map(
     annotationComments
       .filter((c) => c.verdict === "ambiguidade")
-      .map((c) => [cellKey(c), c.comment]),
+      .map((c) => [cellKey(c), c]),
   );
   const coveredCells = new Set<string>();
   const reviews = reviewComments.map((r) => {
     if (r.verdict !== "ambiguo") return r;
     const key = cellKey(r);
-    if (ambiguityBodies.get(key) !== ambiguityCommentBody(r.comment)) return r;
+    const ambiguity = ambiguityComments.get(key);
+    if (ambiguity?.comment !== ambiguityCommentBody(r.comment)) return r;
+    if (!ambiguity.resolvedAt !== !r.resolvedAt) return r;
     coveredCells.add(key);
     return { ...r, coversAmbiguityComment: true as const };
   });
