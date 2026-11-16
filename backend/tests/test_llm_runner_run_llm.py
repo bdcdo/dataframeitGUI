@@ -26,6 +26,7 @@ import pytest
 from pydantic import BaseModel, Field
 from supabase import PostgrestAPIError
 
+from routes.llm_routes import StatusResponse
 from services.llm_runner import (
     _PROBE_DOC_ID,
     DEFAULT_LLM_CALL_TIMEOUT_SECONDS,
@@ -36,6 +37,7 @@ from services.llm_runner import (
     _row_from_result,
     _RowPublisher,
     _RunMetadata,
+    _status_from_row,
     get_job_status,
     init_job,
     run_llm,
@@ -1446,6 +1448,22 @@ def test_get_job_status_devolve_copia_do_estado_vivo():
     status = get_job_status(JOB_ID)
     assert status == _jobs[JOB_ID]
     assert status is not _jobs[JOB_ID]
+
+
+def test_progresso_nao_carrega_campos_de_lote(monkeypatch):
+    # Com a fila contínua (#830) a rodada não se divide em lotes de documentos,
+    # e `current_batch`/`total_batches` ficavam sempre em 0 (#832). Os dois
+    # saíram do estado vivo, do fallback de `llm_runs` e do contrato da rota.
+    sb = _build_supabase(_project_row(), _docs(1))
+    _run_llm_sync(
+        monkeypatch, sb, {"doc-0": {"campo_a": "a", "campo_b": "b", "campo_c": "c"}}
+    )
+
+    campos_de_lote = {"current_batch", "total_batches"}
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert campos_de_lote.isdisjoint(get_job_status(JOB_ID))
+    assert campos_de_lote.isdisjoint(_status_from_row({"status": "running"}))
+    assert campos_de_lote.isdisjoint(StatusResponse.model_fields)
 
 
 def test_run_llm_zero_failure_threshold_allows_complete_run(monkeypatch):

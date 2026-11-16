@@ -8,8 +8,6 @@ interface RunProgressProps {
   progress: number;
   total: number;
   etaSeconds: number | null;
-  currentBatch: number;
-  totalBatches: number;
   processedComplete: number;
   processedPartial: number;
   processedEmpty: number;
@@ -25,13 +23,27 @@ function formatEta(seconds: number): string {
   return `${hours}h ${remainMins}min`;
 }
 
+const PHASE_LABELS: Record<string, string> = {
+  loading: "Carregando",
+  processing: "Processando",
+  saving: "Salvando",
+};
+
+function PhaseBadge({ phase }: { phase: string }) {
+  const label = PHASE_LABELS[phase];
+  if (phase === "processing") {
+    return <Badge className="bg-brand text-brand-foreground">{label}</Badge>;
+  }
+  return (
+    <Badge variant={phase === "saving" ? "outline" : "secondary"}>{label}</Badge>
+  );
+}
+
 export function RunProgress({
   phase,
   progress,
   total,
   etaSeconds,
-  currentBatch,
-  totalBatches,
   processedComplete,
   processedPartial,
   processedEmpty,
@@ -39,29 +51,7 @@ export function RunProgress({
   return (
     <div className="space-y-3 rounded-lg border p-4">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Badge
-            variant={
-              phase === "processing"
-                ? "default"
-                : phase === "saving"
-                  ? "outline"
-                  : "secondary"
-            }
-            className={
-              phase === "processing" ? "bg-brand text-brand-foreground" : ""
-            }
-          >
-            {phase === "loading" && "Carregando"}
-            {phase === "processing" && "Processando"}
-            {phase === "saving" && "Salvando"}
-          </Badge>
-          {phase === "processing" && totalBatches > 0 && (
-            <span className="text-xs text-muted-foreground">
-              Lote {currentBatch}/{totalBatches}
-            </span>
-          )}
-        </div>
+        <PhaseBadge phase={phase} />
         {etaSeconds != null && etaSeconds > 0 && phase === "processing" && (
           <span className="text-xs text-muted-foreground">
             ~{formatEta(etaSeconds)} restantes

@@ -110,8 +110,6 @@ class StatusResponse(BaseModel):
     total: int
     errors: list[str]
     eta_seconds: float | None = None
-    current_batch: int = 0
-    total_batches: int = 0
     # Populated only when status == "error"
     error_traceback: str | None = None
     error_type: str | None = None

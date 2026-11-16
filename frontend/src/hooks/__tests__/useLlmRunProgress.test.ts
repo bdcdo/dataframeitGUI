@@ -43,8 +43,6 @@ function statusRes(overrides: Record<string, unknown> = {}) {
     total: 5,
     errors: [],
     eta_seconds: null,
-    current_batch: 0,
-    total_batches: 0,
     error_traceback: null,
     error_type: null,
     error_line: null,

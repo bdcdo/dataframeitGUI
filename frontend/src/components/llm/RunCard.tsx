@@ -71,8 +71,6 @@ export function RunCard({
     status,
     phase,
     etaSeconds,
-    currentBatch,
-    totalBatches,
     processedComplete,
     processedPartial,
     processedEmpty,
@@ -211,8 +209,6 @@ export function RunCard({
             progress={progress}
             total={total}
             etaSeconds={etaSeconds}
-            currentBatch={currentBatch}
-            totalBatches={totalBatches}
             processedComplete={processedComplete}
             processedPartial={processedPartial}
             processedEmpty={processedEmpty}

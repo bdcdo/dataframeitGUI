@@ -33,8 +33,6 @@ vi.mock("@/hooks/useLlmRunProgress", () => ({
     status: "idle",
     phase: "idle",
     etaSeconds: null,
-    currentBatch: 0,
-    totalBatches: 0,
     processedComplete: 0,
     processedPartial: 0,
     processedEmpty: 0,

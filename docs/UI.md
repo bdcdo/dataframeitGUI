@@ -40,6 +40,12 @@ Por padrão quem codificou um documento não recebe a comparação dele, e o ban
 
 A alternativa descartada foi uma opção do projeto em Configurações > Regras que deixasse os sorteios usarem o codificador quando não houvesse revisor neutro. A exceção por atribuição venceu porque o caso de uso é pontual (pesquisador comparando a própria codificação com a do LLM muito tempo depois, ou equipe pequena demais), porque cada liberação fica registrada com quem a deu e quando, e porque não muda o comportamento dos sorteios. Os vereditos de autocomparação contam no gabarito e nas métricas como os demais. O export apenas os marca na coluna `autocomparacao`.
 
+## O progresso da execução do LLM não mostra lote
+
+O cartão de progresso mostra a fase, os documentos processados sobre o total, o tempo restante estimado e os contadores de respostas completas, parciais e vazias. O rótulo "Lote x/y" que ficava ao lado da fase saiu, junto com os campos `current_batch` e `total_batches` do status da execução ([#832](https://github.com/bdcdo/dataframeitGUI/issues/832)).
+
+O rótulo descrevia um modelo que deixou de existir: com a fila contínua do [#830](https://github.com/bdcdo/dataframeitGUI/pull/830), depois do documento de teste a execução entrega todos os demais à biblioteca numa chamada só, e os dois campos ficavam sempre em zero. As alternativas descartadas foram pôr no lugar os documentos em voo ou a latência média por documento. A contagem de processados e o tempo restante já respondem o que o coordenador acompanha (quanto falta e quando termina), e a latência média é só o insumo desse tempo restante. Documentos em voo, enquanto a fila tem o que processar, é o próprio paralelismo configurado na execução: um número que não muda e não informa andamento.
+
 ## Onde procurar o que este arquivo não descreve
 
 - **Mapeamento entre tipo de campo e controle de formulário** (incluindo campos de data, grupos de subcampos e a opção "Outro"): `frontend/src/components/coding/FieldRenderer.tsx` — é a fonte única, e reproduzi-lo em prosa apenas criaria uma cópia para divergir.

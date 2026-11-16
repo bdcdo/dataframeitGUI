@@ -31,8 +31,6 @@ interface StatusResponse {
   total: number;
   errors: string[];
   eta_seconds: number | null;
-  current_batch: number;
-  total_batches: number;
   error_traceback: string | null;
   error_type: string | null;
   error_line: number | null;
@@ -50,8 +48,6 @@ interface LlmRunProgressState {
   status: string;
   phase: string;
   etaSeconds: number | null;
-  currentBatch: number;
-  totalBatches: number;
   processedComplete: number;
   processedPartial: number;
   processedEmpty: number;
@@ -65,8 +61,6 @@ const INITIAL_STATE: LlmRunProgressState = {
   status: "idle",
   phase: "idle",
   etaSeconds: null,
-  currentBatch: 0,
-  totalBatches: 0,
   processedComplete: 0,
   processedPartial: 0,
   processedEmpty: 0,
@@ -102,8 +96,6 @@ function reducer(
         status: r.status,
         phase: r.phase,
         etaSeconds: r.eta_seconds,
-        currentBatch: r.current_batch,
-        totalBatches: r.total_batches,
         processedComplete: r.processed_complete ?? 0,
         processedPartial: r.processed_partial ?? 0,
         processedEmpty: r.processed_empty ?? 0,
