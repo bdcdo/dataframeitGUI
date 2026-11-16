@@ -46,6 +46,7 @@ import type { HumanResponseRow, LlmResponseRow } from "@/lib/auto-review-backlog
 import {
   autoReviewCoverageCandidates,
   autoReviewCoverageViolations,
+  autoReviewDivergences,
   coverageKey,
   type CoverageResponseMeta,
 } from "@/lib/auto-review-coverage";
@@ -1060,7 +1061,7 @@ const invariants: Invariant[] = [
   {
     name: "divergencia-de-auto-revisao-tem-ciclo-ou-request",
     motivation:
-      "#683, inversa da anterior: aquela pega a fila que não drena, esta pega o trabalho que sumiu. Em projeto auto_review_llm, documento ativo cujo replay do reconciliador (computeBacklogRows com as equivalências de valor) dá divergência humano×LLM num campo sem ciclo operacional em field_reviews para o (documento, campo) e sem request pendente na outbox. Nesse estado final_answers não acha ciclo e exporta a resposta do LLM como 'consenso'. FAIL = algum caminho deixou de reenfileirar quando devia (inclusive a premissa do #670 de que nada se perde sem LLM), o ACK apagou um reenfileiramento (#682), ou a RPC recusou criar o ciclo. Regra em lib/auto-review-coverage.ts",
+      "#683, inversa da anterior: aquela pega a fila que não drena, esta pega o trabalho que sumiu. Em projeto auto_review_llm, documento ativo cujo replay do reconciliador (computeBacklogRows com as equivalências de valor) dá divergência humano×LLM num campo sem ciclo operacional em field_reviews para o (documento, campo) e sem request pendente para a geração LLM corrente. Nesse estado final_answers não acha ciclo e exporta a resposta do LLM como 'consenso'. FAIL = algum caminho deixou de reenfileirar quando devia (inclusive a premissa do #670 de que nada se perde sem LLM), o ACK apagou um reenfileiramento (#682), a RPC recusou criar o ciclo, ou o projeto entrou em auto_review_llm com codificações já feitas e ninguém usou 'Regenerar backlog'. Regra em lib/auto-review-coverage.ts",
     run: async () => {
       const projects = await fetchAll<{ id: string; pydantic_fields: PydanticField[] | null }>(
         "projects",
@@ -1072,9 +1073,10 @@ const invariants: Invariant[] = [
       const inProjects = (q: UntypedSelectBuilder) => q.in("project_id", projectIds);
 
       // Fase 1 (metadados leves): respostas correntes e completas, membros e
-      // documentos ativos, para saber de quem buscar `answers`.
-      const [active, responses, members, equivalences] = await Promise.all([
-        activeDocIds(),
+      // documentos ativos dos projetos em auto-revisão, para saber de quem
+      // buscar `answers`.
+      const [documents, responses, members, equivalences] = await Promise.all([
+        fetchAll<{ id: string }>("documents", "id", (q) => inProjects(q).is("excluded_at", null)),
         fetchAll<CoverageResponseMeta>(
           "responses",
           "id, project_id, document_id, respondent_type, respondent_id",
@@ -1090,9 +1092,9 @@ const invariants: Invariant[] = [
       const membersOf = new Map(
         [...groupBy(members, (m) => m.project_id)].map(([id, rows]) => [id, new Set(rows.map((m) => m.user_id))]),
       );
-      const candidates = autoReviewCoverageCandidates(responses, active, membersOf);
+      const candidates = autoReviewCoverageCandidates(responses, new Set(documents.map((d) => d.id)), membersOf);
 
-      // Fase 2 (campos pesados só dos candidatos).
+      // Fase 2 (campos pesados só dos candidatos) e o replay.
       const heavyOf = new Map(
         (await fetchByIds<{ id: string; answers: Record<string, unknown> | null; answer_field_hashes: AnswerFieldHashes }>(
           "responses",
@@ -1100,56 +1102,80 @@ const invariants: Invariant[] = [
           candidates.map((c) => c.id),
         )).map((r) => [r.id, r]),
       );
+      const candidatesOf = groupBy(candidates, (c) => c.project_id);
+      const equivalencesOf = groupBy(equivalences, (e) => e.project_id);
+      const divergencesOf = new Map(
+        projects.map((project) => {
+          const humans: HumanResponseRow[] = [];
+          const llmByDocId = new Map<string, LlmResponseRow>();
+          for (const c of candidatesOf.get(project.id) ?? []) {
+            const heavy = heavyOf.get(c.id);
+            if (!heavy) throw new Error(`responses(${c.id}): sumiu entre as duas fases`);
+            const row = { id: c.id, document_id: c.document_id, answers: heavy.answers ?? {}, answer_field_hashes: heavy.answer_field_hashes };
+            if (c.respondent_type === "llm") llmByDocId.set(c.document_id, row);
+            else humans.push({ ...row, respondent_id: c.respondent_id! });
+          }
+          const divergences = autoReviewDivergences({
+            projectId: project.id,
+            fields: project.pydantic_fields ?? [],
+            humans,
+            llmByDocId,
+            equivalencesByField: groupValueEquivalencesByField(equivalencesOf.get(project.id)),
+          });
+          return [project.id, divergences] as const;
+        }),
+      );
 
-      // Outbox e ciclos são lidos DEPOIS das respostas, nesta ordem, para a
-      // leitura não fabricar falso positivo com o dreno correndo. O save grava
-      // a resposta e a request na mesma transação; o worker grava os ciclos e
-      // só depois apaga a request. Lendo a outbox antes dos ciclos, uma request
-      // que existia quando as respostas foram lidas ou ainda aparece, ou já foi
-      // apagada — e aí os ciclos que o dreno gravou antes do ACK aparecem. Sobra
-      // só o caso de um save novo E um dreno completo entre as leituras, que
-      // some na execução seguinte.
-      const pending = new Set(
-        (await fetchAll<{ document_id: string }>(
+      // Outbox e ciclos só dos documentos divergentes, lidos DEPOIS das
+      // respostas e nesta ordem, para não fabricar falso positivo com o dreno
+      // correndo: o save grava resposta e request na mesma transação, e o
+      // worker grava os ciclos antes de apagar a request. Uma request que
+      // existia quando as respostas foram lidas ou ainda aparece, ou já foi
+      // apagada, e aí os ciclos gravados antes do ACK aparecem. Sobra o caso de
+      // um save novo e um dreno completo depois da fase 2, que some na execução
+      // seguinte. Ler por documento, e não a tabela paginada, também evita o
+      // salto de página: o worker apaga ciclos e troca o `id` dos que rotaciona.
+      const divergentDocs = [
+        ...new Set([...divergencesOf.values()].flatMap((list) => list.map((d) => d.documentId))),
+      ];
+      const inDivergentDocs = async <T,>(
+        table: string,
+        columns: string,
+        filter: (q: UntypedSelectBuilder) => UntypedSelectBuilder,
+        orderColumn?: string,
+      ) => {
+        const rows: T[] = [];
+        for (let i = 0; i < divergentDocs.length; i += 100) {
+          const batch = divergentDocs.slice(i, i + 100);
+          // react-doctor-disable-next-line react-doctor/async-await-in-loop
+          rows.push(...(await fetchAll<T>(table, columns, (q) => filter(q.in("document_id", batch)), orderColumn)));
+        }
+        return rows;
+      };
+      const pendingLlmOf = new Map(
+        (await inDivergentDocs<{ document_id: string; llm_response_id: string }>(
           "auto_review_reconciliation_requests",
+          "document_id, llm_response_id",
+          (q) => q,
           "document_id",
-          inProjects,
-          "document_id",
-        )).map((r) => r.document_id),
+        )).map((r) => [r.document_id, r.llm_response_id]),
       );
       const openCycles = new Set(
-        (await fetchAll<{ document_id: string; field_name: string }>(
+        (await inDivergentDocs<{ document_id: string; field_name: string }>(
           "field_reviews",
           "document_id, field_name",
-          (q) => inProjects(q).is("superseded_at", null),
+          (q) => q.is("superseded_at", null),
         )).map((c) => coverageKey(c.document_id, c.field_name)),
       );
 
-      const equivalencesOf = groupBy(equivalences, (e) => e.project_id);
-      return projects.flatMap((project) => {
-        const humans: HumanResponseRow[] = [];
-        const llmByDocId = new Map<string, LlmResponseRow>();
-        for (const c of candidates) {
-          if (c.project_id !== project.id) continue;
-          const heavy = heavyOf.get(c.id);
-          if (!heavy) throw new Error(`responses(${c.id}): sumiu entre as duas fases`);
-          const answers = heavy.answers ?? {};
-          if (c.respondent_type === "llm") {
-            llmByDocId.set(c.document_id, { id: c.id, document_id: c.document_id, answers, answer_field_hashes: heavy.answer_field_hashes });
-          } else {
-            humans.push({ id: c.id, document_id: c.document_id, respondent_id: c.respondent_id!, answers, answer_field_hashes: heavy.answer_field_hashes });
-          }
-        }
-        return autoReviewCoverageViolations({
+      return projects.flatMap((project) =>
+        autoReviewCoverageViolations({
           projectId: project.id,
-          fields: project.pydantic_fields ?? [],
-          humans,
-          llmByDocId,
-          equivalencesByField: groupValueEquivalencesByField(equivalencesOf.get(project.id)),
+          divergences: divergencesOf.get(project.id) ?? [],
           openCycles,
-          pendingDocIds: pending,
-        });
-      });
+          pendingLlmOf,
+        }),
+      );
     },
   },
 ];

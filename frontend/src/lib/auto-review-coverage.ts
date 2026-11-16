@@ -27,6 +27,13 @@
  *   nunca por (documento, campo, humano) — que acusaria todo documento com
  *   dois codificadores;
  * - janela do dreno: documento com request pendente fica isento.
+ *
+ * Dois estados que a regra ACUSA de propósito, porque também saem como
+ * 'consenso' no export: projeto que passou a `auto_review_llm` com
+ * codificações já feitas e sem "Regenerar backlog" (a troca de modo não
+ * enfileira nada), e campo cujo primeiro self_reviewer saiu da divergência
+ * depois de ter ciclo — a RPC não abre ciclo para o segundo codificador
+ * enquanto o histórico tiver o primeiro.
  */
 
 import {
@@ -83,7 +90,17 @@ export function coverageKey(documentId: string, fieldName: string): string {
   return `${documentId}|${fieldName}`;
 }
 
-export interface AutoReviewCoverageInput {
+/** Divergência do replay num (documento, campo). */
+export interface AutoReviewDivergence {
+  documentId: string;
+  fieldName: string;
+  /** Geração LLM contra a qual o replay divergiu. */
+  llmResponseId: string;
+  /** Codificadores cuja resposta diverge, sem repetição. */
+  reviewers: string[];
+}
+
+export interface AutoReviewReplayInput {
   projectId: string;
   fields: PydanticField[];
   /** Humanas candidatas do projeto (fase 2, com `answers`). */
@@ -91,42 +108,66 @@ export interface AutoReviewCoverageInput {
   /** Gerações LLM correntes do projeto, uma por documento. */
   llmByDocId: Map<string, LlmResponseRow>;
   equivalencesByField: ValueEquivalencesByField;
-  /** `coverageKey` de cada `field_reviews` com `superseded_at IS NULL`. */
-  openCycles: ReadonlySet<string>;
-  /** Documentos com linha em `auto_review_reconciliation_requests`. */
-  pendingDocIds: ReadonlySet<string>;
 }
 
-export function autoReviewCoverageViolations({
+/**
+ * O replay do reconciliador, agregado por (documento, campo): a RPC só cria
+ * ciclo para o primeiro self_reviewer de cada par, então é por par que se
+ * cobra a cobertura.
+ */
+export function autoReviewDivergences({
   projectId,
   fields,
   humans,
   llmByDocId,
   equivalencesByField,
-  openCycles,
-  pendingDocIds,
-}: AutoReviewCoverageInput): Violation[] {
-  const { fieldReviewRows } = computeBacklogRows(
-    projectId,
-    humans,
-    llmByDocId,
-    equivalencesByField,
-    fields,
-  );
-  const uncovered = new Map<string, string[]>();
+}: AutoReviewReplayInput): AutoReviewDivergence[] {
+  const { fieldReviewRows } = computeBacklogRows(projectId, humans, llmByDocId, equivalencesByField, fields);
+  const byPair = new Map<string, AutoReviewDivergence>();
   for (const row of fieldReviewRows) {
-    if (pendingDocIds.has(row.document_id)) continue;
     const key = coverageKey(row.document_id, row.field_name);
-    if (openCycles.has(key)) continue;
-    const reviewers = uncovered.get(key) ?? [];
-    reviewers.push(row.self_reviewer_id);
-    uncovered.set(key, reviewers);
-  }
-  return [...uncovered].map(([key, reviewers]) => {
-    const [documentId, fieldName] = key.split("|");
-    return {
-      key,
-      detail: `doc ${documentId}, campo ${fieldName} (projeto ${projectId}): diverge do LLM para ${reviewers.join(", ")} sem ciclo em field_reviews nem request pendente`,
+    const divergence = byPair.get(key) ?? {
+      documentId: row.document_id,
+      fieldName: row.field_name,
+      llmResponseId: row.llm_response_id,
+      reviewers: [],
     };
-  });
+    if (!divergence.reviewers.includes(row.self_reviewer_id)) divergence.reviewers.push(row.self_reviewer_id);
+    byPair.set(key, divergence);
+  }
+  return [...byPair.values()];
+}
+
+export interface AutoReviewCoverageInput {
+  projectId: string;
+  divergences: readonly AutoReviewDivergence[];
+  /** `coverageKey` de cada `field_reviews` com `superseded_at IS NULL`. */
+  openCycles: ReadonlySet<string>;
+  /** `llm_response_id` da request pendente de cada documento que tem uma. */
+  pendingLlmOf: ReadonlyMap<string, string>;
+}
+
+/**
+ * Divergência descoberta: sem ciclo operacional no (documento, campo) e sem
+ * request pendente para a geração do replay. A request precisa apontar para
+ * essa geração, como em `is_auto_review_reconciliation_pending` (que é o que
+ * `final_answers` consulta): uma request presa a outra geração o worker só
+ * reconhece como obsoleta, sem criar ciclo, e não cobre nada.
+ */
+export function autoReviewCoverageViolations({
+  projectId,
+  divergences,
+  openCycles,
+  pendingLlmOf,
+}: AutoReviewCoverageInput): Violation[] {
+  return divergences
+    .filter(
+      (d) =>
+        pendingLlmOf.get(d.documentId) !== d.llmResponseId &&
+        !openCycles.has(coverageKey(d.documentId, d.fieldName)),
+    )
+    .map((d) => ({
+      key: coverageKey(d.documentId, d.fieldName),
+      detail: `doc ${d.documentId}, campo ${d.fieldName} (projeto ${projectId}): diverge do LLM para ${d.reviewers.join(", ")} sem ciclo em field_reviews nem request pendente`,
+    }));
 }

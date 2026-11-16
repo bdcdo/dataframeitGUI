@@ -3,8 +3,10 @@ import type { HumanResponseRow, LlmResponseRow } from "@/lib/auto-review-backlog
 import {
   autoReviewCoverageCandidates,
   autoReviewCoverageViolations,
+  autoReviewDivergences,
   coverageKey,
   type AutoReviewCoverageInput,
+  type AutoReviewReplayInput,
   type CoverageResponseMeta,
 } from "@/lib/auto-review-coverage";
 import { groupValueEquivalencesByField, type ValueEquivalence } from "@/lib/equivalence";
@@ -39,7 +41,9 @@ function llm(over: Partial<LlmResponseRow> = {}): LlmResponseRow {
   return { id: "llm1", document_id: "doc1", answers: { campo1: "nao" }, answer_field_hashes: null, ...over };
 }
 
-function input(over: Partial<AutoReviewCoverageInput> = {}): AutoReviewCoverageInput {
+type Scenario = AutoReviewReplayInput & Omit<AutoReviewCoverageInput, "divergences">;
+
+function input(over: Partial<Scenario> = {}): Scenario {
   return {
     projectId: "p1",
     fields: [field],
@@ -47,14 +51,19 @@ function input(over: Partial<AutoReviewCoverageInput> = {}): AutoReviewCoverageI
     llmByDocId: new Map([["doc1", llm()]]),
     equivalencesByField: new Map(),
     openCycles: new Set(),
-    pendingDocIds: new Set(),
+    pendingLlmOf: new Map(),
     ...over,
   };
 }
 
+// O caminho do script: replay e depois cobertura.
+function violationsOf(scenario: Scenario) {
+  return autoReviewCoverageViolations({ ...scenario, divergences: autoReviewDivergences(scenario) });
+}
+
 describe("autoReviewCoverageViolations", () => {
   it("acusa divergência sem ciclo nem request — o trabalho que sumiu", () => {
-    expect(autoReviewCoverageViolations(input())).toEqual([
+    expect(violationsOf(input())).toEqual([
       {
         key: "doc1|campo1",
         detail: "doc doc1, campo campo1 (projeto p1): diverge do LLM para ana sem ciclo em field_reviews nem request pendente",
@@ -63,11 +72,11 @@ describe("autoReviewCoverageViolations", () => {
   });
 
   it("aceita a divergência coberta por ciclo operacional do (documento, campo)", () => {
-    expect(autoReviewCoverageViolations(input({ openCycles: new Set([coverageKey("doc1", "campo1")]) }))).toEqual([]);
+    expect(violationsOf(input({ openCycles: new Set([coverageKey("doc1", "campo1")]) }))).toEqual([]);
   });
 
   it("cobre por campo: ciclo de outro campo do mesmo documento não basta", () => {
-    const violations = autoReviewCoverageViolations(
+    const violations = violationsOf(
       input({
         fields: [field, field2],
         humans: [human({ answers: { campo1: "sim", campo2: "sim" } })],
@@ -79,7 +88,7 @@ describe("autoReviewCoverageViolations", () => {
   });
 
   it("FP 1 — consenso legítimo não produz linha", () => {
-    expect(autoReviewCoverageViolations(input({ humans: [human({ answers: { campo1: "nao" } })] }))).toEqual([]);
+    expect(violationsOf(input({ humans: [human({ answers: { campo1: "nao" } })] }))).toEqual([]);
   });
 
   it("FP 2 — equivalência de valor declarada pelo revisor entra no replay", () => {
@@ -92,32 +101,41 @@ describe("autoReviewCoverageViolations", () => {
       reviewer_id: "rev",
     };
     const equivalencesByField = groupValueEquivalencesByField([equivalence]);
-    expect(autoReviewCoverageViolations(input({ equivalencesByField }))).toEqual([]);
+    expect(violationsOf(input({ equivalencesByField }))).toEqual([]);
     // Equivalência de outra versão da pergunta não vale: a divergência volta.
     const stale = groupValueEquivalencesByField([{ ...equivalence, field_hash: "outra-versao" }]);
-    expect(autoReviewCoverageViolations(input({ equivalencesByField: stale }))).toHaveLength(1);
+    expect(violationsOf(input({ equivalencesByField: stale }))).toHaveLength(1);
   });
 
   it("FP 3 — codificação humana incompleta fica fora", () => {
-    expect(autoReviewCoverageViolations(input({ humans: [human({ answers: {} })] }))).toEqual([]);
+    expect(violationsOf(input({ humans: [human({ answers: {} })] }))).toEqual([]);
   });
 
   it("FP 4 — um ciclo por (documento, campo) cobre os dois codificadores, e a violação sai uma vez só", () => {
     const humans = [human(), human({ id: "h2", respondent_id: "bia", answers: { campo1: "talvez" } })];
     expect(
-      autoReviewCoverageViolations(input({ humans, openCycles: new Set([coverageKey("doc1", "campo1")]) })),
+      violationsOf(input({ humans, openCycles: new Set([coverageKey("doc1", "campo1")]) })),
     ).toEqual([]);
-    const violations = autoReviewCoverageViolations(input({ humans }));
+    const violations = violationsOf(input({ humans }));
     expect(violations).toHaveLength(1);
     expect(violations[0].detail).toContain("para ana, bia");
   });
 
-  it("FP 5 — request pendente no documento absorve a janela do dreno", () => {
-    expect(autoReviewCoverageViolations(input({ pendingDocIds: new Set(["doc1"]) }))).toEqual([]);
+  it("FP 5 — request pendente para a geração corrente absorve a janela do dreno", () => {
+    expect(violationsOf(input({ pendingLlmOf: new Map([["doc1", "llm1"]]) }))).toEqual([]);
+  });
+
+  it("request presa a outra geração não cobre: o worker só a reconhece como obsoleta", () => {
+    expect(violationsOf(input({ pendingLlmOf: new Map([["doc1", "llm-antiga"]]) }))).toHaveLength(1);
+  });
+
+  it("codificador com duas respostas vivas aparece uma vez no detalhe", () => {
+    const humans = [human(), human({ id: "h1-rodada-anterior" })];
+    expect(violationsOf(input({ humans }))[0].detail).toContain("para ana sem ciclo");
   });
 
   it("documento sem geração LLM não entra no replay", () => {
-    expect(autoReviewCoverageViolations(input({ llmByDocId: new Map() }))).toEqual([]);
+    expect(violationsOf(input({ llmByDocId: new Map() }))).toEqual([]);
   });
 });
 
