@@ -153,6 +153,13 @@ describe("identificação do membro na confirmação de remoção", () => {
     expect(memberSecondaryEmail(member)).toBe("ana@example.com");
   });
 
+  it("first_name só de espaços não conta como nome", () => {
+    const member = memberWithProfile({ ...baseProfile, first_name: "   " });
+
+    expect(memberDisplayName(member)).toBe("ana@example.com");
+    expect(memberSecondaryEmail(member)).toBeNull();
+  });
+
   it("não inventa e-mail para membro sem perfil", () => {
     const member = memberWithProfile(null);
 

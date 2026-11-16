@@ -39,7 +39,6 @@ interface MyVerdictsViewProps {
   projectId: string;
   items: VerdictItem[];
   fields: PydanticField[];
-  userName: string;
   isCoordinator?: boolean;
   respondents?: RespondentOption[];
   currentViewUserId?: string;
@@ -59,7 +58,6 @@ function MyVerdictsViewInner({
   projectId,
   items,
   fields,
-  userName,
   isCoordinator,
   respondents = EMPTY_RESPONDENTS,
   currentViewUserId,
@@ -253,7 +251,6 @@ function MyVerdictsViewInner({
               fieldFilter={fieldFilter}
               onFieldFilterChange={setFieldFilter}
               projectId={projectId}
-              userName={userName}
               isPending={isPending}
               onAcknowledge={handleAcknowledge}
             />

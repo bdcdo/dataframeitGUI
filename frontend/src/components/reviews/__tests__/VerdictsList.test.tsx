@@ -26,7 +26,7 @@ function makeItem(overrides?: Partial<VerdictItem>): VerdictItem {
     coordinatorComment: null,
     myAnswer: "sim",
     isCorrect: false,
-    responseSnapshot: null,
+    otherResponses: null,
     acknowledgmentStatus: "pending",
     acknowledgmentComment: null,
     acknowledgmentOutdated: false,
@@ -50,7 +50,6 @@ function renderList(
       fieldFilter="all"
       onFieldFilterChange={vi.fn()}
       projectId="p1"
-      userName="João"
       isPending={false}
       onAcknowledge={onAcknowledge}
     />,

@@ -13,7 +13,9 @@ import type {
 } from "@/lib/types";
 import {
   bumpVersion,
+  MAX_PYDANTIC_CODE_LENGTH,
   planSchemaPersistence,
+  pydanticCodeLength,
   PROJECT_LOG_FIELD_NAME,
   type SchemaPersistencePlan,
 } from "@/lib/schema-utils";
@@ -450,6 +452,18 @@ function prepareSchemaCommit(
   );
   if (!plan.changeType && plan.logEntries.length === 0) {
     return { unchanged: true };
+  }
+  // O backend recusa código acima do teto ao compilar; sem esta checagem o
+  // save passava e o projeto só falhava depois, ao rodar o LLM.
+  const codeLength = pydanticCodeLength(plan.code);
+  if (codeLength > MAX_PYDANTIC_CODE_LENGTH) {
+    const format = (n: number) => n.toLocaleString("pt-BR");
+    return { result: {
+      status: "error",
+      message:
+        `O schema ficou grande demais para salvar: o código gerado tem ${format(codeLength)} caracteres ` +
+        `e o limite é ${format(MAX_PYDANTIC_CODE_LENGTH)}. Encurte descrições, instruções ou opções.`,
+    } };
   }
   return {
     plan,

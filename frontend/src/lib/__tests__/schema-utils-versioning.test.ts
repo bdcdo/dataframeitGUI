@@ -11,9 +11,11 @@ import {
   fieldDiffIsStructural,
   generatePydanticCode,
   isProjectScopedLogEntry,
+  MAX_PYDANTIC_CODE_LENGTH,
   ORDER_LOG_FIELD_NAME,
   planSchemaPersistence,
   PROJECT_LOG_FIELD_NAME,
+  pydanticCodeLength,
   serializeSchemaFields,
   stableStringify,
 } from "@/lib/schema-utils";
@@ -445,6 +447,25 @@ describe("snapshotOf", () => {
     expect(serializeSchemaFields([persistido])).toBe(serializeSchemaFields([editado]));
     expect(classifyChange([persistido], [editado])).toBeNull();
   });
+
+  // `options: []` e `options: null` geram o mesmo código e o mesmo hash de
+  // campo, mas o snapshot os distinguia: trocar um pelo outro subia a versão e
+  // gravava histórico de uma mudança que não existe no código.
+  it.each(["text", "date"] as const)(
+    "lista de opções vazia e ausente são o mesmo campo de %s",
+    (type) => {
+      const id = "00000000-0000-4000-8000-000000000989";
+      const ausente = baseField({ id, name: "q1", type, options: null });
+      const vazia = baseField({ id, name: "q1", type, options: [] });
+      expect(generatePydanticCode([vazia])).toBe(generatePydanticCode([ausente]));
+      expect(snapshotOf(vazia)).toEqual(snapshotOf(ausente));
+      expect(serializeSchemaFields([vazia])).toBe(serializeSchemaFields([ausente]));
+      expect(diffFields([ausente], [vazia])).toEqual([]);
+      expect(classifyChange([ausente], [vazia])).toBeNull();
+      expect(planSchemaPersistence([ausente], [vazia], { major: 1, minor: 0, patch: 0 }))
+        .toMatchObject({ changeType: null, logEntries: [] });
+    },
+  );
 });
 
 // classifyChange é derivado de diffFields + fieldDiffIsStructural. Estes casos
@@ -830,5 +851,22 @@ describe("generatePydanticCode round-trip surface", () => {
     ]);
     expect(explicito).not.toContain('"required"');
     expect(legado).toBe(explicito);
+  });
+});
+
+describe("teto do código Pydantic", () => {
+  it("é o mesmo do compilador do backend", () => {
+    const compiler = readFileSync(
+      fileURLToPath(
+        new URL("../../../../backend/services/pydantic_compiler.py", import.meta.url),
+      ),
+      "utf8",
+    );
+    expect(compiler).toContain("_MAX_CODE_LENGTH = 64 * 1024\n");
+    expect(MAX_PYDANTIC_CODE_LENGTH).toBe(64 * 1024);
+  });
+
+  it("conta code points, como o len() do Python", () => {
+    expect(pydanticCodeLength("ação 😀")).toBe(6);
   });
 });

@@ -389,6 +389,23 @@ describe("saveSchemaFromGUI", () => {
     });
   });
 
+  // O backend recusa código acima de 64 KiB ao compilar. Sem a checagem o save
+  // passava e o projeto só quebrava ao rodar o LLM.
+  it("recusa o save quando o código gerado passa do teto do backend", async () => {
+    state.tableData = { projects: [projectRow()] };
+    const huge = { ...FIELD, help_text: "a".repeat(70_000) };
+
+    const result = await saveSchemaFromGUI("p1", [huge], EMPTY_BASELINE);
+
+    expect(result).toEqual({
+      status: "error",
+      message: expect.stringMatching(
+        /^O schema ficou grande demais para salvar: o código gerado tem 140\.\d{3} caracteres e o limite é 65\.536\. /,
+      ),
+    });
+    expect(state.rpcs).toHaveLength(0);
+  });
+
   it("toast lista no máximo três erros e conta o resto", async () => {
     state.tableData = { projects: [projectRow()] };
     const blank = (n: number): PydanticField => ({

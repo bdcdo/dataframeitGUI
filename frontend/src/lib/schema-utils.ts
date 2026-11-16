@@ -8,6 +8,7 @@ import {
   normalizeSubfields,
   resolveAllowOther,
   resolveOptionalText,
+  resolveOptions,
   resolveRequired,
   resolveSubfieldRequired,
   resolveSubfieldRule,
@@ -113,8 +114,10 @@ function fieldExtra(field: PydanticField): string {
   // código por aqui. Entram no hash do campo, então sem elas o código não
   // reconstrói o campo (#747). Só a lista não vazia sai, e o texto fica
   // byte-idêntico para quem não as usa.
-  if ((field.type === "date" || field.type === "text") && field.options?.length) {
-    const opts = field.options.map((o) => `"${escapeString(o)}"`).join(", ");
+  const extraOptions =
+    field.type === "date" || field.type === "text" ? resolveOptions(field.options) : null;
+  if (extraOptions) {
+    const opts = extraOptions.map((o) => `"${escapeString(o)}"`).join(", ");
     extras.push(`"options": [${opts}]`);
   }
   if ((field.type === "single" || field.type === "multi") && resolveAllowOther(field.allow_other)) {
@@ -225,12 +228,9 @@ export function generatePydanticCode(
     if (field.type === "date") {
       desc += ". Formato: DD/MM/AAAA (use XX para partes desconhecidas)";
     }
-    if (
-      field.type === "date" &&
-      field.options &&
-      field.options.length > 0
-    ) {
-      const sentinelList = field.options
+    const sentinels = field.type === "date" ? resolveOptions(field.options) : null;
+    if (sentinels) {
+      const sentinelList = sentinels
         .map((o) => `\\"${escapeString(o)}\\"`)
         .join(", ");
       desc += `. Caso não seja possível informar a data, usar um dos seguintes valores: ${sentinelList}`;
@@ -578,7 +578,8 @@ export function computeFieldHash(
   questionRevision?: number | null,
 ): string {
   // Lista vazia conta como ausente, como o `if options` do Python.
-  const optionsPart = options && options.length > 0 ? pythonSortedListRepr(options) : "";
+  const resolvedOptions = resolveOptions(options);
+  const optionsPart = resolvedOptions ? pythonSortedListRepr(resolvedOptions) : "";
   const revisionPart =
     questionRevision && questionRevision > 0 ? `|r${questionRevision}` : "";
   const content = `${name}|${type}|${optionsPart}|${description}${revisionPart}`;
@@ -673,7 +674,7 @@ export function snapshotOf(field: PydanticField): Record<string, unknown> {
     type: field.type,
     description: field.description,
     help_text: resolveOptionalText(field.help_text),
-    options: field.options ?? null,
+    options: resolveOptions(field.options),
     target: resolveTarget(field.target),
     required: resolveRequired(field.required),
     subfields: normalizeSubfields(field.subfields),
@@ -829,12 +830,12 @@ export function diffFields(
       before.help_text = resolveOptionalText(old.help_text);
       after.help_text = resolveOptionalText(f.help_text);
     }
-    const oldOpts = JSON.stringify(old.options ?? null);
-    const newOpts = JSON.stringify(f.options ?? null);
-    if (oldOpts !== newOpts) {
+    const oldOpts = resolveOptions(old.options);
+    const newOpts = resolveOptions(f.options);
+    if (JSON.stringify(oldOpts) !== JSON.stringify(newOpts)) {
       diffs.push(f.type === "text" ? "respostas padronizadas" : "opções");
-      before.options = old.options;
-      after.options = f.options;
+      before.options = oldOpts;
+      after.options = newOpts;
     }
     if (old.type !== f.type) {
       diffs.push("tipo");
@@ -940,6 +941,17 @@ export function inheritQuestionRevisions(
       ? { ...field, question_revision: savedRevision.get(field.id) }
       : field,
   );
+}
+
+// Teto do código Pydantic, o mesmo `_MAX_CODE_LENGTH` de
+// `backend/services/pydantic_compiler.py`: acima dele o backend recusa o
+// código, e o projeto salvo deixaria de compilar (LLM, recuperação de campos).
+export const MAX_PYDANTIC_CODE_LENGTH = 64 * 1024;
+
+// O backend mede com o `len()` do Python, que conta code points; `.length`
+// conta unidades UTF-16 e daria duas por emoji.
+export function pydanticCodeLength(code: string): number {
+  return Array.from(code).length;
 }
 
 export interface SchemaPersistencePlan {

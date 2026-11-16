@@ -14,11 +14,12 @@ function review(overrides: Partial<MyVerdictReviewRow> = {}): MyVerdictReviewRow
   };
 }
 
-function build(reviews: MyVerdictReviewRow[], answers: Record<string, unknown> = { q: "Não" }, acknowledgedVerdict = "Sim") {
+function build(reviews: MyVerdictReviewRow[], answers: Record<string, unknown> = { q: "Não" }, acknowledgedVerdict = "Sim", ownResponseIds: string[] = []) {
   return buildMyVerdictItems({
     reviews, fields: [field],
     myAnswersByDoc: new Map([["d1", answers]]),
     docTitles: new Map([["d1", "Documento"]]),
+    ownResponseIds: new Set(ownResponseIds),
     acknowledgments: new Map([["rv1", { status: "questioned", comment: "por quê?", acknowledged_verdict: acknowledgedVerdict }]]),
   });
 }
@@ -58,5 +59,26 @@ describe("buildMyVerdictItems (#758)", () => {
 
   it("sem resposta do respondente no campo, nenhum item", () => {
     expect(build([review()], {})).toEqual([]);
+  });
+});
+
+// A resposta do próprio respondente saía de "Outras respostas" pela comparação
+// do nome da conta com o `respondent_name` gravado no snapshot. Com o nome
+// gravado diferente do atual ela aparecia como de outro, e a de um homônimo
+// sumia.
+describe("buildMyVerdictItems: outras respostas", () => {
+  const snapshot = [
+    { id: "minha-antiga", respondent_name: "ana@example.com", respondent_type: "humano", answer: "Não" },
+    { id: "homonima", respondent_name: "Ana Souza", respondent_type: "humano", answer: "Sim" },
+    { id: "llm", respondent_name: "gpt", respondent_type: "llm", answer: "Sim" },
+  ];
+
+  it("tira a resposta do respondente pelo id, e não pelo nome", () => {
+    const [item] = build([review({ response_snapshot: snapshot })], { q: "Não" }, "Sim", ["minha-antiga", "minha-atual"]);
+    expect(item.otherResponses?.map((r) => r.id)).toEqual(["homonima", "llm"]);
+  });
+
+  it("sem snapshot não há outras respostas", () => {
+    expect(build([review()])[0].otherResponses).toBeNull();
   });
 });

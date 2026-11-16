@@ -103,8 +103,10 @@ export function canEditPendingMemberEmail(
   );
 }
 
+// O trim impede que um `first_name` só de espaços conte como nome, como em
+// `profileFullName`.
 export function memberDisplayName(m: MemberRow): string {
-  return m.profiles?.first_name || m.profiles?.email || "Sem perfil";
+  return m.profiles?.first_name?.trim() || m.profiles?.email || "Sem perfil";
 }
 
 // E-mail que desambigua o nome exibido, quando acrescenta informação.

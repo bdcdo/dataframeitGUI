@@ -24,7 +24,10 @@ function makeClient(documents: unknown[]): SupabaseServerClient {
 describe("loadReviewQueueRows", () => {
   it("não consulta ciclos quando a fila está vazia", async () => {
     const loadFieldReviews = vi.fn(() =>
-      Promise.resolve({ data: [{ id: "unexpected" }], error: null }),
+      Promise.resolve({
+        data: [{ id: "unexpected", document_id: "d1" }],
+        error: null,
+      }),
     );
 
     const result = await loadReviewQueueRows(
@@ -58,15 +61,77 @@ describe("loadReviewQueueRows", () => {
         },
       ]),
       ["active", "excluded"],
-      () => Promise.resolve({ data: [{ id: "review-1" }], error: null }),
+      () =>
+        Promise.resolve({
+          data: [
+            { id: "review-1", document_id: "active" },
+            { id: "review-2", document_id: "excluded" },
+          ],
+          error: null,
+        }),
     );
 
     expect(result).toEqual({
       documents: [
         expect.objectContaining({ id: "active", title: "Ativo" }),
       ],
-      fieldReviews: [{ id: "review-1" }],
+      fieldReviews: [
+        { id: "review-1", document_id: "active" },
+        { id: "review-2", document_id: "excluded" },
+      ],
     });
+  });
+
+  // Na arbitragem os ids vêm dos assignments abertos, e o documento sem campo
+  // pendente sai da fila: o `text` dele não precisa trafegar.
+  it("só busca o texto dos documentos que têm ciclo", async () => {
+    const readCalls: ReadCall[] = [];
+    const document = (id: string) => ({
+      id,
+      title: id,
+      external_id: null,
+      text: `texto de ${id}`,
+      excluded_at: null,
+      exclusion_pending_at: null,
+    });
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { documents: ["d1", "d2", "d3"].map(document) },
+      writeCalls: [],
+      readCalls,
+    }) as unknown as SupabaseServerClient;
+
+    const result = await loadReviewQueueRows(client, ["d3", "d2", "d1"], () =>
+      Promise.resolve({
+        data: [
+          { id: "review-1", document_id: "d1" },
+          { id: "review-3", document_id: "d3" },
+        ],
+        error: null,
+      }),
+    );
+
+    expect(result.documents.map((row) => row.id).toSorted()).toEqual(["d1", "d3"]);
+    expect(
+      readCalls
+        .filter((call) => call.table === "documents")
+        .map((call) => call.filters.find(([kind]) => kind === "in")?.[2]),
+    ).toEqual([["d3", "d1"]]);
+  });
+
+  it("não consulta documentos quando nenhum tem ciclo", async () => {
+    const readCalls: ReadCall[] = [];
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { documents: [] },
+      writeCalls: [],
+      readCalls,
+    }) as unknown as SupabaseServerClient;
+
+    const result = await loadReviewQueueRows(client, ["d1"], () =>
+      Promise.resolve({ data: [] as { document_id: string }[], error: null }),
+    );
+
+    expect(result).toEqual({ documents: [], fieldReviews: [] });
+    expect(readCalls).toEqual([]);
   });
 
   // A lista inteira num `.in()` só vai na URL do PostgREST: com fila grande a

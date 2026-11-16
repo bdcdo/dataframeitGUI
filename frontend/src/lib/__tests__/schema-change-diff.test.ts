@@ -120,6 +120,12 @@ describe("diffPydanticField", () => {
     expect(diffs[0].after).toEqual(["a", "b", "c"]);
   });
 
+  // Entradas gravadas antes do resolvedor guardam `[]` onde não havia opção.
+  it("não acusa mudança entre lista de opções vazia e ausente", () => {
+    expect(diffPydanticField({ options: null }, { options: [] })).toEqual([]);
+    expect(diffPydanticField({ options: [] }, {})).toEqual([]);
+  });
+
   it("não duplica diff quando help_text é null vs undefined", () => {
     const diffs = diffPydanticField(
       { help_text: null },

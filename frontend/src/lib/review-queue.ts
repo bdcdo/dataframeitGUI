@@ -28,8 +28,14 @@ export interface ReviewQueueDocument<TField> {
  * a restringe aos documentos do lote recebido: a lista inteira num `.in()` só
  * vai na URL do PostgREST e estoura com fila grande. Leitura que falha lança,
  * em vez de abrir a fila sem os documentos do lote (P3).
+ *
+ * Em duas fases: os ciclos primeiro, e o `text` só dos documentos que têm
+ * ciclo. Na arbitragem, `documentIds` vem dos assignments abertos, e o
+ * documento sem campo pendente sai da fila sem que o texto dele trafegue.
  */
-export async function loadReviewQueueRows<TFieldReview>(
+export async function loadReviewQueueRows<
+  TFieldReview extends { document_id: string },
+>(
   supabase: SupabaseServerClient,
   documentIds: string[],
   loadFieldReviews: (documentIds: string[]) => PagedRead<TFieldReview>,
@@ -41,8 +47,15 @@ export async function loadReviewQueueRows<TFieldReview>(
     return { documents: [], fieldReviews: [] };
   }
 
-  const [documentsResult, fieldReviewsResult] = await Promise.all([
-    fetchByDocumentChunks<ReviewQueueDocumentRow>(documentIds, (ids) =>
+  const fieldReviews = await fetchByDocumentChunks(documentIds, loadFieldReviews);
+  if (fieldReviews.error) throw queueReadError(fieldReviews.error);
+
+  const reviewedIds = new Set(
+    fieldReviews.data.map((review) => review.document_id),
+  );
+  const documents = await fetchByDocumentChunks<ReviewQueueDocumentRow>(
+    documentIds.filter((id) => reviewedIds.has(id)),
+    (ids) =>
       fetchAllAfterId<ReviewQueueDocumentRow>(() =>
         supabase
           .from("documents")
@@ -51,20 +64,16 @@ export async function loadReviewQueueRows<TFieldReview>(
           .is("excluded_at", null)
           .is("exclusion_pending_at", null),
       ),
-    ),
-    fetchByDocumentChunks(documentIds, loadFieldReviews),
-  ]);
-  const error = documentsResult.error ?? fieldReviewsResult.error;
-  if (error) {
-    throw new Error(
-      `Não foi possível carregar a fila de revisão: ${error.message}`,
-    );
-  }
+  );
+  if (documents.error) throw queueReadError(documents.error);
 
-  return {
-    documents: documentsResult.data,
-    fieldReviews: fieldReviewsResult.data,
-  };
+  return { documents: documents.data, fieldReviews: fieldReviews.data };
+}
+
+function queueReadError(error: { message: string }): Error {
+  return new Error(
+    `Não foi possível carregar a fila de revisão: ${error.message}`,
+  );
 }
 
 export function buildReviewQueueDocumentMap<TField>(

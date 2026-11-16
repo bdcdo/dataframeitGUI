@@ -16,7 +16,13 @@ export interface VerdictItem {
   coordinatorComment: string | null;
   myAnswer: unknown;
   isCorrect: boolean;
-  responseSnapshot: Array<{
+  /**
+   * As respostas que o árbitro viu, menos a do próprio respondente. A própria
+   * sai pelo id da resposta (`ownResponseIds`), e não pelo nome gravado no
+   * snapshot: o nome congela no dia do veredito, e dois membros podem ter o
+   * mesmo.
+   */
+  otherResponses: Array<{
     id: string;
     respondent_name: string;
     respondent_type: "humano" | "llm";
@@ -53,6 +59,8 @@ interface BuildMyVerdictItemsInput {
   myAnswersByDoc: ReadonlyMap<string, Record<string, unknown>>;
   docTitles: ReadonlyMap<string, string>;
   acknowledgments: ReadonlyMap<string, StoredAcknowledgment>;
+  /** Ids de toda resposta do respondente no projeto, inclusive as antigas. */
+  ownResponseIds: ReadonlySet<string>;
 }
 
 type StoredAcknowledgment = { status: string; comment: string | null } & PinnedAcknowledgment;
@@ -65,13 +73,13 @@ type StoredAcknowledgment = { status: string; comment: string | null } & PinnedA
  * existe mais seria falso, e a célula volta à Comparação.
  */
 export function buildMyVerdictItems({
-  reviews, fields, myAnswersByDoc, docTitles, acknowledgments,
+  reviews, fields, myAnswersByDoc, docTitles, acknowledgments, ownResponseIds,
 }: BuildMyVerdictItemsInput): VerdictItem[] {
   const fieldByName = new Map(fields.map((f) => [f.name, f]));
   return [...pickValidCellReviews(reviews, fieldByName).values()].flatMap((r) => {
     const myAnswer = myAnswersByDoc.get(r.document_id)?.[r.field_name];
     if (myAnswer === undefined) return [];
-    return [toVerdictItem(r, myAnswer, fieldByName.get(r.field_name), docTitles, acknowledgments.get(r.id))];
+    return [toVerdictItem(r, myAnswer, fieldByName.get(r.field_name), docTitles, acknowledgments.get(r.id), ownResponseIds)];
   });
 }
 
@@ -81,7 +89,9 @@ function toVerdictItem(
   field: PydanticField | undefined,
   docTitles: ReadonlyMap<string, string>,
   stored: StoredAcknowledgment | undefined,
+  ownResponseIds: ReadonlySet<string>,
 ): VerdictItem {
+  const snapshot = r.response_snapshot as VerdictItem["otherResponses"];
   const fieldType = (field?.type || "text") as VerdictItem["fieldType"];
   return {
     reviewId: r.id,
@@ -94,7 +104,7 @@ function toVerdictItem(
     coordinatorComment: r.comment,
     myAnswer,
     isCorrect: isAnswerCorrect(myAnswer, r.verdict, fieldType),
-    responseSnapshot: r.response_snapshot as VerdictItem["responseSnapshot"],
+    otherResponses: snapshot?.filter((entry) => !ownResponseIds.has(entry.id)) ?? null,
     ...acknowledgmentOf(stored, r.verdict),
   };
 }

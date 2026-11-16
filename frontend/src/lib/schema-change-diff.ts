@@ -3,6 +3,7 @@ import {
   normalizeSubfields,
   resolveAllowOther,
   resolveOptionalText,
+  resolveOptions,
   resolveRequired,
   resolveSubfieldRule,
   resolveTarget,
@@ -119,8 +120,8 @@ export function diffPydanticField(
     }
   }
   if (has(before, "options") || has(after, "options")) {
-    const b = (before.options as string[] | null | undefined) ?? null;
-    const a = (after.options as string[] | null | undefined) ?? null;
+    const b = resolveOptions(before.options as string[] | null | undefined);
+    const a = resolveOptions(after.options as string[] | null | undefined);
     if (!arraysEqual(b, a)) {
       diffs.push({ property: "options", before: b, after: a });
     }

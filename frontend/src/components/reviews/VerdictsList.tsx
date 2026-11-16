@@ -37,7 +37,6 @@ interface VerdictsListProps {
   fieldFilter: string;
   onFieldFilterChange: (v: string) => void;
   projectId: string;
-  userName: string;
   isPending: boolean;
   onAcknowledge: (
     reviewId: string,
@@ -52,7 +51,6 @@ export function VerdictsList({
   fieldFilter,
   onFieldFilterChange,
   projectId,
-  userName,
   isPending,
   onAcknowledge,
 }: VerdictsListProps) {
@@ -120,7 +118,6 @@ export function VerdictsList({
         <VerdictCard
           key={item.reviewId}
           item={item}
-          userName={userName}
           isPending={isPending}
           commentingReviewId={commentingReviewId}
           questionComment={questionComment}
@@ -139,7 +136,6 @@ export function VerdictsList({
 
 function VerdictCard({
   item,
-  userName,
   isPending,
   commentingReviewId,
   questionComment,
@@ -148,7 +144,6 @@ function VerdictCard({
   onAcknowledge,
 }: {
   item: VerdictItem;
-  userName: string;
   isPending: boolean;
   commentingReviewId: string | null;
   questionComment: string;
@@ -161,9 +156,6 @@ function VerdictCard({
   ) => void | Promise<void>;
 }) {
   const isSpecialVerdict = item.verdict === "ambiguo" || item.verdict === "pular";
-  const otherResponses = item.responseSnapshot?.filter(
-    (r) => r.respondent_name !== userName,
-  );
 
   return (
     <div
@@ -236,69 +228,17 @@ function VerdictCard({
       )}
 
       {/* 4. Other responses */}
-      {otherResponses && otherResponses.length > 0 && (
-        <div>
-          <p className="text-[11px] text-muted-foreground mb-1">Outras respostas</p>
-          <div className="space-y-0.5 rounded-md bg-background/80 p-2">
-            {otherResponses.map((r) => (
-              <RespondentRow
-                key={r.id}
-                respondent={r}
-                isMe={false}
-                isSpecialVerdict={isSpecialVerdict}
-                verdict={item.verdict}
-                fieldType={item.fieldType}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      <OtherResponses item={item} isSpecialVerdict={isSpecialVerdict} />
 
-      {/* 5. Acknowledgment actions. A resposta dada a um veredito que depois
-          foi rearbitrado não vale para o novo (#758): o item volta a pedir
-          resposta e diz por quê. */}
-      {(!item.isCorrect || isSpecialVerdict) && item.acknowledgmentOutdated && (
-        <p className="text-xs">O veredito mudou desde a sua última resposta a ele. Responda de novo.</p>
-      )}
+      {/* 5. Acknowledgment actions */}
       {(!item.isCorrect || isSpecialVerdict) && (
-        <div className="flex items-center gap-2 pt-0.5">
-          {(!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") && (
-            <>
-              {!item.isCorrect && (
-                <Button
-                  variant="default"
-                  size="sm"
-                  className="h-6 text-xs"
-                  disabled={isPending}
-                  onClick={() => void onAcknowledge(item.reviewId, "accepted")}
-                >
-                  <Check className="mr-1 size-3" />
-                  Aceitar correção
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-6 text-xs"
-                disabled={isPending}
-                onClick={() =>
-                  onSetCommentingReviewId(
-                    commentingReviewId === item.reviewId ? null : item.reviewId,
-                  )
-                }
-              >
-                <MessageSquare className="mr-1 size-3" />
-                Comentar dúvida
-              </Button>
-            </>
-          )}
-          {item.acknowledgmentStatus === "accepted" && (
-            <Badge className="text-xs bg-green-500/10 text-green-700">Aceita</Badge>
-          )}
-          {item.acknowledgmentStatus === "questioned" && (
-            <Badge className="text-xs bg-amber-500/10 text-amber-700">Dúvida enviada</Badge>
-          )}
-        </div>
+        <AcknowledgmentActions
+          item={item}
+          isPending={isPending}
+          commentingReviewId={commentingReviewId}
+          onSetCommentingReviewId={onSetCommentingReviewId}
+          onAcknowledge={onAcknowledge}
+        />
       )}
 
       {/* Comment input */}
@@ -328,6 +268,99 @@ function VerdictCard({
 
 /* ── Respondent Row ── */
 
+// A resposta dada a um veredito que depois foi rearbitrado não vale para o
+// novo (#758): o item volta a pedir resposta e diz por quê.
+function AcknowledgmentActions({
+  item,
+  isPending,
+  commentingReviewId,
+  onSetCommentingReviewId,
+  onAcknowledge,
+}: {
+  item: VerdictItem;
+  isPending: boolean;
+  commentingReviewId: string | null;
+  onSetCommentingReviewId: (id: string | null) => void;
+  onAcknowledge: (
+    reviewId: string,
+    status: "accepted" | "questioned",
+    comment?: string,
+  ) => void | Promise<void>;
+}) {
+  return (
+    <>
+      {item.acknowledgmentOutdated && (
+        <p className="text-xs">O veredito mudou desde a sua última resposta a ele. Responda de novo.</p>
+      )}
+      <div className="flex items-center gap-2 pt-0.5">
+        {(!item.acknowledgmentStatus || item.acknowledgmentStatus === "pending") && (
+          <>
+            {!item.isCorrect && (
+              <Button
+                variant="default"
+                size="sm"
+                className="h-6 text-xs"
+                disabled={isPending}
+                onClick={() => void onAcknowledge(item.reviewId, "accepted")}
+              >
+                <Check className="mr-1 size-3" />
+                Aceitar correção
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-xs"
+              disabled={isPending}
+              onClick={() =>
+                onSetCommentingReviewId(
+                  commentingReviewId === item.reviewId ? null : item.reviewId,
+                )
+              }
+            >
+              <MessageSquare className="mr-1 size-3" />
+              Comentar dúvida
+            </Button>
+          </>
+        )}
+        {item.acknowledgmentStatus === "accepted" && (
+          <Badge className="text-xs bg-green-500/10 text-green-700">Aceita</Badge>
+        )}
+        {item.acknowledgmentStatus === "questioned" && (
+          <Badge className="text-xs bg-amber-500/10 text-amber-700">Dúvida enviada</Badge>
+        )}
+      </div>
+    </>
+  );
+}
+
+function OtherResponses({
+  item,
+  isSpecialVerdict,
+}: {
+  item: VerdictItem;
+  isSpecialVerdict: boolean;
+}) {
+  if (!item.otherResponses?.length) return null;
+  return (
+    <div>
+      <p className="text-[11px] text-muted-foreground mb-1">Outras respostas</p>
+      <div className="space-y-0.5 rounded-md bg-background/80 p-2">
+        {item.otherResponses.map((r) => (
+          <RespondentRow
+            key={r.id}
+            respondent={r}
+            isMe={false}
+            isSpecialVerdict={isSpecialVerdict}
+            verdict={item.verdict}
+            fieldType={item.fieldType}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RespondentRow({
   respondent,
   isMe,
@@ -335,7 +368,7 @@ function RespondentRow({
   verdict,
   fieldType,
 }: {
-  respondent: NonNullable<VerdictItem["responseSnapshot"]>[number];
+  respondent: NonNullable<VerdictItem["otherResponses"]>[number];
   isMe: boolean;
   isSpecialVerdict: boolean;
   verdict: string;

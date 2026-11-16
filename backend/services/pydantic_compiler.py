@@ -135,8 +135,24 @@ def _normalize_optional_str(raw) -> str | None:
     return (raw.strip() if isinstance(raw, str) else None) or None
 
 
+def _parse_extra_options(field_name: str, raw: object) -> list[str] | None:
+    """Valida as `options` de `json_schema_extra`; lista vazia é ausente.
+
+    O gerador só emite lista de strings. Converter com `str()` o que vem de
+    código escrito à mão (`[1, None]` virava `["1", "None"]`) reconstruía um
+    campo com opções que ninguém escreveu, e com outro hash.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or not all(
+        isinstance(option, str) for option in raw
+    ):
+        raise ValueError(f'Campo "{field_name}": "options" deve ser lista de strings.')
+    return list(raw) or None
+
+
 def _resolve_field_type_and_options(
-    field_type: str, options: list[str] | None, extra: dict
+    field_name: str, field_type: str, options: list[str] | None, extra: dict
 ) -> tuple[str, list[str] | None]:
     """Aplica override explícito de tipo e as opções que viajam no extra."""
     # Allow json_schema_extra to override the inferred field type (e.g. date)
@@ -146,9 +162,7 @@ def _resolve_field_type_and_options(
     # Em data (sentinelas) e em texto (respostas padronizadas) a anotação é
     # `str`, e não Literal: as opções vêm de json_schema_extra.
     if field_type in ("date", "text"):
-        raw_opts = extra.get("options")
-        if isinstance(raw_opts, (list, tuple)) and raw_opts:
-            options = [str(o) for o in raw_opts]
+        options = _parse_extra_options(field_name, extra.get("options")) or options
     return field_type, options
 
 
@@ -273,7 +287,7 @@ def _build_field_dict(
     extra = extract_json_schema_extra(field_info)
 
     field_type, options = _resolve_field_type_and_options(
-        parsed_type, parsed_options, extra
+        field_name, parsed_type, parsed_options, extra
     )
     description = field_info.description or field_name
     help_text = _normalize_optional_str(extra.get("help_text"))

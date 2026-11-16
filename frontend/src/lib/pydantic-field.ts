@@ -487,6 +487,17 @@ export function resolveAllowOther(value: boolean | null | undefined): boolean {
   return value ?? false;
 }
 
+// `options`: lista vazia e ausente são o mesmo campo. O gerador só emite a lista
+// não vazia e o hash do campo trata a vazia como ausente (`if options` do
+// Python), mas `snapshotOf` as distinguia: trocar `null` por `[]` num campo de
+// texto ou de data gravava versão nova e entrada de histórico sem mudar um byte
+// do código.
+export function resolveOptions(
+  value: readonly string[] | null | undefined,
+): string[] | null {
+  return value?.length ? [...value] : null;
+}
+
 // `help_text` e `justification_prompt`: vazio e ausente são o mesmo campo, porque
 // o gerador não emite texto vazio. Normalizar de dois jeitos deixava o editor
 // sujo para sempre com `""` persistido, e o save sem diff não gravava nada (#503).

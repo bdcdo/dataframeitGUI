@@ -59,7 +59,7 @@ function makeItem(overrides?: Partial<VerdictItem>): VerdictItem {
     coordinatorComment: null,
     myAnswer: "sim",
     isCorrect: true,
-    responseSnapshot: null,
+    otherResponses: null,
     acknowledgmentStatus: null,
     acknowledgmentComment: null,
     acknowledgmentOutdated: false,
@@ -76,7 +76,7 @@ const THREE_DOCS: VerdictItem[] = [
 
 function renderView(items: VerdictItem[]) {
   return render(
-    <MyVerdictsView projectId="p1" items={items} fields={[]} userName="João" />,
+    <MyVerdictsView projectId="p1" items={items} fields={[]} />,
   );
 }
 
