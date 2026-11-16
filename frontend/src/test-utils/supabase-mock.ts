@@ -7,7 +7,14 @@
 // registrada (#686) é migrar os testes que usam mocks cegos a filtro para
 // este motor, um arquivo por vez.
 
-export type WriteCall = { table: string; op: string; payload: unknown };
+// `filters`: os filtros da escrita (eq/neq/is/in), no mock filter-aware, para o
+// teste conferir quais linhas ela alcançaria.
+export type WriteCall = {
+  table: string;
+  op: string;
+  payload: unknown;
+  filters?: Array<[string, string, unknown]>;
+};
 export type RpcCall = { fn: string; args: unknown };
 export type RpcResult = {
   data?: unknown;
@@ -50,7 +57,14 @@ export function callsOf(
 // e registra writes em state.writeCalls. Linha sem a coluna filtrada não passa
 // em .eq/.neq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada
 // linha do teste declara as colunas que a query filtra. O .neq também descarta
-// `c: null`, como o Postgres (`null <> x` é NULL, não verdadeiro).
+// `c: null`, como o Postgres (`null <> x` é NULL, não verdadeiro), e o mesmo
+// vale para `.eq(c, null)` e para o null dentro de `.in`: `c = NULL` nunca é
+// verdadeiro; NULL se pede com `.is(c, null)`.
+//
+// Como o PostgREST, `.single()` com zero ou mais de uma linha devolve o erro
+// PGRST116, e `.maybeSingle()` com mais de uma também; e UPDATE ou DELETE sem
+// filtro é recusado (o `safeupdate` do Supabase, código 21000). Cada escrita
+// registra os filtros em `filters`.
 // `state` deve ser passado como objeto fresco a cada chamada de makeClient()
 // local (não memoizar), para sempre refletir os valores atuais de
 // `let tableData`/`let writeCalls` do arquivo de teste — que são reatribuídos
@@ -66,15 +80,29 @@ export function makeFilterAwareSupabaseMock(state: {
     rpc: (fn: string, args: unknown) => {
       state.rpcCalls?.push({ fn, args });
       const result = state.rpcResults?.[fn];
-      return {
-        then: (resolve: (value: unknown) => unknown) =>
-          resolve({ data: result?.data ?? null, error: result?.error ?? null }),
+      // `.order()` e `.range()`, para a RPC que devolve tabela e é paginada por
+      // `fetchAllPaged`: a ordem é a do array do teste.
+      let rangeN: [number, number] | null = null;
+      const call: Record<string, unknown> = {
+        order: () => call,
+        range: (from: number, to: number) => {
+          rangeN = [from, to];
+          return call;
+        },
+        then: (resolve: (value: unknown) => unknown) => {
+          const error = result?.error ?? null;
+          const data = error ? null : (result?.data ?? null);
+          const paged =
+            rangeN && Array.isArray(data) ? data.slice(rangeN[0], rangeN[1] + 1) : data;
+          return resolve({ data: paged, error });
+        },
       };
+      return call;
     },
     from: (table: string) => {
-      const eqs: Array<[string, unknown]> = [];
-      const neqs: Array<[string, unknown]> = [];
-      const ins: Array<[string, unknown[]]> = [];
+      // Os filtros na ordem das chamadas: é a ordem que `write.filters` registra.
+      const filterList: Array<[string, string, unknown]> = [];
+      let write: WriteCall | null = null;
       // Última operação do builder: compõe a chave de erro de `queryErrors`.
       let op = "select";
       let limitN: number | null = null;
@@ -87,58 +115,80 @@ export function makeFilterAwareSupabaseMock(state: {
         rangeN = [from, to];
         return builder;
       };
-      builder.eq = (c: string, v: unknown) => {
-        eqs.push([c, v]);
-        return builder;
-      };
-      builder.neq = (c: string, v: unknown) => {
-        neqs.push([c, v]);
-        return builder;
-      };
-      builder.is = (c: string, v: unknown) => {
-        eqs.push([c, v]);
-        return builder;
-      };
-      builder.in = (c: string, v: unknown[]) => {
-        ins.push([c, v]);
-        return builder;
-      };
+      for (const kind of ["eq", "neq", "is", "in"]) {
+        builder[kind] = (c: string, v: unknown) => {
+          filterList.push([kind, c, v]);
+          return builder;
+        };
+      }
       builder.limit = (n: number) => {
         limitN = n;
         return builder;
       };
-      for (const write of ["update", "upsert", "insert", "delete"]) {
+      for (const writeOp of ["update", "upsert", "insert", "delete"]) {
         // delete() não tem payload; o argumento opcional ({ count }) é opção.
-        builder[write] = (payload: unknown) => {
-          state.writeCalls.push({
+        builder[writeOp] = (payload: unknown) => {
+          // Os filtros vêm depois no encadeamento; o registro é o mesmo objeto,
+          // e `filters` é lido na resolução.
+          write = {
             table,
-            op: write,
-            payload: write === "delete" ? null : payload,
-          });
-          op = write;
+            op: writeOp,
+            payload: writeOp === "delete" ? null : payload,
+          };
+          state.writeCalls.push(write);
+          op = writeOp;
           return builder;
         };
       }
+      // `col = NULL` e `NULL IN (...)` nunca são verdadeiros; `col <> x` com
+      // `col` NULL também não. `.is(c, null)` exige `c: null` explícito.
+      const passes = (r: Record<string, unknown>, [kind, c, v]: [string, string, unknown]) => {
+        if (kind === "is") return c in r && r[c] === v;
+        if (r[c] == null) return false;
+        if (kind === "eq") return r[c] === v;
+        if (kind === "neq") return r[c] !== v;
+        return (v as unknown[]).includes(r[c]);
+      };
       const rows = () => {
         const data = (state.tableData[table] ?? []) as Array<
           Record<string, unknown>
         >;
-        const filtered = data.filter((r) => {
-          for (const [c, v] of eqs) if (r[c] !== v) return false;
-          for (const [c, v] of neqs) if (r[c] == null || r[c] === v) return false;
-          for (const [c, vals] of ins) if (!vals.includes(r[c])) return false;
-          return true;
-        });
+        const filtered = data.filter((r) => filterList.every((f) => passes(r, f)));
         const ranged = rangeN ? filtered.slice(rangeN[0], rangeN[1] + 1) : filtered;
         return limitN != null ? ranged.slice(0, limitN) : ranged;
       };
-      const err = () => state.queryErrors?.[`${table}:${op}`] ?? null;
-      builder.single = () =>
-        Promise.resolve({ data: rows()[0] ?? null, error: err() });
-      builder.maybeSingle = () =>
-        Promise.resolve({ data: rows()[0] ?? null, error: err() });
-      builder.then = (resolve: (v: unknown) => unknown) =>
-        resolve({ data: rows(), error: err() });
+      const unfilteredWrite = () =>
+        (op === "update" || op === "delete") && filterList.length === 0
+          ? { code: "21000", message: `${op.toUpperCase()} requires a WHERE clause` }
+          : null;
+      const err = () => {
+        if (write) write.filters = [...filterList];
+        return state.queryErrors?.[`${table}:${op}`] ?? unfilteredWrite();
+      };
+      const notOneRow = (count: number) => ({
+        code: "PGRST116",
+        message: `JSON object requested, multiple (or no) rows returned (${count})`,
+      });
+      // `insert/upsert(...).select().single()` devolve a linha escrita, e não
+      // uma linha da tabela.
+      const singleRows = () =>
+        op === "insert" || op === "upsert"
+          ? [write?.payload].flat().filter((row) => row != null)
+          : rows();
+      builder.single = () => {
+        const found = singleRows();
+        const error = err() ?? (found.length === 1 ? null : notOneRow(found.length));
+        return Promise.resolve({ data: error ? null : found[0], error });
+      };
+      builder.maybeSingle = () => {
+        const found = singleRows();
+        const error = err() ?? (found.length > 1 ? notOneRow(found.length) : null);
+        return Promise.resolve({ data: error ? null : (found[0] ?? null), error });
+      };
+      builder.then = (resolve: (v: unknown) => unknown) => {
+        const error = err();
+        return resolve({ data: error ? null : rows(), error });
+      };
       return builder;
     },
   };

@@ -11,7 +11,7 @@ import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
 import type { PydanticField } from "@/lib/types";
 import type { ErrorDecision } from "@/lib/error-resolution";
 import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
-import { makeSupabaseMock } from "@/actions/__tests__/supabase-mock";
+import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 
 describe("buildReviewLookupMaps", () => {
   it("indexa campos e usa título, ID externo e ID como fallback do documento", () => {
@@ -156,7 +156,7 @@ describe("fetchReviewBaseData: decisão ancorada em veredito válido que não é
   const HASH = "aaaaaaaaaaaa";
   const x = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", description: "Pergunta", options: null, hash: HASH } as PydanticField;
   const reviewRow = (id: string, reviewer: string, created_at: string) => ({
-    id, document_id: "doc1", field_name: "x", verdict: "Humano", chosen_response_id: "rh", comment: null,
+    id, project_id: "p1", document_id: "doc1", field_name: "x", verdict: "Humano", chosen_response_id: "rh", comment: null,
     reviewer_id: reviewer, created_at, field_hash: HASH,
   });
 
@@ -166,17 +166,18 @@ describe("fetchReviewBaseData: decisão ancorada em veredito válido que não é
       const resolution = resolutionFixture(decision);
       resolution.context!.source = { kind: "comparacao", id: "antiga", verdict: "Humano" };
       resolution.current_context = structuredClone(resolution.context);
-      const client = makeSupabaseMock({
-        tableResults: {
-          projects: { data: { pydantic_fields: [x], pydantic_hash: null, created_by: "owner" } },
-          responses: { data: [
-            { id: "rllm", document_id: "doc1", respondent_id: null, respondent_type: "llm", respondent_name: "LLM", answers: { x: "LLM" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z" },
-            { id: "rh", document_id: "doc1", respondent_id: "ana", respondent_type: "humano", respondent_name: "Ana", answers: { x: "Humano" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z" },
-          ] },
-          reviews: { data: [reviewRow("nova", "bia", "2026-09-03T00:00:00Z"), reviewRow("antiga", "caio", "2026-09-02T00:00:00Z")] },
-          documents: { data: [{ id: "doc1", title: "Documento", external_id: null }] },
-          profiles: { data: [] },
+      const client = makeFilterAwareSupabaseMock({
+        tableData: {
+          projects: [{ id: "p1", pydantic_fields: [x], pydantic_hash: null, created_by: "owner" }],
+          responses: [
+            { id: "rllm", project_id: "p1", document_id: "doc1", respondent_id: null, respondent_type: "llm", respondent_name: "LLM", answers: { x: "LLM" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z" },
+            { id: "rh", project_id: "p1", document_id: "doc1", respondent_id: "ana", respondent_type: "humano", respondent_name: "Ana", answers: { x: "Humano" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z" },
+          ],
+          reviews: [reviewRow("nova", "bia", "2026-09-03T00:00:00Z"), reviewRow("antiga", "caio", "2026-09-02T00:00:00Z")],
+          documents: [{ id: "doc1", project_id: "p1", title: "Documento", external_id: null, excluded_at: null, exclusion_pending_at: null }],
+          profiles: [],
         },
+        writeCalls: [],
         rpcResults: { read_error_resolutions: { data: [resolution] } },
       });
 

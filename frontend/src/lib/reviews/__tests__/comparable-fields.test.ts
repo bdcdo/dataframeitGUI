@@ -4,7 +4,7 @@ import { computeDivergentFieldNames } from "@/lib/compare-divergence";
 import { isMeasurableField } from "@/lib/llm-error-metrics";
 import { assembleExport, type ExportResponse } from "@/lib/export/assemble";
 import type { PydanticField } from "@/lib/types";
-import { makeSupabaseMock } from "@/actions/__tests__/supabase-mock";
+import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 
 // Troca o default de `target` para `human_only`: se algum consumidor da
 // Comparacao ainda re-derivar "ausente = all" no call site, o campo legado
@@ -22,14 +22,15 @@ const all = { ...legacy, name: "todos", target: "all" } as PydanticField;
 
 describe("o default de `target` da Comparação vem de `resolveTarget` (issue #500)", () => {
   it("gabarito, fila de divergência e métricas do LLM seguem o resolvedor", async () => {
-    const client = makeSupabaseMock({
-      tableResults: {
-        projects: { data: { pydantic_fields: [legacy, all], pydantic_hash: null, created_by: "owner" } },
-        responses: { data: [] },
-        reviews: { data: [] },
-        documents: { data: [] },
-        profiles: { data: [] },
+    const client = makeFilterAwareSupabaseMock({
+      tableData: {
+        projects: [{ id: "p1", pydantic_fields: [legacy, all], pydantic_hash: null, created_by: "owner" }],
+        responses: [],
+        reviews: [],
+        documents: [],
+        profiles: [],
       },
+      writeCalls: [],
       rpcResults: { read_error_resolutions: { data: [] } },
     });
     const ctx = await fetchReviewBaseData(client as never, "p1");
