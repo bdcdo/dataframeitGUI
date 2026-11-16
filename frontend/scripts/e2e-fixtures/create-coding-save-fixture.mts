@@ -13,38 +13,20 @@
 //
 // Rodar de frontend/:  npm run e2e:fixture:coding
 // Contra o Supabase local:  E2E_ENV_PATH=<arquivo> npm run e2e:fixture:coding
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@supabase/supabase-js";
-import { loadE2eEnvironment } from "../worktree-env/env-contract.mjs";
+import { fixtureClient } from "./fixture-client";
 
 // O mesmo ambiente que o playwright.config.ts carrega, inclusive o
-// E2E_ENV_PATH (ver loadE2eEnvironment): a fixture nasce no banco que o spec lê.
-const frontendDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-loadE2eEnvironment(process.env, frontendDir);
-
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!url || !key) {
-  throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes");
-}
-const supabase = createClient(url, key);
-// O ambiente pode vir do E2E_ENV_PATH: diz em qual banco a fixture nasceu.
-console.log(`Supabase: ${new URL(url).host}`);
+// E2E_ENV_PATH: a fixture nasce no banco que o spec lê. Os e-mails vêm do
+// ambiente, nunca hardcoded: a fixture vale para qualquer instância Clerk
+// (dev de outro contribuidor, instância nova), não só para os usuários de
+// teste desta máquina.
+const {
+  supabase,
+  coordinatorEmail: COORDINATOR_EMAIL,
+  memberEmail: MEMBER_EMAIL,
+} = fixtureClient();
 
 const PROJECT_NAME = "Codificação (save path) — teste E2E";
-
-// Lidos do ambiente, nunca hardcoded: a fixture precisa valer para qualquer
-// instância Clerk (dev de outro contribuidor, instância nova), não só para os
-// usuários de teste desta máquina. São as mesmas variáveis que o Playwright já
-// exige — ver .env.e2e.example.
-const COORDINATOR_EMAIL = process.env.E2E_COORDINATOR_EMAIL;
-const MEMBER_EMAIL = process.env.E2E_MEMBER_EMAIL;
-if (!COORDINATOR_EMAIL || !MEMBER_EMAIL) {
-  throw new Error(
-    "E2E_COORDINATOR_EMAIL / E2E_MEMBER_EMAIL ausentes — configure frontend/.env.e2e (ver .env.e2e.example)",
-  );
-}
 
 async function profileIdByEmail(email: string): Promise<string> {
   const { data, error } = await supabase

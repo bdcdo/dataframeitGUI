@@ -25,35 +25,20 @@
 //
 // Rodar de frontend/:  npm run e2e:fixture:compare
 // Contra o Supabase local:  E2E_ENV_PATH=<arquivo> npm run e2e:fixture:compare
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@supabase/supabase-js";
-import { loadE2eEnvironment } from "../worktree-env/env-contract.mjs";
+import { fixtureClient } from "./fixture-client";
 import { sameStoredFields } from "./fixture-schema";
 
 // O mesmo ambiente que o playwright.config.ts carrega, inclusive o
-// E2E_ENV_PATH (ver loadE2eEnvironment): a fixture nasce no banco que o spec lê.
-const frontendDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-loadE2eEnvironment(process.env, frontendDir);
-
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!url || !key) {
-  throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes");
-}
-// Os dois respondentes humanos são os usuários de teste que o contrato já
-// exige — evita uma terceira variável de ambiente só para este fixture. O
-// coordenador entra como respondente porque a fila de Comparação pede 2
-// humanos, e coordenador também codifica no produto.
-const COORDINATOR_EMAIL = process.env.E2E_COORDINATOR_EMAIL;
-const MEMBER_EMAIL = process.env.E2E_MEMBER_EMAIL;
-if (!COORDINATOR_EMAIL || !MEMBER_EMAIL) {
-  throw new Error("E2E_COORDINATOR_EMAIL / E2E_MEMBER_EMAIL ausentes (.env.e2e)");
-}
-
-const supabase = createClient(url, key, { auth: { persistSession: false } });
-// O ambiente pode vir do E2E_ENV_PATH: diz em qual banco a fixture nasceu.
-console.log(`Supabase: ${new URL(url).host}`);
+// E2E_ENV_PATH: a fixture nasce no banco que o spec lê. Os dois respondentes
+// humanos são os usuários de teste que o contrato já exige — evita uma
+// terceira variável de ambiente só para este fixture. O coordenador entra
+// como respondente porque a fila de Comparação pede 2 humanos, e coordenador
+// também codifica no produto.
+const {
+  supabase,
+  coordinatorEmail: COORDINATOR_EMAIL,
+  memberEmail: MEMBER_EMAIL,
+} = fixtureClient();
 
 export const PROJECT_NAME = "Comparação campo-trocado — teste E2E";
 const SCHEMA_HASH = "e2e-campotrocado-schema-hash";
@@ -114,8 +99,8 @@ async function profileId(email: string): Promise<string> {
 
 async function main() {
   const [coordId, memberId] = await Promise.all([
-    profileId(COORDINATOR_EMAIL!),
-    profileId(MEMBER_EMAIL!),
+    profileId(COORDINATOR_EMAIL),
+    profileId(MEMBER_EMAIL),
   ]);
 
   const { data: existing, error: findError } = await supabase

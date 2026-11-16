@@ -29,37 +29,18 @@
 // Rodar de frontend/, com E2E_ENV_PATH apontando para o env do Supabase local
 // (ver .env.e2e.example):
 //   E2E_ENV_PATH=<arquivo> npm run e2e:fixture:llm-decisions
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { createClient } from "@supabase/supabase-js";
 import { acquireFixtureLock, defaultFixtureLockDir, fixtureLockWaitMs } from "../../e2e/fixture-lock";
 import { fieldHashOf } from "../../src/lib/schema-utils";
-import { loadE2eEnvironment } from "../worktree-env/env-contract.mjs";
+import { FRONTEND_DIR, fixtureClient } from "./fixture-client";
 import { sameStoredFields } from "./fixture-schema";
 
 // O mesmo ambiente que o playwright.config.ts carrega, inclusive o
-// E2E_ENV_PATH (ver loadE2eEnvironment): a fixture nasce no banco que o spec lê.
-const frontendDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-loadE2eEnvironment(process.env, frontendDir);
-
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!url || !key) {
-  throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes");
-}
-const host = new URL(url).hostname;
-if (!/^(localhost|127\.0\.0\.1)$/.test(host)) {
-  throw new Error(
-    `NEXT_PUBLIC_SUPABASE_URL aponta para ${host}: esta fixture só é criada no Supabase local (ver E2E_ENV_PATH em .env.e2e.example)`,
-  );
-}
-const COORDINATOR_EMAIL = process.env.E2E_COORDINATOR_EMAIL;
-const MEMBER_EMAIL = process.env.E2E_MEMBER_EMAIL;
-if (!COORDINATOR_EMAIL || !MEMBER_EMAIL) {
-  throw new Error("E2E_COORDINATOR_EMAIL / E2E_MEMBER_EMAIL ausentes (.env.e2e)");
-}
-
-const supabase = createClient(url, key, { auth: { persistSession: false } });
+// E2E_ENV_PATH: a fixture nasce no banco que o spec lê, e só no local.
+const {
+  supabase,
+  coordinatorEmail: COORDINATOR_EMAIL,
+  memberEmail: MEMBER_EMAIL,
+} = fixtureClient({ localOnly: true });
 
 const MODES = ["compare_llm", "auto_review_llm"] as const;
 type Mode = (typeof MODES)[number];
@@ -260,7 +241,7 @@ for (const mode of MODES) {
   // O mesmo lock que o spec toma (e2e/fixture-lock.ts): recriar o documento no
   // meio do teste de outra worktree trocaria o documento debaixo dele.
   const lock = await acquireFixtureLock(projectId, {
-    dir: defaultFixtureLockDir(process.env, frontendDir),
+    dir: defaultFixtureLockDir(process.env, FRONTEND_DIR),
     label: "npm run e2e:fixture:llm-decisions",
     waitMs: fixtureLockWaitMs(process.env),
   });
