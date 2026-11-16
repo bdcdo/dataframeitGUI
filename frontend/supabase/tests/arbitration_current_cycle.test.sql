@@ -16,11 +16,14 @@
 --      (pergunta mudou, campo segue divergente) ou o move para o histórico
 --      (campo deixou de divergir). Nos dois casos o árbitro é solto e o
 --      assignment de arbitragem aberto sai;
---   2. o cliente não grava `superseded_at`, nem como coordenador.
+--   2. o cliente não grava `superseded_at`: nem o coordenador, nem o árbitro,
+--      nem o auto-revisor, cada um na transição que lhe é permitida.
 --
--- Se um dia o reconciliador passar a deixar ciclo superado na tabela, este
--- contrato reprova, e aí os cinco predicados sem `superseded_at` (os dois
--- fechos, `archive_review_dependencies_on_response_change`,
+-- O contrato cobre os produtores de hoje. Se o reconciliador passar a deixar
+-- ciclo superado na tabela, ele reprova; um produtor novo de `superseded_at`
+-- precisa entrar aqui. Nos dois casos, os cinco predicados sem
+-- `superseded_at` (os dois fechos,
+-- `archive_review_dependencies_on_response_change`,
 -- `archive_question_changed_field_reviews` e `unify_project_members`)
 -- precisam ganhar o filtro.
 --
@@ -56,7 +59,8 @@ VALUES
    '31a00000-0000-0000-0000-000000000002', 'auto_review_llm', 'schema-p31',
    '[{"id":"00000000-0000-4000-8000-0000000031a1","name":"q1","type":"text","target":"all","description":"Decidida","hash":"q10000000001"},
      {"id":"00000000-0000-4000-8000-0000000031a2","name":"q2","type":"text","target":"all","description":"Pergunta alterada","hash":"q20000000001"},
-     {"id":"00000000-0000-4000-8000-0000000031a3","name":"q3","type":"text","target":"all","description":"Deixa de divergir","hash":"q30000000001"}]');
+     {"id":"00000000-0000-4000-8000-0000000031a3","name":"q3","type":"text","target":"all","description":"Deixa de divergir","hash":"q30000000001"},
+     {"id":"00000000-0000-4000-8000-0000000031a4","name":"q4","type":"text","target":"all","description":"Sem veredito proprio","hash":"q40000000001"}]');
 
 INSERT INTO public.documents (id, project_id, title, text, text_hash) VALUES
   ('31c00000-0000-0000-0000-000000000001',
@@ -76,14 +80,14 @@ INSERT INTO public.responses
 VALUES
   ('31d00000-0000-0000-0000-000000000001', '31b00000-0000-0000-0000-000000000001',
    '31c00000-0000-0000-0000-000000000001', '31a00000-0000-0000-0000-000000000001',
-   'humano', '{"q1":"a","q2":"a","q3":"a"}'),
+   'humano', '{"q1":"a","q2":"a","q3":"a","q4":"a"}'),
   ('31d00000-0000-0000-0000-000000000003', '31b00000-0000-0000-0000-000000000001',
    '31c00000-0000-0000-0000-000000000001', NULL,
-   'llm', '{"q1":"llm","q2":"llm","q3":"llm"}');
+   'llm', '{"q1":"llm","q2":"llm","q3":"llm","q4":"llm"}');
 
--- Os três campos foram contestados por A e estão com X. q1 já tem veredito
--- final; q2 e q3 estão na fase cega. É o caso relatado: o que resta sem
--- veredito final vai ser superado.
+-- q1, q2 e q3 foram contestados por A e estão com X. q1 já tem veredito
+-- final; q2 e q3 estão na fase cega. É o caso relatado: o que resta com X sem
+-- veredito final vai ser superado. q4 ainda espera a auto-revisão de A.
 INSERT INTO public.field_reviews
   (id, project_id, document_id, field_name, human_response_id, llm_response_id,
    self_reviewer_id, self_verdict, self_reviewed_at, self_justification,
@@ -103,7 +107,12 @@ VALUES
    '31c00000-0000-0000-0000-000000000001', 'q3',
    '31d00000-0000-0000-0000-000000000001', '31d00000-0000-0000-0000-000000000003',
    '31a00000-0000-0000-0000-000000000001', 'contesta_llm', now(), 'difere',
-   '31a00000-0000-0000-0000-000000000003', NULL, NULL, NULL, NULL);
+   '31a00000-0000-0000-0000-000000000003', NULL, NULL, NULL, NULL),
+  ('31f00000-0000-0000-0000-000000000004', '31b00000-0000-0000-0000-000000000001',
+   '31c00000-0000-0000-0000-000000000001', 'q4',
+   '31d00000-0000-0000-0000-000000000001', '31d00000-0000-0000-0000-000000000003',
+   '31a00000-0000-0000-0000-000000000001', NULL, NULL, NULL,
+   NULL, NULL, NULL, NULL, NULL);
 
 INSERT INTO public.assignments (id, project_id, document_id, user_id, type, status)
 VALUES
@@ -112,51 +121,102 @@ VALUES
    'arbitragem', 'pendente');
 
 -- ========== 1. O cliente não grava superseded_at ==========
--- O coordenador é quem mais pode em field_reviews (policy de UPDATE); nem ele
--- marca um ciclo como superado.
-SELECT pg_catalog.set_config(
-  'request.jwt.claims',
-  '{"sub":"31a00000-0000-0000-0000-000000000002","supabase_uid":"31a00000-0000-0000-0000-000000000002"}',
-  true
-);
+-- Cada ator tenta a transição que o gatilho de fase lhe permite (controle: sem
+-- superseded_at ela passa, e é desfeita) e depois a mesma transição levando
+-- superseded_at junto. O controle é o que garante que a recusa vem de
+-- superseded_at, e não de GRANT, RLS ou de uma transição inválida por outro
+-- motivo. Quem recusa aqui é enforce_field_review_phase_transition;
+-- guard_field_review_update_columns também recusaria, mas sai cedo quando o
+-- SESSION_USER é postgres, que é como a suíte roda.
+--
+-- O ambiente local não concede DML do schema public por padrão (no remoto ele
+-- vem dos default privileges).
+GRANT SELECT, UPDATE ON public.field_reviews TO authenticated;
 SET LOCAL ROLE authenticated;
 
 DO $$
 DECLARE
-  v_refused BOOLEAN := false;
+  item RECORD;
+  v_rows INTEGER;
+  v_outcome TEXT;
 BEGIN
-  BEGIN
-    UPDATE public.field_reviews
-    SET superseded_at = now(), superseded_reason = 'answer_changed'
-    WHERE id = '31f00000-0000-0000-0000-000000000003';
-  EXCEPTION
-    WHEN raise_exception OR insufficient_privilege THEN
-      v_refused := true;
-  END;
-  IF NOT v_refused THEN
-    RAISE EXCEPTION 'FALHOU: coordenador gravou superseded_at em field_reviews';
-  END IF;
+  FOR item IN
+    SELECT * FROM (VALUES
+      ('coordenador devolve a arbitragem ao pool',
+       '31a00000-0000-0000-0000-000000000002',
+       '31f00000-0000-0000-0000-000000000003',
+       'arbitrator_id = NULL, blind_verdict = NULL, blind_decided_at = NULL'),
+      ('árbitro dá o veredito cego',
+       '31a00000-0000-0000-0000-000000000003',
+       '31f00000-0000-0000-0000-000000000003',
+       'blind_verdict = ''humano'''),
+      ('auto-revisor dá o veredito próprio',
+       '31a00000-0000-0000-0000-000000000001',
+       '31f00000-0000-0000-0000-000000000004',
+       'self_verdict = ''admite_erro''')
+    ) AS cases(label, actor_id, review_id, transition)
+  LOOP
+    PERFORM pg_catalog.set_config(
+      'request.jwt.claims',
+      pg_catalog.jsonb_build_object(
+        'sub', item.actor_id, 'supabase_uid', item.actor_id)::TEXT,
+      true
+    );
+
+    BEGIN
+      EXECUTE pg_catalog.format(
+        'UPDATE public.field_reviews SET %s WHERE id = %L',
+        item.transition, item.review_id);
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+      -- Desfaz o controle: a fixture segue como estava para os blocos seguintes.
+      RAISE EXCEPTION USING ERRCODE = 'P0P31', MESSAGE = v_rows::TEXT;
+    EXCEPTION
+      WHEN SQLSTATE 'P0P31' THEN
+        v_rows := SQLERRM::INTEGER;
+    END;
+    IF v_rows <> 1 THEN
+      RAISE EXCEPTION 'FALHOU controle (%): a transição permitida alterou % linha(s)',
+        item.label, v_rows;
+    END IF;
+
+    BEGIN
+      EXECUTE pg_catalog.format(
+        'UPDATE public.field_reviews SET %s, superseded_at = now(), '
+        'superseded_reason = ''answer_changed'' WHERE id = %L',
+        item.transition, item.review_id);
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+      v_outcome := 'gravou ' || v_rows || ' linha(s)';
+    EXCEPTION
+      WHEN insufficient_privilege THEN
+        v_outcome := SQLERRM;
+    END;
+    IF v_outcome IS DISTINCT FROM
+       'field_review phase transition is not allowed for this actor' THEN
+      RAISE EXCEPTION 'FALHOU (%): superseded_at não foi recusado pelo gatilho de fase (%)',
+        item.label, v_outcome;
+    END IF;
+  END LOOP;
+  RAISE NOTICE 'OK 1: o cliente não grava superseded_at';
 END $$;
 
 RESET ROLE;
 SELECT pg_catalog.set_config('request.jwt.claims', '{}', true);
 
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.field_reviews
-    WHERE project_id = '31b00000-0000-0000-0000-000000000001'
-      AND superseded_at IS NOT NULL
-  ) THEN
-    RAISE EXCEPTION 'FALHOU: superseded_at ficou gravado pelo cliente';
-  END IF;
-  RAISE NOTICE 'OK 1: o cliente não grava superseded_at';
-END $$;
-
 -- ========== 2. O reconciliador não deixa ciclo superado para trás ==========
 -- q2: a pergunta mudou e o campo segue divergente (o carimbo do ciclo deixa
 -- de ser o do schema), então o ciclo é superado e reciclado. q3: deixou de
--- divergir, então o ciclo é superado e arquivado. q1 não muda.
+-- divergir, então o ciclo é superado e arquivado. q1 e q4 não mudam.
+DO $$
+BEGIN
+  -- Controle do bloco 3: antes do reconciliador, X tem a arbitragem aberta.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.assignments
+    WHERE id = '31e00000-0000-0000-0000-000000000001' AND status = 'pendente'
+  ) THEN
+    RAISE EXCEPTION 'FALHOU fixture: a arbitragem de X não está aberta antes do reconciliador';
+  END IF;
+END $$;
+
 UPDATE public.field_reviews
 SET field_hash = 'q2-versao-anterior'
 WHERE id = '31f00000-0000-0000-0000-000000000002';
@@ -165,8 +225,8 @@ SET LOCAL request.jwt.claims = '{"role":"service_role"}';
 SELECT public.reconcile_auto_review_cycles(jsonb_build_array(jsonb_build_object(
   'human_response_id', '31d00000-0000-0000-0000-000000000001',
   'llm_response_id', '31d00000-0000-0000-0000-000000000003',
-  'field_names', '["q1","q2","q3"]'::jsonb,
-  'divergent_field_names', '["q1","q2"]'::jsonb,
+  'field_names', '["q1","q2","q3","q4"]'::jsonb,
+  'divergent_field_names', '["q1","q2","q4"]'::jsonb,
   'expected_human_updated_at',
     (SELECT updated_at FROM public.responses
      WHERE id = '31d00000-0000-0000-0000-000000000001'),
