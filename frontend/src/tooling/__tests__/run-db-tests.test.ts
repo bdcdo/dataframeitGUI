@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 // Relatório do scripts/run-db-tests.sh, o runner do `test:db` que o hook
 // db-tests e o database-tests.yml chamam. O Supabase é falso: o `docker` aceita
@@ -60,45 +60,75 @@ esac
   uv: "#!/usr/bin/env bash\nexit 0\n",
 };
 
+function makeBin(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "run-db-tests-"));
+  for (const [name, content] of Object.entries(fakes)) {
+    fs.writeFileSync(path.join(dir, name), content, { mode: 0o755 });
+  }
+  return dir;
+}
+
 let bin: string;
 
 beforeEach(() => {
-  bin = fs.mkdtempSync(path.join(os.tmpdir(), "run-db-tests-"));
-  for (const [name, content] of Object.entries(fakes)) {
-    fs.writeFileSync(path.join(bin, name), content, { mode: 0o755 });
-  }
+  bin = makeBin();
 });
 
 afterEach(() => {
   fs.rmSync(bin, { recursive: true, force: true });
 });
 
-function run(failing: string[], env: Record<string, string> = {}, suites: string[] = []) {
+// O runner de verdade, com um subprocesso por suíte. Os casos pedem só as
+// suítes que conferem; a varredura inteira roda uma vez, no beforeAll abaixo.
+// O teto do spawn segura um runner pendurado, que o timeout do Vitest não
+// interrompe num teste síncrono.
+const RUNNER_TIMEOUT_MS = 60_000;
+
+function run(
+  failing: string[],
+  env: Record<string, string> = {},
+  suites: string[] = [],
+  dir: string = bin,
+) {
   // O próprio CI define GITHUB_ACTIONS; aqui só o caso que o pede o tem.
   return spawnSync("/bin/bash", [runner, ...suites], {
-    env: { ...process.env, GITHUB_ACTIONS: "", PATH: `${bin}:${process.env.PATH}`, FAKE_BIN: bin, FAKE_FAIL_FILES: failing.map(suite).join(":"), ...env },
+    env: { ...process.env, GITHUB_ACTIONS: "", PATH: `${dir}:${process.env.PATH}`, FAKE_BIN: dir, FAKE_FAIL_FILES: failing.map(suite).join(":"), ...env },
     encoding: "utf8",
+    timeout: RUNNER_TIMEOUT_MS,
   });
 }
 
-const psqlLog = () => fs.readFileSync(path.join(bin, "psql.log"), "utf8");
+
+// A varredura inteira, sem falha, uma vez para os casos que a conferem.
+let sweep: { status: number | null; stdout: string; log: string };
+
+beforeAll(() => {
+  const dir = makeBin();
+  try {
+    const result = run([], {}, [], dir);
+    const log = fs.readFileSync(path.join(dir, "psql.log"), "utf8");
+    sweep = { status: result.status, stdout: result.stdout, log };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, RUNNER_TIMEOUT_MS);
 
 describe("run-db-tests.sh", () => {
   it("sem falha, aprova a varredura inteira", () => {
-    const { status, stdout } = run([]);
-    expect(stdout).toContain("OK: todas as suítes de gate passaram.");
-    expect(stdout).toContain("RED*(conhecida)=0");
-    expect(status).toBe(0);
+    expect(sweep.stdout).toContain("OK: todas as suítes de gate passaram.");
+    expect(sweep.stdout).toContain("RED*(conhecida)=0");
+    expect(sweep.status).toBe(0);
   });
 
   // value_equivalences saiu de KNOWN_RED (#913): conecta como supabase_admin,
   // a única que não usa postgres, e a falha dela reprova.
   it("value_equivalences é gate e conecta como supabase_admin", () => {
-    const { status, stdout } = run(["value_equivalences"]);
+    const { status, stdout } = run(["value_equivalences"], {}, ["value_equivalences"]);
     expect(stdout).toContain("  FAIL  value_equivalences");
     expect(status).toBe(1);
-    const calls = psqlLog().trim().split("\n");
-    // A única conexão de supabase_admin é a da suíte com a diretiva.
+    // Na varredura inteira, a única conexão de supabase_admin é a da suíte com
+    // a diretiva.
+    const calls = sweep.log.trim().split("\n");
     const directive = fs.readFileSync(suite("value_equivalences"), "utf8").split("\n")[0];
     expect(directive).toBe("-- @test-role: supabase_admin");
     expect(calls.filter((line) => line.startsWith("supabase_admin "))).toEqual([
@@ -111,8 +141,7 @@ describe("run-db-tests.sh", () => {
   // mesma sessão e antes da suíte (supabase/tests/lib/self_dblink.sql); a suíte
   // entra inteira por stdin.
   it("toda suíte psql recebe o preâmbulo do dblink por -c e a suíte por stdin", () => {
-    run([]);
-    const calls = psqlLog().trim().split("\n").map((line) => line.split(" "));
+    const calls = sweep.log.trim().split("\n").map((line) => line.split(" "));
     const dir = path.join(frontend, "supabase/tests");
     const suites = fs.readdirSync(dir).filter((name) => name.endsWith(".test.sql"));
     const firstLines = new Set(
@@ -143,7 +172,8 @@ describe("run-db-tests.sh", () => {
 
   it("reprova a suíte de gate que falha, com a cauda da saída", () => {
     // schema_revision_serialization saiu de KNOWN_RED (#572): a falha dela reprova.
-    const { status, stdout } = run(["rls_audit", "schema_revision_serialization"]);
+    const failing = ["rls_audit", "schema_revision_serialization"];
+    const { status, stdout } = run(failing, {}, failing);
     expect(status).toBe(1);
     expect(stdout).toContain("  FAIL  rls_audit");
     expect(stdout).toContain("  FAIL  schema_revision_serialization");
@@ -155,7 +185,11 @@ describe("run-db-tests.sh", () => {
   // O workflow roda tudo num passo só. O passo por suíte de antes mostrava a
   // saída inteira de cada uma e, num travamento, qual suíte estava rodando.
   it("no GitHub Actions abre um grupo por suíte, antes de rodá-la, com a saída inteira", () => {
-    const { status, stdout } = run(["rls_audit", "responses_llm_actor_integrity"], { GITHUB_ACTIONS: "true" });
+    const { status, stdout } = run(
+      ["rls_audit", "responses_llm_actor_integrity"],
+      { GITHUB_ACTIONS: "true" },
+      ["rls_audit", "responses_llm_actor_integrity", "value_equivalences", "backend_integration"],
+    );
     expect(status).toBe(1);
     for (const failed of ["rls_audit", "responses_llm_actor_integrity"]) {
       const start = stdout.indexOf(`::group::${failed}\n`);

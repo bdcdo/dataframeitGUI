@@ -81,6 +81,12 @@ Quando o orçamento estoura, a saída é tirar trabalho do teste, nunca subir a 
 
 Para medir: a mensagem do `afterEach` traz a CPU gasta. Para ver todos os testes, `process.threadCpuUsage()` num `setupFiles` extra, gravando por teste, em `vitest run` da suíte completa.
 
+Medição de 2026-11-16, numa VM de 4 vCPUs dividida entre várias sessões, com carga de 5 a 11, sobre os testes de `ComparePage.integration.test.tsx` que reprovaram em rodadas soltas do pre-push (#922):
+- **Isolados:** os mais pesados gastaram de 150 a 175 ms de CPU, inclusive com quatro laços ocupando os núcleos.
+- **Na suíte completa:** gastaram de 455 a 568 ms, contra o teto de 450. Isso é de 2,6 a 3,7 vezes o isolado, acima das "duas a três vezes" do segundo parágrafo, e passaram ao rodar de novo.
+- **O arquivo sozinho, com um worker, em rodadas seguidas:** a soma dos 19 testes variou de 2,5 s a 4,2 s com a carga do momento. Nesta VM, a CPU por teste também acompanha a carga do host, e não só a da suíte.
+- **Consulta mais barata:** trocar o `getByRole` com `name` desses testes por uma busca direta nos botões cortou cerca de 16% da CPU do arquivo, menos que a variação acima, e não foi aplicado.
+
 ### Locators visíveis nos specs E2E — contrato do projeto
 
 Quando o HTML de uma página com `<Suspense>` termina antes do script `$RC`, o React renderiza a boundary no cliente e o segmento do servidor fica órfão e oculto no fim do body. `getByRole` ignora essa cópia; `getByText`, `getByPlaceholder`, `getByTestId`, `locator(css)` e os demais não, e ela vira strict mode violation ou dobra contagens. Por isso todo locator que parte de um `Page` e não é `getByRole` passa por `visivel()` (`frontend/e2e/visivel.ts`, onde o mecanismo está descrito), e um bloco `no-restricted-syntax` restrito a `e2e/**` em `eslint.config.mjs` barra quem não passar, assim como `getByRole` com `includeHidden: true`.
