@@ -85,6 +85,32 @@ export function applyFormEdits(
   return fields;
 }
 
+// O strip de `applyFormEdits` só alcança as condições do base. Este passo roda
+// sobre o resultado do merge e alcança também as que outra sessão criou com o
+// diálogo aberto, que só o remoto traz (#599). Entra só a opção que a edição
+// local tirou (base × local, casados por id) e que o campo do merge, com lista
+// de opções, também não tem: uma removida no remoto já teve as suas condições
+// tratadas lá, e a validação do save só cobra valor de campo com opções.
+function stripLocallyRemovedOptions(
+  baseFields: PydanticField[],
+  localFields: PydanticField[],
+  mergedFields: PydanticField[],
+): PydanticField[] {
+  let fields = mergedFields;
+  for (const local of localFields) {
+    const base = baseFields.find((f) => f.id === local.id);
+    const trigger = fields.find((f) => f.id === local.id);
+    if (!base || !trigger?.options) continue;
+    const kept = new Set([...(local.options ?? []), ...trigger.options]);
+    for (const removed of base.options ?? []) {
+      if (!kept.has(removed)) {
+        fields = stripOptionFromConditions(fields, trigger.name, removed);
+      }
+    }
+  }
+  return fields;
+}
+
 // Um conflito aqui é colisão real: a mesma propriedade editada no diálogo e em
 // outra sessão. A UX mínima é bloquear sem perder a digitação — reconstruir o
 // diálogo de resoluções do SchemaEditor neste fluxo seria um segundo mecanismo
@@ -140,16 +166,23 @@ export async function saveMergedEdit(
     return { status: "blocked", message: conflictBlockMessage(blocked) };
   }
 
-  let result = await submit(merged.fields, baseline);
+  // Remover a opção torna inválida toda condição sobre ela, venha de onde vier;
+  // deixar a remota passar só trocava a limpeza por uma recusa do save que
+  // culpa o campo, e não a concorrência (#599).
+  let result = await submit(
+    stripLocallyRemovedOptions(baseFields, localFields, merged.fields),
+    baseline,
+  );
   if (result.status === "conflict") {
     const remerged = mergeSchemas(baseFields, localFields, result.current.fields);
     const reblocked = unresolvedSchemaConflicts(remerged);
     if (reblocked.length > 0) {
       return { status: "blocked", message: conflictBlockMessage(reblocked) };
     }
-    result = await submit(remerged.fields, {
-      revision: result.current.revision,
-    });
+    result = await submit(
+      stripLocallyRemovedOptions(baseFields, localFields, remerged.fields),
+      { revision: result.current.revision },
+    );
   }
   if (result.status === "conflict") {
     return { status: "error", message: STALE_RETRY_FAILED_MESSAGE };

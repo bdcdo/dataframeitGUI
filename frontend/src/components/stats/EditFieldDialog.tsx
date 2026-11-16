@@ -163,11 +163,9 @@ export function EditFieldDialog({
   // em outra sessão depois que o diálogo abriu. Ancorá-la no base capturado
   // esconderia exatamente a dependência que o usuário não tem como ver.
   //
-  // A contrapartida é que o strip de `applyFormEdits` roda sobre o base, então
-  // uma condição que só existe no remoto sobrevive apontando para a opção
-  // removida. O save recusa isso (`validateConditionValues` em pydantic-field),
-  // então é fail-closed e não schema inconsistente — mas a mensagem culpa o
-  // campo, não a concorrência. Ver issue #599.
+  // O strip de `applyFormEdits` roda sobre o base, mas `saveMergedEdit` o
+  // repete sobre o resultado do merge, então a condição remota que a guarda
+  // mostrou também é limpa no save (#599).
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
     fieldName,

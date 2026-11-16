@@ -206,6 +206,74 @@ describe("saveMergedEdit", () => {
   });
 });
 
+// A guarda de remoção olha o `allFields` vivo, mas o strip de `applyFormEdits`
+// roda sobre o base capturado na abertura. Uma condição criada em outra sessão
+// sobre a opção removida só aparece no merge, e é lá que precisa ser limpa —
+// senão o save é recusado culpando o campo, não a concorrência (#599).
+describe("saveMergedEdit — opção removida e condição criada em outra sessão", () => {
+  const q3: PydanticField = {
+    id: "00000000-0000-4000-8000-000000000003",
+    name: "q3",
+    type: "text",
+    options: null,
+    description: "Pergunta 3",
+    condition: { field: "q1", equals: "Não" },
+  };
+  const savedFields = async (
+    remote: PydanticField[],
+    form: Partial<EditFieldFormValues> = { options: ["Sim"] },
+  ) => {
+    const submit = vi.fn<(f: PydanticField[], b: SchemaBaselineIdentity) => Promise<SubmitOutcome>>()
+      .mockResolvedValue({ status: "saved" });
+    const local = applyFormEdits([q1], "q1", formOf(form));
+    const result = await saveMergedEdit([q1], local, remote, BASELINE, submit);
+    expect(result).toEqual({ status: "saved" });
+    return submit.mock.calls[0][0];
+  };
+
+  it("limpa a condição remota que dependia da opção removida", async () => {
+    const fields = await savedFields([q1, q3]);
+
+    expect(fields.find((f) => f.name === "q1")?.options).toEqual(["Sim"]);
+    expect(fields.find((f) => f.name === "q3")).not.toHaveProperty("condition");
+  });
+
+  it("tira só a opção removida de uma condição remota com lista", async () => {
+    const fields = await savedFields([
+      q1,
+      { ...q3, condition: { field: "q1", in: ["Sim", "Não"] } },
+    ]);
+
+    expect(fields.find((f) => f.name === "q3")?.condition).toEqual({
+      field: "q1",
+      in: ["Sim"],
+    });
+  });
+
+  it("sem opção removida, a condição remota passa intacta", async () => {
+    const fields = await savedFields([q1, q3], { description: "Local" });
+
+    expect(fields.find((f) => f.name === "q3")).toEqual(q3);
+  });
+
+  it("o reenvio após conflito de CAS também limpa a condição nova", async () => {
+    const submit = vi.fn<(f: PydanticField[], b: SchemaBaselineIdentity) => Promise<SubmitOutcome>>()
+      .mockResolvedValueOnce({
+        status: "conflict",
+        current: { fields: [q1, q3], version: "0.1.4", revision: 9 },
+      })
+      .mockResolvedValueOnce({ status: "saved" });
+    const local = applyFormEdits([q1], "q1", formOf({ options: ["Sim"] }));
+
+    const result = await saveMergedEdit([q1], local, [q1], BASELINE, submit);
+
+    expect(result).toEqual({ status: "saved" });
+    expect(submit.mock.calls[1][0].find((f) => f.name === "q3")).not.toHaveProperty(
+      "condition",
+    );
+  });
+});
+
 // A mensagem de bloqueio é o que resta ao usuário quando o save para: precisa
 // nomear a disputa nos três `kind` que o merge produz, e não o id opaco.
 describe("saveMergedEdit — a mensagem nomeia a disputa", () => {
