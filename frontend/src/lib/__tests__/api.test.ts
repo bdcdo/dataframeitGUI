@@ -79,7 +79,8 @@ describe("requireSupabaseToken", () => {
 // quem só não concluiu o acesso — o request não pode sair.
 describe("requireSupabaseToken — token sem o vínculo (supabase_uid)", () => {
   const linked = sessionTokenWith(LINKED_CLAIMS);
-  // Um token por teste: o helper lembra o último token cuja reemissão falhou.
+  // Um token por teste: o helper lembra, em estado do módulo, o último token
+  // reemitido sem o claim, e um token repetido pularia a reemissão.
   let serial = 0;
   const unlinkedToken = () =>
     sessionTokenWith({ ...UNLINKED_CLAIMS, jti: `t${++serial}` });
@@ -127,22 +128,30 @@ describe("requireSupabaseToken — token sem o vínculo (supabase_uid)", () => {
     );
   });
 
-  it("não reemite de novo enquanto o Clerk devolve o mesmo token em cache", async () => {
+  it("não reemite de novo enquanto o Clerk devolve o token já reemitido", async () => {
     // O helper roda a cada poll e a cada pausa de digitação no preview: sem
-    // essa memória, cada chamada seria uma ida ao Clerk.
-    const first = unlinkedToken();
-    const getToken = vi.fn().mockResolvedValue(first);
+    // essa memória, cada chamada seria uma ida ao Clerk. O dublê faz o que o
+    // Clerk faz: `skipCache` emite um token NOVO e o põe no cache, de onde o
+    // `getToken()` seguinte o devolve.
+    let cached = unlinkedToken();
+    const getToken = vi.fn(async (options?: { skipCache?: boolean }) => {
+      if (options?.skipCache) cached = unlinkedToken();
+      return cached;
+    });
+    const reissues = () =>
+      getToken.mock.calls.filter(([options]) => options?.skipCache).length;
+
     await requireSupabaseToken(getToken, pending).catch(() => {});
     await requireSupabaseToken(getToken, pending).catch(() => {});
     await expect(requireSupabaseToken(getToken, pending)).rejects.toMatchObject({
       name: "AccessLinkPendingError",
     });
-    expect(getToken.mock.calls.filter(([options]) => options)).toHaveLength(1);
+    expect(reissues()).toBe(1);
 
-    // Token novo no cache (o Clerk renova a cada ~60s): vale uma nova tentativa.
-    getToken.mockResolvedValue(unlinkedToken());
+    // O cache do Clerk renova sozinho (a cada ~60s): vale uma nova tentativa.
+    cached = unlinkedToken();
     await requireSupabaseToken(getToken, pending).catch(() => {});
-    expect(getToken.mock.calls.filter(([options]) => options)).toHaveLength(2);
+    expect(reissues()).toBe(2);
   });
 
   it("sessão que cai durante a reemissão vira MissingAuthTokenError", async () => {

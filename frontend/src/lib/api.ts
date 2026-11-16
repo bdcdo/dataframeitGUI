@@ -81,7 +81,7 @@ function apiErrorCopy(path: string, status: number, statusText: string, body: un
 
 type GetToken = (options?: { skipCache?: boolean }) => Promise<string | null>;
 
-// Último token em cache cuja reemissão não trouxe o claim. Enquanto o Clerk
+// Último token reemitido que veio sem o claim. Enquanto o Clerk
 // devolver esse mesmo token (até ~60s), não adianta reemitir de novo: o helper
 // roda a cada poll e a cada pausa de digitação no preview do prompt, e cada
 // reemissão é uma ida ao Clerk.
@@ -111,11 +111,12 @@ export async function requireSupabaseToken(
   if (!lacksSupabaseUid(token)) return token;
 
   if (token !== reissueFailedFor) {
-    const cached = token;
     token = await getToken({ skipCache: true });
     if (!token) throw new MissingAuthTokenError();
     if (!lacksSupabaseUid(token)) return token;
-    reissueFailedFor = cached;
+    // O token reemitido, não o anterior: a reemissão o põe no cache do Clerk, e
+    // é ele que o próximo `getToken()` devolve.
+    reissueFailedFor = token;
   }
   if (accountHasLink()) return token;
   throw new AccessLinkPendingError();
