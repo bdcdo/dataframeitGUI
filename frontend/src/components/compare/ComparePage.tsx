@@ -31,8 +31,7 @@ import { staleVerdictOf, type ReviewsByDoc, type StaleReviewsByDoc } from "@/lib
 import type { PydanticField } from "@/lib/types";
 import type { ValueEquivalence } from "@/lib/equivalence";
 import type { SplitLayout } from "@/lib/compare-split-layout";
-import type { DocCoverage } from "@/app/(app)/projects/[id]/analyze/compare/page";
-import type { CompareDocument, CompareResponse } from "./compare-types";
+import type { CompareDocument, CompareResponse, DocCoverage } from "./compare-types";
 
 interface ComparePageProps {
   projectId: string;

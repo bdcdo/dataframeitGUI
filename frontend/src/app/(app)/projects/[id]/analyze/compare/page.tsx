@@ -14,8 +14,6 @@ import {
   parseSplitLayout,
 } from "@/lib/compare-split-layout";
 
-export type { DocCoverage } from "@/lib/compare-queue";
-
 export default async function ComparePageRoute({
   params,
   searchParams,
@@ -45,11 +43,12 @@ export default async function ComparePageRoute({
 
   const queue = await loadCompareQueue(supabase, id, identity, sp);
 
+  // O carregador já logou a falha; `error` é a copy da tela, com o código que
+  // a liga à linha do log.
   if (!queue.ok) {
-    console.error("Failed to fetch responses for compare:", queue.error);
     return (
       <div className="flex h-full items-center justify-center text-destructive">
-        Erro ao carregar respostas. Tente novamente.
+        {queue.error}
       </div>
     );
   }

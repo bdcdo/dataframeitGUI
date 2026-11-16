@@ -120,7 +120,6 @@
       },
       {
         "files": [
-          "src/app/**/analyze/compare/page.tsx",
           "src/app/**/reviews/comments/page.tsx"
         ],
         "rules": [

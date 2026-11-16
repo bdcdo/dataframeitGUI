@@ -25,6 +25,19 @@ export interface CompareResponse {
   created_at: string;
 }
 
+// Cobertura de um documento da fila, medida por `loadCompareQueue`
+// (compare-queue.ts) e exibida na lista e no painel.
+export interface DocCoverage {
+  docId: string;
+  humanCount: number; // responderam com versão ok
+  totalCount: number;
+  assignedCodingCount: number; // pesquisadores atribuídos em codificação
+  humansFromAssigned: number; // dos atribuídos, quantos responderam
+  divergentCount: number;
+  reviewedCount: number;
+  assignmentStatus: "pendente" | "em_andamento" | "concluido" | null;
+}
+
 export interface CompareDocument {
   id: string;
   title: string | null;

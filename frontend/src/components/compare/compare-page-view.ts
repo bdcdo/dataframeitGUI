@@ -3,10 +3,9 @@
 // cada uma seja testável por tabela, sem montar a árvore da Comparação.
 
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
-import type { DocCoverage } from "@/lib/compare-queue";
 import type { PydanticField } from "@/lib/types";
 import type { DocListEntry } from "./CompareDocList";
-import type { CompareDocument } from "./compare-types";
+import type { CompareDocument, DocCoverage } from "./compare-types";
 
 // Documento sem linha de cobertura (não deveria acontecer, mas a fila não
 // garante) aparece zerado na lista, e não some.

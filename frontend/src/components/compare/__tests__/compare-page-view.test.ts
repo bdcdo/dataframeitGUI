@@ -2,7 +2,7 @@
 // cobre o mesmo comportamento pela árvore montada; aqui cada ramo fica fixado
 // por tabela.
 import { describe, it, expect } from "vitest";
-import type { DocCoverage } from "@/lib/compare-queue";
+import type { DocCoverage } from "../compare-types";
 import type { VerdictInfo } from "@/lib/compare-reviews";
 import {
   buildDocListEntries,

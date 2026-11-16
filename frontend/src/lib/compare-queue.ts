@@ -34,10 +34,12 @@ import {
 import type { resolveProjectQueueIdentity } from "@/lib/auth";
 import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
 import { reviewValidity } from "@/lib/review-validity";
+import { serverErrorScope } from "@/lib/server-error";
+import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { PydanticField } from "@/lib/types";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
-import type { CompareResponse } from "@/components/compare/compare-types";
+import type { CompareResponse, DocCoverage } from "@/components/compare/compare-types";
 
 interface CompareDoc {
   id: string;
@@ -57,17 +59,6 @@ interface CompareDoc {
 // check.
 interface CompareQueueResponse extends CompareResponse {
   document_id: string;
-}
-
-export interface DocCoverage {
-  docId: string;
-  humanCount: number; // responderam com versão ok
-  totalCount: number;
-  assignedCodingCount: number; // pesquisadores atribuídos em codificação
-  humansFromAssigned: number; // dos atribuídos, quantos responderam
-  divergentCount: number;
-  reviewedCount: number;
-  assignmentStatus: "pendente" | "em_andamento" | "concluido" | null;
 }
 
 // A cobertura que a qualificação do documento consegue medir: tudo menos o
@@ -500,6 +491,22 @@ export type CompareQueueIdentity = ReturnType<typeof resolveProjectQueueIdentity
   isCoordinator: boolean;
 };
 
+// Toda fonte da fila é estrutural: sem ela, a fila, a cobertura ou as
+// contagens saem erradas sem aviso (documento sumido, veredito tido como
+// pendente, badge zerado). Falha de qualquer uma vira a tela de erro, com o
+// código que liga a tela à linha do log, e não uma fila parcial.
+const queueReadError = serverErrorScope("compare-queue");
+const QUEUE_ERROR_COPY = "Erro ao carregar a fila de comparação. Tente novamente.";
+
+function firstReadError(
+  reads: Record<string, { error: { message: string } | null }>,
+): { ok: false; error: string } | null {
+  for (const [table, { error }] of Object.entries(reads)) {
+    if (error) return { ok: false, error: queueReadError(`leitura de ${table}`, error, QUEUE_ERROR_COPY) };
+  }
+  return null;
+}
+
 export async function loadCompareQueue(
   supabase: Pick<SupabaseServerClient, "from">,
   projectId: string,
@@ -511,12 +518,16 @@ export async function loadCompareQueue(
   identity: Promise<CompareQueueIdentity>,
   searchParams: Record<string, string | undefined>,
 ) {
+  // Leituras do projeto inteiro paginadas com ordem total pela PK, e as
+  // restritas à fila em lotes de documentos: o PostgREST corta cada leitura
+  // em 1000 linhas sem erro, e uma lista longa de ids no `.in` estoura a URL
+  // (ver fetch-all-paged.ts).
   const [
-    { data: project },
-    { data: allResponses, error: responsesError },
-    { data: versionLog },
-    { data: allAssignments },
-    { data: allEquivalences },
+    projectRead,
+    responsesRead,
+    versionLogRead,
+    assignmentsRead,
+    equivalencesRead,
     { ownMemberUserId, queueUserId, isImpersonating, isCoordinator },
   ] = await Promise.all([
     supabase
@@ -526,38 +537,60 @@ export async function loadCompareQueue(
       )
       .eq("id", projectId)
       .single(),
-    supabase
-      .from("responses")
-      // `documents!inner` + filtro excluded_at: documentos arquivados não
-      // entram na fila de comparação (consistente com a contagem de B4).
-      .select(
-        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, is_partial, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents!inner(id, title, external_id)",
-      )
-      .eq("project_id", projectId)
-      .is("documents.excluded_at", null)
-      .is("documents.exclusion_pending_at", null)
-      .limit(5000),
-    supabase
-      .from("schema_change_log")
-      .select("version_major, version_minor, version_patch")
-      .eq("project_id", projectId)
-      .not("version_major", "is", null)
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("assignments")
-      .select("document_id, user_id, type, status")
-      .eq("project_id", projectId),
+    fetchAllPaged<RawResponseRow>(
+      () =>
+        supabase
+          .from("responses")
+          // `documents!inner` + filtro excluded_at: documentos arquivados não
+          // entram na fila de comparação (consistente com a contagem de B4).
+          .select(
+            "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, is_partial, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents!inner(id, title, external_id)",
+          )
+          .eq("project_id", projectId)
+          .is("documents.excluded_at", null)
+          .is("documents.exclusion_pending_at", null),
+      ["id"],
+    ),
+    // A ordem não importa (as versões são ordenadas depois); a PK é a ordem
+    // total que a paginação exige.
+    fetchAllPaged<VersionLogRow>(
+      () =>
+        supabase
+          .from("schema_change_log")
+          .select("version_major, version_minor, version_patch")
+          .eq("project_id", projectId)
+          .not("version_major", "is", null),
+      ["id"],
+    ),
+    fetchAllPaged<AssignmentRow>(
+      () =>
+        supabase
+          .from("assignments")
+          .select("document_id, user_id, type, status")
+          .eq("project_id", projectId),
+      ["id"],
+    ),
     // Equivalências de valor: escopo do projeto, uma linha por par de valores
     // (centenas por projeto), então não há o que recortar por documento.
     fetchProjectValueEquivalences(supabase, projectId),
     identity,
   ]);
 
-  if (responsesError) return { ok: false as const, error: responsesError.message };
+  const readError = firstReadError({
+    projects: projectRead,
+    responses: responsesRead,
+    schema_change_log: versionLogRead,
+    assignments: assignmentsRead,
+    value_equivalences: equivalencesRead,
+  });
+  if (readError) return readError;
+  const project = projectRead.data;
+  const allResponses = responsesRead.data;
+  const allAssignments = assignmentsRead.data;
 
   // fieldName -> equivalências de valor do projeto. Serve à divergência no
   // servidor e à fusão dos cards no cliente.
-  const equivalencesByField = groupValueEquivalencesByField(allEquivalences);
+  const equivalencesByField = groupValueEquivalencesByField(equivalencesRead.data);
 
   // Fail-CLOSED (ao contrario de comments/llm-insights): showAllQueue decide
   // quais documentos aparecem na fila — quem não pediu "todos" ve so os
@@ -623,44 +656,73 @@ export async function loadCompareQueue(
       equivalencesByField,
     });
 
-  // Fetch text + reviews + comment counts
-  const [{ data: docTexts }, { data: reviews }, { data: commentCounts }, { data: suggestionCounts }] =
-    await Promise.all([
-      qualifiedDocIds.length > 0
-        ? supabase
+  // Fetch text + reviews + comment counts. Texto e veredito só dos documentos
+  // da fila: nada qualificado, nenhuma leitura.
+  const [textsRead, reviewsRead, commentsRead, suggestionsRead] = await Promise.all([
+    fetchByDocumentChunks(qualifiedDocIds, (ids) =>
+      fetchAllPaged<{ id: string; text: string }>(
+        () =>
+          supabase
             .from("documents")
             .select("id, text")
-            .in("id", qualifiedDocIds)
+            .in("id", ids)
             .is("excluded_at", null)
-            .is("exclusion_pending_at", null)
-        : Promise.resolve({ data: [] as { id: string; text: string }[] }),
-      // Só os reviews da identidade efetiva: a revisão é por revisor e este
-      // fetch alimenta exclusivamente existingReviews/reviewedCount (ver
-      // buildReviewsAndReviewedCounts). Vereditos de terceiros contaminavam o
-      // estado "já revisado" da tela e travavam o fecho do parecer.
-      supabase
-        .from("reviews")
-        .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
-        .eq("project_id", projectId)
-        .eq("reviewer_id", queueUserId),
-      supabase
-        .from("project_comments")
-        .select("document_id, field_name")
-        .eq("project_id", projectId)
-        .is("resolved_at", null),
-      supabase
-        .from("schema_suggestions")
-        .select("field_name")
-        .eq("project_id", projectId)
-        .eq("status", "pending"),
-    ]);
+            .is("exclusion_pending_at", null),
+        ["id"],
+      ),
+    ),
+    // Só os reviews da identidade efetiva: a revisão é por revisor e este
+    // fetch alimenta exclusivamente existingReviews/reviewedCount (ver
+    // buildReviewsAndReviewedCounts). Vereditos de terceiros contaminavam o
+    // estado "já revisado" da tela e travavam o fecho do parecer. E só dos
+    // documentos da fila: o cliente não usa veredito de documento que não
+    // lista, e o reviewedCount só é medido nos qualificados.
+    fetchByDocumentChunks(qualifiedDocIds, (ids) =>
+      fetchAllPaged<ReviewRow>(
+        () =>
+          supabase
+            .from("reviews")
+            .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
+            .eq("project_id", projectId)
+            .eq("reviewer_id", queueUserId)
+            .in("document_id", ids),
+        ["id"],
+      ),
+    ),
+    fetchAllPaged<CommentCountRow>(
+      () =>
+        supabase
+          .from("project_comments")
+          .select("document_id, field_name")
+          .eq("project_id", projectId)
+          .is("resolved_at", null),
+      ["id"],
+    ),
+    fetchAllPaged<SuggestionCountRow>(
+      () =>
+        supabase
+          .from("schema_suggestions")
+          .select("field_name")
+          .eq("project_id", projectId)
+          .eq("status", "pending"),
+      ["id"],
+    ),
+  ]);
 
-  const textMap = new Map((docTexts || []).map((d) => [d.id, d.text]));
+  const secondReadError = firstReadError({
+    documents: textsRead,
+    reviews: reviewsRead,
+    project_comments: commentsRead,
+    schema_suggestions: suggestionsRead,
+  });
+  if (secondReadError) return secondReadError;
+
+  const textMap = new Map(textsRead.data.map((d) => [d.id, d.text]));
 
   // Reviews da identidade efetiva — na impersonação, o progresso exibido é o
   // do dono da fila, não o do master.
   const { existingReviews, staleReviews, coverageByDoc } = buildReviewsAndReviewedCounts(
-    reviews,
+    reviewsRead.data,
     queueUserId,
     qualifiedCoverageByDoc,
     divergentFields,
@@ -668,8 +730,8 @@ export async function loadCompareQueue(
   );
 
   const { commentCountsByKey, suggestionCountsByField } = buildCountsByKey(
-    commentCounts,
-    suggestionCounts,
+    commentsRead.data,
+    suggestionsRead.data,
   );
 
   return {
@@ -691,7 +753,7 @@ export async function loadCompareQueue(
       coverageByDoc: coverageByDoc,
       commentCountsByKey,
       suggestionCountsByField,
-      availableVersions: buildAvailableVersions(versionLog, allResponses),
+      availableVersions: buildAvailableVersions(versionLogRead.data, allResponses),
       latestMajorLabel: formatVersion(latestMajorAnchor(projectVersion)),
       currentProjectVersion: formatVersion(projectVersion),
       // Maps don't cross the RSC boundary.
