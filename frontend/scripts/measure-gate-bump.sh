@@ -69,12 +69,13 @@ summary=()
 # entry abaixo depende disso.
 read_hooks() {
   ruby -ryaml -e '
-    repos = YAML.safe_load(File.read(ARGV.fetch(0))).fetch("repos")
+    text = File.read(ARGV.fetch(0))
+    repos = YAML.safe_load(text).fetch("repos")
     gitleaks = repos.find { |r| r["hooks"]&.any? { |h| h["id"] == "gitleaks" } }
     abort("hook gitleaks ausente") unless gitleaks
     abort("hook gitleaks fora do repo gitleaks/gitleaks: #{gitleaks["repo"]}") unless gitleaks["repo"].to_s.end_with?("gitleaks/gitleaks")
     rev = gitleaks.fetch("rev").to_s
-    frozen = File.read(ARGV.fetch(0))[/^\s*rev:\s*#{Regexp.escape(rev)}\s+#\s*frozen:\s*(\S+)/, 1]
+    frozen = text[/^\s*rev:\s*#{Regexp.escape(rev)}\s+#\s*frozen:\s*(\S+)/, 1]
     puts repos.flat_map { |r| (r["hooks"] || []).map { |h| h["id"] } }.join(" "), gitleaks["repo"], rev, frozen ? "#{frozen} (#{rev[0, 9]})" : rev
   ' "$1"
 }

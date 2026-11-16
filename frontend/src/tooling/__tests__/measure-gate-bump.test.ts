@@ -149,7 +149,7 @@ describe("measure-gate-bump.sh pre-commit", () => {
   });
 
   // O rev real é um SHA com a tag em `# frozen:` (#555): o hook roda o SHA, e o
-  // resumo nomeia a tag, que o YAML descarta junto com o comentário.
+  // resumo nomeia a tag.
   it("acha o rev do gitleaks na .pre-commit-config.yaml real do repo e rotula pela tag do # frozen:", () => {
     const pinned = realPreCommitConfig.match(
       /repo: https:\/\/github\.com\/gitleaks\/gitleaks\n\s+rev: ([0-9a-f]{40})\s+# frozen: (\S+)/,

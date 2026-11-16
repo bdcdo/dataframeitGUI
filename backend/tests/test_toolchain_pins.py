@@ -133,7 +133,7 @@ def _remote_revs(config: str) -> list[tuple[str, str]]:
     """
     revs = []
     for block in re.split(r"^\s*- repo:", config, flags=re.MULTILINE)[1:]:
-        repo = block.split(maxsplit=1)[0].strip("'\"") if block.strip() else ""
+        repo = block.split(maxsplit=1)[0]
         if repo in ("local", "meta"):
             continue
         rev = re.search(r"^\s*rev:\s*(.*)$", block, re.MULTILINE)
@@ -141,22 +141,20 @@ def _remote_revs(config: str) -> list[tuple[str, str]]:
     return revs
 
 
-def _remote_rev_problems(config: str) -> list[str]:
+def _remote_rev_problems(revs: list[tuple[str, str]]) -> list[str]:
     """Repositórios remotos cujo ``rev`` não é SHA com ``# frozen: <tag>``."""
     return [
         f"{repo} em .pre-commit-config.yaml com `rev: {rev}`: pine pelo SHA "
         "do commit com `# frozen: <tag>` (#555)."
-        for repo, rev in _remote_revs(config)
-        if not re.fullmatch(r"['\"]?[0-9a-f]{40}['\"]?\s+# frozen: \S.*", rev)
+        for repo, rev in revs
+        if not re.fullmatch(r"[0-9a-f]{40}\s+# frozen: \S.*", rev)
     ]
 
 
 def test_remote_hooks_pinned_by_frozen_sha() -> None:
-    config = (REPO / ".pre-commit-config.yaml").read_text()
-    assert _remote_revs(config), (
-        "nenhum repositório remoto achado: o teste não confere nada"
-    )
-    problems = _remote_rev_problems(config)
+    revs = _remote_revs((REPO / ".pre-commit-config.yaml").read_text())
+    assert revs, "nenhum repositório remoto achado: o teste não confere nada"
+    problems = _remote_rev_problems(revs)
     assert not problems, "\n".join(problems)
 
 
@@ -182,7 +180,7 @@ def test_remote_rev_problems_flags_tag_pin() -> None:
         "  - repo: https://github.com/example/ok\n"
         f"    rev: {sha}  # frozen: release-1.2 (ver #555)\n"
     )
-    problems = _remote_rev_problems(config)
+    problems = _remote_rev_problems(_remote_revs(config))
     assert [p.split(" ")[0] for p in problems] == [
         "https://github.com/gitleaks/gitleaks",
         "git@github.com:org/hook.git",
