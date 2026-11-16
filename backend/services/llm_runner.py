@@ -202,11 +202,10 @@ def _persist_run_insert(sb, job_id: str, project_id: str, filter_mode: str) -> N
 def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> bool:
     """Persistir snapshot de counters + heartbeat em llm_runs.
 
-    Chamado periodicamente pelo save loop (throttle 2s). Erros aqui são
-    logados, não re-lançados: a run principal não deve abortar só porque uma
-    atualização de progresso falhou. Devolve se a gravação saiu, para o
-    throttle só contar a que saiu: a que falhou é tentada de novo na linha
-    seguinte.
+    Chamado pelo save loop (throttle 2s) e a cada mudança de fase. Erros aqui
+    são logados, não re-lançados: a run principal não deve abortar só porque
+    uma atualização de progresso falhou. O próximo tick tenta de novo. Devolve
+    se a gravação saiu.
 
     O `total` não entra aqui: é constante durante a run, e quem o grava é
     `_persist_run_snapshot` (o fecho da run o repete).
@@ -1937,15 +1936,20 @@ def _persist_run_progress_throttled(sb, job_id: str, jobs_state: dict) -> None:
     publica. Com o intervalo repetido nos dois, um ajuste num deixaria o outro
     martelando `llm_runs` ou deixando o heartbeat envelhecer.
     """
-    if time.time() - jobs_state["last_progress_persist"] >= 2.0:
-        _persist_run_progress_now(sb, job_id, jobs_state)
+    now_ts = time.time()
+    if now_ts - jobs_state["last_progress_persist"] >= 2.0:
+        _persist_run_progress(sb, job_id, jobs_state)
+        # Conta a tentativa, e não só a que saiu: com o banco fora, cada linha
+        # pagaria uma ida e volta condenada.
+        jobs_state["last_progress_persist"] = now_ts
 
 
 def _persist_run_progress_now(sb, job_id: str, jobs_state: dict) -> None:
     """`_persist_run_progress` sem esperar o throttle, acertando o relógio dele.
 
     Para a mudança de fase, que não pode esperar 2 s. Sem acertar o relógio, a
-    linha seguinte regravava o mesmo progresso logo depois.
+    linha seguinte regravava o mesmo progresso logo depois. A gravação que
+    falha não o acerta: a linha seguinte tenta de novo, pelo throttle.
     """
     if _persist_run_progress(sb, job_id, jobs_state):
         jobs_state["last_progress_persist"] = time.time()
