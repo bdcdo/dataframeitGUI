@@ -186,7 +186,8 @@ describe("fetchReviewBaseData: lê as tabelas inteiras, página a página", () =
     projects: [{ id: "p1", pydantic_fields: [x], pydantic_hash: null, created_by: "owner" }],
     responses: docs.map((doc) => ({
       id: `r-${doc}`, project_id: "p1", document_id: doc, respondent_id: "ana", respondent_type: "humano", respondent_name: "Ana",
-      answers: { x: "A" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z",
+      answers: { x: "A" } as Record<string, string>, justifications: null, is_latest: true, pydantic_hash: null,
+      answer_field_hashes: { x: HASH } as Record<string, string>, created_at: "2026-09-01T00:00:00Z",
     })),
     reviews: docs.map((doc) => ({
       id: `rv-${doc}`, project_id: "p1", document_id: doc, field_name: "x", verdict: "A", chosen_response_id: `r-${doc}`, comment: null,
@@ -228,12 +229,39 @@ describe("fetchReviewBaseData: lê as tabelas inteiras, página a página", () =
     expect(ctx.responsesByDoc.get(docId(0))?.map((r) => r.id)).toEqual(["r-b", "r-a"]);
   });
 
-  it.each(["responses", "reviews", "documents"])("erro na leitura de %s falha alto em vez de montar o Gabarito sem a tabela", async (table) => {
+  it.each(["projects", "responses", "reviews", "documents"])("erro na leitura de %s falha alto em vez de montar o Gabarito sem a tabela", async (table) => {
     const client = makeFilterAwareSupabaseMock({
       tableData: tableData(), writeCalls: [], rpcResults: { read_error_resolutions: { data: [] } },
       queryErrors: { [`${table}:select`]: { message: "gateway fora" } },
     });
 
     await expect(fetchReviewBaseData(client as never, "p1")).rejects.toThrow("gateway fora");
+  });
+
+  it("erro na leitura das decisões falha alto em vez de montar o Gabarito sem elas", async () => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: tableData(), writeCalls: [], rpcResults: { read_error_resolutions: { data: null, error: { message: "gateway fora" } } },
+    });
+
+    await expect(fetchReviewBaseData(client as never, "p1")).rejects.toThrow("gateway fora");
+  });
+
+  it("os campos de um documento saem na ordem do schema, não na da PK das revisões", async () => {
+    const y = { ...x, id: "00000000-0000-4000-8000-000000000002", name: "y" } as PydanticField;
+    const data = tableData();
+    data.projects[0].pydantic_fields = [x, y];
+    data.responses = [{ ...data.responses[0], answers: { x: "A", y: "A" }, answer_field_hashes: { x: HASH, y: HASH } }];
+    // A PK da revisão de `y` vem antes da de `x`.
+    data.reviews = [
+      { ...data.reviews[0], id: "rv-2", field_name: "x" },
+      { ...data.reviews[0], id: "rv-1", field_name: "y" },
+    ];
+    const client = makeFilterAwareSupabaseMock({
+      tableData: data, writeCalls: [], rpcResults: { read_error_resolutions: { data: [] } },
+    });
+
+    const [doc] = computeReviewedDocuments(await fetchReviewBaseData(client as never, "p1"));
+
+    expect(doc.fields.map((field) => field.fieldName)).toEqual(["x", "y"]);
   });
 });

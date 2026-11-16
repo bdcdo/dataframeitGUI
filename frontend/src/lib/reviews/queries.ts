@@ -165,7 +165,7 @@ async function readAllOrThrow<T>(
   what: string,
 ): Promise<T[]> {
   const { data, error } = await read;
-  if (error) throw new Error(`Não foi possível carregar ${what}: ${error.message}`);
+  if (error) throw new Error(`Não foi possível carregar ${what}: ${error.message}`, { cause: error });
   return data;
 }
 
@@ -176,7 +176,7 @@ export async function fetchReviewBaseData(
   projectId: string,
 ): Promise<ReviewComputationContext> {
   const [
-    { data: project },
+    { data: project, error: projectError },
     responses,
     reviews,
     documents,
@@ -234,6 +234,9 @@ export async function fetchReviewBaseData(
   const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
   const currentFieldHashes = buildFieldHashMap(fields);
 
+  // Sem o projeto não há schema, e todo veredito sairia como de campo removido.
+  if (projectError) throw new Error(`Não foi possível carregar o projeto: ${projectError.message}`, { cause: projectError });
+
   const responsesByDoc = new Map<string, ResponseRow[]>();
   for (const r of responses) {
     const list = responsesByDoc.get(r.document_id) || [];
@@ -241,9 +244,10 @@ export async function fetchReviewBaseData(
     responsesByDoc.set(r.document_id, list);
   }
   // O cursor devolve as respostas na ordem da PK, que é aleatória. A ordem
-  // dos respondentes de cada documento na tela segue a de gravação.
+  // dos respondentes de cada documento na tela segue a de gravação, por
+  // instante e não pelo texto do timestamp, como em `pickCellReview`.
   for (const list of responsesByDoc.values()) {
-    list.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : 1));
+    list.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at) || (a.id < b.id ? -1 : 1));
   }
 
   const uniqueReviews = gabaritoReviews(reviews, fieldMap);
@@ -346,6 +350,9 @@ function sameAnswer(answer: unknown, value: unknown): boolean {
 }
 
 export function computeReviewedDocuments(ctx: ReviewComputationContext): ReviewedDocument[] {
+  // As reviews chegam na ordem da PK, que é aleatória: os campos de cada
+  // documento saem na ordem do schema.
+  const fieldOrder = new Map(ctx.fields.map((field, index) => [field.name, index]));
   const reviewsByDoc = new Map<string, ReviewRow[]>();
   reviewsWithResolutions(ctx).forEach((r) => {
     const list = reviewsByDoc.get(r.document_id) || [];
@@ -359,6 +366,7 @@ export function computeReviewedDocuments(ctx: ReviewComputationContext): Reviewe
     const docResponses = ctx.responsesByDoc.get(docId) || [];
     const reviewedFields: ReviewedField[] = [];
 
+    docReviews.sort((a, b) => (fieldOrder.get(a.field_name) ?? 0) - (fieldOrder.get(b.field_name) ?? 0));
     for (const review of docReviews) {
       const { resolution } = review;
       const field = ctx.fieldMap.get(review.field_name);
