@@ -22,7 +22,9 @@ mkdir -p "$tmp_dir/bin"
 # as passadas: `machine list` lê o arquivo, `machine clone` acrescenta uma
 # Machine iniciada com o nome do `--name`, o último argumento, e `machine
 # destroy` tira a Machine da lista, menos as de DESTROY_FAILS, para as quais
-# falha sem mudar nada.
+# falha sem mudar nada. CLONE_BREAKS dá o nome de uma Machine que passa a
+# "failed" quando qualquer clone é feito, para simular o estado que muda no
+# meio do conserto.
 cat >"$tmp_dir/bin/flyctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -63,8 +65,9 @@ case "${1:-} ${2:-}" in
       serial="$(($(cat "$MACHINES_STATE.serial" 2>/dev/null || echo 0) + 1))"
       echo "$serial" >"$MACHINES_STATE.serial"
       name="${*: -1}"
-      jq -c --arg id "clone$serial" --arg name "$name" \
-        '. + [{id: $id, name: $name, state: "started", region: "gru", events: []}]' \
+      jq -c --arg id "clone$serial" --arg name "$name" --arg breaks "${CLONE_BREAKS:-}" \
+        'map(if .name == $breaks then .state = "failed" else . end)
+         + [{id: $id, name: $name, state: "started", region: "gru", events: []}]' \
         "$MACHINES_STATE" >"$MACHINES_STATE.tmp"
       mv "$MACHINES_STATE.tmp" "$MACHINES_STATE"
     fi
@@ -159,6 +162,7 @@ run_vigia() {
     MACHINES_AFTER_PROBE_JSON="${MACHINES_AFTER_PROBE_JSON:-}" \
     MACHINES_STATE="${MACHINES_STATE:-}" \
     DESTROY_FAILS="${DESTROY_FAILS:-}" \
+    CLONE_BREAKS="${CLONE_BREAKS:-}" \
     PROBE_OK="${PROBE_OK:-1}" \
     PROBE_OK_FROM_CALL="${PROBE_OK_FROM_CALL:-}" \
     START_FAILS="${START_FAILS:-}" \
@@ -441,6 +445,17 @@ machine destroy m2 -a app-teste --force"
 assert_state "m1 clone1 clone2"
 DESTROY_FAILS=""
 
+# O clone de m2 cai enquanto o vigia clona m1, na mesma passada: o estado dele
+# é relido na vez de m2, e a original, que voltou a servir, fica.
+set_state "$(machine m1 failed)" "$(machine m2)" '{"id":"c2","name":"vigia-m2","state":"started","region":"gru","events":[]}'
+CLONE_BREAKS="vigia-m2"
+expect_failure
+assert_calls "machine clone m1 -a app-teste --region gru --name vigia-m1
+machine destroy m1 -a app-teste --force"
+assert_contains "$CALLS_LOG.summary" 'o clone vigia-m2 da Machine m2 está "failed"'
+assert_state "m2 c2 clone1"
+unset CLONE_BREAKS
+
 # Clone do vigia que não está de pé (o `machine clone` criou a Machine e
 # falhou antes de iniciá-la): destruir a original seria ficar só com uma
 # Machine que não serve. Nada é destruído nem clonado; o vigia avisa e falha.
@@ -461,6 +476,22 @@ for original_state in failed started; do
   assert_calls ""
   assert_contains "$CALLS_LOG.summary" 'o clone vigia-m2 da Machine m2 está "failed"'
 done
+
+# Depois do conserto completo o clone é a Machine normal da app e segue com o
+# nome do vigia: se travar, é consertado como qualquer outra.
+MACHINES_JSON="$(machines '{"id":"c1","name":"vigia-m2","state":"failed","region":"gru","events":[]}')"
+expect_failure
+assert_calls "machine clone c1 -a app-teste --region gru --name vigia-c1
+machine destroy c1 -a app-teste --force"
+
+# A releitura da lista falha ou não traz mais a Machine presa: nada é clonado
+# nem destruído às cegas.
+MACHINES_JSON="$(machines "$(machine m2 failed)")"
+for MACHINES_AFTER_PROBE_JSON in "Error: 502 from API" "[]"; do
+  expect_failure
+  assert_calls ""
+done
+unset MACHINES_AFTER_PROBE_JSON
 
 # O clone estava de pé na primeira listagem e cai durante a sonda: o que vale
 # é a lista lida na hora do conserto, e a original, a única que ainda pode

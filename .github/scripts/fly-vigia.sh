@@ -220,11 +220,18 @@ fi
 # enquanto a original existir: cloná-lo e destruí-lo apagaria o nome que liga
 # os dois, e a Machine a mais ficaria sem aviso. O par é tratado pela original.
 #
-# A lista é lida de novo aqui porque a sonda e os starts acima levam minutos, e
-# o estado do clone decide se a original pode ser destruída.
+# A lista é lida de novo a cada Machine porque a sonda, os starts e cada clone
+# levam minutos, e o estado do clone decide se a original pode ser destruída.
 # O `</dev/null` tem o mesmo motivo do laço de start acima.
-machines_json="$(list_machines)"
 while read -r stuck_id; do
+  if ! machines_json="$(list_machines </dev/null)" || ! jq -e 'type == "array"' >/dev/null <<<"$machines_json"; then
+    summary "$app: não foi possível reler a lista de Machines antes de consertar $stuck_id; conserto interrompido."
+    exit 1
+  fi
+  if ! jq -e --arg id "$stuck_id" 'any(.[]; .id == $id)' >/dev/null <<<"$machines_json"; then
+    summary "$app: a Machine $stuck_id não está mais na app; nada a fazer com ela."
+    continue
+  fi
   if jq -e --arg id "$stuck_id" '
     (first(.[] | select(.id == $id) | .name) // "") as $name
     | ($name | startswith("vigia-")) and any(.[]; .id == ($name | ltrimstr("vigia-")))
