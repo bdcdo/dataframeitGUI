@@ -134,20 +134,19 @@ const ORIGIN_EXPLANATION: Record<NotFoundOrigin, string> = {
 // e a do login hospedado do Clerk, para onde vai quem não define aquela.
 const LOGIN_PATH = /^\/(?:auth\/login|sign-in)(?:\/|$)/;
 
-// Código que `errorDetail` (src/lib/server-error.ts) põe no painel dos
-// boundaries de erro do app quando o erro veio do servidor. É o mesmo código da
-// linha `[erro <código>]` que o `onRequestError` (src/instrumentation.ts) loga
-// com a mensagem e o stack, e o stderr do servidor sai nesta mesma execução com
-// o prefixo `[WebServer]`. Só esse log diz por que o servidor falhou: o código
-// é um hash do erro, não uma pista da origem (#527).
+// Código que `errorDetail` (src/lib/server-error.ts) põe no painel de erro do
+// app, o mesmo da linha `[erro <código>]` que o `onRequestError`
+// (src/instrumentation.ts) loga. O código é hash do erro, não pista da origem:
+// só o log diz por que o servidor falhou (#527).
 const ERROR_SCREEN_CODE = /Código do erro: ([0-9a-z]+)/;
 
 export function describeErrorScreen(pageText: string): string | null {
   const code = ERROR_SCREEN_CODE.exec(pageText)?.[1];
   if (!code) return null;
   return (
-    `tela de erro de servidor, código ${code}: a linha "[erro ${code}]" ` +
-    "na saída [WebServer] desta execução traz a mensagem e o stack"
+    `tela de erro de servidor, código ${code}: a linha "[erro ${code}]" do ` +
+    "log do servidor ([WebServer] nesta saída, ou o terminal do servidor " +
+    "reaproveitado) traz a mensagem e o stack"
   );
 }
 
@@ -165,10 +164,11 @@ export function describeFinalUrl(url: string, pageText = ""): string {
     // about:blank ou URL malformada: mostra como veio.
   }
   const login = LOGIN_PATH.test(path)
-    ? " — tela de login: o login do spec não terminou, ou a sessão não valeu para o servidor"
-    : "";
-  const errorScreen = describeErrorScreen(pageText);
-  return `${redactUrl(url)}${login}${errorScreen ? ` — ${errorScreen}` : ""}`;
+    ? "tela de login: o login do spec não terminou, ou a sessão não valeu para o servidor"
+    : null;
+  return [redactUrl(url), login, describeErrorScreen(pageText)]
+    .filter(Boolean)
+    .join(" — ");
 }
 
 export function describeNavigation(record: NavigationRecord): string {

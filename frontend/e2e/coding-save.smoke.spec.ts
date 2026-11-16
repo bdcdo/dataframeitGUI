@@ -45,9 +45,6 @@ const DOC_TITLE = "Doc E2E save 1";
 const UNSENT_VALUE = "valor-e2e-nao-enviado";
 // Espera pela primeira pergunta: é onde o spec descobre que a página não chegou
 // ao estado esperado. A mensagem lista onde olhar, sem presumir a causa (#740).
-// A tela de erro de servidor mostra um código que é hash do erro, não pista da
-// origem: quem diz se foi o Clerk ou outra coisa é a linha do log que a linha
-// [URL final] aponta (#527).
 const QUESTION_NOT_SHOWN =
   "pergunta 'Resumo do documento' não ficou visível uma única vez — confira " +
   "na linha [URL final] se a página é o login ou a tela de erro de servidor " +

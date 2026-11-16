@@ -69,15 +69,17 @@ export const test = base.extend<{ navigationDiagnostics: void }>({
       // Antes das navegações, e mesmo quando nenhuma deu erro: o
       // redirecionamento ao login responde 200 e não aparece na lista abaixo.
       // O texto do `<main>`, onde todo boundary de erro do app põe o painel,
-      // só serve para achar o código da tela de erro, e não vai para a saída;
-      // página já fechada sai sem ele.
+      // só serve para achar o código da tela de erro e não vai para a saída.
+      // Com prazo curto: página travada, fechada ou sem `<main>` sai sem ele,
+      // em vez de prender o teardown e levar junto o resto do diagnóstico.
       const finalUrls = await Promise.all(
         context.pages().map(async (page) => {
-          const texts = await page
+          const text = await page
             .getByRole("main")
-            .allInnerTexts()
-            .catch(() => []);
-          return `  ${describeFinalUrl(page.url(), texts.join("\n"))}`;
+            .first()
+            .innerText({ timeout: 2_000 })
+            .catch(() => "");
+          return `  ${describeFinalUrl(page.url(), text)}`;
         }),
       );
       console.log(`[URL final] ${testInfo.title}\n${finalUrls.join("\n")}`);

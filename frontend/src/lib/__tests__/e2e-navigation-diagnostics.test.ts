@@ -168,15 +168,11 @@ describe("describeFinalUrl", () => {
     expect(line).not.toContain("segredo");
   });
 
-  it("aponta a tela de erro de servidor pelo código, que acha o stack no log (#527)", () => {
-    const code = errorCode({ digest: "1903308217" })!;
-    const line = describeFinalUrl(
-      "http://localhost:3100/projects/p1/analyze/code",
-      `Algo deu errado\n${errorDetail({ digest: "1903308217" })}\nTentar de novo`,
-    );
-    expect(line).toContain("tela de erro de servidor");
-    expect(line).toContain(`[erro ${code}]`);
-    expect(line).toContain("[WebServer]");
+  it("acrescenta a tela de erro de servidor lida do texto da página (#527)", () => {
+    const text = `Algo deu errado\n${errorDetail({ digest: "1903308217" })}\nTentar de novo`;
+    const line = describeFinalUrl("http://localhost:3100/projects/p1/analyze/code", text);
+    expect(line).toMatch(/^http:\/\/localhost:3100\/projects\/p1\/analyze\/code — tela de erro de servidor/);
+    expect(line).toContain(`"[erro ${errorCode({ digest: "1903308217" })}]"`);
   });
 
   it("página do app sai como veio, sem o aviso de login", () => {
