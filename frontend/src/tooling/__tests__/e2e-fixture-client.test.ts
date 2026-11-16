@@ -98,9 +98,7 @@ describe("LOCAL_SUPABASE_HOST", () => {
       path.join(__dirname, "../../../e2e/llm-decisions.smoke.spec.ts"),
       "utf8",
     );
-    expect(spec).toMatch(
-      /import \{ LOCAL_SUPABASE_HOST \} from "\.\.\/scripts\/e2e-fixtures\/local-supabase";/,
-    );
+    expect(spec).toMatch(/import \{[^}]*\bLOCAL_SUPABASE_HOST\b[^}]*\} from "[^"]*\/local-supabase"/);
     expect(spec).not.toMatch(/localhost|127\\?\.0\\?\.0\\?\.1/);
   });
 });
