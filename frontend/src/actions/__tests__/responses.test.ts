@@ -13,6 +13,7 @@ const drainAutoReviewReconciliationRequests = vi.hoisted(() => vi.fn(async () =>
   failed: 0,
   remaining: 0,
 })));
+const createAutoComparisonIfDiverges = vi.hoisted(() => vi.fn(async () => {}));
 
 // Mocks precisam ser declarados antes do import dinamico do modulo sob teste.
 vi.mock("next/cache", () => ({
@@ -29,6 +30,7 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/auto-review-reconciler", () => ({
   drainAutoReviewReconciliationRequests,
 }));
+vi.mock("@/lib/auto-comparison", () => ({ createAutoComparisonIfDiverges }));
 
 interface State {
   responseInsertPayload: Record<string, unknown> | null;
@@ -94,6 +96,7 @@ beforeEach(() => {
   };
   vi.mocked(revalidatePath).mockClear();
   drainAutoReviewReconciliationRequests.mockClear();
+  createAutoComparisonIfDiverges.mockClear();
 });
 
 // Builder generico awaitable: usado quando o resultado final eh `{ error: null }`
@@ -928,6 +931,33 @@ describe("saveResponse — falha ao sincronizar o assignment de codificação", 
     expect(state.assignmentUpdatePayload?.status).toBe("concluido");
     // A resposta foi gravada: as telas que a mostram são revalidadas.
     expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/analyze/code");
+  });
+
+  it("segundo envio conclui o assignment e dispara comparação após falha no primeiro UPDATE", async () => {
+    state.automationMode = "compare_humans";
+    state.assignmentUpdateError = { message: "falha temporária", code: "57014" };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const saveResponse = await loadSaveResponse();
+
+    const first = await saveResponse("proj-1", "doc-1", { q1: "a" });
+    expect(first.success).toBe(false);
+    expect(state.responseInsertPayload?.is_partial).toBe(false);
+    expect(createAutoComparisonIfDiverges).not.toHaveBeenCalled();
+
+    state.existingResponse = {
+      id: "resp-1", is_partial: false, answers: { q1: "a" }, answer_field_hashes: null,
+    };
+    state.assignmentUpdateError = null;
+    const second = await saveResponse("proj-1", "doc-1", { q1: "a" });
+
+    expect(second.success).toBe(true);
+    expect(state.assignmentUpdatePayload?.status).toBe("concluido");
+    expect(createAutoComparisonIfDiverges).toHaveBeenCalledTimes(1);
+    state.currentAssignmentStatus = "concluido";
+    const third = await saveResponse("proj-1", "doc-1", { q1: "a" });
+    expect(third.success).toBe(true);
+    expect(createAutoComparisonIfDiverges).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
   });
 
   it("UPDATE que mantém o assignment em andamento falha: copy pt-BR, texto do banco só no log", async () => {

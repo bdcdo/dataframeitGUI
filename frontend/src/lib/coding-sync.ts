@@ -99,6 +99,23 @@ async function completeCodingAssignment(
   supabase: SupabaseServerClient,
   params: SyncCodingAssignmentParams,
 ): Promise<{ error?: string }> {
+  // O primeiro envio pode ter gravado a response e falhado neste UPDATE. No
+  // retry, is_partial já é false, mas o assignment ainda não foi concluído:
+  // usar só hadCompletedResponse pularia a automação para sempre.
+  let alreadyCompleted = params.hadCompletedResponse;
+  if (params.hadCompletedResponse) {
+    const { data: assignment, error: readError } = await supabase
+      .from("assignments")
+      .select("status")
+      .eq("project_id", params.projectId)
+      .eq("document_id", params.documentId)
+      .eq("user_id", params.userId)
+      .eq("type", "codificacao")
+      .eq("round_id", params.roundId)
+      .maybeSingle();
+    if (readError) return { error: syncError("leitura do assignment", readError) };
+    alreadyCompleted = assignment?.status === "concluido";
+  }
   const { error } = await supabase
     .from("assignments")
     .update({ status: "concluido", completed_at: new Date().toISOString() })
@@ -109,7 +126,7 @@ async function completeCodingAssignment(
     .eq("round_id", params.roundId);
   if (error) return { error: syncError("conclusão do assignment", error) };
 
-  if (!params.hadCompletedResponse) {
+  if (!alreadyCompleted) {
     await runCodingAutomation(
       params.automationMode,
       params.projectId,
