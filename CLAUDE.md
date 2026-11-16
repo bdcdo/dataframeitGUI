@@ -85,7 +85,7 @@ Deploy e automatico a partir de merge no branch `main`. Frontend: Fly.io (app `g
 - `frontend/` — Next.js: `src/app` (rotas), `src/actions` (Server Actions), `src/components`, `src/lib` (lógica pura, com testes em `__tests__`), `src/hooks`; `e2e/` (Playwright), `supabase/migrations` e `supabase/tests` (suítes SQL), `scripts/` (gates e utilitários)
 - `backend/` — FastAPI: `routes/`, `services/` (LLM runner, compilador Pydantic, auth), `tests/` (pytest)
 - `docs/` — decisões (UI, banco, ferramentas de qualidade, verificação)
-- `.github/workflows/` — deploys no Fly, contratos do Fly, testes de banco, secret scan (não há job de lint e testes unitários no CI: eles rodam nos hooks locais)
+- `.github/workflows/` — deploys no Fly, contratos do Fly, testes de banco, secret scan e o `ci.yml`, que roda no servidor os hooks de pre-push: a matriz dele sai do `.pre-commit-config.yaml`, então hook novo de pre-push entra no CI sozinho, e o que não pode rodar lá ganha motivo em `.github/ci-exempt-gates.json`
 
 ## Como rodar
 

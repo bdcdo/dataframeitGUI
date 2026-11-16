@@ -1,0 +1,5 @@
+{
+  "e2e-smoke": "Depende de segredos do Clerk e de projetos fixture provisionados fora do repositório: PR de fork e do Dependabot não recebe segredo, e o mesmo commit ficaria verde ou vermelho conforme o tenant (#649). Segue fail-closed no pre-push.",
+  "db-tests": "Precisa do Supabase local (Docker). Roda no servidor pelo database-tests.yml, com o mesmo runner do hook.",
+  "llm-runs-contract": "Precisa do Supabase local (Docker). O runner do database-tests.yml (run-db-tests.sh) roda este contrato por último."
+}

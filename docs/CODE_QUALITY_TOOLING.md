@@ -14,6 +14,7 @@ A regra de ouro é que tudo roda sozinho, via git hook ou automação de servido
 |---|---|---|---|
 | `pre-commit` | todo commit (leve, file-scoped) | gitleaks · ruff (lint+format) · actionlint · deploy notifier · react-doctor | só o arquivo/linha tocado é checado; o notifier roda quando seu workflow ou teste muda |
 | `pre-push` | todo `git push` (pesado, grafo/tipos) | typecheck · vitest · e2e-smoke (Playwright) · lint:types · fallow audit · semgrep · backend-pytest · mypy · db-tests | new-only / file-scoped (ver cada um); Vitest, pytest e db-tests rodam as suítes inteiras; e2e-smoke e db-tests falham fechado no pre-push (envs E2E/Clerk faltando; Supabase local fora do ar, respectivamente) |
+| GitHub Actions (`ci.yml`) | todo PR e push na `main` | os hooks de `pre-push`, uma célula por hook, menos os de `.github/ci-exempt-gates.json` (e2e-smoke, db-tests, llm-runs-contract) · ruff · eslint | estado absoluto: cada hook roda com `--all-files` |
 | GitHub (servidor) | automático | Dependabot | n/a — abre PRs de vuln sozinho |
 | on-demand | ao investigar performance | React Scan | n/a — ferramenta de diagnóstico, não gate |
 
@@ -162,7 +163,21 @@ O primeiro scan completo encontrou **113 erros em 5 arquivos**, com **103 (91%) 
 
 ### Dependabot e semgrep — a segurança
 
-Sobre o gitleaks (secrets) que já existia, a #260 acrescentou duas camadas. O **Dependabot** (`.github/dependabot.yml`) cobre dependências vulneráveis e desatualizadas em npm (`/frontend`), uv (`/backend`), github-actions e pre-commit: roda no servidor do GitHub e abre PRs sozinho, com `cooldown` de 7 dias antes de propor uma versão recém-publicada — janela de defesa contra supply-chain. O **semgrep** (hook de pre-push via `uvx`, rulesets `p/typescript`, `p/react`, `p/python`) faz SAST de código inseguro em JS/TS e Python, complementando as poucas regras de Security do react-doctor. O `--baseline-commit` limita aos achados novos vs `origin/main` (grandfathering); o hook falha fechado em achado real (exit 1) e falha aberto em erro de infra/rede (exit > 1), para não travar um push offline.
+Sobre o gitleaks (secrets) que já existia, a #260 acrescentou duas camadas. O **Dependabot** (`.github/dependabot.yml`) cobre dependências vulneráveis e desatualizadas em npm (`/frontend`), uv (`/backend`), github-actions e pre-commit: roda no servidor do GitHub e abre PRs sozinho, com `cooldown` de 7 dias antes de propor uma versão recém-publicada — janela de defesa contra supply-chain. O **semgrep** (hook de pre-push via `uvx`, rulesets `p/typescript`, `p/react`, `p/python`) faz SAST de código inseguro em JS/TS e Python, complementando as poucas regras de Security do react-doctor. O `--baseline-commit` limita aos achados novos vs `origin/main` (grandfathering); o hook falha fechado em achado real (exit 1) e falha aberto em erro de infra/rede (exit > 1), para não travar um push offline. No CI o mesmo script (`frontend/scripts/semgrep-gate.sh`) roda com `GATE_FAIL_OPEN=0`: tenta mais duas vezes e reprova, porque no servidor um semgrep que não rodou não pode passar por verde.
+
+### CI (`ci.yml`) — os gates de pre-push no servidor
+
+Os hooks locais não rodam para quem usa `--no-verify`, `SKIP=`, edita pela web ou não rodou `pre-commit install`, e PR do Dependabot nunca passa por eles. O `.github/workflows/ci.yml` roda os mesmos hooks no servidor em todo PR e em todo push na `main`, sem segredo e sem deploy ([#649](https://github.com/bdcdo/dataframeitGUI/issues/649)).
+
+A matriz não é escrita no workflow. O job `discover` chama `.github/scripts/ci-gate-matrix.sh`, que lê o `.pre-commit-config.yaml` e emite uma célula por hook com `pre-push` nos stages; cada célula roda `pre-commit run --hook-stage pre-push --all-files <id>`. Hook novo de pre-push vira célula sem tocar no `ci.yml`: a lista de gates do servidor não tem como ficar atrás da lista local, que foi como suítes inteiras ficaram fora de todo gate. Três arquivos declaram o que foge disso, e o teste de contrato `.github/scripts/test-ci-gate-matrix.sh` (hook `ci-gate-matrix` e primeiro passo do `discover`) reprova a declaração que deixou de valer:
+
+- `.github/ci-exempt-gates.json`: hook que não pode rodar no servidor, com motivo obrigatório. Chave que não corresponde a hook de pre-push (órfã) ou motivo vazio reprovam. Hoje: `e2e-smoke` (segredos do Clerk e fixture fora do repo) e `db-tests`/`llm-runs-contract` (Supabase local, cobertos pelo `database-tests.yml`).
+- `.github/ci-gate-shards.json`: hook dividido em fatias, que recebe a fatia em `GATE_SHARD`. Hoje o `vitest`, em duas.
+- `GATE_FAIL_OPEN=0`, que toda célula recebe: o gate que no push local libera em erro de infra (semgrep) reprova no servidor. É variável do mesmo script, e não um segundo script.
+
+O CI mede estado absoluto e o hook mede o delta: com `--all-files`, `lint-types` e `mypy` rodam no repositório inteiro, e os hooks com `files:` rodam mesmo quando o PR não toca o que eles observam. `fallow-audit` e `semgrep` seguem medindo o que o PR introduz contra `origin/main`. O job `lint` roda o que não é hook de pre-push (ruff no backend inteiro e eslint).
+
+`ci-required` espera todos os jobs com `if: always()` e exige `success` de cada um. É o único check a marcar como obrigatório no ruleset ([#651](https://github.com/bdcdo/dataframeitGUI/issues/651)): uma lista de checks na UI do GitHub seria mais uma lista à mão. Por isso o workflow não tem filtro de `paths`: workflow que não dispara deixa o check obrigatório em "Expected" para sempre, e o PR trava sem nada vermelho para consertar. O teste de contrato barra a volta do filtro e o job que fique fora do `ci-required`.
 
 ### PR que sobe ferramenta de gate: medição pareada antes do merge
 
@@ -219,4 +234,3 @@ uv run mypy .            # type-check (llm_runner.py isento; ver seção mypy ac
 - **Biome** (lint+format all-in-one) — sobreporia o investimento já feito em ESLint + react-doctor.
 - **type-coverage** — o projeto já é `strict`; ganho marginal fora de migração/caça a `any`.
 - **Analisadores de bundle** (vite-bundle-visualizer, source-map-explorer) — só se performance de bundle pesar; a dívida de performance atual não é de bundle.
-- **CI bloqueante no GitHub Actions** (Vitest + pytest + lint + typecheck) — de escopo maior, fora desta rodada. Quando existir, os hooks mais pesados (semgrep, fallow full) podem migrar do pre-push para o CI.
