@@ -117,8 +117,7 @@ export function ComparePage({
   queueContext,
   savedSplit,
 }: ComparePageProps) {
-  const { showingAll: showingAllQueue, hasAssignedDocs, isImpersonating } =
-    queueContext;
+  const { showingAll: showingAllQueue, isImpersonating } = queueContext;
   // Impersonação master torna a Comparação somente-leitura (issue #428). Mesma
   // convenção `readOnly: boolean` do Codificar (`code/page.tsx`).
   const readOnly = isImpersonating;
@@ -185,10 +184,6 @@ export function ComparePage({
     equivalencesByField,
   });
 
-  // Contexto da decisão: o par (doc, campo) exibido, o veredito dele e a
-  // origem carimbada nos caminhos de escrita. `ctxKey` inclui `readOnly` para
-  // que entrar ou sair de impersonação descarte comentário e rascunho da
-  // identidade anterior.
   const { currentVerdict, ctxKey, currentOrigin } = useCompareDecisionContext(
     currentDoc,
     currentFieldName,
@@ -236,8 +231,9 @@ export function ComparePage({
     toggleList,
   } = useCompareLayoutToggles();
 
+  const hasPendingVerdict = pendingVerdict !== null;
   const nav = useCompareNavGuard({
-    hasPendingVerdict: pendingVerdict !== null,
+    hasPendingVerdict,
     isSaveInFlight,
     handleDocNavigate,
     setFieldIndex,
@@ -261,7 +257,7 @@ export function ComparePage({
     onPrepareVerdict: preparePendingVerdict,
     onSubmitSpecialVerdict: submitCurrentVerdict,
     onConfirmPendingVerdict: handleConfirmPending,
-    hasPendingVerdict: pendingVerdict !== null,
+    hasPendingVerdict,
   });
 
   const docListEntries = buildDocListEntries(
@@ -270,12 +266,6 @@ export function ComparePage({
     divergentFields,
     localReviews,
   );
-  const docList = {
-    docs: docListEntries,
-    onSelect: nav.navigateDoc,
-    collapsed: listCollapsed,
-    onToggle: toggleList,
-  };
   const frame = {
     showQueueTabs: isCoordinator,
     queueValue,
@@ -287,14 +277,18 @@ export function ComparePage({
     return (
       <CompareFrame fullscreen={false} {...frame}>
         <div className="flex flex-1 w-full">
-          <CompareDocList {...docList} currentIndex={docIndex} />
+          <CompareDocList
+            docs={docListEntries}
+            currentIndex={docIndex}
+            onSelect={nav.navigateDoc}
+            collapsed={listCollapsed}
+            onToggle={toggleList}
+          />
           <div className="flex flex-1 items-center justify-center text-muted-foreground">
             {resolveEmptyMessage({
+              ...queueContext,
               hasDocuments: documents.length > 0,
               isCoordinator,
-              showingAll: showingAllQueue,
-              hasAssignedDocs,
-              isImpersonating,
             })}
           </div>
         </div>

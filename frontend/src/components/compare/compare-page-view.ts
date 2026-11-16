@@ -62,12 +62,13 @@ export function buildDocListEntries(
   });
 }
 
+// O `queueContext` do `ComparePage` mais o que a mensagem precisa além dele.
 export interface EmptyQueueContext {
-  hasDocuments: boolean;
-  isCoordinator: boolean;
   showingAll: boolean;
   hasAssignedDocs: boolean;
   isImpersonating: boolean;
+  hasDocuments: boolean;
+  isCoordinator: boolean;
 }
 
 // Fila pessoal vazia de coordenador tem duas causas bem diferentes:

@@ -64,8 +64,11 @@ describe("useCompareNavGuard", () => {
     );
   });
 
-  it("com salvamento em andamento, bloqueia em silêncio", () => {
-    const { raw, nav } = setup(true, true);
+  it.each<[string, boolean]>([
+    ["com rascunho", true],
+    ["sem rascunho (campo multi, atalhos a/s)", false],
+  ])("com salvamento em andamento %s, bloqueia em silêncio", (_name, hasPending) => {
+    const { raw, nav } = setup(hasPending, true);
     for (const fn of Object.values(raw)) expect(fn).not.toHaveBeenCalled();
     expect(nav.guardNavigation()).toBe(false);
     expect(toastWarning).not.toHaveBeenCalled();

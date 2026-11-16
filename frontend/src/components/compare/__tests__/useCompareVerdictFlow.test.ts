@@ -32,15 +32,7 @@ function deferred() {
   return { promise, resolve };
 }
 
-type Props = {
-  ctxKey: string | null;
-  currentOrigin: VerdictOrigin | null;
-  handleVerdict: (
-    origin: VerdictOrigin,
-    verdict: string,
-    chosenResponseId?: string,
-  ) => Promise<boolean>;
-};
+type Props = Parameters<typeof useCompareVerdictFlow>[0];
 
 function setup(handleVerdict: Props["handleVerdict"]) {
   return renderHook((props: Props) => useCompareVerdictFlow(props), {

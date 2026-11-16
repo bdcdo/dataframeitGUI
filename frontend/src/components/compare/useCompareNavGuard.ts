@@ -19,6 +19,22 @@ interface UseCompareNavGuardParams {
   changeQueue: (value: CompareQueueScope) => void;
 }
 
+// Navegação crua que só roda se o gate deixar. Um `useCallback` por wrapper,
+// e não um objeto memoizado com todos: a identidade de cada um muda só com a
+// sua navegação, e `nextField`/`prevField` estão nas deps do listener de
+// teclado (`useCompareKeyboard`).
+function useGuarded<A extends unknown[]>(
+  guardNavigation: () => boolean,
+  navigate: (...args: A) => void,
+) {
+  return useCallback(
+    (...args: A) => {
+      if (guardNavigation()) navigate(...args);
+    },
+    [guardNavigation, navigate],
+  );
+}
+
 /**
  * Ponto único de gate da navegação MANUAL (sidebar, nav de doc, nav de campo,
  * filtro de campo, aba de fila, teclado). Extraído de `ComparePage` na
@@ -59,48 +75,14 @@ export function useCompareNavGuard({
     return true;
   }, [hasPendingVerdict, isSaveInFlight]);
 
-  const navigateDoc = useCallback(
-    (index: number) => {
-      if (guardNavigation()) handleDocNavigate(index);
-    },
-    [guardNavigation, handleDocNavigate],
-  );
-  const navigateField = useCallback(
-    (index: number) => {
-      if (guardNavigation()) setFieldIndex(index);
-    },
-    [guardNavigation, setFieldIndex],
-  );
-  const nextDoc = useCallback(() => {
-    if (guardNavigation()) handleNextDoc();
-  }, [guardNavigation, handleNextDoc]);
-  const nextField = useCallback(() => {
-    if (guardNavigation()) goNextField();
-  }, [goNextField, guardNavigation]);
-  const prevField = useCallback(() => {
-    if (guardNavigation()) goPrevField();
-  }, [goPrevField, guardNavigation]);
-  const changeFieldFilter = useCallback(
-    (value: string) => {
-      if (guardNavigation()) changeFilter(value);
-    },
-    [changeFilter, guardNavigation],
-  );
-  const changeQueueGuarded = useCallback(
-    (value: CompareQueueScope) => {
-      if (guardNavigation()) changeQueue(value);
-    },
-    [changeQueue, guardNavigation],
-  );
-
   return {
     guardNavigation,
-    navigateDoc,
-    navigateField,
-    nextDoc,
-    nextField,
-    prevField,
-    changeFieldFilter,
-    changeQueue: changeQueueGuarded,
+    navigateDoc: useGuarded(guardNavigation, handleDocNavigate),
+    navigateField: useGuarded(guardNavigation, setFieldIndex),
+    nextDoc: useGuarded(guardNavigation, handleNextDoc),
+    nextField: useGuarded(guardNavigation, goNextField),
+    prevField: useGuarded(guardNavigation, goPrevField),
+    changeFieldFilter: useGuarded(guardNavigation, changeFilter),
+    changeQueue: useGuarded(guardNavigation, changeQueue),
   };
 }
