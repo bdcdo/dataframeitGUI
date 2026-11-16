@@ -450,6 +450,33 @@ expect_failure
 assert_calls ""
 assert_contains "$CALLS_LOG.summary" 'o clone vigia-m2 da Machine m2 está "stopped"'
 
+# O clone de um conserto pela metade trava também, com a original ainda na
+# app: consertá-lo à parte (clonar o clone e destruí-lo) apagaria o nome que o
+# liga à original, e a Machine a mais ficaria sem aviso. O vigia não mexe em
+# nenhuma das duas e segue falhando, passada após passada, com a original
+# presa ou de volta ao ar.
+for original_state in failed started; do
+  MACHINES_JSON="$(machines "$(machine m2 "$original_state")" '{"id":"c1","name":"vigia-m2","state":"failed","region":"gru","events":[]}')"
+  expect_failure
+  assert_calls ""
+  assert_contains "$CALLS_LOG.summary" 'o clone vigia-m2 da Machine m2 está "failed"'
+done
+
+# O clone estava de pé na primeira listagem e cai durante a sonda: o que vale
+# é a lista lida na hora do conserto, e a original, a única que ainda pode
+# servir, não é destruída.
+MACHINES_JSON="$(machines "$(machine m2)" '{"id":"c1","name":"vigia-m2","state":"started","region":"gru","events":[]}')"
+MACHINES_AFTER_PROBE_JSON="$(machines "$(machine m2)" '{"id":"c1","name":"vigia-m2","state":"failed","region":"gru","events":[]}')"
+PROBE_OK=0
+START_FAILS_OTHER="c1"
+START_OTHER_MESSAGE="failed to start: 503 Service Unavailable"
+expect_failure probe
+assert_calls "machine start c1 -a app-teste"
+assert_contains "$CALLS_LOG.summary" 'o clone vigia-m2 da Machine m2 está "failed"'
+unset MACHINES_AFTER_PROBE_JSON START_OTHER_MESSAGE
+START_FAILS_OTHER=""
+PROBE_OK=1
+
 # Resposta fora do formato: recusa sem agir.
 MACHINES_JSON='{"unexpected":"shape"}'
 expect_failure

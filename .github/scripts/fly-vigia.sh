@@ -114,7 +114,8 @@ fi
 # original de um conserto cujo destroy falhou (#839). Ela pode não parecer
 # mais presa, porque a recusa de start só aparece com a sonda vermelha, que o
 # clone deixou verde, e os crashes saem da janela; sem esta regra a Machine a
-# mais ficaria para sempre, com o vigia verde.
+# mais ficaria para sempre, com o vigia verde. Ela pode até ter voltado a
+# subir, e é destruída assim mesmo: com o clone de pé, uma das duas sobra.
 now_ms="$(($(date +%s) * 1000))"
 stuck_ids="$(jq -r \
   --argjson since "$((now_ms - crash_window_minutes * 60 * 1000))" \
@@ -214,8 +215,22 @@ fi
 # nome é único por app no Fly, então clonar outra vez seria recusado lá.
 # Uma falha no destroy não interrompe o laço: as outras presas ainda são
 # consertadas nesta passada.
+#
+# O clone de um conserto pela metade não é consertado por conta própria
+# enquanto a original existir: cloná-lo e destruí-lo apagaria o nome que liga
+# os dois, e a Machine a mais ficaria sem aviso. O par é tratado pela original.
+#
+# A lista é lida de novo aqui porque a sonda e os starts acima levam minutos, e
+# o estado do clone decide se a original pode ser destruída.
 # O `</dev/null` tem o mesmo motivo do laço de start acima.
+machines_json="$(list_machines)"
 while read -r stuck_id; do
+  if jq -e --arg id "$stuck_id" '
+    (first(.[] | select(.id == $id) | .name) // "") as $name
+    | ($name | startswith("vigia-")) and any(.[]; .id == ($name | ltrimstr("vigia-")))
+  ' >/dev/null <<<"$machines_json"; then
+    continue
+  fi
   clone_name="vigia-$stuck_id"
   clone_state="$(jq -r --arg name "$clone_name" 'first(.[] | select(.name == $name) | .state) // empty' <<<"$machines_json")"
   if [[ -z "$clone_state" ]]; then
