@@ -8,7 +8,8 @@ import type {
   RespondentAnswer,
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
-import { fetchAllAfterId } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId, rowsOrThrow, type PagedRead } from "@/lib/supabase/fetch-all-paged";
+import { fetchLatestResponses } from "@/lib/supabase/fetch-latest-responses";
 import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
 import { pickValidCellReviews } from "@/lib/review-validity";
 import { stableStringify } from "@/lib/schema-utils";
@@ -160,13 +161,8 @@ export function gabaritoReviews(
 
 // Lança em vez de devolver a leitura parcial: metade das linhas renderizaria um
 // Gabarito com cara de completo.
-async function readAllOrThrow<T>(
-  read: PromiseLike<{ data: T[]; error: { message: string } | null }>,
-  what: string,
-): Promise<T[]> {
-  const { data, error } = await read;
-  if (error) throw new Error(`Não foi possível carregar ${what}: ${error.message}`, { cause: error });
-  return data;
+async function readAllOrThrow<T>(read: PagedRead<T>, what: string): Promise<T[]> {
+  return rowsOrThrow(`Não foi possível carregar ${what}`, await read);
 }
 
 // As três tabelas são lidas inteiras, página a página: o PostgREST corta cada
@@ -189,14 +185,10 @@ export async function fetchReviewBaseData(
       .eq("id", projectId)
       .single(),
     readAllOrThrow(
-      fetchAllAfterId<ResponseRow>(() =>
-        supabase
-          .from("responses")
-          .select(
-            "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, pydantic_hash, answer_field_hashes, created_at",
-          )
-          .eq("project_id", projectId)
-          .eq("is_latest", true),
+      fetchLatestResponses<ResponseRow>(
+        supabase,
+        projectId,
+        "respondent_name, answers, justifications, pydantic_hash, answer_field_hashes, created_at",
       ),
       "as respostas",
     ),

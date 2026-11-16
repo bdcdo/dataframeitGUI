@@ -2,7 +2,8 @@
  * Regra da invariante `responses-is-latest-unica`
  * (scripts/invariants/check-invariants.ts), separada da leitura do banco para
  * poder ser testada: o script faz o SELECT e este módulo decide o que é
- * violação.
+ * violação. A chave também deduplica a leitura paginada das vigentes
+ * (`supabase/fetch-latest-responses.ts`).
  *
  * A chave de cada tipo de respondente é a do índice UNIQUE correspondente, sem
  * tirar nem pôr:
@@ -40,7 +41,7 @@ interface Violation {
 }
 
 /** Chave do índice que cobre a linha, ou null quando alguma coluna dela é NULL. */
-function indexKey(r: LatestResponseRow): string | null {
+export function latestResponseIndexKey(r: Omit<LatestResponseRow, "id">): string | null {
   const columns =
     r.respondent_type === "llm"
       ? [r.project_id, r.document_id]
@@ -52,7 +53,7 @@ export function latestResponseUniquenessViolations(
   rows: readonly LatestResponseRow[],
 ): Violation[] {
   const keyed = rows.flatMap((r) => {
-    const key = indexKey(r);
+    const key = latestResponseIndexKey(r);
     return key === null ? [] : [{ key, id: r.id }];
   });
   return [...groupBy(keyed, (r) => r.key)]

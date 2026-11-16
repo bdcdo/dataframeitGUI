@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fetchAllPaged, fetchAllAfterId, fetchAllAfterDocumentField, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllPaged, fetchAllAfterId, fetchAllAfterDocumentField, fetchByDocumentChunks, rowsOrThrow } from "@/lib/supabase/fetch-all-paged";
 import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 
 const PAGE_SIZE = 1000;
@@ -153,6 +153,22 @@ describe("cursor nos contratos id e (document_id, field_name)", () => {
     const result = await fetchAllAfterId<{ id: string }>(() => selectMock(failing, "rows", "id"));
     expect(result.data).toHaveLength(1000);
     expect(result.error).toEqual({ message: "segunda página" });
+  });
+});
+
+describe("rowsOrThrow", () => {
+  it("devolve as linhas, e lista vazia quando a leitura não trouxe nenhuma", () => {
+    expect(rowsOrThrow("documents", { data: [{ id: "d1" }], error: null })).toEqual([{ id: "d1" }]);
+    expect(rowsOrThrow("documents", { data: null, error: null })).toEqual([]);
+  });
+
+  it("lança com o rótulo e guarda o erro original, mesmo com linhas parciais", () => {
+    const error = { message: "gateway fora" };
+    const thrown = (() => {
+      try { rowsOrThrow("responses", { data: [{ id: "r1" }], error }); } catch (e) { return e as Error; }
+    })();
+    expect(thrown?.message).toBe("responses: gateway fora");
+    expect(thrown?.cause).toBe(error);
   });
 });
 

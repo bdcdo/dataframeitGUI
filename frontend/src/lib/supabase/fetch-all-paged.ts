@@ -15,7 +15,7 @@ import { mapWithConcurrency } from "@/lib/upload-chunking";
 // `is_latest` que sumir tira o documento inteiro do numerador E do denominador.
 // A ordem aplicada precisa ser TOTAL — as colunas passadas têm que desempatar
 // até a última linha, tipicamente a PK.
-const PAGE_SIZE = 1000;
+export const PAGE_SIZE = 1000;
 
 interface PagedQueryBuilder<T> {
   order: (column: string) => PagedQueryBuilder<T>;
@@ -51,8 +51,9 @@ export async function fetchAllPaged<T>(
 
 // Chaves que pertencem ao contrato das linhas lidas por cursor.
 // O cursor evita que INSERT/DELETE antes da página seguinte desloque o OFFSET;
-// cada página ainda é um statement separado, sem snapshot transacional.
-interface CursorQueryBuilder<T> extends PromiseLike<{ data: T[] | null; error: { message: string } | null }> {
+// cada página ainda é um statement separado, sem snapshot transacional (para as
+// respostas vigentes, ver `fetch-latest-responses.ts`).
+export interface CursorQueryBuilder<T> extends PromiseLike<{ data: T[] | null; error: { message: string } | null }> {
   order: (column: string) => CursorQueryBuilder<T>;
   limit: (count: number) => CursorQueryBuilder<T>;
   gt: (column: string, value: string) => CursorQueryBuilder<T>;
@@ -94,6 +95,16 @@ export function fetchAllAfterDocumentField<T extends { document_id: string; fiel
       `document_id.gt.${JSON.stringify(last.document_id)},and(document_id.eq.${JSON.stringify(last.document_id)},field_name.gt.${JSON.stringify(last.field_name)})`,
     ),
   );
+}
+
+// Leitura que falha em vez de devolver meia tabela: metade das linhas vira
+// número errado com cara de completo.
+export function rowsOrThrow<T>(
+  label: string,
+  { data, error }: { data: T[] | null; error: { message: string } | null },
+): T[] {
+  if (error) throw new Error(`${label}: ${error.message}`, { cause: error });
+  return data ?? [];
 }
 
 // Lote do `.in("document_id", ...)`: uma lista longa de UUIDs vai na URL do

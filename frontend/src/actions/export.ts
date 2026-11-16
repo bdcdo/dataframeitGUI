@@ -8,6 +8,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
 import type { PydanticField } from "@/lib/types";
 import { fetchAllAfterId, fetchAllAfterDocumentField } from "@/lib/supabase/fetch-all-paged";
+import { fetchLatestResponses } from "@/lib/supabase/fetch-latest-responses";
 import { serverErrorCopy } from "@/lib/server-error";
 import type { ErrorResolutionRow } from "@/lib/error-resolution";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
@@ -80,13 +81,7 @@ export async function getExportDataset(
     ),
     // `is_partial` marca o rascunho (`AssembleInput.includeDrafts`); sem a
     // coluna, toda resposta contaria como rascunho.
-    fetchAllAfterId<ExportResponse>(() =>
-      supabase
-        .from("responses")
-        .select("id, document_id, respondent_name, respondent_type, respondent_id, answers, answer_field_hashes, is_partial")
-        .eq("project_id", projectId)
-        .eq("is_latest", true),
-    ),
+    fetchLatestResponses<ExportResponse>(supabase, projectId, "respondent_name, answers, answer_field_hashes, is_partial"),
     fetchAllAfterId<ExportReview>(() =>
       supabase
         .from("reviews")
