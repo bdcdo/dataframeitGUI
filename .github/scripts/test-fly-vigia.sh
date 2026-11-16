@@ -12,7 +12,8 @@ mkdir -p "$tmp_dir/bin"
 # O flyctl falso registra toda chamada que muda produção em $CALLS_LOG; é o que
 # os casos asserem. `machine list` devolve MACHINES_JSON na primeira chamada e
 # MACHINES_AFTER_PROBE_JSON (quando dado) nas seguintes, para simular a Machine
-# que segue sem iniciar depois da sonda. `machine start` falha para os ids em
+# que segue sem iniciar depois da sonda e a lista que muda ou falha na
+# releitura do conserto. `machine start` falha para os ids em
 # START_FAILS (separados por espaço), a forma da Machine presa de 2026-08-10,
 # cujo start voltava "insufficient CPUs available", e para os ids em
 # START_FAILS_OTHER com START_OTHER_MESSAGE, a forma de um erro da API ou de
@@ -475,6 +476,7 @@ for original_state in failed started; do
   expect_failure
   assert_calls ""
   assert_contains "$CALLS_LOG.summary" 'o clone vigia-m2 da Machine m2 está "failed"'
+  assert_no_probe
 done
 
 # Depois do conserto completo o clone é a Machine normal da app e segue com o
@@ -486,11 +488,24 @@ machine destroy c1 -a app-teste --force"
 
 # A releitura da lista falha ou não traz mais a Machine presa: nada é clonado
 # nem destruído às cegas.
+# A lista que não é array interrompe o conserto ali, sem a sonda final.
 MACHINES_JSON="$(machines "$(machine m2 failed)")"
-for MACHINES_AFTER_PROBE_JSON in "Error: 502 from API" "[]"; do
+for MACHINES_AFTER_PROBE_JSON in "Error: 502 from API" '{"a":{"id":"m2"}}'; do
   expect_failure
   assert_calls ""
+  assert_contains "$CALLS_LOG.summary" "conserto interrompido"
+  assert_no_probe
+  if grep -Fq "nenhuma Machine clonada" "$CALLS_LOG.summary"; then
+    echo "a releitura que falha tem de interromper o conserto, e não seguir adiante" >&2
+    exit 1
+  fi
 done
+MACHINES_AFTER_PROBE_JSON="[]"
+expect_failure
+assert_calls ""
+assert_contains "$CALLS_LOG.summary" "não está mais na app"
+assert_contains "$CALLS_LOG.summary" "nenhuma Machine clonada ou destruída"
+assert_no_probe
 unset MACHINES_AFTER_PROBE_JSON
 
 # O clone estava de pé na primeira listagem e cai durante a sonda: o que vale

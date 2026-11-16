@@ -223,6 +223,7 @@ fi
 # A lista é lida de novo a cada Machine porque a sonda, os starts e cada clone
 # levam minutos, e o estado do clone decide se a original pode ser destruída.
 # O `</dev/null` tem o mesmo motivo do laço de start acima.
+repaired=""
 while read -r stuck_id; do
   if ! machines_json="$(list_machines </dev/null)" || ! jq -e 'type == "array"' >/dev/null <<<"$machines_json"; then
     summary "$app: não foi possível reler a lista de Machines antes de consertar $stuck_id; conserto interrompido."
@@ -249,12 +250,17 @@ while read -r stuck_id; do
     summary "$app: o clone $clone_name da Machine $stuck_id está \"$clone_state\", e não de pé; nada destruído, alguém precisa olhar."
     continue
   fi
+  repaired=1
   if ! flyctl machine destroy "$stuck_id" -a "$app" --force </dev/null; then
     summary "$app: o destroy da Machine $stuck_id falhou e a app ficou com uma Machine a mais, o clone $clone_name. A próxima passada repete só o destroy; até lá o deploy pode ser recusado pela contagem de Machines."
   fi
 done <<<"$stuck_ids"
 
-if probe; then
+# Sem clone nem destroy nesta passada não há conserto a conferir, e a sonda
+# não roda: o par parado à espera de alguém repetiria o aviso a cada passada.
+if [[ -z "$repaired" ]]; then
+  summary "$app: nenhuma Machine clonada ou destruída nesta passada."
+elif probe; then
   summary "$app: health respondeu depois do conserto."
 else
   summary "$app: health segue sem responder depois do conserto."
