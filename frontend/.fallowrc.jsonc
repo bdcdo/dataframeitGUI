@@ -7,7 +7,9 @@
   // scripts/invariants/* (checker de invariantes de banco, `npm run
   // invariants`) e scripts/e2e-fixtures/* (provisionamento dos projetos de
   // teste do Playwright) rodam manualmente via `tsx`, nunca sao importados por
-  // um entry point do Next - falso-positivo de unused-files.
+  // um entry point do Next - falso-positivo de unused-files. A excecao e
+  // scripts/e2e-fixtures/local-supabase.ts, que o spec de llm-decisions importa
+  // para aplicar a mesma regra de host local do gerador.
   "ignorePatterns": [
     "scripts/comentarios-relatorio/**",
     "scripts/invariants/**",

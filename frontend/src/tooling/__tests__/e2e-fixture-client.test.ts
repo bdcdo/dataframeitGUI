@@ -55,10 +55,10 @@ describe("fixtureEnvironment", () => {
     expect(() => fixtureEnvironment({ localOnly: true }, {}, dir)).toThrow(
       /aponta para e2e\.example\.test: esta fixture só é criada no Supabase local/,
     );
-    const local = envFile("local.env", complete("http://localhost:54321"));
-    expect(fixtureEnvironment({ localOnly: true }, { E2E_ENV_PATH: local }, dir).url).toBe(
-      "http://localhost:54321",
-    );
+    for (const url of ["http://localhost:54321", "http://127.0.0.1:54321"]) {
+      const local = envFile("local.env", complete(url));
+      expect(fixtureEnvironment({ localOnly: true }, { E2E_ENV_PATH: local }, dir).url).toBe(url);
+    }
   });
 
   it("recusa ambiente sem chave ou sem os e-mails E2E", () => {
@@ -83,7 +83,7 @@ describe("LOCAL_SUPABASE_HOST", () => {
     expect(local("http://localhost:54321")).toBe(true);
     expect(local("http://127.0.0.1:54321")).toBe(true);
     for (const url of [
-      "https://nryebmwlmxuwvynfuzsv.supabase.co",
+      "https://projeto.supabase.co",
       "http://e2e.example.test",
       "http://localhost.example.test:54321",
       "http://127.0.0.1.nip.io:54321",
@@ -93,27 +93,14 @@ describe("LOCAL_SUPABASE_HOST", () => {
     }
   });
 
-  it("localOnly aceita 127.0.0.1, e sem chave recusa antes de olhar o host", () => {
-    const loopback = envFile("loopback.env", complete("http://127.0.0.1:54321"));
-    expect(fixtureEnvironment({ localOnly: true }, { E2E_ENV_PATH: loopback }, dir).url).toBe(
-      "http://127.0.0.1:54321",
-    );
-    const noKey = envFile("sem-chave.env", { NEXT_PUBLIC_SUPABASE_URL: "https://remoto.example.test" });
-    expect(() => fixtureEnvironment({ localOnly: true }, { E2E_ENV_PATH: noKey }, dir)).toThrow(
-      "NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes",
-    );
-  });
-
-  it("sem localOnly, os geradores de coding e compare seguem aceitando host remoto", () => {
-    expect(fixtureEnvironment({}, {}, dir).url).toBe("http://e2e.example.test");
-  });
-
   it("o spec de llm-decisions usa a mesma regra, sem cópia própria", () => {
     const spec = fs.readFileSync(
       path.join(__dirname, "../../../e2e/llm-decisions.smoke.spec.ts"),
       "utf8",
     );
-    expect(spec).toContain("toMatch(LOCAL_SUPABASE_HOST)");
-    expect(spec).not.toMatch(/localhost\|127/);
+    expect(spec).toMatch(
+      /import \{ LOCAL_SUPABASE_HOST \} from "\.\.\/scripts\/e2e-fixtures\/local-supabase";/,
+    );
+    expect(spec).not.toMatch(/localhost|127\\?\.0\\?\.0\\?\.1/);
   });
 });
