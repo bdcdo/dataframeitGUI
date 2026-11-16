@@ -132,7 +132,15 @@ check_workflow() {
   end
   # O grupo do workflow vale para todos os jobs, o prepare inclusive; com o
   # nome do grupo do vigia, a espera voltaria para a fila dele.
-  abort("o grupo do workflow não pode ser o do vigia da API") if workflow.fetch("concurrency").fetch("group") == machines_queue.fetch("group")
+  pipeline_group = workflow.fetch("concurrency").fetch("group")
+  abort("o grupo do workflow não pode ser o do vigia da API") if pipeline_group == machines_queue.fetch("group")
+  # Com expressão no nome (o id da run, o SHA), cada deploy teria o seu grupo
+  # e a fila entre eles acabaria.
+  abort("o grupo do workflow tem de ser um nome fixo") if pipeline_group.include?("${{")
+  # Job pulado não é falha: o deploy deixaria de acontecer sem abrir incidente.
+  [prepare_job, deploy_job].each do |job|
+    abort("os jobs prepare e deploy não podem ter if nem continue-on-error") if job.key?("if") || job.key?("continue-on-error")
+  end
   # Que esse grupo não cancela nem descarta deploy pendente está em
   # test-deploy-failure-notification.sh.
   abort("o job deploy precisa vir depois do prepare") unless Array(deploy_job["needs"]) == ["prepare"]
@@ -224,7 +232,10 @@ expect_queue_failure() {
 expect_queue_failure "o grupo do workflow não pode ser o do vigia" 'workflow["concurrency"] = machines_queue'
 expect_queue_failure "o job prepare não pode ter grupo" 'jobs["prepare"]["concurrency"] = machines_queue'
 expect_queue_failure "o job notify-failure não pode ter grupo" 'jobs["notify-failure"]["concurrency"] = machines_queue'
-# O deploy fora da fila do vigia: sem grupo, em outro grupo, ou cancelável.
+expect_queue_failure "o grupo do workflow tem de ser um nome fixo" 'workflow["concurrency"]["group"] += "-${{ github.run_id }}"'
+expect_queue_failure "os jobs prepare e deploy não podem ter if" 'jobs["deploy"]["if"] = "false"'
+expect_queue_failure "os jobs prepare e deploy não podem ter if" 'jobs["prepare"]["continue-on-error"] = true'
+# O deploy fora da fila do vigia: sem grupo ou cancelável.
 expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"].delete("concurrency")'
 expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"]["concurrency"] = machines_queue.merge("cancel-in-progress" => true)'
 expect_queue_failure "o job deploy precisa vir depois do prepare" 'jobs["deploy"].delete("needs")'
@@ -297,7 +308,7 @@ run_wait_status() {
   : >"$tmp_dir/wait.output"
   echo 1700000000 >"$tmp_dir/wait.clock"
   wait_output="$(env -u WAIT_DEADLINE "PATH=$wait_bin:$PATH" WAIT_LOG="$tmp_dir/wait" CURL_RESPONSES="$tmp_dir/curl-responses" \
-    GITHUB_OUTPUT="$tmp_dir/wait.output" "${wait_env[@]}" \
+    GITHUB_OUTPUT="$tmp_dir/wait.output" GITHUB_RUN_ATTEMPT=1 "${wait_env[@]}" \
     timeout 120 bash --noprofile --norc -eo pipefail "$wait_script" 2>&1)"
 }
 
@@ -343,17 +354,23 @@ assert_wait "Nenhuma run em curso." "10 60"
 mapfile -t endless_run < <(yes '{"status":"ok","active_jobs":1}' | head -n 121)
 run_wait "${endless_run[@]}"
 assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" "$(yes 60 | head -n 120 | paste -sd' ')"
-# O prepare publica o prazo que calculou: o relógio falso mais 4 h.
-[[ "$(cat "$tmp_dir/wait.output")" == "deadline=$((1700000000 + 4 * 60 * 60))" ]] || { echo "prazo publicado divergente: $(cat "$tmp_dir/wait.output")" >&2; exit 1; }
+# O prepare publica a tentativa e o prazo que calculou: o relógio falso mais 4 h.
+[[ "$(cat "$tmp_dir/wait.output")" == "deadline=1:$((1700000000 + 4 * 60 * 60))" ]] || { echo "prazo publicado divergente: $(cat "$tmp_dir/wait.output")" >&2; exit 1; }
 
 # No job deploy o prazo vem do prepare. Run que já o estourou lá não é esperada
 # de novo dentro da fila do vigia: uma leitura, nenhum sleep.
-wait_env=(WAIT_DEADLINE=1700000000)
+wait_env=(WAIT_DEADLINE=1:1700000000)
 run_wait "${endless_run[@]}"
 assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" ""
+# Só o job deploy reexecutado, horas depois: o prazo recebido é o da tentativa
+# 1 e esta é a 2. A run em curso ganha as 4 h inteiras, em vez de morrer na
+# troca por um prazo vencido antes de a reexecução começar.
+wait_env=(WAIT_DEADLINE=1:1700000000 GITHUB_RUN_ATTEMPT=2)
+run_wait "${endless_run[@]}"
+assert_wait "a espera recomeça com prazo novo" "$(yes 60 | head -n 120 | paste -sd' ')"
 # Run iniciada entre os dois jobs, com 5 min de prazo restantes: espera só o
 # resto (a 1ª leitura termina em +60 s; cada volta soma 120 s), e não outras 4 h.
-wait_env=(WAIT_DEADLINE=$((1700000000 + 300)))
+wait_env=(WAIT_DEADLINE=1:$((1700000000 + 300)))
 run_wait "${endless_run[@]}"
 assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" "60 60"
 # Sem run, o prazo recebido não muda nada.
@@ -361,7 +378,7 @@ run_wait '{"status":"ok","active_jobs":0}'
 assert_wait "Nenhuma run em curso." ""
 # Prazo vazio ou ilegível (output do prepare perdido) reprova o passo em vez de
 # abrir um prazo novo.
-for bad_deadline in "" "amanhã" "17e9"; do
+for bad_deadline in "" "amanhã" "1700000000" "1:17e9"; do
   wait_env=("WAIT_DEADLINE=$bad_deadline")
   expect_failure run_wait_status '{"status":"ok","active_jobs":0}'
   assert_wait "WAIT_DEADLINE sem o prazo" ""
