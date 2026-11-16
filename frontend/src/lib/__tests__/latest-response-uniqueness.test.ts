@@ -23,7 +23,7 @@ function row(overrides: Partial<Row> & Pick<Row, "id">): Row {
 const llm = (id: string, overrides: Partial<Row> = {}) =>
   row({ id, respondent_type: "llm", respondent_id: null, respondent_name: "gpt-x", ...overrides });
 
-const violatingIds = (rows: Row[]) =>
+const violationDetails = (rows: Row[]) =>
   latestResponseUniquenessViolations(rows).map((v) => v.detail);
 
 describe("latestResponseUniquenessViolations", () => {
@@ -52,17 +52,19 @@ describe("latestResponseUniquenessViolations", () => {
     ]);
   });
 
-  // O resíduo do 23505 da #715: LLM viva presa em rodada anterior, ao lado da
-  // da rodada corrente. O índice LLM não tem round_id, então é colisão.
+  // A colisão que o 23505 da #715 barrou: LLM viva presa em rodada anterior ao
+  // lado de uma da rodada corrente. O índice LLM não tem round_id. (A órfã sem
+  // par na corrente, o resíduo medido na #715, não colide com nada aqui e é
+  // achado de `response-is-latest-na-rodada-corrente`.)
   it("acusa duas LLM vivas no mesmo doc em rodadas diferentes", () => {
     expect(
-      violatingIds([llm("l-velha", { round_id: "rodada-1" }), llm("l-nova", { round_id: "rodada-2" })]),
+      violationDetails([llm("l-velha", { round_id: "rodada-1" }), llm("l-nova", { round_id: "rodada-2" })]),
     ).toEqual(["2 responses is_latest: l-velha, l-nova"]);
   });
 
   it("acusa duas LLM vivas sem respondent_name no mesmo doc", () => {
     expect(
-      violatingIds([llm("l-a", { respondent_name: null }), llm("l-b", { respondent_name: null })]),
+      violationDetails([llm("l-a", { respondent_name: null }), llm("l-b", { respondent_name: null })]),
     ).toEqual(["2 responses is_latest: l-a, l-b"]);
   });
 
@@ -79,10 +81,19 @@ describe("latestResponseUniquenessViolations", () => {
   // acusa é `response-is-latest-na-rodada-corrente`. Repetir aqui contaria o
   // mesmo achado duas vezes e misturaria duas invariantes numa.
   it("não acusa humanas do mesmo pesquisador em rodadas diferentes", () => {
-    expect(violatingIds([row({ id: "h-velha", round_id: "rodada-1" }), row({ id: "h-nova" })])).toEqual([]);
+    expect(violationDetails([row({ id: "h-velha", round_id: "rodada-1" }), row({ id: "h-nova" })])).toEqual([]);
+  });
+
+  // O CHECK responses_human_latest_has_actor_check proíbe este estado; se ele
+  // passar, o índice não o vê como colisão (NULLS DISTINCT) e a invariante,
+  // que o espelha, também não.
+  it("não agrupa humanas vivas sem respondent_id, como o índice", () => {
+    expect(
+      violationDetails([row({ id: "h-a", respondent_id: null }), row({ id: "h-b", respondent_id: null })]),
+    ).toEqual([]);
   });
 
   it("não confunde humana e LLM no mesmo doc", () => {
-    expect(violatingIds([row({ id: "h" }), llm("l")])).toEqual([]);
+    expect(violationDetails([row({ id: "h" }), llm("l")])).toEqual([]);
   });
 });

@@ -235,7 +235,7 @@ const invariants: Invariant[] = [
   {
     name: "responses-is-latest-unica",
     motivation:
-      "espelha, com a chave exata de cada um, os índices responses_one_latest_llm_per_document (project_id, document_id) e responses_one_latest_human_per_document (#609; project_id, round_id, document_id, respondent_id); até a #609 a regra humana vivia só na aplicação, e a família de duplicatas por corrida/re-import (#490, dedup Zolgensma) nascia daí. Com os dois índices no lugar ela não tem como falhar: FAIL aqui = índice dropado ou recriado com outra chave, ou canal de escrita que o contorna. Até a #715 a chave era document_id|respondent_type|respondent_id, a de nenhum dos dois, e com respondent_id NULL em toda linha LLM deixava passar duas LLM vivas de modelos diferentes. Resposta viva presa em rodada anterior (o resíduo do 23505 da #715) é de response-is-latest-na-rodada-corrente",
+      "espelha, com a chave exata de cada um, os índices responses_one_latest_llm_per_document (project_id, document_id) e responses_one_latest_human_per_document (#609; project_id, round_id, document_id, respondent_id); até a #609 a regra humana vivia só na aplicação, e a família de duplicatas por corrida/re-import (#490, dedup Zolgensma) nascia daí. Com os dois índices no lugar ela não tem como falhar: FAIL aqui = índice dropado ou recriado com outra chave, ou canal de escrita que o contorna. Regra e histórico da chave (#715) em lib/latest-response-uniqueness.ts. Resposta viva presa em rodada anterior sem par na corrente (o resíduo medido na #715), ou humana viva em rodada anterior, que o índice humano permite, é achado de response-is-latest-na-rodada-corrente",
     run: async () =>
       latestResponseUniquenessViolations(
         await fetchAll<LatestResponseRow>(

@@ -11,13 +11,16 @@
  *   linha LLM; o modelo (respondent_name) também não entra.
  * - humano: `responses_one_latest_human_per_document`
  *   (project_id, round_id, document_id, respondent_id), recriado em
- *   20260731120000 com round_id. respondent_id não é NULL em humana viva
- *   (CHECK de 20260727120000).
+ *   20260731120000 com round_id. O CHECK de 20260727120000 proíbe humana viva
+ *   com respondent_id NULL; se uma passar, ela não colide com nada, como no
+ *   índice (NULLS DISTINCT), em vez de ser contada como índice dropado.
  *
  * Até a #715 a chave era `document_id|respondent_type|respondent_id`, que não
  * era a de nenhum dos dois: em linha LLM o respondent_id NULL caía para o
  * respondent_name, e duas LLM vivas de modelos diferentes passavam.
  */
+
+import { groupBy } from "@/lib/utils";
 
 export interface LatestResponseRow {
   id: string;
@@ -42,12 +45,11 @@ function indexKey(r: LatestResponseRow): string {
 export function latestResponseUniquenessViolations(
   rows: readonly LatestResponseRow[],
 ): Violation[] {
-  const byKey = new Map<string, string[]>();
-  for (const r of rows) {
-    const key = indexKey(r);
-    byKey.set(key, [...(byKey.get(key) ?? []), r.id]);
-  }
-  return [...byKey.entries()]
-    .filter(([, ids]) => ids.length > 1)
-    .map(([key, ids]) => ({ key, detail: `${ids.length} responses is_latest: ${ids.join(", ")}` }));
+  const indexed = rows.filter((r) => r.respondent_type === "llm" || r.respondent_id !== null);
+  return [...groupBy(indexed, indexKey)]
+    .filter(([, group]) => group.length > 1)
+    .map(([key, group]) => ({
+      key,
+      detail: `${group.length} responses is_latest: ${group.map((r) => r.id).join(", ")}`,
+    }));
 }
