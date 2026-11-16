@@ -37,6 +37,10 @@ import {
 } from "@/lib/error-resolution";
 import { draftBackedComparisonViolations } from "@/lib/draft-backed-comparison";
 import { concludedCodingDraftViolations } from "@/lib/concluded-coding-draft";
+import {
+  latestResponseUniquenessViolations,
+  type LatestResponseRow,
+} from "@/lib/latest-response-uniqueness";
 import { verdictMatchesAnswer } from "@/lib/llm-error-metrics";
 // Mesma primitiva de igualdade que o produto usa para decidir divergência
 // (`lib/compare-divergence.ts`, `lib/equivalence.ts`): se as duas réguas
@@ -231,28 +235,15 @@ const invariants: Invariant[] = [
   {
     name: "responses-is-latest-unica",
     motivation:
-      "invariante dos índices responses_one_latest_human_per_document (#609) e responses_one_latest_llm_per_document; até a #609 a regra humana vivia só na aplicação, e a família de duplicatas por corrida/re-import (#490, dedup Zolgensma) nascia daí. FAIL aqui deixou de ser 'mais uma corrida': é índice dropado ou canal de escrita que o contorna",
-    run: async () => {
-      const rows = await fetchAll<{
-        id: string;
-        document_id: string;
-        respondent_type: string;
-        respondent_id: string | null;
-        respondent_name: string | null;
-      }>(
-        "responses",
-        "id, document_id, respondent_type, respondent_id, respondent_name",
-        (q) => q.eq("is_latest", true),
-      );
-      const byKey = new Map<string, string[]>();
-      for (const r of rows) {
-        const key = `${r.document_id}|${r.respondent_type}|${r.respondent_id ?? r.respondent_name ?? "?"}`;
-        byKey.set(key, [...(byKey.get(key) ?? []), r.id]);
-      }
-      return [...byKey.entries()]
-        .filter(([, ids]) => ids.length > 1)
-        .map(([key, ids]) => ({ key, detail: `${ids.length} responses is_latest: ${ids.join(", ")}` }));
-    },
+      "espelha, com a chave exata de cada um, os índices responses_one_latest_llm_per_document (project_id, document_id) e responses_one_latest_human_per_document (#609; project_id, round_id, document_id, respondent_id); até a #609 a regra humana vivia só na aplicação, e a família de duplicatas por corrida/re-import (#490, dedup Zolgensma) nascia daí. Com os dois índices no lugar ela não tem como falhar: FAIL aqui = índice dropado ou recriado com outra chave, ou canal de escrita que o contorna. Até a #715 a chave era document_id|respondent_type|respondent_id, a de nenhum dos dois, e com respondent_id NULL em toda linha LLM deixava passar duas LLM vivas de modelos diferentes. Resposta viva presa em rodada anterior (o resíduo do 23505 da #715) é de response-is-latest-na-rodada-corrente",
+    run: async () =>
+      latestResponseUniquenessViolations(
+        await fetchAll<LatestResponseRow>(
+          "responses",
+          "id, project_id, round_id, document_id, respondent_type, respondent_id",
+          (q) => q.eq("is_latest", true),
+        ),
+      ),
   },
   {
     name: "response-is-latest-na-rodada-corrente",
