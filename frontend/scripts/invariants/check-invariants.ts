@@ -42,7 +42,6 @@ import {
   type LatestResponseRow,
 } from "@/lib/latest-response-uniqueness";
 import { verdictMatchesAnswer } from "@/lib/llm-error-metrics";
-import type { HumanResponseRow, LlmResponseRow } from "@/lib/auto-review-backlog";
 import {
   autoReviewCoverageCandidates,
   autoReviewCoverageViolations,
@@ -1099,32 +1098,26 @@ const invariants: Invariant[] = [
         (await fetchByIds<{ id: string; answers: Record<string, unknown> | null; answer_field_hashes: AnswerFieldHashes }>(
           "responses",
           "id, answers, answer_field_hashes",
-          candidates.map((c) => c.id),
+          candidates.flatMap((c) => [c.llm, ...c.humans].map((r) => r.id)),
         )).map((r) => [r.id, r]),
       );
-      const candidatesOf = groupBy(candidates, (c) => c.project_id);
+      const withAnswers = (r: CoverageResponseMeta) => {
+        const heavy = heavyOf.get(r.id);
+        if (!heavy) throw new Error(`responses(${r.id}): sumiu entre as duas fases`);
+        return { id: r.id, document_id: r.document_id, answers: heavy.answers ?? {}, answer_field_hashes: heavy.answer_field_hashes };
+      };
+      const candidatesOf = groupBy(candidates, (c) => c.llm.project_id);
       const equivalencesOf = groupBy(equivalences, (e) => e.project_id);
-      const divergencesOf = new Map(
-        projects.map((project) => {
-          const humans: HumanResponseRow[] = [];
-          const llmByDocId = new Map<string, LlmResponseRow>();
-          for (const c of candidatesOf.get(project.id) ?? []) {
-            const heavy = heavyOf.get(c.id);
-            if (!heavy) throw new Error(`responses(${c.id}): sumiu entre as duas fases`);
-            const row = { id: c.id, document_id: c.document_id, answers: heavy.answers ?? {}, answer_field_hashes: heavy.answer_field_hashes };
-            if (c.respondent_type === "llm") llmByDocId.set(c.document_id, row);
-            else humans.push({ ...row, respondent_id: c.respondent_id! });
-          }
-          const divergences = autoReviewDivergences({
-            projectId: project.id,
-            fields: project.pydantic_fields ?? [],
-            humans,
-            llmByDocId,
-            equivalencesByField: groupValueEquivalencesByField(equivalencesOf.get(project.id)),
-          });
-          return [project.id, divergences] as const;
-        }),
-      );
+      const divergences = projects.flatMap((project) => {
+        const docs = candidatesOf.get(project.id) ?? [];
+        return autoReviewDivergences({
+          projectId: project.id,
+          fields: project.pydantic_fields ?? [],
+          humans: docs.flatMap((c) => c.humans.map((h) => ({ ...withAnswers(h), respondent_id: h.respondent_id }))),
+          llmByDocId: new Map(docs.map((c) => [c.llm.document_id, withAnswers(c.llm)])),
+          equivalencesByField: groupValueEquivalencesByField(equivalencesOf.get(project.id)),
+        });
+      });
 
       // Outbox e ciclos só dos documentos divergentes, lidos DEPOIS das
       // respostas e nesta ordem, para não fabricar falso positivo com o dreno
@@ -1135,28 +1128,30 @@ const invariants: Invariant[] = [
       // um save novo e um dreno completo depois da fase 2, que some na execução
       // seguinte. Ler por documento, e não a tabela paginada, também evita o
       // salto de página: o worker apaga ciclos e troca o `id` dos que rotaciona.
-      const divergentDocs = [
-        ...new Set([...divergencesOf.values()].flatMap((list) => list.map((d) => d.documentId))),
-      ];
+      const divergentDocs = [...new Set(divergences.map((d) => d.documentId))];
+      // Mesmo teto de URL do `fetchByIds`; aqui com paginação dentro do lote,
+      // porque 100 documentos podem ter mais de 1000 ciclos.
+      const CHUNK = 100;
       const inDivergentDocs = async <T,>(
         table: string,
         columns: string,
-        filter: (q: UntypedSelectBuilder) => UntypedSelectBuilder,
+        filter?: (q: UntypedSelectBuilder) => UntypedSelectBuilder,
         orderColumn?: string,
       ) => {
-        const rows: T[] = [];
-        for (let i = 0; i < divergentDocs.length; i += 100) {
-          const batch = divergentDocs.slice(i, i + 100);
-          // react-doctor-disable-next-line react-doctor/async-await-in-loop
-          rows.push(...(await fetchAll<T>(table, columns, (q) => filter(q.in("document_id", batch)), orderColumn)));
-        }
-        return rows;
+        const batches = [];
+        for (let i = 0; i < divergentDocs.length; i += CHUNK) batches.push(divergentDocs.slice(i, i + CHUNK));
+        const pages = await Promise.all(
+          batches.map((batch) =>
+            fetchAll<T>(table, columns, (q) => (filter ? filter(q.in("document_id", batch)) : q.in("document_id", batch)), orderColumn),
+          ),
+        );
+        return pages.flat();
       };
       const pendingLlmOf = new Map(
         (await inDivergentDocs<{ document_id: string; llm_response_id: string }>(
           "auto_review_reconciliation_requests",
           "document_id, llm_response_id",
-          (q) => q,
+          undefined,
           "document_id",
         )).map((r) => [r.document_id, r.llm_response_id]),
       );
@@ -1168,14 +1163,7 @@ const invariants: Invariant[] = [
         )).map((c) => coverageKey(c.document_id, c.field_name)),
       );
 
-      return projects.flatMap((project) =>
-        autoReviewCoverageViolations({
-          projectId: project.id,
-          divergences: divergencesOf.get(project.id) ?? [],
-          openCycles,
-          pendingLlmOf,
-        }),
-      );
+      return autoReviewCoverageViolations({ divergences, openCycles, pendingLlmOf });
     },
   },
 ];

@@ -54,35 +54,40 @@ export interface CoverageResponseMeta {
   respondent_id: string | null;
 }
 
+/** Documento que entra no replay: a geração LLM e as humanas de membros. */
+export interface CoverageCandidate {
+  llm: CoverageResponseMeta;
+  humans: (CoverageResponseMeta & { respondent_id: string })[];
+}
+
 /**
  * Fase 1: das respostas `is_latest` e `is_partial = false` dos projetos em
- * auto-revisão, as que entram no replay — a geração LLM e as humanas de
- * membros do projeto, em documento ativo que tenha as duas. O reconciliador
- * descarta a humana de quem não é membro (`eligibleHumanResponses`), então
- * ela também não gera divergência aqui. Só destas o script busca `answers`.
+ * auto-revisão, os documentos ativos que têm geração LLM e ao menos uma humana
+ * de membro do projeto. Espelha a elegibilidade do reconciliador
+ * (`readReconciliationInputs` e `eligibleHumanResponses`, que descarta a humana
+ * de quem não é membro) e precisa acompanhá-la se ela mudar. Só destas
+ * respostas o script busca `answers`.
  */
 export function autoReviewCoverageCandidates(
   responses: readonly CoverageResponseMeta[],
   activeDocIds: ReadonlySet<string>,
   membersOf: ReadonlyMap<string, ReadonlySet<string>>,
-): CoverageResponseMeta[] {
-  const byDoc = new Map<string, { llm?: CoverageResponseMeta; humans: CoverageResponseMeta[] }>();
+): CoverageCandidate[] {
+  const byDoc = new Map<string, { llm?: CoverageResponseMeta; humans: CoverageCandidate["humans"] }>();
+  const entryOf = (documentId: string) => {
+    const entry = byDoc.get(documentId) ?? { humans: [] };
+    byDoc.set(documentId, entry);
+    return entry;
+  };
   for (const r of responses) {
     if (!activeDocIds.has(r.document_id)) continue;
-    const isLlm = r.respondent_type === "llm";
-    const isMemberHuman =
-      r.respondent_type === "humano" &&
-      r.respondent_id !== null &&
-      membersOf.get(r.project_id)?.has(r.respondent_id) === true;
-    if (!isLlm && !isMemberHuman) continue;
-    const entry = byDoc.get(r.document_id) ?? { humans: [] };
-    if (isLlm) entry.llm = r;
-    else entry.humans.push(r);
-    byDoc.set(r.document_id, entry);
+    const { respondent_id } = r;
+    if (r.respondent_type === "llm") entryOf(r.document_id).llm = r;
+    else if (r.respondent_type === "humano" && respondent_id !== null && membersOf.get(r.project_id)?.has(respondent_id)) {
+      entryOf(r.document_id).humans.push({ ...r, respondent_id });
+    }
   }
-  return [...byDoc.values()].flatMap(({ llm, humans }) =>
-    llm && humans.length > 0 ? [llm, ...humans] : [],
-  );
+  return [...byDoc.values()].flatMap(({ llm, humans }) => (llm && humans.length > 0 ? [{ llm, humans }] : []));
 }
 
 /** Chave da cobertura: um ciclo operacional por (documento, campo). */
@@ -92,6 +97,7 @@ export function coverageKey(documentId: string, fieldName: string): string {
 
 /** Divergência do replay num (documento, campo). */
 export interface AutoReviewDivergence {
+  projectId: string;
   documentId: string;
   fieldName: string;
   /** Geração LLM contra a qual o replay divergiu. */
@@ -127,6 +133,7 @@ export function autoReviewDivergences({
   for (const row of fieldReviewRows) {
     const key = coverageKey(row.document_id, row.field_name);
     const divergence = byPair.get(key) ?? {
+      projectId,
       documentId: row.document_id,
       fieldName: row.field_name,
       llmResponseId: row.llm_response_id,
@@ -139,7 +146,6 @@ export function autoReviewDivergences({
 }
 
 export interface AutoReviewCoverageInput {
-  projectId: string;
   divergences: readonly AutoReviewDivergence[];
   /** `coverageKey` de cada `field_reviews` com `superseded_at IS NULL`. */
   openCycles: ReadonlySet<string>;
@@ -155,7 +161,6 @@ export interface AutoReviewCoverageInput {
  * reconhece como obsoleta, sem criar ciclo, e não cobre nada.
  */
 export function autoReviewCoverageViolations({
-  projectId,
   divergences,
   openCycles,
   pendingLlmOf,
@@ -168,6 +173,6 @@ export function autoReviewCoverageViolations({
     )
     .map((d) => ({
       key: coverageKey(d.documentId, d.fieldName),
-      detail: `doc ${d.documentId}, campo ${d.fieldName} (projeto ${projectId}): diverge do LLM para ${d.reviewers.join(", ")} sem ciclo em field_reviews nem request pendente`,
+      detail: `doc ${d.documentId}, campo ${d.fieldName} (projeto ${d.projectId}): diverge do LLM para ${d.reviewers.join(", ")} sem ciclo em field_reviews nem request pendente`,
     }));
 }

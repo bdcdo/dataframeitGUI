@@ -157,7 +157,7 @@ describe("autoReviewCoverageCandidates", () => {
       meta({ id: "h1" }),
       meta({ id: "h-fora", respondent_id: "ex-membro" }),
     ];
-    expect(autoReviewCoverageCandidates(rows, active, members).map((r) => r.id)).toEqual(["llm1", "h1"]);
+    expect(autoReviewCoverageCandidates(rows, active, members).map((c) => [c.llm.id, ...c.humans.map((h) => h.id)])).toEqual([["llm1", "h1"]]);
   });
 
   it("descarta documento sem LLM, sem humana de membro, ou excluído", () => {
