@@ -6,21 +6,22 @@ import { TEXT_CHANGE_WITH_RESPONSES_MESSAGE } from "@/lib/upload-chunking";
 // documents_project_external_id_active_uniq (migration 20260623130000):
 // uploadDocuments nao pode mais inserir external_id ja ATIVO no projeto nem
 // repetido no proprio lote, senao o INSERT em lote falharia inteiro. O mock de
-// documents e uma FILA: 1a query = SELECT dos external_ids ativos existentes,
-// 2a = o INSERT. Quando o lote nao tem external_id, o SELECT e pulado e o INSERT
-// consome o 1o item.
+// documents usa linhas filtradas no SELECT e erro por operação no INSERT.
 import {
-  makeSupabaseMock,
-  type TableResult,
-  type TableResults,
+  makeFilterAwareSupabaseMock,
+  type QueryError,
+  type RpcResult,
   type WriteCall,
   type RpcCall,
-} from "./supabase-mock";
+  type ReadCall,
+} from "@/test-utils/supabase-mock";
 
 let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
-let serverTableResults: TableResults | undefined;
-let serverRpcResults: Record<string, TableResult> | undefined;
+let readCalls: ReadCall[];
+let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError>;
+let serverRpcResults: Record<string, RpcResult>;
 
 // vi.fn() (não arrow fixa) para permitir override por teste nos guards de
 // exclude/restore/hardDelete — mesmo padrão de comparisons-retry.test.ts.
@@ -78,19 +79,24 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({
-      tableResults: serverTableResults,
+    makeFilterAwareSupabaseMock({
+      tableData,
+      queryErrors,
       writeCalls,
+      readCalls,
       rpcCalls,
       rpcResults: serverRpcResults,
+      projectColumns: true,
     }),
 }));
 
 beforeEach(() => {
   writeCalls = [];
   rpcCalls = [];
-  serverTableResults = undefined;
-  serverRpcResults = undefined;
+  readCalls = [];
+  tableData = {};
+  queryErrors = {};
+  serverRpcResults = {};
   hoisted.getUser.mockResolvedValue({ id: "userCoord" });
   hoisted.isCoord.mockResolvedValue(true);
   hoisted.resolveMemberUserId.mockReset();
@@ -146,27 +152,25 @@ beforeAll(async () => {
 
 describe("getDocumentsForBrowse — identidade canônica", () => {
   it("reconhece como própria a resposta do membro canônico da conta-alias", async () => {
-    serverTableResults = {
-      documents: {
-        data: [
-          {
-            id: "doc-1",
-            external_id: "EXT-1",
-            title: "Documento",
-            created_at: "2026-07-15T00:00:00Z",
-            exclusion_pending_at: null,
-          },
-        ],
-      },
-      responses: {
-        data: [{ document_id: "doc-1", respondent_id: "canonical-member" }],
-      },
-      project_comments: { data: [] },
+    tableData = {
+      documents: [
+        {
+          id: "doc-1", project_id: "project-1", excluded_at: null,
+          external_id: "EXT-1", title: "Documento", created_at: "2026-07-15T00:00:00Z", exclusion_pending_at: null,
+        },
+        {
+          id: "doc-excluded", project_id: "project-1", excluded_at: "2026-07-16T00:00:00Z",
+          external_id: "EXT-2", title: "Excluído", created_at: "2026-07-16T00:00:00Z", exclusion_pending_at: null,
+        },
+      ],
+      responses: [{ project_id: "project-1", respondent_type: "humano", document_id: "doc-1", respondent_id: "canonical-member" }],
+      project_comments: [],
     };
     const browse = await loadBrowse();
 
     const result = await browse("project-1");
 
+    expect(result).toHaveLength(1);
     expect(result[0]?.userAlreadyResponded).toBe(true);
     expect(hoisted.resolveMemberUserId).toHaveBeenCalledWith("project-1");
   });
@@ -183,9 +187,12 @@ function insertedRows(): { metadata: unknown; external_id: string | null }[] {
 
 describe("uploadDocuments — filtro do indice unico (add_all)", () => {
   it("pula external_id ja ATIVO no projeto e insere os demais", async () => {
-    // SELECT devolve DOC-1 como ja existente ativo; depois o INSERT (sem erro).
-    serverTableResults = {
-      documents: [{ data: [{ external_id: "DOC-1" }] }, { error: null }],
+    tableData = {
+      documents: [
+        { project_id: "proj-1", excluded_at: null, external_id: "DOC-1" },
+        { project_id: "proj-1", excluded_at: "2026-01-01", external_id: "DOC-2" },
+        { project_id: "another", excluded_at: null, external_id: "DOC-3" },
+      ],
     };
     const uploadDocuments = await loadUpload();
 
@@ -206,9 +213,6 @@ describe("uploadDocuments — filtro do indice unico (add_all)", () => {
   });
 
   it("pula repeticao do mesmo external_id dentro do lote (mantem a 1a)", async () => {
-    serverTableResults = {
-      documents: [{ data: [] }, { error: null }],
-    };
     const uploadDocuments = await loadUpload();
 
     const r = await uploadDocuments(
@@ -227,8 +231,7 @@ describe("uploadDocuments — filtro do indice unico (add_all)", () => {
   });
 
   it("nunca filtra documentos sem external_id", async () => {
-    // Sem external_ids no lote -> SELECT e pulado; INSERT consome o 1o item.
-    serverTableResults = { documents: [{ error: null }] };
+    // Sem external_ids no lote, o SELECT é pulado.
     const uploadDocuments = await loadUpload();
 
     const r = await uploadDocuments(
@@ -243,15 +246,13 @@ describe("uploadDocuments — filtro do indice unico (add_all)", () => {
     expect(r.count).toBe(2);
     expect(r.skipped).toBe(0);
     expect(insertedExternalIds()).toEqual([null, null]);
+    expect(readCalls.filter((call) => call.table === "documents")).toEqual([]);
   });
 });
 
 describe("uploadDocuments — contagem em add_new_only", () => {
   it("conta os duplicados do duplicateMap em skipped (count + skipped == total)", async () => {
-    // SELECT do filtro nao acha nada ativo; INSERT do DOC-2 ok.
-    serverTableResults = {
-      documents: [{ data: [] }, { error: null }],
-    };
+    // SELECT do filtro não acha nada ativo; INSERT do DOC-2 ok.
     const uploadDocuments = await loadUpload();
 
     const r = await uploadDocuments(
@@ -313,7 +314,6 @@ describe("uploadDocuments — replace_and_add delega à RPC transacional", () =>
 
   it("chama a RPC com dup + novo e não emite writes diretos", async () => {
     // O filtro do novo doc consulta documents (SELECT, sem conflito ativo).
-    serverTableResults = { documents: [{ data: [] }] };
     const uploadDocuments = await loadUpload();
 
     const r = await uploadDocuments(
@@ -424,7 +424,6 @@ describe("uploadDocuments — persiste a linha original (metadata)", () => {
   };
 
   it("add_all: grava metadata no INSERT; doc sem metadata vira null", async () => {
-    serverTableResults = { documents: [{ error: null }] };
     const uploadDocuments = await loadUpload();
 
     await uploadDocuments(
@@ -442,7 +441,6 @@ describe("uploadDocuments — persiste a linha original (metadata)", () => {
   });
 
   it("add_new_only: grava metadata nas linhas novas inseridas", async () => {
-    serverTableResults = { documents: [{ data: [] }, { error: null }] };
     const uploadDocuments = await loadUpload();
 
     await uploadDocuments(
@@ -457,7 +455,6 @@ describe("uploadDocuments — persiste a linha original (metadata)", () => {
 
   it("replace_and_add: metadata flui no p_new_documents e no p_duplicate_updates da RPC", async () => {
     // Pré-filtro do doc novo consulta documents (SELECT sem conflito).
-    serverTableResults = { documents: [{ data: [] }] };
     const uploadDocuments = await loadUpload();
 
     await uploadDocuments(
@@ -497,9 +494,7 @@ describe("uploadDocuments — persiste a linha original (metadata)", () => {
 
 describe("checkDuplicates — propaga erro de query (não engole silenciosamente)", () => {
   it("lança quando a query por external_id falha", async () => {
-    serverTableResults = {
-      documents: [{ error: { message: "db down" } }],
-    };
+    queryErrors["documents:select"] = { message: "db down" };
     const checkDuplicates = await loadCheck();
 
     await expect(
@@ -510,10 +505,8 @@ describe("checkDuplicates — propaga erro de query (não engole silenciosamente
   });
 
   it("lança quando a query por text_hash falha (docs sem external_id)", async () => {
-    // Sem external_id, o bloco 1 é pulado e a query de hash é a 1ª em documents.
-    serverTableResults = {
-      documents: [{ error: { message: "hash fail" } }],
-    };
+    // Sem external_id, o bloco 1 é pulado e só a consulta por hash roda.
+    queryErrors["documents:select"] = { message: "hash fail" };
     const checkDuplicates = await loadCheck();
 
     await expect(
@@ -523,10 +516,8 @@ describe("checkDuplicates — propaga erro de query (não engole silenciosamente
 
   it("lança quando a query de responses falha", async () => {
     // extId acha 1 duplicata → dispara a query de responses, que falha.
-    serverTableResults = {
-      documents: [{ data: [{ id: "d1", external_id: "X" }] }],
-      responses: [{ error: { message: "resp fail" } }],
-    };
+    tableData = { documents: [{ id: "d1", project_id: "proj-1", excluded_at: null, external_id: "X" }] };
+    queryErrors["responses:select"] = { message: "resp fail" };
     const checkDuplicates = await loadCheck();
 
     await expect(
@@ -537,10 +528,7 @@ describe("checkDuplicates — propaga erro de query (não engole silenciosamente
   });
 
   it("caminho feliz: retorna duplicatas sem lançar quando não há erro", async () => {
-    serverTableResults = {
-      documents: [{ data: [{ id: "d1", external_id: "X" }] }],
-      responses: [{ data: [] }],
-    };
+    tableData = { documents: [{ id: "d1", project_id: "proj-1", excluded_at: null, external_id: "X" }], responses: [] };
     const checkDuplicates = await loadCheck();
 
     const r = await checkDuplicates("proj-1", [
@@ -557,26 +545,14 @@ describe("checkDuplicates — propaga erro de query (não engole silenciosamente
 // text_hash NULL fica fora da conta (a guarda do banco decide esse caso).
 describe("checkDuplicates: duplicatas respondidas com texto novo", () => {
   it("conta só a respondida cujo text_hash gravado difere do hash que chega", async () => {
-    serverTableResults = {
+    tableData = {
       documents: [
-        {
-          data: [
-            { id: "d-novo", external_id: "A", text_hash: "h-velho" },
-            { id: "d-igual", external_id: "B", text_hash: "hB" },
-            { id: "d-nulo", external_id: "C", text_hash: null },
-            { id: "d-sem-resp", external_id: "D", text_hash: "h-velho-d" },
-          ],
-        },
+        { id: "d-novo", project_id: "proj-1", excluded_at: null, external_id: "A", text_hash: "h-velho" },
+        { id: "d-igual", project_id: "proj-1", excluded_at: null, external_id: "B", text_hash: "hB" },
+        { id: "d-nulo", project_id: "proj-1", excluded_at: null, external_id: "C", text_hash: null },
+        { id: "d-sem-resp", project_id: "proj-1", excluded_at: null, external_id: "D", text_hash: "h-velho-d" },
       ],
-      responses: [
-        {
-          data: [
-            { document_id: "d-novo" },
-            { document_id: "d-igual" },
-            { document_id: "d-nulo" },
-          ],
-        },
-      ],
+      responses: ["d-novo", "d-igual", "d-nulo"].map((document_id) => ({ project_id: "proj-1", document_id })),
     };
     const checkDuplicates = await loadCheck();
 
@@ -595,9 +571,11 @@ describe("checkDuplicates: duplicatas respondidas com texto novo", () => {
 
 describe("getDocumentText", () => {
   it("retorna texto e titulo quando o doc existe", async () => {
-    serverTableResults = {
-      documents: [{ data: { title: "Titulo", text: "conteudo" } }],
-    };
+    tableData = { documents: [
+      { id: "doc-1", project_id: "proj-1", title: "Titulo", text: "conteudo" },
+      { id: "doc-2", project_id: "proj-1", title: "Outro ID", text: "outro" },
+      { id: "doc-1", project_id: "outro", title: "Outro projeto", text: "alheio" },
+    ] };
     const getDocumentText = await loadGetDocumentText();
 
     const r = await getDocumentText("proj-1", "doc-1");
@@ -607,16 +585,13 @@ describe("getDocumentText", () => {
 
   it("retorna null (sem lancar) quando o doc nao existe", async () => {
     // maybeSingle devolve data:null em 0 linhas; nao pode lancar (era .single()).
-    serverTableResults = { documents: [{ data: null }] };
     const getDocumentText = await loadGetDocumentText();
 
     await expect(getDocumentText("proj-1", "missing")).resolves.toBeNull();
   });
 
   it("lanca quando a query retorna erro, em vez de silenciar como nao-encontrado", async () => {
-    serverTableResults = {
-      documents: [{ error: { message: "rls denied", code: "42501" } }],
-    };
+    queryErrors["documents:select"] = { message: "rls denied", code: "42501" };
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const getDocumentText = await loadGetDocumentText();
 
@@ -686,15 +661,14 @@ describe("excludeDocuments", () => {
         excluded_reason: "motivo",
         excluded_by: "userCoord",
       },
+      filters: [["eq", "project_id", "proj-1"], ["in", "id", ["doc1", "doc2"]]],
     });
   });
 
   // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log (#502).
   it("erro do Supabase → copy pt-BR, texto cru no log, sem revalidar", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    serverTableResults = {
-      documents: [{ error: { message: "db down" } }],
-    };
+    queryErrors["documents:update"] = { message: "db down" };
     const excludeDocuments = await loadExclude();
 
     const r = await excludeDocuments("proj-1", ["doc1"], "motivo");
@@ -728,6 +702,7 @@ describe("restoreDocuments", () => {
       table: "documents",
       op: "update",
       payload: { excluded_at: null, excluded_reason: null, excluded_by: null },
+      filters: [["eq", "project_id", "proj-1"], ["in", "id", ["doc1", "doc2", "doc3"]]],
     });
   });
 });
@@ -751,7 +726,10 @@ describe("hardDeleteDocuments", () => {
     const r = await hardDeleteDocuments("proj-1", ["doc1"]);
 
     expect(r).toEqual({ count: 1 });
-    expect(writeCalls[0]).toMatchObject({ table: "documents", op: "delete" });
+    expect(writeCalls[0]).toMatchObject({
+      table: "documents", op: "delete",
+      filters: [["eq", "project_id", "proj-1"], ["in", "id", ["doc1"]]],
+    });
   });
 });
 
