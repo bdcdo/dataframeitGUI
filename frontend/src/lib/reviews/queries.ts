@@ -30,27 +30,6 @@ interface ResponseRow {
   created_at: string;
 }
 
-// A linha de `responses` como o PostgREST a devolve, antes de o nome do
-// respondente ser resolvido pelo perfil.
-interface FetchedResponseRow {
-  id: string;
-  document_id: string;
-  respondent_id: string | null;
-  respondent_type: string;
-  respondent_name: string | null;
-  answers: unknown;
-  justifications: unknown;
-  pydantic_hash: string | null;
-  answer_field_hashes: unknown;
-  created_at: string;
-}
-
-interface ReviewDocumentRow {
-  id: string;
-  title: string | null;
-  external_id: string | null;
-}
-
 export interface ReviewRow {
   id: string;
   document_id: string;
@@ -195,7 +174,6 @@ async function readAllOrThrow<T>(
 export async function fetchReviewBaseData(
   supabase: SupabaseClient,
   projectId: string,
-  options?: { since?: string },
 ): Promise<ReviewComputationContext> {
   const [
     { data: project },
@@ -211,16 +189,15 @@ export async function fetchReviewBaseData(
       .eq("id", projectId)
       .single(),
     readAllOrThrow(
-      fetchAllAfterId<FetchedResponseRow>(() => {
-        const query = supabase
+      fetchAllAfterId<ResponseRow>(() =>
+        supabase
           .from("responses")
           .select(
-            "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, created_at",
+            "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, pydantic_hash, answer_field_hashes, created_at",
           )
           .eq("project_id", projectId)
-          .eq("is_latest", true);
-        return options?.since ? query.gte("created_at", options.since) : query;
-      }),
+          .eq("is_latest", true),
+      ),
       "as respostas",
     ),
     readAllOrThrow(
@@ -235,7 +212,7 @@ export async function fetchReviewBaseData(
       "as revisões",
     ),
     readAllOrThrow(
-      fetchAllAfterId<ReviewDocumentRow>(() =>
+      fetchAllAfterId<{ id: string; title: string | null; external_id: string | null }>(() =>
         supabase
           .from("documents")
           .select("id, title, external_id")
@@ -251,34 +228,23 @@ export async function fetchReviewBaseData(
     ),
     fetchProfileNames(supabase, projectId),
   ]);
-  // O cursor devolve as respostas na ordem da PK, que é aleatória. A ordem
-  // dos respondentes na tela segue a de gravação.
-  responses.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
-
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const projectPydanticHash = project?.pydantic_hash || null;
 
   const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
   const currentFieldHashes = buildFieldHashMap(fields);
 
-  // Group responses by document_id
   const responsesByDoc = new Map<string, ResponseRow[]>();
-  responses.forEach((r) => {
+  for (const r of responses) {
     const list = responsesByDoc.get(r.document_id) || [];
-    list.push({
-      id: r.id,
-      document_id: r.document_id,
-      respondent_id: r.respondent_id,
-      respondent_type: r.respondent_type as "humano" | "llm",
-      respondent_name: respondentDisplayName(r, profileNames),
-      answers: r.answers as Record<string, unknown>,
-      justifications: r.justifications as Record<string, string> | null,
-      pydantic_hash: r.pydantic_hash,
-      answer_field_hashes: r.answer_field_hashes as AnswerFieldHashes,
-      created_at: r.created_at,
-    });
+    list.push({ ...r, respondent_name: respondentDisplayName(r, profileNames) });
     responsesByDoc.set(r.document_id, list);
-  });
+  }
+  // O cursor devolve as respostas na ordem da PK, que é aleatória. A ordem
+  // dos respondentes de cada documento na tela segue a de gravação.
+  for (const list of responsesByDoc.values()) {
+    list.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id < b.id ? -1 : 1));
+  }
 
   const uniqueReviews = gabaritoReviews(reviews, fieldMap);
 
