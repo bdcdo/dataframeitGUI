@@ -122,6 +122,54 @@ def test_ruff_hook_problems_flags_second_pin() -> None:
     assert any("backend/uv.lock" in p for p in problems), problems
 
 
+def _remote_rev_problems(config: str) -> list[str]:
+    """Hooks de repositório remoto cujo ``rev`` não é SHA com ``# frozen: <tag>``."""
+    problems = []
+    for match in re.finditer(
+        r"^\s*- repo:\s*(\S+)\s*\n\s*rev:\s*(.*)$", config, re.MULTILINE
+    ):
+        repo, rev = match.groups()
+        if not re.fullmatch(r"[0-9a-f]{40}\s+# frozen: v?\d\S*", rev.strip()):
+            problems.append(
+                f"{repo} em .pre-commit-config.yaml com `rev: {rev.strip()}`: "
+                "pine pelo SHA do commit com `# frozen: <tag>` (#555)."
+            )
+    return problems
+
+
+def test_remote_hooks_pinned_by_frozen_sha() -> None:
+    config = (REPO / ".pre-commit-config.yaml").read_text()
+    remotes = re.findall(r"^\s*- repo:\s*https://", config, re.MULTILINE)
+    # Todo repo remoto precisa ser visto pela regex do `rev`: um bloco em
+    # outra forma passaria sem ser conferido.
+    revs = re.findall(r"^\s*- repo:\s*https://\S+\s*\n\s*rev:", config, re.MULTILINE)
+    assert remotes and len(revs) == len(remotes), (remotes, revs)
+    problems = _remote_rev_problems(config)
+    assert not problems, "\n".join(problems)
+
+
+def test_remote_rev_problems_flags_tag_pin() -> None:
+    # Prova do vermelho: o pin por tag de antes reprova; SHA sem o comentário
+    # (o Dependabot não saberia a tag) e SHA abreviado também.
+    sha = "83d9cd684c87d95d656c1458ef04895a7f1cbd8e"
+    config = (
+        "  - repo: https://github.com/gitleaks/gitleaks\n"
+        "    rev: v8.30.1\n"
+        "  - repo: https://github.com/rhysd/actionlint\n"
+        f"    rev: {sha}\n"
+        "  - repo: https://github.com/pre-commit/pre-commit-hooks\n"
+        f"    rev: {sha[:12]}  # frozen: v6.0.0\n"
+        "  - repo: https://github.com/example/ok\n"
+        f"    rev: {sha}  # frozen: v1.2.3\n"
+    )
+    problems = _remote_rev_problems(config)
+    assert [p.split(" ")[0] for p in problems] == [
+        "https://github.com/gitleaks/gitleaks",
+        "https://github.com/rhysd/actionlint",
+        "https://github.com/pre-commit/pre-commit-hooks",
+    ], problems
+
+
 def test_python_version_matches_dockerfile_and_mypy() -> None:
     pinned = (BACKEND / ".python-version").read_text().strip()
     match = re.search(

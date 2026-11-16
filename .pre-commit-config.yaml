@@ -19,6 +19,12 @@ default_install_hook_types: [pre-commit, pre-push, post-checkout]
 # estagios), furando a divisao descrita abaixo.
 default_stages: [pre-commit]
 
+# Hook de repositorio remoto pina o `rev` por SHA do commit, com a tag legivel
+# em `# frozen: vX.Y.Z` (forma do `pre-commit autoupdate --freeze`): a tag e
+# ponteiro movel, e quem controla o upstream poderia reapontar a tag para outro
+# codigo sob o mesmo `rev`, sem diff aqui. O Dependabot de `pre-commit` le o
+# comentario para resolver a tag nova e reescreve SHA e comentario juntos (#555).
+# O teste em backend/tests/test_toolchain_pins.py barra a volta do pin por tag.
 repos:
   # Marcador de conflito nao resolvido em qualquer arquivo versionado. Entrou
   # depois de 2026-08-10: a resolucao de um merge deixou um `=======` orfao em
@@ -28,7 +34,7 @@ repos:
   # Fail-closed na producao funcionou (o preflight abortou antes de mutar nada),
   # mas o custo foi um deploy vermelho por algo que um grep pega no commit.
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v6.0.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # frozen: v6.0.0
     hooks:
       # --assume-in-merge porque o default so inspeciona quando o repo esta em
       # estado de merge (MERGE_HEAD presente), e o marcador sobrevive ao commit
@@ -39,7 +45,7 @@ repos:
         args: [--assume-in-merge]
 
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.1
+    rev: 83d9cd684c87d95d656c1458ef04895a7f1cbd8e  # frozen: v8.30.1
     hooks:
       - id: gitleaks
 
@@ -74,7 +80,7 @@ repos:
         require_serial: true
 
   - repo: https://github.com/rhysd/actionlint
-    rev: v1.7.12
+    rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
     hooks:
       - id: actionlint
         # v1.7.12 é anterior a `concurrency.queue`; o teste local abaixo valida
