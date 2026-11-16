@@ -52,7 +52,7 @@ export function useLlmRun({
       const poll = async () => {
         if (cancelledRef.current) return;
         try {
-          // Token fresco a cada poll: o do template expira em ~60s e o
+          // Token fresco a cada poll: ele expira em ~60s e o
           // polling pode durar minutos. O await roda antes do guard de
           // cancelamento de propósito (mesma razão da supressão no fetchFastAPI
           // abaixo): o token precisa estar fresco quando a request de status

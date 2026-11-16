@@ -74,7 +74,8 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/projects/p1/analyze/compare",
 }));
-// A árvore real monta RunCard, que usa useAuth().getToken para anexar o JWT.
+// A árvore real monta RunCard, que usa `useSupabaseToken` (useAuth + useUser)
+// para anexar o JWT.
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: compareMocks.getToken }),
   useUser: () => ({ user: null }),

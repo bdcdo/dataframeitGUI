@@ -156,7 +156,7 @@ export function useLlmRunProgress(
 
     const tick = async () => {
       try {
-        // Token fresco a cada tick: o do template expira em ~60s.
+        // Token fresco a cada tick: expira em ~60s.
         const token = await getSupabaseToken();
         const res = await fetchFastAPI<StatusResponse>(
           `/api/llm/status/${activeJobId}`,

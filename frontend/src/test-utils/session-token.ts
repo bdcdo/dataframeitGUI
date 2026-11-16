@@ -14,10 +14,10 @@ export const LINKED_CLAIMS = {
   supabase_uid: "11111111-1111-1111-1111-111111111111",
 };
 
-/** Sessão válida de quem ainda não tem o vínculo: os claims default do Clerk,
- * sem `supabase_uid` (o custom claim sai vazio enquanto a metadata não existe). */
-export const UNLINKED_CLAIMS = {
-  sub: "user_2abc",
-  iss: "https://clerk.test",
-  role: "authenticated",
+/** Sessão válida de quem ainda não tem o vínculo: os mesmos claims, sem
+ * `supabase_uid` (o custom claim sai vazio enquanto a metadata não existe). */
+export const UNLINKED_CLAIMS: Omit<typeof LINKED_CLAIMS, "supabase_uid"> = {
+  sub: LINKED_CLAIMS.sub,
+  iss: LINKED_CLAIMS.iss,
+  role: LINKED_CLAIMS.role,
 };
