@@ -266,8 +266,6 @@ function VerdictCard({
   );
 }
 
-/* ── Respondent Row ── */
-
 // A resposta dada a um veredito que depois foi rearbitrado não vale para o
 // novo (#758): o item volta a pedir resposta e diz por quê.
 function AcknowledgmentActions({
@@ -360,6 +358,8 @@ function OtherResponses({
     </div>
   );
 }
+
+/* ── Respondent Row ── */
 
 function RespondentRow({
   respondent,

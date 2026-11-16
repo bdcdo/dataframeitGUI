@@ -406,6 +406,22 @@ describe("saveSchemaFromGUI", () => {
     expect(state.rpcs).toHaveLength(0);
   });
 
+  // Schema gravado acima do teto antes da checagem: o save que o encurta
+  // passa, ou o coordenador ficaria sem caminho de volta.
+  it("aceita o save que encurta um schema que já estava acima do teto", async () => {
+    const huge = { ...FIELD, help_text: "a".repeat(70_000) };
+    state.tableData = { projects: [projectRow({ pydantic_fields: [huge] })] };
+    state.rpcResults = { commit_project_schema: { data: commitRow() } };
+
+    const result = await saveSchemaFromGUI(
+      "p1",
+      [{ ...FIELD, help_text: "a".repeat(60_000) }],
+      EMPTY_BASELINE,
+    );
+
+    expect(result.status).toBe("saved");
+  });
+
   it("toast lista no máximo três erros e conta o resto", async () => {
     state.tableData = { projects: [projectRow()] };
     const blank = (n: number): PydanticField => ({

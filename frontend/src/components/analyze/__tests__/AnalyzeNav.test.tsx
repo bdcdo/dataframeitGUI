@@ -12,10 +12,10 @@ vi.mock("next/navigation", () => ({
 
 import { AnalyzeNav } from "@/components/analyze/AnalyzeNav";
 
-function tabsAt(pathname: string, search = "") {
+function tabsAt(pathname: string, search = "", isMaster = true) {
   location.pathname = pathname;
   location.search = search;
-  render(<AnalyzeNav projectId="p1" />);
+  render(<AnalyzeNav projectId="p1" isMaster={isMaster} />);
   return screen.getAllByRole("link").map((link) => link.textContent);
 }
 
@@ -42,10 +42,14 @@ describe("AnalyzeNav — master visualizando como outro membro", () => {
     ).toEqual(["Atribuições", "Codificar"]);
   });
 
-  it("sem impersonação a aba segue o probe do layout", () => {
-    expect(tabsAt("/projects/p1/analyze/arbitragem")).toEqual([
-      "Atribuições",
-      "Codificar",
-    ]);
+  // A página só aceita o parâmetro do master, e ignora o vazio.
+  it.each([
+    ["sem o parâmetro", "", true],
+    ["com o parâmetro vazio", "viewAsUser=", true],
+    ["para quem não é master", "viewAsUser=member-2", false],
+  ])("%s a aba segue o probe do layout", (_label, search, isMaster) => {
+    expect(
+      tabsAt("/projects/p1/analyze/arbitragem", search, isMaster),
+    ).toEqual(["Atribuições", "Codificar"]);
   });
 });

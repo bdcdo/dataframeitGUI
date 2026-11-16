@@ -29,9 +29,11 @@ export interface ReviewQueueDocument<TField> {
  * vai na URL do PostgREST e estoura com fila grande. Leitura que falha lança,
  * em vez de abrir a fila sem os documentos do lote (P3).
  *
- * Em duas fases: os ciclos primeiro, e o `text` só dos documentos que têm
- * ciclo. Na arbitragem, `documentIds` vem dos assignments abertos, e o
- * documento sem campo pendente sai da fila sem que o texto dele trafegue.
+ * `onlyDocumentsWithReviews` troca a leitura paralela por duas fases: os
+ * ciclos primeiro, e o `text` só dos documentos que têm ciclo. É para a
+ * arbitragem, em que `documentIds` vem dos assignments abertos e o documento
+ * sem campo pendente sai da fila. Na auto-revisão todo documento tem ciclo, e
+ * a segunda fase só somaria uma ida e volta.
  */
 export async function loadReviewQueueRows<
   TFieldReview extends { document_id: string },
@@ -39,6 +41,7 @@ export async function loadReviewQueueRows<
   supabase: SupabaseServerClient,
   documentIds: string[],
   loadFieldReviews: (documentIds: string[]) => PagedRead<TFieldReview>,
+  { onlyDocumentsWithReviews = false } = {},
 ): Promise<{
   documents: ReviewQueueDocumentRow[];
   fieldReviews: TFieldReview[];
@@ -47,26 +50,38 @@ export async function loadReviewQueueRows<
     return { documents: [], fieldReviews: [] };
   }
 
-  const fieldReviews = await fetchByDocumentChunks(documentIds, loadFieldReviews);
-  if (fieldReviews.error) throw queueReadError(fieldReviews.error);
-
-  const reviewedIds = new Set(
-    fieldReviews.data.map((review) => review.document_id),
-  );
-  const documents = await fetchByDocumentChunks<ReviewQueueDocumentRow>(
-    documentIds.filter((id) => reviewedIds.has(id)),
-    (ids) =>
+  const fieldReviewsRead = fetchByDocumentChunks(documentIds, loadFieldReviews);
+  const loadDocuments = (ids: string[]) =>
+    fetchByDocumentChunks<ReviewQueueDocumentRow>(ids, (chunk) =>
       fetchAllAfterId<ReviewQueueDocumentRow>(() =>
         supabase
           .from("documents")
           .select("id, title, external_id, text")
-          .in("id", ids)
+          .in("id", chunk)
           .is("excluded_at", null)
           .is("exclusion_pending_at", null),
       ),
+    );
+
+  if (!onlyDocumentsWithReviews) {
+    const [documents, fieldReviews] = await Promise.all([
+      loadDocuments(documentIds),
+      fieldReviewsRead,
+    ]);
+    const error = documents.error ?? fieldReviews.error;
+    if (error) throw queueReadError(error);
+    return { documents: documents.data, fieldReviews: fieldReviews.data };
+  }
+
+  const fieldReviews = await fieldReviewsRead;
+  if (fieldReviews.error) throw queueReadError(fieldReviews.error);
+  const reviewedIds = new Set(
+    fieldReviews.data.map((review) => review.document_id),
+  );
+  const documents = await loadDocuments(
+    documentIds.filter((id) => reviewedIds.has(id)),
   );
   if (documents.error) throw queueReadError(documents.error);
-
   return { documents: documents.data, fieldReviews: fieldReviews.data };
 }
 

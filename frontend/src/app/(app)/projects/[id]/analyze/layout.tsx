@@ -24,7 +24,7 @@ export default async function AnalyzeLayout({
     getProjectAccessContext(id, user),
   ]);
   const access = requireResolvedProjectAccess(rawAccess);
-  const { memberUserId, isCoordinator } = access;
+  const { memberUserId, isCoordinator, isMaster } = access;
   // Queries direcionadas com .limit(1) em vez de uma genérica com .limit(50),
   // que poderia mascarar um tipo se o membro canônico tiver muitos assignments
   // de outro. O probe da auto-revisão usa a regra da própria fila e, por
@@ -86,6 +86,7 @@ export default async function AnalyzeLayout({
         showAutoReview={showAutoReview}
         showArbitragem={showArbitragem}
         showCompare={showCompare}
+        isMaster={isMaster}
       />
       <div className="flex-1">{children}</div>
     </div>

@@ -78,7 +78,9 @@ describe("buildMyVerdictItems: outras respostas", () => {
     expect(item.otherResponses?.map((r) => r.id)).toEqual(["homonima", "llm"]);
   });
 
-  it("sem snapshot não há outras respostas", () => {
-    expect(build([review()])[0].otherResponses).toBeNull();
+  // O snapshot é gravado como o cliente mandou; um que não é lista não pode
+  // derrubar a página.
+  it.each([null, { id: "x" }, "texto"])("snapshot %j não tem outras respostas", (bad) => {
+    expect(build([review({ response_snapshot: bad })])[0].otherResponses).toBeNull();
   });
 });

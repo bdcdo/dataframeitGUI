@@ -91,7 +91,10 @@ function toVerdictItem(
   stored: StoredAcknowledgment | undefined,
   ownResponseIds: ReadonlySet<string>,
 ): VerdictItem {
-  const snapshot = r.response_snapshot as VerdictItem["otherResponses"];
+  // O snapshot vem do cliente e é gravado como chegou: só a lista é lida.
+  const snapshot = Array.isArray(r.response_snapshot)
+    ? (r.response_snapshot as NonNullable<VerdictItem["otherResponses"]>)
+    : null;
   const fieldType = (field?.type || "text") as VerdictItem["fieldType"];
   return {
     reviewId: r.id,

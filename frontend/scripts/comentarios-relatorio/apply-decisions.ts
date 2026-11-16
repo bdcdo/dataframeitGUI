@@ -153,8 +153,9 @@ async function applySchemaChanges(
 
   // `help_text` alterado aqui vale como "Só esclarece": ver `question_revision`
   // em references/decisions-format.md.
-  const { changeType, bumped, logEntries, code, hash, fieldsWithHash } =
+  const { changeType, bumped, logEntries, code, codeSizeError, hash, fieldsWithHash } =
     planSchemaPersistence(oldFields, validatedFields, current);
+  if (codeSizeError) throw new Error(codeSizeError);
 
   const summary = {
     changeType,

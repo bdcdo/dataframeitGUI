@@ -15,6 +15,8 @@ interface AnalyzeNavProps {
   showAutoReview?: boolean;
   showArbitragem?: boolean;
   showCompare?: boolean;
+  /** Só o master impersona: as páginas ignoram `?viewAsUser=` dos demais. */
+  isMaster?: boolean;
 }
 
 export function AnalyzeNav(props: AnalyzeNavProps) {
@@ -32,6 +34,7 @@ function AnalyzeNavInner({
   showAutoReview = false,
   showArbitragem = false,
   showCompare = false,
+  isMaster = false,
 }: AnalyzeNavProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -42,7 +45,7 @@ function AnalyzeNavInner({
   // a página mostra a fila de outro membro, e a aba dela podia não existir:
   // nas telas que aceitam a impersonação, a aba da rota aberta aparece sempre.
   // As demais abas seguem sendo as do próprio master.
-  const impersonating = searchParams.has("viewAsUser");
+  const impersonating = isMaster && Boolean(searchParams.get("viewAsUser"));
   const onImpersonatedRoute = (tab: string) =>
     impersonating && pathname.startsWith(hrefOf(tab));
 

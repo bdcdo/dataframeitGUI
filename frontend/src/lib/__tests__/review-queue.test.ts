@@ -84,7 +84,7 @@ describe("loadReviewQueueRows", () => {
 
   // Na arbitragem os ids vêm dos assignments abertos, e o documento sem campo
   // pendente sai da fila: o `text` dele não precisa trafegar.
-  it("só busca o texto dos documentos que têm ciclo", async () => {
+  it("onlyDocumentsWithReviews: só busca o texto dos documentos que têm ciclo", async () => {
     const readCalls: ReadCall[] = [];
     const document = (id: string) => ({
       id,
@@ -100,14 +100,18 @@ describe("loadReviewQueueRows", () => {
       readCalls,
     }) as unknown as SupabaseServerClient;
 
-    const result = await loadReviewQueueRows(client, ["d3", "d2", "d1"], () =>
-      Promise.resolve({
-        data: [
-          { id: "review-1", document_id: "d1" },
-          { id: "review-3", document_id: "d3" },
-        ],
-        error: null,
-      }),
+    const result = await loadReviewQueueRows(
+      client,
+      ["d3", "d2", "d1"],
+      () =>
+        Promise.resolve({
+          data: [
+            { id: "review-1", document_id: "d1" },
+            { id: "review-3", document_id: "d3" },
+          ],
+          error: null,
+        }),
+      { onlyDocumentsWithReviews: true },
     );
 
     expect(result.documents.map((row) => row.id).toSorted()).toEqual(["d1", "d3"]);
@@ -118,7 +122,7 @@ describe("loadReviewQueueRows", () => {
     ).toEqual([["d3", "d1"]]);
   });
 
-  it("não consulta documentos quando nenhum tem ciclo", async () => {
+  it("onlyDocumentsWithReviews: não consulta documentos quando nenhum tem ciclo", async () => {
     const readCalls: ReadCall[] = [];
     const client = makeFilterAwareSupabaseMock({
       tableData: { documents: [] },
@@ -126,8 +130,12 @@ describe("loadReviewQueueRows", () => {
       readCalls,
     }) as unknown as SupabaseServerClient;
 
-    const result = await loadReviewQueueRows(client, ["d1"], () =>
-      Promise.resolve({ data: [] as { document_id: string }[], error: null }),
+    const result = await loadReviewQueueRows(
+      client,
+      ["d1"],
+      () =>
+        Promise.resolve({ data: [] as { document_id: string }[], error: null }),
+      { onlyDocumentsWithReviews: true },
     );
 
     expect(result).toEqual({ documents: [], fieldReviews: [] });

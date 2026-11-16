@@ -37,11 +37,15 @@ function subfieldClassName(fieldName: string): string {
 }
 
 function baseAnnotation(field: PydanticField): string {
-  if (field.type === "single" && field.options) {
-    return `Literal[${field.options.map((o) => `"${escapeString(o)}"`).join(", ")}]`;
+  // Lista vazia é ausente, como em `snapshotOf`: os dois não podem divergir
+  // sobre o que é "o mesmo campo". (Campo de escolha sem opção não passa na
+  // validação do save.)
+  const options = resolveOptions(field.options);
+  if (field.type === "single" && options) {
+    return `Literal[${options.map((o) => `"${escapeString(o)}"`).join(", ")}]`;
   }
-  if (field.type === "multi" && field.options) {
-    return `list[Literal[${field.options.map((o) => `"${escapeString(o)}"`).join(", ")}]]`;
+  if (field.type === "multi" && options) {
+    return `list[Literal[${options.map((o) => `"${escapeString(o)}"`).join(", ")}]]`;
   }
   if (field.subfields && field.subfields.length > 0) {
     return subfieldClassName(field.name);
@@ -954,11 +958,31 @@ export function pydanticCodeLength(code: string): number {
   return Array.from(code).length;
 }
 
+// Mensagem de recusa quando o código passa do teto, ou `null`. Um schema que
+// já estava acima dele (gravado antes desta checagem) ainda aceita o save que
+// o encurta: recusar deixaria o coordenador sem caminho de volta pelo
+// `EditFieldDialog`, que salva um campo por vez.
+function pydanticCodeSizeError(code: string, previousCode: () => string): string | null {
+  const length = pydanticCodeLength(code);
+  if (length <= MAX_PYDANTIC_CODE_LENGTH) return null;
+  if (length < pydanticCodeLength(previousCode())) return null;
+  const format = (n: number) => n.toLocaleString("pt-BR");
+  return (
+    `O schema ficou grande demais para salvar: o código gerado tem ${format(length)} caracteres ` +
+    `e o limite é ${format(MAX_PYDANTIC_CODE_LENGTH)}. Encurte descrições, instruções ou opções.`
+  );
+}
+
 export interface SchemaPersistencePlan {
   changeType: ChangeType | null;
   bumped: { major: number; minor: number; patch: number };
   logEntries: SchemaLogEntry[];
   code: string;
+  /**
+   * Preenchido quando o código passa do teto do backend: quem persiste recusa
+   * o save com esta mensagem.
+   */
+  codeSizeError: string | null;
   hash: string;
   fieldsWithHash: PydanticField[];
 }
@@ -986,5 +1010,6 @@ export function planSchemaPersistence(
     ...f,
     hash: fieldHashOf(f),
   }));
-  return { changeType, bumped, logEntries, code, hash, fieldsWithHash };
+  const codeSizeError = pydanticCodeSizeError(code, () => generatePydanticCode(oldFields));
+  return { changeType, bumped, logEntries, code, codeSizeError, hash, fieldsWithHash };
 }
