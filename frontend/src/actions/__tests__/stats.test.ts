@@ -60,6 +60,50 @@ describe("withResolutionAction — guard (via resolveNote, idêntico nas 10 fun�
   });
 });
 
+describe("withResolutionAction — exceção na ação", () => {
+  // O texto em inglês vai ao log com o code; o toast recebe a copy (#502).
+  it("vira copy pt-BR com código", async () => {
+    supabaseState.reset();
+    hoisted.getUser.mockRejectedValueOnce(
+      Object.assign(new Error("fetch failed"), { code: "ECONNRESET" }),
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { resolveNote } = await loadStats();
+
+    const r = await resolveNote("p1", "resp1", "nota");
+
+    expect(r).toEqual({
+      success: false,
+      error: copyWithRef("Não foi possível concluir a ação. Tente novamente."),
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[stats] resolução falhou", { code: "ECONNRESET", message: "fetch failed" }),
+    );
+    consoleError.mockRestore();
+  });
+});
+
+describe("fetchGabaritoForComment — leitura que falha", () => {
+  // Antes, a leitura com erro devolvia o gabarito vazio, como se ninguém
+  // tivesse respondido (P3).
+  it("devolve a copy pt-BR, e não um gabarito vazio sem aviso", async () => {
+    supabaseState.reset({ responses: { data: null, error: { message: "timeout", code: "57014" } } });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { fetchGabaritoForComment } = await loadStats();
+
+    const r = await fetchGabaritoForComment("p1", "doc1", "q1", null);
+
+    expect(r).toEqual({
+      answers: [],
+      error: copyWithRef("Não foi possível carregar as respostas do gabarito. Tente novamente."),
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[stats] leitura do gabarito falhou", { code: "57014", message: "timeout" }),
+    );
+    consoleError.mockRestore();
+  });
+});
+
 describe("resolveNote / reopenNote", () => {
   it("resolveNote: sucesso → insert em note_resolutions e revalida", async () => {
     const { resolveNote } = await loadStats();

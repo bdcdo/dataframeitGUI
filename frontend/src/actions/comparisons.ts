@@ -2,7 +2,8 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
-import { errorMessage } from "@/lib/utils";
+import { caughtErrorCopy } from "@/lib/server-error";
+import { PostgrestWriteError } from "@/lib/supabase/rls-guard";
 import { revalidatePath } from "next/cache";
 import {
   scanComparisonBacklog,
@@ -41,7 +42,7 @@ export async function retryPendingComparisons(projectId: string): Promise<{
       .select("automation_mode")
       .eq("id", projectId)
       .single();
-    if (projectError) throw new Error(projectError.message);
+    if (projectError) throw new PostgrestWriteError(projectError);
     const mode = project?.automation_mode;
     if (mode !== "compare_humans" && mode !== "compare_llm") {
       return { success: true, assigned: 0, stillNoPool: 0 };
@@ -83,7 +84,13 @@ export async function retryPendingComparisons(projectId: string): Promise<{
   } catch (e) {
     return {
       success: false,
-      error: errorMessage(e) || "Erro",
+      // O texto do Postgres vai para o log, com o code quando o erro é um
+      // PostgrestWriteError; o toast recebe a copy pt-BR (#502).
+      error: caughtErrorCopy(
+        "[comparisons] reprocessamento falhou",
+        e,
+        "Não foi possível reprocessar as comparações. Tente novamente.",
+      ),
       assigned: 0,
       stillNoPool: 0,
     };

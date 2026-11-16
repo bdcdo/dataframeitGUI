@@ -8,7 +8,6 @@ import {
   resolveProjectMemberActor,
 } from "@/lib/auth";
 import { buildLoadMap } from "@/lib/load-balancing";
-import { errorMessage } from "@/lib/utils";
 import { resolveBlindVerdict } from "@/lib/arbitration-order";
 import { verdictRequiresJustification } from "@/lib/auto-review-decided";
 import { formatAnswerTechnical } from "@/lib/format-answer";
@@ -17,7 +16,8 @@ import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm"
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
 import { propagateValueEquivalenceChange } from "@/lib/value-equivalence-effects";
-import { serverErrorScope } from "@/lib/server-error";
+import { caughtErrorCopy, serverErrorScope } from "@/lib/server-error";
+import { PostgrestWriteError } from "@/lib/supabase/rls-guard";
 import type {
   SelfVerdict,
   ArbitrationVerdict,
@@ -28,6 +28,9 @@ import type {
 // copy pt-BR do fluxo (#502).
 const AUTO_REVIEW_FAILED = "Não foi possível enviar a auto-revisão. Tente novamente.";
 const ARBITRATION_FAILED = "Não foi possível registrar a arbitragem. Tente novamente.";
+const BACKLOG_FAILED = "Não foi possível regenerar o backlog. Tente novamente.";
+const RETRY_ARBITRATIONS_FAILED =
+  "Não foi possível redistribuir as arbitragens pendentes. Tente novamente.";
 
 const reviewServerError = serverErrorScope("field-reviews");
 
@@ -219,7 +222,7 @@ export async function submitAutoReview(
     revalidateAutoReviewSubmission(projectId);
     return { success: true, arbitrated: result.arbitrated ?? 0, warning };
   } catch (e) {
-    return { success: false, error: errorMessage(e) || "Erro" };
+    return { success: false, error: caughtErrorCopy("[field-reviews] auto-revisão falhou", e, AUTO_REVIEW_FAILED) };
   }
 }
 
@@ -319,7 +322,7 @@ async function assignArbitrator(
       p_field_review_ids: fieldReviewIds,
     },
   );
-  if (assignmentError) throw new Error(assignmentError.message);
+  if (assignmentError) throw new PostgrestWriteError(assignmentError);
 
   return { count: typeof assigned === "number" ? assigned : 0, noPool: false };
 }
@@ -417,7 +420,7 @@ export async function submitBlindVerdicts(
     revalidatePath(`/projects/${projectId}/analyze/arbitragem`);
     return { success: true };
   } catch (e) {
-    return { success: false, error: errorMessage(e) || "Erro" };
+    return { success: false, error: caughtErrorCopy("[field-reviews] veredito cego falhou", e, ARBITRATION_FAILED) };
   }
 }
 
@@ -565,7 +568,7 @@ export async function submitFinalVerdicts(
     revalidateFinalVerdictSubmission(projectId);
     return { success: true };
   } catch (e) {
-    return { success: false, error: errorMessage(e) || "Erro" };
+    return { success: false, error: caughtErrorCopy("[field-reviews] veredito final falhou", e, ARBITRATION_FAILED) };
   }
 }
 
@@ -596,7 +599,7 @@ export async function regenerateAutoReviewBacklog(
       "enqueue_auto_review_reconciliation_for_project",
       { p_project_id: projectId },
     );
-    if (enqueueError) return { success: false, error: reviewServerError("regeneração do backlog", enqueueError, "Não foi possível regenerar o backlog. Tente novamente.") };
+    if (enqueueError) return { success: false, error: reviewServerError("regeneração do backlog", enqueueError, BACKLOG_FAILED) };
 
     // A contagem lê com o cliente do usuário: a RLS de responses, field_reviews
     // e do histórico já deixa coordenador e master verem o projeto inteiro, e
@@ -632,7 +635,7 @@ export async function regenerateAutoReviewBacklog(
       withoutLlm: withoutLlmResult.count,
     };
   } catch (e) {
-    return { success: false, error: errorMessage(e) || "Erro" };
+    return { success: false, error: caughtErrorCopy("[field-reviews] regeneração do backlog falhou", e, BACKLOG_FAILED) };
   }
 }
 
@@ -669,7 +672,7 @@ export async function retryPendingArbitrations(
       .is("superseded_at", null)
       .is("arbitrator_id", null);
     if (error)
-      return { success: false, error: reviewServerError("leitura das arbitragens pendentes", error, "Não foi possível redistribuir as arbitragens pendentes. Tente novamente."), assigned: 0, stillNoPool: 0 };
+      return { success: false, error: reviewServerError("leitura das arbitragens pendentes", error, RETRY_ARBITRATIONS_FAILED), assigned: 0, stillNoPool: 0 };
     if (!pending || pending.length === 0)
       return { success: true, assigned: 0, stillNoPool: 0 };
 
@@ -708,7 +711,7 @@ export async function retryPendingArbitrations(
       // Sem o set, o codificador do documento entraria no pool como árbitro
       // "neutro": falha alto em vez de atribuir errado (P3).
       if (codersError)
-        return { success: false, error: reviewServerError("leitura dos codificadores", codersError, "Não foi possível redistribuir as arbitragens pendentes. Tente novamente."), assigned: 0, stillNoPool: 0 };
+        return { success: false, error: reviewServerError("leitura dos codificadores", codersError, RETRY_ARBITRATIONS_FAILED), assigned: 0, stillNoPool: 0 };
       for (const c of allCoders ?? []) {
         const docId = c.document_id as string;
         const respId = c.respondent_id as string | null;
@@ -752,7 +755,7 @@ export async function retryPendingArbitrations(
   } catch (e) {
     return {
       success: false,
-      error: errorMessage(e) || "Erro",
+      error: caughtErrorCopy("[field-reviews] redistribuição das arbitragens falhou", e, RETRY_ARBITRATIONS_FAILED),
       assigned: 0,
       stillNoPool: 0,
     };

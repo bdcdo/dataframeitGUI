@@ -1,5 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import { serverActionTooLarge } from "@/lib/server-action-body-limit";
 
 // Cutover de dominio (#194): redirect 308 (preserva metodo + corpo) do dominio
 // legado para o canonico, preservando path + query. O middleware dispara pelo
@@ -17,6 +18,11 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, request) => {
+  // Antes de qualquer outra coisa: o envio grande demais recebe um 413 que o
+  // cliente consegue ler (ver `server-action-body-limit.ts`).
+  const tooLarge = serverActionTooLarge(request);
+  if (tooLarge) return tooLarge;
+
   if (request.headers.get("host") === LEGACY_HOST) {
     return NextResponse.redirect(
       `https://${CANONICAL_HOST}${request.nextUrl.pathname}${request.nextUrl.search}`,

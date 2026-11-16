@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { caughtErrorCopy } from "@/lib/server-error";
+import { UserFacingError, type ServerError } from "@/lib/server-error";
 
 // UPDATE/DELETE via client RLS que não casa nenhuma linha (porque a policy
 // filtrou, ou porque o registro não existe) retorna sucesso com 0 linhas e
@@ -15,9 +15,11 @@ import { caughtErrorCopy } from "@/lib/server-error";
 // usar o guard nessa tabela.
 //
 // Os throws daqui não devem atravessar a fronteira de uma Server Action: o
-// Next mascara a message em produção. A action captura e retorna { error }.
+// Next mascara a message em produção. A action captura e retorna { error },
+// com `caughtErrorCopy`: o ZeroRowsError já traz a copy de permissão do fluxo,
+// e o resto vai para o log com o `code` (#502).
 
-export class ZeroRowsError extends Error {
+export class ZeroRowsError extends UserFacingError {
   constructor(
     public readonly table: string,
     public readonly operation: "update" | "delete",
@@ -31,25 +33,23 @@ export class ZeroRowsError extends Error {
   }
 }
 
-// Erro real do PostgREST no write. Carrega o `code` do Postgres (57014 timeout,
-// 23505 unique, ...) para o log da action distinguir as causas: um
-// `new Error(error.message)` o descartava e o log saía com `code: undefined`.
+// Erro real do PostgREST, na escrita ou na leitura dentro de um `try`. Carrega
+// o `code` do Postgres (57014 timeout, 23505 unique, ...), o `details` e o
+// `hint` para o log da action distinguir as causas (`caughtErrorCopy`): um
+// `new Error(error.message)` os descartava e o log saía com `code: undefined`.
 export class PostgrestWriteError extends Error {
-  constructor(
-    message: string,
-    public readonly code?: string,
-  ) {
-    super(message);
-    this.name = "PostgrestWriteError";
-  }
-}
+  readonly code?: string;
+  readonly details?: string;
+  readonly hint?: string;
 
-// Copy do toast para o que updateOrThrow/deleteOrThrow lançam: ZeroRowsError já
-// traz a copy de permissão do fluxo; o resto (PostgrestWriteError, falha de rede)
-// vai para o log com o `code`, e o toast recebe a copy genérica (#502).
-export function guardErrorCopy(e: unknown, scope: string, generic: string): string {
-  if (e instanceof ZeroRowsError) return e.message;
-  return caughtErrorCopy(scope, e, generic);
+  /** `context`, quando dado, prefixa a mensagem: "Erro ao ler X: <texto>". */
+  constructor(error: ServerError, context?: string) {
+    super(context ? `${context}: ${error.message}` : error.message);
+    this.name = "PostgrestWriteError";
+    this.code = error.code;
+    this.details = error.details ?? undefined;
+    this.hint = error.hint ?? undefined;
+  }
 }
 
 interface GuardOpts {
@@ -72,7 +72,7 @@ export async function updateOrThrow(
     .update(payload)
     .match(match)
     .select(col);
-  if (error) throw new PostgrestWriteError(error.message, error.code);
+  if (error) throw new PostgrestWriteError(error);
   if (!data || data.length === 0) {
     throw new ZeroRowsError(table, "update", opts?.message);
   }
@@ -92,7 +92,7 @@ export async function deleteOrThrow(
     .delete()
     .match(match)
     .select(col);
-  if (error) throw new PostgrestWriteError(error.message, error.code);
+  if (error) throw new PostgrestWriteError(error);
   if (!data || data.length === 0) {
     throw new ZeroRowsError(table, "delete", opts?.message);
   }

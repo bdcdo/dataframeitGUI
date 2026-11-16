@@ -1,5 +1,5 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
-import { copyWithRef } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import {
   makeSupabaseAdminModuleMock,
   makeSupabaseServerModuleMock,
@@ -305,6 +305,34 @@ describe("retryPendingArbitrations — erro na pré-busca de codificadores", () 
       copyWithRef("Não foi possível redistribuir as arbitragens pendentes. Tente novamente."),
     );
     expect(arbitrationCalls()).toHaveLength(0);
+    consoleError.mockRestore();
+  });
+});
+
+describe("retryPendingArbitrations — erro na RPC de atribuição", () => {
+  // assignArbitrator lança o erro do PostgREST, e o catch da action o converte:
+  // o texto em inglês e o code vão ao log, o toast recebe a copy pt-BR.
+  it("vira a copy pt-BR com código, e o log leva o code do Postgres", async () => {
+    tableData.field_reviews = [pendingReview("fr1", "doc1", "userA")];
+    tableData.project_members = [arbiter("userB")];
+    rpcResults.assign_arbitration_cycles_if_eligible = {
+      error: { message: "deadlock detected", code: "40P01" },
+    };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const retry = await loadRetry();
+    const r = await retry("p1");
+    expect(r).toEqual({
+      success: false,
+      error: copyWithRef("Não foi possível redistribuir as arbitragens pendentes. Tente novamente."),
+      assigned: 0,
+      stillNoPool: 0,
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[field-reviews] redistribuição das arbitragens falhou", {
+        code: "40P01",
+        message: "deadlock detected",
+      }),
+    );
     consoleError.mockRestore();
   });
 });

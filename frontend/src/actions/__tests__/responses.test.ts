@@ -781,19 +781,39 @@ describe("saveResponse — unicidade da resposta corrente (#609)", () => {
     expect(state.existingReadCount).toBe(1);
   });
 
-  it("erro do trigger (23514) propaga sem retry", async () => {
+  it("recusa do gatilho de comparação (23514) chega ao toast como veio, sem retry", async () => {
     state.existingResponse = null;
     state.responseInsertErrorQueue = [
-      { code: "23514", message: "codificador não pode responder documento em comparação" },
+      { code: "23514", message: "o revisor da comparação não pode codificar o mesmo documento" },
     ];
     const saveResponse = await loadSaveResponse();
     const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
 
     expect(r).toEqual({
       success: false,
-      error: "codificador não pode responder documento em comparação",
+      error: "o revisor da comparação não pode codificar o mesmo documento",
     });
     expect(state.existingReadCount).toBe(1);
+  });
+
+  // Outro 23514 é falha real: o texto vai ao log e o toast recebe a copy (#502).
+  it("outro 23514 na escrita vira copy pt-BR com código e log", async () => {
+    state.existingResponse = null;
+    state.responseInsertErrorQueue = [
+      { code: "23514", message: "new row violates check constraint \"responses_x\"" },
+    ];
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
+
+    expect(r).toEqual({
+      success: false,
+      error: copyWithRef("Não foi possível salvar a codificação. Tente novamente."),
+    });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[responses] gravação da codificação falhou", { code: "23514" }),
+    );
+    consoleError.mockRestore();
   });
 
   // O SQLSTATE aqui é contrato, não detalhe: 40001 (serialization_failure) faz
@@ -824,7 +844,10 @@ describe("saveResponse — unicidade da resposta corrente (#609)", () => {
     const saveResponse = await loadSaveResponse();
     const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
 
-    expect(r).toEqual({ success: false, error: "could not serialize access" });
+    expect(r).toEqual({
+      success: false,
+      error: copyWithRef("Não foi possível salvar a codificação. Tente novamente."),
+    });
   });
 
   it("conflito nas DUAS tentativas devolve erro explícito, sem girar", async () => {

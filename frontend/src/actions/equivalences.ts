@@ -18,7 +18,8 @@ import {
   type UsageDocument,
 } from "@/lib/value-equivalence-usage";
 import { errorMessage } from "@/lib/utils";
-import { ZeroRowsError } from "@/lib/supabase/rls-guard";
+import { PostgrestWriteError, ZeroRowsError } from "@/lib/supabase/rls-guard";
+import { caughtErrorCopy, UserFacingError, type ServerError } from "@/lib/server-error";
 import type { ResponseSnapshotEntry } from "@/actions/reviews";
 import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE } from "@/lib/review-validity";
 import { fetchFieldDefinition } from "@/lib/reviews/field-definition";
@@ -101,6 +102,21 @@ export interface ConfirmEquivalentVerdictInput {
   responseSnapshot?: ResponseSnapshotEntry[];
 }
 
+// Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
+// copy pt-BR do fluxo (#502). A exceção é a guarda de `record_value_equivalences`
+// contra resposta a outra versão da pergunta, que levanta copy pt-BR própria
+// com 23514 (`recordedOrThrow`); outro 23514, de CHECK da tabela, é falha real.
+const MARK_FAILED = "Não foi possível marcar as respostas como equivalentes. Tente novamente.";
+const OTHER_VERSION_GUARD_MESSAGE = "foi dada a outra versão da pergunta";
+
+function recordedOrThrow(error: ServerError | null): void {
+  if (!error) return;
+  if (error.code === "23514" && error.message.includes(OTHER_VERSION_GUARD_MESSAGE)) {
+    throw new UserFacingError(error.message);
+  }
+  throw new PostgrestWriteError(error);
+}
+
 export async function confirmEquivalentVerdict({
   projectId,
   documentId,
@@ -138,7 +154,7 @@ export async function confirmEquivalentVerdict({
   let recorded: ChangedEquivalence[] | null;
   try {
     const { data, error: equivErr } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
-    if (equivErr) throw new Error(equivErr.message);
+    recordedOrThrow(equivErr);
     recorded = data as ChangedEquivalence[] | null;
 
     const { error: reviewErr } = await supabase.from("reviews").upsert(
@@ -156,9 +172,9 @@ export async function confirmEquivalentVerdict({
         onConflict: "project_id,document_id,field_name,reviewer_id",
       },
     );
-    if (reviewErr) throw new Error(reviewErr.message);
+    if (reviewErr) throw new PostgrestWriteError(reviewErr);
   } catch (e) {
-    return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
+    return { error: caughtErrorCopy("[equivalences] confirmação de equivalentes falhou", e, MARK_FAILED) };
   }
 
   // Pós-commit best-effort: a equivalência e o review já foram gravados. Uma
@@ -206,10 +222,10 @@ export async function markLlmEquivalent(
   let recorded: ChangedEquivalence[] | null;
   try {
     const { data, error } = await supabase.rpc("record_value_equivalences", { p_rows: rows });
-    if (error) throw new Error(error.message);
+    recordedOrThrow(error);
     recorded = data as ChangedEquivalence[] | null;
   } catch (e) {
-    return { error: errorMessage(e) || "Falha ao marcar equivalentes." };
+    return { error: caughtErrorCopy("[equivalences] equivalência do LLM falhou", e, MARK_FAILED) };
   }
 
   schedulePropagation(projectId, changesOf(recorded));
@@ -242,7 +258,7 @@ export async function unmarkEquivalencePair(
       p_project_id: projectId,
       p_equivalence_id: equivalenceId,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new PostgrestWriteError(error);
 
     // Conjunto vazio significa linha inexistente OU autoridade que não bate: a
     // RPC não distingue, e nenhum dos dois é sucesso. Sem este guard a action
@@ -258,7 +274,13 @@ export async function unmarkEquivalencePair(
     }
     removed = row;
   } catch (e) {
-    return { error: errorMessage(e) || "Falha ao desfazer equivalência." };
+    return {
+      error: caughtErrorCopy(
+        "[equivalences] desfazer equivalência falhou",
+        e,
+        "Não foi possível desfazer a equivalência. Tente novamente.",
+      ),
+    };
   }
 
   if (documentId) {
@@ -299,10 +321,16 @@ export async function loadEquivalenceUsage(
       fetchProjectValueEquivalences(supabase, projectId),
       fetchFieldDefinition(supabase, projectId, fieldName),
     ]);
-    if (answers.error) throw new Error(answers.error.message);
-    if (equivalences.error) throw new Error(equivalences.error.message);
+    if (answers.error) throw new PostgrestWriteError(answers.error);
+    if (equivalences.error) throw new PostgrestWriteError(equivalences.error);
     return { usage: equivalenceUsageByClass(answers.data, equivalences.data, field) };
   } catch (e) {
-    return { error: errorMessage(e) || "Falha ao carregar onde a equivalência se aplica." };
+    return {
+      error: caughtErrorCopy(
+        "[equivalences] leitura de onde se aplica falhou",
+        e,
+        "Não foi possível carregar onde a equivalência se aplica. Tente novamente.",
+      ),
+    };
   }
 }

@@ -2,8 +2,8 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser } from "@/lib/auth";
-import { guardErrorCopy, updateOrThrow } from "@/lib/supabase/rls-guard";
-import { serverErrorCopy } from "@/lib/server-error";
+import { updateOrThrow } from "@/lib/supabase/rls-guard";
+import { caughtErrorCopy, serverErrorCopy } from "@/lib/server-error";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { AUTOMATION_MODES, type AutomationMode } from "@/lib/types";
@@ -84,9 +84,9 @@ export async function updateProject(
     });
   } catch (e) {
     return {
-      error: guardErrorCopy(
-        e,
+      error: caughtErrorCopy(
         "[projects] atualização do projeto falhou",
+        e,
         "Não foi possível salvar o projeto. Tente novamente.",
       ),
     };

@@ -14,9 +14,11 @@ import type { DocumentMetadata, PydanticField } from "@/lib/types";
 import { serverErrorScope, type ServerError } from "@/lib/server-error";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
-// copy pt-BR do fluxo (#502). `replace_and_add_documents` fica de fora: a RPC
-// levanta copy pt-BR própria sobre o texto de documento já respondido.
+// copy pt-BR do fluxo (#502). A guarda de `replace_and_add_documents` sobre o
+// texto de documento já respondido levanta copy pt-BR própria com 55000
+// (20260927160000): essa passa como veio.
 const UPLOAD_FAILED = "Não foi possível gravar os documentos. Tente novamente.";
+const ANSWERED_TEXT_GUARD_SQLSTATE = "55000";
 
 const documentsServerError = serverErrorScope("documents");
 
@@ -371,7 +373,14 @@ export async function uploadDocuments(
       p_duplicate_updates: duplicateUpdates,
       p_new_documents: rows,
     });
-    if (error) return { error: error.message };
+    if (error) {
+      return {
+        error:
+          error.code === ANSWERED_TEXT_GUARD_SQLSTATE
+            ? error.message
+            : documentsServerError("substituição de documentos", error, UPLOAD_FAILED),
+      };
+    }
 
     if (revalidate) await revalidateProjectDocumentsCache(projectId);
     return { count: documents.length - skipped, skipped };

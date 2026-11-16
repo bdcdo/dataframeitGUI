@@ -11,7 +11,7 @@ export type WriteCall = { table: string; op: string; payload: unknown };
 export type RpcCall = { fn: string; args: unknown };
 export type RpcResult = {
   data?: unknown;
-  error?: { message: string } | null;
+  error?: { message: string; code?: string } | null;
 };
 
 export type QueryError = {

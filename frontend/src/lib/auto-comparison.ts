@@ -20,6 +20,7 @@ import {
 } from "@/lib/equivalence";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
+import { PostgrestWriteError } from "@/lib/supabase/rls-guard";
 
 // Both factories return the same data-client shape. Coordinator flows pass an
 // authenticated reader; automatic writes pass a service-role client.
@@ -31,7 +32,7 @@ interface QueryResult<T> {
 }
 
 function queryData<T>(result: QueryResult<T>): T {
-  if (result.error) throw new Error(result.error.message);
+  if (result.error) throw new PostgrestWriteError(result.error);
   return result.data;
 }
 

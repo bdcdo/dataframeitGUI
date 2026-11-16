@@ -2,16 +2,16 @@
 
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getAuthUser, type AuthUser } from "@/lib/auth";
-import { errorMessage } from "@/lib/utils";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
-import { serverErrorScope } from "@/lib/server-error";
+import { caughtErrorCopy, serverErrorScope } from "@/lib/server-error";
 import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
 // copy pt-BR do fluxo (#502). `set_error_resolution` fica de fora: a RPC levanta
 // copy pt-BR própria ("A decisão mudou. Recarregue antes de confirmar.").
 const statsServerError = serverErrorScope("stats");
+const GABARITO_FAILED = "Não foi possível carregar as respostas do gabarito. Tente novamente.";
 
 async function withResolutionAction(
   projectId: string,
@@ -28,7 +28,12 @@ async function withResolutionAction(
     if (result.success) revalidatePath(`/projects/${projectId}/reviews`);
     return result;
   } catch (e) {
-    return { success: false, error: errorMessage(e) || "Erro desconhecido" };
+    // O texto do erro vai para o log, e o toast recebe a copy (#502). As
+    // ações devolvem o caso de nenhuma linha como `{ error }`, sem lançar.
+    return {
+      success: false,
+      error: caughtErrorCopy("[stats] resolução falhou", e, "Não foi possível concluir a ação. Tente novamente."),
+    };
   }
 }
 
@@ -215,7 +220,7 @@ export async function fetchGabaritoForComment(
 
     const supabase = await createSupabaseServer();
 
-    const { data: responses } = await supabase
+    const { data: responses, error } = await supabase
       .from("responses")
       .select("id, respondent_name, respondent_type, answers")
       .eq("project_id", projectId)
@@ -224,6 +229,9 @@ export async function fetchGabaritoForComment(
       // não devem aparecer no gabarito do comentário.
       .eq("is_latest", true);
 
+    // Sem este retorno, a leitura que falha mostrava um gabarito vazio, como
+    // se ninguém tivesse respondido (P3).
+    if (error) return { answers: [], error: statsServerError("leitura do gabarito", error, GABARITO_FAILED) };
     if (!responses) return { answers: [] };
 
     const result: GabaritoRespondentAnswer[] = responses.map((r) => ({
@@ -236,7 +244,7 @@ export async function fetchGabaritoForComment(
 
     return { answers: result };
   } catch (e) {
-    return { answers: [], error: errorMessage(e) || "Erro desconhecido" };
+    return { answers: [], error: caughtErrorCopy("[stats] leitura do gabarito falhou", e, GABARITO_FAILED) };
   }
 }
 
@@ -306,7 +314,13 @@ export async function prepareErrorResolution(input: {
     const parsed = errorResolutionContextSchema.safeParse(data);
     return parsed.success ? { context: parsed.data } : { error: "As fontes mudaram ou não estão disponíveis. Recarregue a página." };
   } catch (e) {
-    return { error: errorMessage(e) };
+    return {
+      error: caughtErrorCopy(
+        "[stats] contexto do erro do LLM falhou",
+        e,
+        "Não foi possível carregar as fontes da decisão. Tente novamente.",
+      ),
+    };
   }
 }
 

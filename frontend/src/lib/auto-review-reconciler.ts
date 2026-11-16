@@ -10,6 +10,7 @@ import {
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import { createSupabaseAdmin } from "@/lib/supabase/admin";
 import type { PydanticField } from "@/lib/types";
+import { PostgrestWriteError } from "@/lib/supabase/rls-guard";
 
 interface ReconciliationRequest {
   project_id: string;
@@ -83,7 +84,7 @@ async function acknowledge(
     .eq("document_id", request.document_id)
     .eq("llm_response_id", request.llm_response_id)
     .eq("requested_at", request.requested_at);
-  if (error) throw new Error(error.message);
+  if (error) throw new PostgrestWriteError(error);
 }
 
 async function recordFailure(
@@ -141,7 +142,7 @@ async function eligibleHumanResponses(
     .from("project_members")
     .select("user_id")
     .eq("project_id", request.project_id);
-  if (membersResult.error) throw new Error(membersResult.error.message);
+  if (membersResult.error) throw new PostgrestWriteError(membersResult.error);
   const memberIds = new Set(
     (membersResult.data ?? []).map((member) => member.user_id),
   );
@@ -167,7 +168,7 @@ async function eligibleHumanResponses(
       .eq("project_id", request.project_id),
   ]);
   const readError = firstError([currentResult, historyResult, aliasesResult]);
-  if (readError) throw new Error(readError.message);
+  if (readError) throw new PostgrestWriteError(readError);
 
   const dependencyIds = collectDependencyIds(
     currentResult.data ?? [],
@@ -194,7 +195,7 @@ function projectEquivalences(
   let pending = cache.get(projectId);
   if (!pending) {
     pending = fetchProjectValueEquivalences(admin, projectId).then((result) => {
-      if (result.error) throw new Error(result.error.message);
+      if (result.error) throw new PostgrestWriteError(result.error);
       return groupValueEquivalencesByField(result.data);
     });
     // Falha não fica no cache: a próxima request do lote tenta de novo.
@@ -241,7 +242,7 @@ async function readReconciliationInputs(
       projectEquivalences(admin, request.project_id, equivalenceCache),
     ]);
   const readError = firstError([projectResult, humansResult, llmResult]);
-  if (readError) throw new Error(readError.message);
+  if (readError) throw new PostgrestWriteError(readError);
 
   return {
     fields: (projectResult.data?.pydantic_fields ?? []) as PydanticField[],
@@ -347,7 +348,7 @@ async function reconcileRequest(
     const { error } = await admin.rpc("reconcile_auto_review_cycles", {
       p_groups: groups,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new PostgrestWriteError(error);
   }
   await acknowledge(admin, request);
   return "processed";
@@ -396,7 +397,7 @@ async function fetchDueRequests(
     .limit(batchSize);
   if (projectId) query = query.eq("project_id", projectId);
   const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  if (error) throw new PostgrestWriteError(error);
   return (data ?? []) as ReconciliationRequest[];
 }
 
@@ -410,7 +411,7 @@ async function countDueRequests(
     .lte("next_attempt_at", new Date().toISOString());
   if (projectId) query = query.eq("project_id", projectId);
   const { count, error } = await query;
-  if (error) throw new Error(error.message);
+  if (error) throw new PostgrestWriteError(error);
   return count ?? 0;
 }
 

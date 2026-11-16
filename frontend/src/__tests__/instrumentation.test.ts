@@ -46,6 +46,28 @@ describe("onRequestError (#653)", () => {
     );
   });
 
+  // O erro do Postgres que uma leitura lança como PostgrestWriteError chega com
+  // o code; o details só nos códigos de chave, e redigido.
+  it("leva o code, o hint e o details redigido do erro do Postgres", async () => {
+    const err = Object.assign(new Error("duplicate key"), {
+      digest: "2876531478",
+      code: "23505",
+      details: "Key (email)=(ana@x.com) already exists.",
+      hint: "h",
+    });
+
+    await onRequestError(err, request, context);
+
+    const line = String(consoleError.mock.calls[0]?.[0]);
+    const payload = JSON.parse(line.slice(line.indexOf("{")));
+    expect(payload).toMatchObject({
+      code: "23505",
+      details: "Key (email)=(…) already exists.",
+      hint: "h",
+    });
+    expect(line).not.toContain("ana@x.com");
+  });
+
   it("erro sem digest numérico (controle do Next) não ganha linha própria", async () => {
     const redirect = Object.assign(new Error("NEXT_REDIRECT"), {
       digest: "NEXT_REDIRECT;replace;/x;307;",

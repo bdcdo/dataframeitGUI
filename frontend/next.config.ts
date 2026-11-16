@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { SERVER_ACTION_BODY_LIMIT } from "./src/lib/server-action-body-limit";
 
 // Abas que saíram da raiz do projeto para "Analisar". Os links antigos
 // (favoritos, e-mails) seguem funcionando pelo redirect, que roda antes de
@@ -19,7 +20,7 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     serverActions: {
-      bodySizeLimit: "10mb",
+      bodySizeLimit: SERVER_ACTION_BODY_LIMIT,
     },
     optimizePackageImports: ["lucide-react", "framer-motion"],
   },

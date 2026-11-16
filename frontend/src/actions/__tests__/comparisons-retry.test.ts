@@ -9,6 +9,7 @@ import {
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 import { authModuleMock } from "@/test-utils/auth-mock";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import {
   makeHumanResponse,
   makeEmptyComparisonTableData,
@@ -16,6 +17,8 @@ import {
   makeProjectMember,
   makeProjectRow,
 } from "@/test-utils/comparison-fixtures";
+
+const RETRY_FAILED = "Não foi possível reprocessar as comparações. Tente novamente.";
 
 // Mock supabase filter-aware (mesmo padrão de lib/__tests__/auto-comparison.test.ts).
 let writeCalls: WriteCall[];
@@ -132,19 +135,29 @@ describe("retryPendingComparisons — guards", () => {
     expect(assignmentCalls()).toHaveLength(0);
   });
 
-  it("falha ao carregar projeto → erro técnico, sem RPC", async () => {
+  // O texto do Postgres vai ao log com o code; o toast recebe a copy (#502).
+  it("falha ao carregar projeto → copy pt-BR, log com o code, sem RPC", async () => {
     queryErrors["projects:select"] = {
       message: "falha ao carregar projeto",
+      code: "57014",
     };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await runRetry();
 
     expect(result).toMatchObject({
       success: false,
-      error: "falha ao carregar projeto",
+      error: copyWithRef(RETRY_FAILED),
       assigned: 0,
       stillNoPool: 0,
     });
+    expect(errorSpy).toHaveBeenCalledWith(
+      loggedLine("[comparisons] reprocessamento falhou", {
+        code: "57014",
+        message: "falha ao carregar projeto",
+      }),
+    );
+    errorSpy.mockRestore();
     expect(assignmentCalls()).toHaveLength(0);
   });
 
@@ -155,11 +168,13 @@ describe("retryPendingComparisons — guards", () => {
     // carrega a distribuição usada antes de escolher qualquer revisor.
     assignmentSelectErrorAt = 2;
 
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await runRetry();
+    errorSpy.mockRestore();
 
     expect(result).toMatchObject({
       success: false,
-      error: "falha ao carregar carga aberta",
+      error: copyWithRef(RETRY_FAILED),
       assigned: 0,
       stillNoPool: 0,
     });

@@ -1,5 +1,6 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
 import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
+import { TEXT_CHANGE_WITH_RESPONSES_MESSAGE } from "@/lib/upload-chunking";
 
 // Testa o filtro de conflito com o indice unico parcial
 // documents_project_external_id_active_uniq (migration 20260623130000):
@@ -351,19 +352,9 @@ describe("uploadDocuments — replace_and_add delega à RPC transacional", () =>
       .toBe("DOC-2");
   });
 
-  it("propaga o erro da RPC (ex.: 23505) sem fallout parcial", async () => {
-    // newDocs vazio (o único doc é duplicado) -> sem SELECT de filtro; só a RPC.
-    serverRpcResults = {
-      replace_and_add_documents: {
-        error: {
-          message: "duplicate key value violates unique constraint",
-          code: "23505",
-        },
-      },
-    };
+  async function replaceOneDuplicate() {
     const uploadDocuments = await loadUpload();
-
-    const r = await uploadDocuments(
+    return uploadDocuments(
       "proj-1",
       [{ external_id: "DOC-1", text: "casa por hash com outro doc" }],
       false,
@@ -375,11 +366,54 @@ describe("uploadDocuments — replace_and_add delega à RPC transacional", () =>
         ],
       },
     );
+  }
 
-    expect(r.error).toContain("duplicate key");
+  // O texto do Postgres vai ao log com o code e o details redigido; o toast
+  // recebe a copy pt-BR (#502).
+  it("erro inesperado da RPC (ex.: 23505) vira copy pt-BR, sem fallout parcial", async () => {
+    // newDocs vazio (o único doc é duplicado) -> sem SELECT de filtro; só a RPC.
+    serverRpcResults = {
+      replace_and_add_documents: {
+        error: {
+          message: "duplicate key value violates unique constraint",
+          code: "23505",
+        },
+      },
+    };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const r = await replaceOneDuplicate();
+
+    expect(r.error).toEqual(
+      copyWithRef("Não foi possível gravar os documentos. Tente novamente."),
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[documents] substituição de documentos falhou", {
+        code: "23505",
+        message: "duplicate key value violates unique constraint",
+      }),
+    );
+    consoleError.mockRestore();
     // Nenhuma escrita direta — a atomicidade (rollback) é responsabilidade da RPC.
     expect(writeCalls).toHaveLength(0);
     expect(rpcCalls).toHaveLength(1);
+  });
+
+  // A guarda de texto de documento já respondido levanta copy pt-BR própria
+  // com 55000: ela chega ao toast como veio, e não vai ao log.
+  it("a guarda de documento já respondido (55000) passa como veio", async () => {
+    serverRpcResults = {
+      replace_and_add_documents: {
+        error: { message: TEXT_CHANGE_WITH_RESPONSES_MESSAGE, code: "55000" },
+      },
+    };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const r = await replaceOneDuplicate();
+
+    expect(r.error).toBe(TEXT_CHANGE_WITH_RESPONSES_MESSAGE);
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
 

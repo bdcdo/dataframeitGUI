@@ -8,7 +8,7 @@ import { missingRequiredHumanFields } from "@/lib/coding-completeness";
 import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import { deriveProjectVersionContext } from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
-import { serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { caughtErrorCopy, serverErrorCopy, type ServerError } from "@/lib/server-error";
 
 export interface SaveResponseOpts {
   notes?: string;
@@ -251,7 +251,7 @@ interface PersistResponseRowParams {
 type PersistOutcome =
   | { status: "ok" }
   | { status: "conflict" }
-  | { status: "error"; error: string; code?: string };
+  | { status: "error"; error: ServerError };
 
 // O índice único parcial que sustenta o ramo de conflito abaixo. Conferir o
 // nome é o que separa "perdi a corrida, releia" de qualquer outra violação de
@@ -302,7 +302,7 @@ async function persistResponseRow({
     .eq("round_id", roundId)
     .eq("is_latest", true)
     .select("id");
-  if (updErr) return { status: "error", error: updErr.message, code: updErr.code };
+  if (updErr) return { status: "error", error: updErr };
   if (updated && updated.length > 0) return { status: "ok" };
 
   const { error: insErr } = await supabase.from("responses").insert({
@@ -321,7 +321,7 @@ async function persistResponseRow({
   ) {
     return { status: "conflict" };
   }
-  return { status: "error", error: insErr.message, code: insErr.code };
+  return { status: "error", error: insErr };
 }
 
 // Propaga o efeito do envio para as telas que leem a mesma resposta —
@@ -398,6 +398,20 @@ function buildSaveWrite({
 // Leitura que falha antes do save: o texto do Postgres vai para o log, e o
 // toast recebe esta copy (#502).
 const SAVE_READ_FAILED = "Não foi possível carregar a codificação para salvar. Tente novamente.";
+const SAVE_WRITE_FAILED = "Não foi possível salvar a codificação. Tente novamente.";
+
+// Recusa de enforce_comparison_response_actor (20261113120000): quem revisa a
+// comparação do documento não o codifica. Só ela, entre os 23514 da escrita,
+// é recusa a mostrar; outro CHECK é falha real e vai ao log.
+const COMPARISON_REVIEWER_TRIGGER_MESSAGE =
+  "o revisor da comparação não pode codificar o mesmo documento";
+
+function isComparisonReviewerRefusal(error: ServerError): boolean {
+  return (
+    error.code === "23514" &&
+    error.message.includes(COMPARISON_REVIEWER_TRIGGER_MESSAGE)
+  );
+}
 
 // Os motivos para não gravar, avaliados antes de montar qualquer payload.
 // Nenhum deles depende do que foi digitado — só do estado do projeto, da
@@ -505,12 +519,21 @@ async function runSaveAttempt({
     roundId: expectedRoundId,
   });
   if (outcome.status === "error") {
+    // A recusa do gatilho é a razão real e já vem em pt-BR: passa como veio.
+    if (isComparisonReviewerRefusal(outcome.error)) {
+      return { success: false, error: outcome.error.message };
+    }
+    // O texto do Postgres vai para o log, e o toast recebe a copy (#502). A
+    // rodada trocada é estado esperado, com copy própria e sem log.
     return {
       success: false,
-      error:
-        outcome.code === ROUND_CHANGED_SQLSTATE
-          ? "A rodada mudou enquanto este formulário estava aberto. Recarregue a página."
-          : outcome.error,
+      error: serverErrorCopy("[responses] gravação da codificação falhou", outcome.error, {
+        generic: SAVE_WRITE_FAILED,
+        byCode: {
+          [ROUND_CHANGED_SQLSTATE]:
+            "A rodada mudou enquanto este formulário estava aberto. Recarregue a página.",
+        },
+      }),
     };
   }
   if (outcome.status === "conflict") return { conflict: true };
@@ -639,7 +662,7 @@ export async function saveResponse(
   } catch (e) {
     return {
       success: false,
-      error: e instanceof Error ? e.message : "Erro desconhecido",
+      error: caughtErrorCopy("[responses] save falhou", e, SAVE_WRITE_FAILED),
     };
   }
 }

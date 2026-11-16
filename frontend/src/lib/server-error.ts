@@ -18,6 +18,69 @@ import { ActionTimeoutError, ACTION_TIMEOUT_MESSAGE } from "@/lib/action-timeout
 export interface ServerError {
   code?: string;
   message: string;
+  details?: string | null;
+  hint?: string | null;
+}
+
+// Exceção lançada de propósito dentro do `try` de uma action, com copy pt-BR
+// para o toast: `caughtErrorCopy` a devolve como veio e não a loga, porque é
+// estado esperado (sem permissão, registro inexistente, guarda de uma RPC que
+// levanta texto pt-BR), e não falha.
+export class UserFacingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UserFacingError";
+  }
+}
+
+// Códigos cujo `details` diz qual chave colidiu ou faltou, o que o `message`
+// não diz: unique (23505) e foreign key (23503). O `details` de outros códigos
+// pode trazer a linha inteira ("Failing row contains (...)"), e fica fora.
+const KEY_DETAIL_CODES = new Set(["23505", "23503"]);
+
+// "Key (email)=(ana@x.com) already exists." vira "Key (email)=(…) already
+// exists.": a coluna diz o que colidiu; o valor é dado de usuário e não vai ao
+// log. O valor vai do "=(" até o ")" que antecede o fim conhecido da frase do
+// Postgres, então parêntese no meio do valor não o deixa escapar. Fora desse
+// formato, o details inteiro fica fora.
+const KEY_DETAIL = /^(Key \(.*?\)=)\(.*\)( (?:already exists|is not present in table .*|is still referenced from table .*)\.?)$/;
+
+function redactKeyValues(details: string): string | undefined {
+  const match = KEY_DETAIL.exec(details);
+  return match ? `${match[1]}(…)${match[2]}` : undefined;
+}
+
+function stringProp(e: unknown, key: string): string | undefined {
+  if (typeof e !== "object" || e === null || !(key in e)) return undefined;
+  const value = (e as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+// O que um erro do Postgres acrescenta à linha de log, além da mensagem: o
+// `code`, o `details` redigido nos códigos de chave e o `hint`, que é texto do
+// Postgres ou da RPC e não traz dado. Lido de qualquer objeto com essas chaves
+// (PostgrestError, PostgrestWriteError), inclusive pelo `instrumentation.ts`.
+export function postgresLogFields(error: unknown): {
+  code?: string;
+  details?: string;
+  hint?: string;
+} {
+  const code = stringProp(error, "code");
+  const details = stringProp(error, "details");
+  const hint = stringProp(error, "hint");
+  return {
+    ...(code !== undefined && { code }),
+    ...(details && code && KEY_DETAIL_CODES.has(code) && {
+      details: redactKeyValues(details),
+    }),
+    ...(hint && { hint }),
+  };
+}
+
+function logDetail(error: ServerError): Record<string, string | undefined> {
+  // O code abre a linha, antes da mensagem, como sempre saiu no log.
+  const { code, ...rest } = postgresLogFields(error);
+  return { code, message: error.message, ...rest };
 }
 
 export interface ServerErrorCopy {
@@ -34,7 +97,7 @@ export function serverErrorCopy(
   if (specific) return specific;
   // No navegador (o `fetchFastAPI` dos componentes cliente), o log fica no
   // console de quem usa: um código ali não acharia nada no `fly logs`.
-  const detail = { code: error.code, message: error.message };
+  const detail = logDetail(error);
   if (typeof window !== "undefined") {
     console.error(scope, detail);
     return copy.generic;
@@ -64,14 +127,22 @@ export function serverErrorScope(module: string) {
 }
 
 // Exceção capturada num `catch` (rede, PostgREST, erro lançado por helper):
-// vai para o log com o `code`, quando o erro o carrega (PostgrestWriteError,
-// por exemplo), e o toast recebe a copy genérica.
+// vai para o log com o `code`, o `details` e o `hint`, quando o erro os
+// carrega (PostgrestWriteError, por exemplo), e o toast recebe a copy
+// genérica. `UserFacingError` (e o `ZeroRowsError`, que a estende) já é a copy
+// do toast e passa como veio.
 export function caughtErrorCopy(scope: string, e: unknown, generic: string): string {
-  const code =
-    typeof e === "object" && e !== null && "code" in e && typeof e.code === "string"
-      ? e.code
-      : undefined;
-  return serverErrorCopy(scope, { code, message: errorMessage(e) }, { generic });
+  if (e instanceof UserFacingError) return e.message;
+  return serverErrorCopy(
+    scope,
+    {
+      code: stringProp(e, "code"),
+      message: errorMessage(e),
+      details: stringProp(e, "details"),
+      hint: stringProp(e, "hint"),
+    },
+    { generic },
+  );
 }
 
 // Exceção não tratada no servidor (Server Action, render de RSC): em produção

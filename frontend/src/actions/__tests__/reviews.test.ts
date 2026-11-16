@@ -1,4 +1,5 @@
 import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 
 import {
   makeFilterAwareSupabaseMock,
@@ -222,8 +223,9 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
       project_comments: [ambiguityComment()],
     };
     queryErrors = { "reviews:select": { message: "timeout", code: "57014" } };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const submitVerdict = await loadSubmit();
-    await submitVerdict({
+    const result = await submitVerdict({
       projectId: "p1",
       documentId: "doc1",
       fieldName: "q1",
@@ -233,6 +235,14 @@ describe("submitVerdict — veredito ambiguo vira comentario automatico", () => 
     expect(
       opCalls.some((c) => c.op === "delete" && c.table === "project_comments"),
     ).toBe(false);
+    // O texto do Postgres vai ao log com o code; o toast recebe a copy (#502).
+    expect(result).toEqual({
+      error: copyWithRef("Não foi possível salvar o veredito. Tente novamente."),
+    });
+    expect(errorSpy).toHaveBeenCalledWith(
+      loggedLine("[reviews] veredito falhou", { code: "57014", message: "timeout" }),
+    );
+    errorSpy.mockRestore();
   });
 
   // Cada filtro da busca de "ainda ambíguo" descarta o review que não sustenta

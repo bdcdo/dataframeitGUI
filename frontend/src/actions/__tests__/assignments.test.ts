@@ -251,6 +251,7 @@ describe("previewLottery", () => {
       responses: { data: [] },
     };
 
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await previewLottery({
       projectId: "p1",
       type: "codificacao",
@@ -260,9 +261,16 @@ describe("previewLottery", () => {
       participantIds: ["u1"],
     });
 
-    expect(result.error).toBe(
-      "Erro ao ler as atribuições existentes do sorteio: timeout",
+    // O contexto e o texto do Postgres vão ao log; o toast recebe a copy (#502).
+    expect(result.error).toEqual(
+      copyWithRef("Não foi possível calcular a prévia do sorteio. Tente novamente."),
     );
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[assignments] prévia do sorteio falhou", {
+        message: "Erro ao ler as atribuições existentes do sorteio: timeout",
+      }),
+    );
+    consoleError.mockRestore();
     expect(rpcCalls).toHaveLength(0);
   });
 
@@ -586,6 +594,65 @@ describe("sorteio de comparação: um revisor por documento (#490)", () => {
     expect((rpc?.args as { p_batch: unknown }).p_batch).toMatchObject({ researchers_per_doc: 1 });
   });
 
+  // 40001: a RPC recusa o lote porque o sorteio mudou desde a prévia. A
+  // saída é recarregar, e a copy diz isso; outra falha da RPC vai ao log.
+  it.each([
+    [
+      { code: "40001", message: "a rodada atual mudou; recarregue o sorteio" },
+      "O sorteio mudou desde que foi aberto (rodada, escopo ou trabalho em aberto). Recarregue o sorteio e tente novamente.",
+      false,
+    ],
+    [
+      { code: "P0001", message: "a rodada atual possui 3 trabalhos abertos em documentos ativos" },
+      "Não foi possível iniciar a nova rodada: a rodada atual possui 3 trabalhos abertos em documentos ativos. Reabra o sorteio e confirme o trabalho em aberto.",
+      false,
+    ],
+    [
+      { code: "XX000", message: "internal error" },
+      copyWithRef("Não foi possível gravar o sorteio. Tente novamente."),
+      true,
+    ],
+  ])("smartRandomize com a RPC recusando (%o)", async (rpcError, expected, logged) => {
+    serverTableResults = {
+      ...comparisonFixture(),
+      assignment_batches: [{ data: [] }, { data: { id: "b1" } }],
+    };
+    rpcResults = { apply_lottery_assignments: { error: rpcError } };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await smartRandomize({
+      projectId: "p1",
+      type: "comparacao",
+      mode: "append",
+      balancing: "round",
+      participantIds: ["u1", "u2", "u3"],
+    });
+
+    expect(result.error).toEqual(expected);
+    expect(consoleError.mock.calls.length > 0).toBe(logged);
+    consoleError.mockRestore();
+  });
+
+  it("recusa deliberada do sorteio chega ao toast como foi escrita", async () => {
+    serverTableResults = {
+      ...comparisonFixture(),
+      project_members: { data: [{ user_id: "u1" }] },
+    };
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await previewLottery({
+      projectId: "p1",
+      type: "comparacao",
+      mode: "append",
+      balancing: "round",
+      participantIds: ["u1", "u-desconhecido"],
+    });
+
+    expect(result.error).toBe("Necessário ter ao menos um participante válido.");
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("nova rodada envia contagens e confirmações separadas no snapshot transacional", async () => {
     serverTableResults = {
       ...comparisonFixture(),
@@ -822,9 +889,18 @@ describe("status inicial do assignment de codificação (#521)", () => {
       projects: [{ data: PROJECT_ROW }, { data: null, error: { message: "boom" } }],
     };
 
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await smartRandomize(lotteryParams);
 
-    expect(result.error).toContain("status inicial");
+    expect(result.error).toEqual(
+      copyWithRef("Não foi possível gravar o sorteio. Tente novamente."),
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[assignments] sorteio falhou", {
+        message: expect.stringContaining("status inicial"),
+      }),
+    );
+    consoleError.mockRestore();
     expect(writeCalls.some((c) => c.table === "assignment_batches")).toBe(false);
     expect(rpcCalls).toHaveLength(0);
   });
@@ -979,6 +1055,20 @@ describe("cycleAssignment — autocomparação", () => {
     expect(await cycleAssignment("p1", "d1", "u1")).toEqual({ needsSelfComparisonConfirmation: true });
   });
 
+  // guard_self_comparison_approval: quem libera perdeu o papel entre o gate e
+  // a escrita. A recusa pt-BR do gatilho chega ao toast como veio.
+  it("recusa 42501 da liberação de autocomparação passa como veio", async () => {
+    serverTableResults = {
+      projects: PROJECT,
+      assignments: [pendingCoding, { error: { code: "42501", message: "só o coordenador pode liberar a autocomparação" } }],
+      responses: notCoder,
+    };
+
+    const result = await cycleAssignment("p1", "d1", "u1");
+
+    expect(result.error).toBe("só o coordenador pode liberar a autocomparação");
+  });
+
   it("outro 23514 em assignments é erro real, não pedido de confirmação", async () => {
     serverTableResults = {
       projects: PROJECT,
@@ -986,10 +1076,20 @@ describe("cycleAssignment — autocomparação", () => {
       responses: notCoder,
     };
 
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await cycleAssignment("p1", "d1", "u1");
 
     expect(result.needsSelfComparisonConfirmation).toBeUndefined();
-    expect(result.error).toMatch(/assignments_self_comparison_approval_shape/);
+    expect(result.error).toEqual(
+      copyWithRef("Não foi possível alterar a atribuição. Tente novamente."),
+    );
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[assignments] ciclo da atribuição falhou", {
+        code: "23514",
+        message: expect.stringMatching(/assignments_self_comparison_approval_shape/),
+      }),
+    );
+    consoleError.mockRestore();
   });
 });
 

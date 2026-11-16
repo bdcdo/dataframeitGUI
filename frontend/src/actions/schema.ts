@@ -17,7 +17,7 @@ import {
   PROJECT_LOG_FIELD_NAME,
   type SchemaPersistencePlan,
 } from "@/lib/schema-utils";
-import { guardErrorCopy, updateOrThrow } from "@/lib/supabase/rls-guard";
+import { updateOrThrow } from "@/lib/supabase/rls-guard";
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
 import { errorMessage } from "@/lib/utils";
 import { caughtErrorCopy, serverErrorCopy, type ServerError, type ServerErrorCopy } from "@/lib/server-error";
@@ -391,9 +391,9 @@ export async function savePrompt(
     );
   } catch (e) {
     return {
-      error: guardErrorCopy(
-        e,
+      error: caughtErrorCopy(
         "[schema] save do prompt falhou",
+        e,
         "Não foi possível salvar o prompt. Tente novamente.",
       ),
     };
@@ -924,9 +924,9 @@ export async function saveLlmConfig(
     });
   } catch (e) {
     return {
-      error: guardErrorCopy(
-        e,
+      error: caughtErrorCopy(
         "[schema] save da configuração do LLM falhou",
+        e,
         "Não foi possível salvar a configuração do LLM. Tente novamente.",
       ),
     };

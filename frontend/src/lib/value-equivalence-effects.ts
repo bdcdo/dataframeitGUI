@@ -7,6 +7,7 @@ import { drainAutoReviewReconciliationRequests } from "@/lib/auto-review-reconci
 import { resyncProjectCompareAssignments } from "@/lib/compare-assignment-sync";
 import { affectedValueKeys, equivalenceValueKey, type ValueEquivalence } from "@/lib/equivalence";
 import { errorMessage } from "@/lib/utils";
+import { PostgrestWriteError } from "@/lib/supabase/rls-guard";
 
 // O que muda fora do documento quando uma equivalência de valor nasce ou é
 // desfeita. Ela vale no projeto inteiro, então a divergência muda em todo
@@ -108,7 +109,7 @@ export async function propagateValueEquivalenceChange(input: {
       p_project_id: projectId,
       p_document_ids: documentIds,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new PostgrestWriteError(error);
     // Auto-revisão e comparação são independentes: as duas correm juntas, e a
     // falha de uma não esconde a outra.
     const results = await Promise.allSettled([

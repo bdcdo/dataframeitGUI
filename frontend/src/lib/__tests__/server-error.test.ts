@@ -10,7 +10,9 @@ import {
   withErrorCode,
   serverErrorCopy,
   serverErrorScope,
+  UserFacingError,
 } from "@/lib/server-error";
+import { PostgrestWriteError, ZeroRowsError } from "@/lib/supabase/rls-guard";
 import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { maskedServerError } from "@/test-utils/masked-server-error";
 
@@ -116,6 +118,115 @@ describe("caughtErrorCopy", () => {
     );
     // Sem code string, a linha não leva a chave.
     expect(consoleError.mock.calls.flat().join()).not.toContain('"code"');
+  });
+});
+
+// Em 23505/23503, o `details` diz qual chave colidiu ou faltou, o que o
+// `message` não diz. O valor da chave é dado de usuário e sai redigido; o
+// `details` de outros códigos pode trazer a linha inteira e fica fora.
+describe("log de details e hint", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("23505 e 23503 levam o details com a coluna e sem o valor", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    serverErrorCopy(
+      "[x] falhou",
+      {
+        code: "23505",
+        message: 'duplicate key value violates unique constraint "project_members_pkey"',
+        details: "Key (project_id, email)=(p1, ana@x.com) already exists.",
+        hint: null,
+      },
+      { generic: "g" },
+    );
+    serverErrorCopy(
+      "[x] falhou",
+      {
+        code: "23503",
+        message: "insert or update violates foreign key constraint",
+        details: 'Key (lower(email))=(bia@x.com) is not present in table "profiles".',
+      },
+      { generic: "g" },
+    );
+    expect(consoleError).toHaveBeenNthCalledWith(
+      1,
+      loggedLine("[x] falhou", {
+        code: "23505",
+        details: "Key (project_id, email)=(…) already exists.",
+      }),
+    );
+    expect(consoleError).toHaveBeenNthCalledWith(
+      2,
+      loggedLine("[x] falhou", {
+        details: 'Key (lower(email))=(…) is not present in table "profiles".',
+      }),
+    );
+    expect(consoleError.mock.calls.flat().join()).not.toMatch(/ana@x\.com|bia@x\.com/);
+  });
+
+  it("valor com parêntese solto sai redigido inteiro; formato desconhecido fica fora", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = (details: string) =>
+      serverErrorCopy("[x] falhou", { code: "23505", message: "dup", details }, { generic: "g" });
+    log("Key (project_id, external_id)=(p1, Processo (1) already exists.");
+    log("algo que não é o formato do Postgres (ana@x.com)");
+    expect(consoleError).toHaveBeenNthCalledWith(
+      1,
+      loggedLine("[x] falhou", { details: "Key (project_id, external_id)=(…) already exists." }),
+    );
+    expect(String(consoleError.mock.calls[1]?.[0])).not.toContain("details");
+    expect(consoleError.mock.calls.flat().join()).not.toMatch(/Processo|ana@x\.com/);
+  });
+
+  it("outro código não leva o details; o hint vai quando há", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    serverErrorCopy(
+      "[x] falhou",
+      {
+        code: "23502",
+        message: 'null value in column "title" violates not-null constraint',
+        details: "Failing row contains (d1, ana@x.com, null).",
+        hint: "Confira a coluna title.",
+      },
+      { generic: "g" },
+    );
+    const line = String(consoleError.mock.calls[0]?.[0]);
+    expect(line).toEqual(loggedLine("[x] falhou", { hint: "Confira a coluna title." }));
+    expect(line).not.toContain("Failing row");
+  });
+
+  it("caughtErrorCopy lê details e hint do PostgrestWriteError", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = new PostgrestWriteError({
+      code: "23505",
+      message: "duplicate key",
+      details: "Key (id)=(abc) already exists.",
+      hint: "h",
+    });
+    caughtErrorCopy("[x] falhou", e, "g");
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[x] falhou", {
+        code: "23505",
+        details: "Key (id)=(…) already exists.",
+        hint: "h",
+      }),
+    );
+  });
+});
+
+// Mensagem pt-BR lançada de propósito dentro do try de uma action.
+describe("UserFacingError", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("passa como veio e não vai ao log, inclusive o ZeroRowsError", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(caughtErrorCopy("[x] falhou", new UserFacingError("Informe o nome."), "g")).toBe(
+      "Informe o nome.",
+    );
+    expect(
+      caughtErrorCopy("[x] falhou", new ZeroRowsError("t", "update", "Sem permissão."), "g"),
+    ).toBe("Sem permissão.");
+    expect(consoleError).not.toHaveBeenCalled();
   });
 });
 

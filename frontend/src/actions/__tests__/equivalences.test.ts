@@ -1,4 +1,5 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 
 // Cobertura de regressão para o bug relatado na issue #366 ("não tá indo a
 // resposta da equivalencia"): antes da PR #362, estas actions lançavam Error
@@ -17,7 +18,7 @@ let serverTableResults: TableResults | undefined;
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, {
   data?: unknown;
-  error?: { message: string } | null;
+  error?: { message: string; code?: string } | null;
 }>;
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
@@ -101,6 +102,8 @@ const TARGET_EQUIVALENCE: TableResults = {
   projects: { data: { pydantic_fields: [Q1_FIELD] } },
 };
 
+const MARK_FAILED = "Não foi possível marcar as respostas como equivalentes. Tente novamente.";
+
 // As 3 actions de equivalences.ts falham do mesmo jeito (upsert/delete
 // retorna erro → `{ error }`, nunca lança); um caso por action evita repetir
 // o esqueleto "seta serverTableResults, chama a action, confere o retorno".
@@ -117,7 +120,7 @@ describe.each([
         gabaritoId: "r1",
         verdictDisplay: "resposta fundida",
       }),
-    expectedError: "pair upsert boom",
+    expectedError: MARK_FAILED,
     extraChecks: () => {
       expect(rpcCalls).toHaveLength(1);
       expect(upsertsOn("reviews")).toHaveLength(0);
@@ -129,7 +132,7 @@ describe.each([
     tableResults: undefined,
     call: (fns: Actions) =>
       fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1"),
-    expectedError: "llm pair boom",
+    expectedError: MARK_FAILED,
     extraChecks: undefined,
     rpcError: "llm pair boom",
   },
@@ -137,7 +140,7 @@ describe.each([
     action: "unmarkEquivalencePair",
     tableResults: TARGET_EQUIVALENCE,
     call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
-    expectedError: "delete pair boom",
+    expectedError: "Não foi possível desfazer a equivalência. Tente novamente.",
     extraChecks: undefined,
     rpcError: "delete pair boom",
   },
@@ -151,11 +154,67 @@ describe.each([
       rpcResults[rpcName] = { error: { message: rpcError } };
     }
     const fns = await loadActions();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const result = await call(fns);
 
-    expect(result).toEqual({ error: expectedError });
+    // O texto do Postgres vai para o log; o toast recebe a copy pt-BR (#502).
+    expect(result).toEqual({ error: copyWithRef(expectedError) });
+    expect(errorSpy).toHaveBeenCalledWith(
+      loggedLine(/\[equivalences\] .* falhou/, { message: rpcError }),
+    );
+    errorSpy.mockRestore();
     extraChecks?.();
+  });
+});
+
+// A guarda de `record_value_equivalences` contra resposta a outra versão da
+// pergunta levanta copy pt-BR própria (23514): ela chega ao toast como veio.
+describe("record_value_equivalences — guarda de versão da pergunta", () => {
+  it.each([
+    ["confirmEquivalentVerdict", (fns: Actions) =>
+      fns.confirmEquivalentVerdict({
+        projectId: "p1",
+        documentId: "doc1",
+        fieldName: "q1",
+        responseIds: ["r1", "r2"],
+        gabaritoId: "r1",
+        verdictDisplay: "resposta fundida",
+      })],
+    ["markLlmEquivalent", (fns: Actions) =>
+      fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1")],
+  ])("%s devolve a copy da RPC", async (_name, call) => {
+    const guard =
+      "Uma das respostas foi dada a outra versão da pergunta e não pode ser marcada como equivalente.";
+    rpcResults.record_value_equivalences = { error: { message: guard, code: "23514" } };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await call(await loadActions());
+
+    expect(result).toEqual({ error: guard });
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+  });
+});
+
+describe("record_value_equivalences — outro 23514", () => {
+  // CHECK da tabela (ordem canônica, origem) é falha real: vai ao log.
+  it("vira a copy pt-BR com código e loga o texto", async () => {
+    rpcResults.record_value_equivalences = {
+      error: {
+        message: 'new row for relation "value_equivalences" violates check constraint "value_equivalences_canonical_order"',
+        code: "23514",
+      },
+    };
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await (await loadActions()).markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1");
+
+    expect(result).toEqual({ error: copyWithRef(MARK_FAILED) });
+    expect(errorSpy).toHaveBeenCalledWith(
+      loggedLine("[equivalences] equivalência do LLM falhou", { code: "23514" }),
+    );
+    errorSpy.mockRestore();
   });
 });
 
@@ -183,7 +242,7 @@ describe("confirmEquivalentVerdict", () => {
     // Documenta o comportamento atual: o par de equivalência já foi
     // persistido quando o upsert de reviews falha (não há rollback), mesmo
     // com a action reportando erro ao client.
-    expect(result).toEqual({ error: "review upsert boom" });
+    expect(result).toEqual({ error: copyWithRef(MARK_FAILED) });
     expect(rpcCalls).toHaveLength(1);
     expect(upsertsOn("reviews")).toHaveLength(1);
   });
@@ -437,7 +496,9 @@ describe("unmarkEquivalencePair", () => {
 
     const result = await unmarkEquivalencePair("p1", "eq1");
 
-    expect(result).toEqual({ error: "remove boom" });
+    expect(result).toEqual({
+      error: copyWithRef("Não foi possível desfazer a equivalência. Tente novamente."),
+    });
     expect(afterCallbacks).toHaveLength(0);
   });
 });
@@ -468,6 +529,8 @@ describe("loadEquivalenceUsage", () => {
 
     const result = await loadEquivalenceUsage("p1", "q1,answers");
 
-    expect(result.error).toMatch(/nome de campo inválido/);
+    expect(result.error).toEqual(
+      copyWithRef("Não foi possível carregar onde a equivalência se aplica. Tente novamente."),
+    );
   });
 });

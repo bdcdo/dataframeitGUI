@@ -31,11 +31,18 @@ import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { AnswerFieldHashes, PydanticField, Round } from "@/lib/types";
 import { decideSelfComparison, planAssignmentCycle, type CycleStep } from "@/lib/assignment-cycle";
 import { z } from "zod";
-import { serverErrorScope } from "@/lib/server-error";
+import {
+  caughtErrorCopy,
+  serverErrorScope,
+  UserFacingError,
+  type ServerError,
+} from "@/lib/server-error";
+import { PostgrestWriteError } from "@/lib/supabase/rls-guard";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
-// copy pt-BR do fluxo (#502). As escritas de comparação ficam de fora: os
-// gatilhos de autocomparação levantam copy pt-BR própria.
+// copy pt-BR do fluxo (#502). As recusas dos gatilhos de autocomparação, que
+// levantam copy pt-BR própria, chegam ao toast como vieram
+// (`comparisonWriteResult`).
 const CODING_ASSIGNMENT_FAILED = "Não foi possível alterar a atribuição. Tente novamente.";
 
 const assignmentServerError = serverErrorScope("assignments");
@@ -99,12 +106,11 @@ interface InitialStatusInputs {
  * qualquer escrita.
  */
 function requireData<T>(
-  result: { data: T; error: { message: string } | null },
+  result: { data: T; error: ServerError | null },
   context: string,
 ): NonNullable<T> {
-  if (result.error || result.data == null) {
-    throw new Error(`${context}: ${result.error?.message ?? "resposta vazia"}`);
-  }
+  if (result.error) throw new PostgrestWriteError(result.error, context);
+  if (result.data == null) throw new Error(`${context}: resposta vazia`);
   return result.data as NonNullable<T>;
 }
 
@@ -113,7 +119,9 @@ async function loadRounds(
   projectId: string,
 ): Promise<Round[]> {
   const result = await supabase.from("rounds").select("id, label").eq("project_id", projectId);
-  if (result.error) throw new Error(`Erro ao ler as rodadas do projeto: ${result.error.message}`);
+  if (result.error) {
+    throw new PostgrestWriteError(result.error, "Erro ao ler as rodadas do projeto");
+  }
   return (result.data ?? []) as Round[];
 }
 
@@ -263,8 +271,8 @@ async function insertCodingAssignment(
  * OUTROS usuários no mesmo documento. Quem barra é o índice
  * assignments_one_active_comparacao_per_doc (um revisor por documento); o
  * 23505 vira mensagem em português em vez de vazar o texto do Postgres para o
- * toast do coordenador. `conflict` distingue essa recusa esperada de uma falha
- * real, que o chamador propaga como exceção.
+ * toast do coordenador. `error` é essa recusa esperada; uma falha real vem em
+ * `failure`, que o chamador propaga como exceção.
  *
  * `selfComparisonApprover`: o coordenador liberou a autocomparação (o
  * pesquisador codificou o documento). O banco recusa sem a liberação
@@ -319,8 +327,8 @@ function selfComparisonApproval(approver: string | null) {
 
 function toCycleResult(result: ComparisonWriteResult): CycleAssignmentResult {
   if (result.selfComparisonRace) return { needsSelfComparisonConfirmation: true };
-  if (result.conflict) return { error: result.error };
-  if (result.error) throw new Error(result.error);
+  if (result.error) return { error: result.error };
+  if (result.failure) throw new PostgrestWriteError(result.failure);
   return {};
 }
 
@@ -330,22 +338,34 @@ function toCycleResult(result: ComparisonWriteResult): CycleAssignmentResult {
 const SELF_COMPARISON_TRIGGER_MESSAGE = "o codificador do documento não pode receber sua comparação";
 
 interface ComparisonWriteResult {
+  /** Recusa que a tela mostra como veio (comparação já atribuída, liberação
+   *  sem papel de coordenador). */
   error?: string;
-  conflict?: boolean;
+  /** Falha real do PostgREST, que o `catch` de `cycleAssignment` loga. */
+  failure?: ServerError;
   /** Corrida: a codificação do par apareceu entre a checagem e a escrita. */
   selfComparisonRace?: boolean;
 }
 
-function comparisonWriteResult(
-  error: { code?: string; message: string } | null,
-): ComparisonWriteResult {
-  if (error?.code === "23505") {
-    return { error: "Este documento já tem um revisor de comparação atribuído.", conflict: true };
+// As recusas esperadas da escrita de comparação, ou null para falha real.
+function comparisonRefusal(error: ServerError): ComparisonWriteResult | null {
+  if (error.code === "23505") {
+    return { error: "Este documento já tem um revisor de comparação atribuído." };
   }
-  if (error?.code === "23514" && error.message.includes(SELF_COMPARISON_TRIGGER_MESSAGE)) {
+  if (error.code === "23514" && error.message.includes(SELF_COMPARISON_TRIGGER_MESSAGE)) {
     return { selfComparisonRace: true };
   }
-  return error ? { error: error.message } : {};
+  // guard_self_comparison_approval (20261113120000): quem libera a
+  // autocomparação perdeu o papel de coordenador entre o gate e a escrita.
+  if (error.code === "42501" && error.message.includes("autocomparação")) {
+    return { error: error.message };
+  }
+  return null;
+}
+
+function comparisonWriteResult(error: ServerError | null): ComparisonWriteResult {
+  if (!error) return {};
+  return comparisonRefusal(error) ?? { failure: error };
 }
 
 /**
@@ -366,7 +386,7 @@ async function isHumanCoder(
     .eq("respondent_id", userId)
     .eq("respondent_type", "humano")
     .eq("is_latest", true);
-  if (error) throw new Error(error.message);
+  if (error) throw new PostgrestWriteError(error);
   return (count ?? 0) > 0;
 }
 
@@ -394,7 +414,8 @@ async function insertCodingAssignmentOrThrow(
     documentId,
     userId,
   );
-  if (error) throw new Error(error);
+  // A copy pt-BR já vem pronta, e o erro já foi logado com o código.
+  if (error) throw new UserFacingError(error);
 }
 
 async function deleteAssignmentsOrThrow(
@@ -402,7 +423,7 @@ async function deleteAssignmentsOrThrow(
   assignmentIds: string[],
 ): Promise<void> {
   const { error } = await supabase.from("assignments").delete().in("id", assignmentIds);
-  if (error) throw new Error(error.message);
+  if (error) throw new PostgrestWriteError(error);
 }
 
 export interface CycleAssignmentResult {
@@ -476,7 +497,7 @@ export async function cycleAssignment(
         .eq("round_id", currentRoundId),
       isHumanCoder(supabase, projectId, documentId, userId),
     ]);
-    if (existingError) throw new Error(existingError.message);
+    if (existingError) throw new PostgrestWriteError(existingError);
     const decision = decideSelfComparison(
       planAssignmentCycle(existing ?? []),
       coder,
@@ -494,7 +515,13 @@ export async function cycleAssignment(
     );
     if (result.error || result.needsSelfComparisonConfirmation) return result;
   } catch (e) {
-    return { error: errorMessage(e) || "Erro ao alterar a atribuição" };
+    return {
+      error: caughtErrorCopy(
+        "[assignments] ciclo da atribuição falhou",
+        e,
+        CODING_ASSIGNMENT_FAILED,
+      ),
+    };
   }
 
   revalidatePath(`/projects/${projectId}/analyze/assignments`);
@@ -646,7 +673,7 @@ const lotteryParamsSchema = z.discriminatedUnion("type", [
 function validateLotteryParams(params: LotteryParams): LotteryParams {
   const result = lotteryParamsSchema.safeParse(params);
   if (!result.success) {
-    throw new Error(
+    throw new UserFacingError(
       `Configuração do sorteio inválida: ${result.error.issues[0]?.message ?? "revise os campos"}`,
     );
   }
@@ -665,7 +692,11 @@ async function validateAndAuthorizeLottery(
   } catch (error) {
     return {
       ok: false,
-      error: errorMessage(error) || "Configuração do sorteio inválida",
+      error: caughtErrorCopy(
+        "[assignments] validação do sorteio falhou",
+        error,
+        "Configuração do sorteio inválida.",
+      ),
     };
   }
 
@@ -902,7 +933,13 @@ export async function getLotteryDocStats(
   try {
     return await fetchLotteryDocStats(projectId);
   } catch (e) {
-    return { error: errorMessage(e) || "Erro ao carregar as estatísticas do sorteio" };
+    return {
+      error: caughtErrorCopy(
+        "[assignments] estatísticas do sorteio falharam",
+        e,
+        "Não foi possível carregar as estatísticas do sorteio. Tente novamente.",
+      ),
+    };
   }
 }
 
@@ -960,14 +997,14 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
     expectedRoundId: data.currentRoundId ?? "",
   };
   if (!data.currentRoundId || target.expectedRoundId !== data.currentRoundId) {
-    throw new Error("A rodada atual mudou. Reabra o sorteio e tente novamente.");
+    throw new UserFacingError("A rodada atual mudou. Reabra o sorteio e tente novamente.");
   }
   const startsNewRound = target.kind === "new";
   if (startsNewRound && assignmentType !== "codificacao") {
-    throw new Error("Uma nova rodada só pode ser iniciada pelo sorteio de codificação.");
+    throw new UserFacingError("Uma nova rodada só pode ser iniciada pelo sorteio de codificação.");
   }
   if (target.kind === "new" && !target.roundLabel.trim()) {
-    throw new Error("Informe o nome da nova rodada.");
+    throw new UserFacingError("Informe o nome da nova rodada.");
   }
 
   // Pool de participantes: deduplicado e validado contra project_members
@@ -977,11 +1014,11 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
   const uniqueIds = [...new Set(params.participantIds)];
   const participantIds = uniqueIds.filter((id) => memberIds.has(id));
   if (!participantIds.length || participantIds.length !== uniqueIds.length) {
-    throw new Error("Necessário ter ao menos um participante válido.");
+    throw new UserFacingError("Necessário ter ao menos um participante válido.");
   }
 
   if (!data.docs.length) {
-    throw new Error("Necessário ter documentos.");
+    throw new UserFacingError("Necessário ter documentos.");
   }
 
   // Gate de comparação derivado do modo de automação — compõe com os filtros.
@@ -1003,7 +1040,7 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
       data.minResponsesForComparison,
     );
     if (!candidateDocs.length) {
-      throw new Error(
+      throw new UserFacingError(
         data.automationMode === "compare_llm"
           ? "Nenhum documento tem resposta humana e do LLM para comparação."
           : "Nenhum documento tem respostas humanas suficientes para comparação.",
@@ -1013,7 +1050,7 @@ async function computeLottery(params: LotteryParams): Promise<LotteryComputation
 
   const filteredDocs = filterEligibleDocs(candidateDocs, assignmentType, filters);
   if (!filteredDocs.length) {
-    throw new Error("Nenhum documento passa nos filtros atuais.");
+    throw new UserFacingError("Nenhum documento passa nos filtros atuais.");
   }
 
   // Conjunto preservado conforme o modo: append preserva
@@ -1267,8 +1304,32 @@ export async function previewLottery(
       },
     };
   } catch (e) {
-    return { error: errorMessage(e) || "Erro ao calcular a prévia" };
+    return {
+      error: caughtErrorCopy(
+        "[assignments] prévia do sorteio falhou",
+        e,
+        "Não foi possível calcular a prévia do sorteio. Tente novamente.",
+      ),
+    };
   }
+}
+
+const LOTTERY_STALE_MESSAGE =
+  "O sorteio mudou desde que foi aberto (rodada, escopo ou trabalho em aberto). Recarregue o sorteio e tente novamente.";
+
+// O erro a lançar quando `apply_lottery_assignments` recusa o lote. Duas
+// recusas têm copy que a usuária precisa ler; o resto vai para o log.
+function lotteryRpcError(rpcError: ServerError): Error {
+  // 40001: a rodada, o escopo ou o trabalho aberto mudou desde a prévia, e a
+  // saída é recarregar o sorteio.
+  if (rpcError.code === "40001") return new UserFacingError(LOTTERY_STALE_MESSAGE);
+  // P0001: a nova rodada encerraria trabalho em aberto sem a confirmação.
+  if (rpcError.code === "P0001" && rpcError.message.includes("trabalhos abertos")) {
+    return new UserFacingError(
+      `Não foi possível iniciar a nova rodada: ${rpcError.message}. Reabra o sorteio e confirme o trabalho em aberto.`,
+    );
+  }
+  return new PostgrestWriteError(rpcError, "Erro ao gravar as atribuições do sorteio");
 }
 
 export async function smartRandomize(
@@ -1345,9 +1406,7 @@ export async function smartRandomize(
         p_replace: validatedParams.mode === "replace",
       },
     );
-    if (rpcError) {
-      throw new Error(`Erro ao gravar as atribuições do sorteio: ${rpcError.message}`);
-    }
+    if (rpcError) throw lotteryRpcError(rpcError);
 
     // A RPC exige correspondência exata entre proposta e inserção. Qualquer
     // conflito concorrente reverte o lote inteiro com 40001.
@@ -1355,7 +1414,13 @@ export async function smartRandomize(
     count = rpcResult?.inserted ?? newAssignments.length;
     preserved = preservedCount;
   } catch (e) {
-    return { error: errorMessage(e) || "Erro ao sortear" };
+    return {
+      error: caughtErrorCopy(
+        "[assignments] sorteio falhou",
+        e,
+        "Não foi possível gravar o sorteio. Tente novamente.",
+      ),
+    };
   }
 
   // Pós-commit best-effort: as atribuições já foram gravadas pelo RPC. Uma falha

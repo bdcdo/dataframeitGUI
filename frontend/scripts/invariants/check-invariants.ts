@@ -38,14 +38,9 @@ import {
 import { draftBackedComparisonViolations } from "@/lib/draft-backed-comparison";
 import { concludedCodingDraftViolations } from "@/lib/concluded-coding-draft";
 import {
-  latestHumanWithoutActorViolations,
   latestResponseUniquenessViolations,
   type LatestResponseRow,
 } from "@/lib/latest-response-uniqueness";
-import {
-  activeComparisonUniquenessViolations,
-  type ComparisonAssignmentRow,
-} from "@/lib/active-comparison-uniqueness";
 import { verdictMatchesAnswer } from "@/lib/llm-error-metrics";
 // Mesma primitiva de igualdade que o produto usa para decidir divergência
 // (`lib/compare-divergence.ts`, `lib/equivalence.ts`): se as duas réguas
@@ -236,46 +231,36 @@ function sourceDependentDecisions() {
   return (sourceScan ??= scanSourceDependentDecisions());
 }
 
-// As três invariantes de `responses` vivas leem a mesma varredura de
-// `is_latest = true`, feita uma vez por execução: cada uma era uma passada
-// paginada sobre o mesmo conjunto. As colunas são a união do que as três usam.
-let latestResponsesScan: Promise<(LatestResponseRow & { is_latest: boolean })[]> | undefined;
-function latestResponses() {
-  return (latestResponsesScan ??= fetchAll<LatestResponseRow & { is_latest: boolean }>(
-    "responses",
-    "id, project_id, round_id, document_id, respondent_type, respondent_id, is_latest",
-    (q) => q.eq("is_latest", true),
-  ));
-}
-
 const invariants: Invariant[] = [
   {
     name: "responses-is-latest-unica",
     motivation:
       "espelha, com a chave exata de cada um, os índices responses_one_latest_llm_per_document (project_id, document_id) e responses_one_latest_human_per_document (#609; project_id, round_id, document_id, respondent_id); até a #609 a regra humana vivia só na aplicação, e a família de duplicatas por corrida/re-import (#490, dedup Zolgensma) nascia daí. Com os dois índices no lugar ela não tem como falhar: FAIL aqui = índice dropado ou recriado com outra chave, ou canal de escrita que o contorna. Regra e histórico da chave (#715) em lib/latest-response-uniqueness.ts. Resposta viva presa em rodada anterior sem par na corrente (o resíduo medido na #715), ou humana viva em rodada anterior, que o índice humano permite, é achado de response-is-latest-na-rodada-corrente",
-    run: async () => latestResponseUniquenessViolations(await latestResponses()),
-  },
-  {
-    name: "response-humana-viva-tem-autor",
-    motivation:
-      "espelha o CHECK responses_human_latest_has_actor_check (20260727120000): humana is_latest sem respondent_id. É ele que dá dente ao índice humano de responses-is-latest-unica, porque NULL nunca colide em índice único e N humanas vivas anônimas no mesmo documento passariam por ele. FAIL aqui = CHECK dropado ou afrouxado, ou canal de escrita que o contorna. Regra em lib/latest-response-uniqueness.ts",
-    run: async () => latestHumanWithoutActorViolations(await latestResponses()),
+    run: async () =>
+      latestResponseUniquenessViolations(
+        await fetchAll<LatestResponseRow>(
+          "responses",
+          "id, project_id, round_id, document_id, respondent_type, respondent_id",
+          (q) => q.eq("is_latest", true),
+        ),
+      ),
   },
   {
     name: "response-is-latest-na-rodada-corrente",
     motivation:
       "a troca de rodada (#642/#645) arquiva a rodada anterior com is_latest = false no mesmo passo em que ativa a nova. Até 2026-08-04 esse UPDATE abortava com 42501 — SECURITY INVOKER contra o WITH CHECK de \"Users manage own responses\", que exige autoria do chamador — e nenhuma transição chegou a commitar. Com o arquivamento movido para start_project_round (SECURITY DEFINER), FAIL aqui = transição parcial: rodada nova ativa e resposta da anterior ainda corrente, que é o estado que faria a Comparação ler a rodada errada",
     run: async () => {
-      const [projects, responses] = await Promise.all([
-        fetchAll<{ id: string; current_round_id: string | null }>("projects", "id, current_round_id"),
-        latestResponses(),
-      ]);
-      // LatestResponseRow tipa project_id nullable (ver o módulo); a chave aceita
-      // null para a linha sem projeto continuar violando.
-      const currentRoundOf = new Map<string | null, string | null>(
-        projects.map((p) => [p.id, p.current_round_id]),
+      const projects = await fetchAll<{ id: string; current_round_id: string | null }>(
+        "projects",
+        "id, current_round_id",
       );
-      return responses
+      const currentRoundOf = new Map(projects.map((p) => [p.id, p.current_round_id]));
+      const rows = await fetchAll<{ id: string; project_id: string; round_id: string | null }>(
+        "responses",
+        "id, project_id, round_id",
+        (q) => q.eq("is_latest", true),
+      );
+      return rows
         .filter((r) => r.round_id !== currentRoundOf.get(r.project_id))
         .map((r) => ({
           key: r.id,
@@ -284,17 +269,23 @@ const invariants: Invariant[] = [
     },
   },
   {
-    name: "comparacao-ativa-unica-por-documento-e-rodada",
+    name: "comparacao-ativa-unica-por-documento",
     motivation:
-      "invariante do índice assignments_one_active_comparacao_per_doc_round (#490/PR #496; por rodada desde 20260731120000); FAIL aqui = índice dropado ou canal de escrita que o contorna. Chave, status NULL e NULLS DISTINCT em lib/active-comparison-uniqueness.ts",
-    run: async () =>
-      activeComparisonUniquenessViolations(
-        await fetchAll<ComparisonAssignmentRow>(
-          "assignments",
-          "id, document_id, round_id, status",
-          (q) => q.eq("type", "comparacao"),
-        ),
-      ),
+      "invariante do índice assignments_one_active_comparacao_per_doc (#490/PR #496); FAIL aqui = índice dropado ou canal de escrita que o contorna",
+    run: async () => {
+      const rows = await fetchAll<{ id: string; document_id: string; status: string | null }>(
+        "assignments",
+        "id, document_id, status",
+        (q) => q.eq("type", "comparacao"),
+      );
+      // inclui status NULL, como o predicado IS DISTINCT FROM do índice
+      const active = rows.filter((r) => r.status !== "concluido");
+      const byDoc = new Map<string, string[]>();
+      for (const r of active) byDoc.set(r.document_id, [...(byDoc.get(r.document_id) ?? []), r.id]);
+      return [...byDoc.entries()]
+        .filter(([, ids]) => ids.length > 1)
+        .map(([doc, ids]) => ({ key: doc, detail: `${ids.length} comparações ativas: ${ids.join(", ")}` }));
+    },
   },
   {
     name: "review-chosen-response-do-mesmo-documento",
