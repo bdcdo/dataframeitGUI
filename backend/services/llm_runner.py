@@ -19,7 +19,7 @@ from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from typing import Any, Optional
+from typing import Any, Optional, Union, get_args, get_origin
 
 import pandas as pd
 
@@ -666,6 +666,99 @@ def _extend_model_with_justifications(model_class):
     return extended_model
 
 
+# Chaves de `json_schema_extra` que a biblioteca dataframeit lê com sentido
+# próprio. Cópia de `_LIBRARY_EXTRA_KEYS` em `dataframeit/agent.py`, que é
+# privado; o teste de paridade em test_llm_schema_extra.py acusa a divergência
+# quando a biblioteca for atualizada.
+_DATAFRAMEIT_EXTRA_KEYS = frozenset(
+    {
+        "condition",
+        "depends_on",
+        "prompt",
+        "prompt_replace",
+        "prompt_append",
+        "search_depth",
+        "max_results",
+        "max_search_calls",
+    }
+)
+
+
+def _strip_internal_schema_extra(model_class):
+    """Tira do modelo que vai ao provider as chaves internas de `json_schema_extra`.
+
+    O provider serializa o JSON Schema inteiro do modelo, e `json_schema_extra`
+    entra inline em cada propriedade. As chaves que o gerador grava ali (`id`,
+    `help_text`, `visible_if`, `target`, `options`...) são metadado de produto,
+    lido por nós antes e depois da chamada; no schema enviado só inflam o
+    payload (#697). O que o modelo deve ler está em `description`, que fica.
+
+    Ficam apenas as chaves que a própria biblioteca dataframeit lê
+    (`_DATAFRAMEIT_EXTRA_KEYS`): ela as consome e as tira do schema por conta
+    própria, e removê-las aqui desligaria em silêncio a configuração de busca
+    de um código escrito à mão.
+
+    Tem de ser a última etapa de `_prepare_llm_model`: a leitura das condições
+    e de `justification_prompt` depende das chaves que saem aqui. O
+    `pydantic_code` e o `pydantic_fields` não são tocados — o filtro vale só
+    para a classe montada para a chamada. Como em `_filter_model_for_llm`, a
+    classe é refeita sobre `BaseModel`: só campos e anotações sobrevivem.
+    """
+    from pydantic import BaseModel, create_model
+
+    fields: dict = {}
+    changed = False
+    for name, info in model_class.model_fields.items():
+        annotation = _strip_annotation(info.annotation)
+        extra = extract_json_schema_extra(info)
+        kept = {k: v for k, v in extra.items() if k in _DATAFRAMEIT_EXTRA_KEYS}
+        if len(kept) != len(extra):
+            changed = True
+            original = info
+            info = copy(original)
+            info.json_schema_extra = kept or None
+            # copy() compartilha `_attributes_set`, de onde o Pydantic remonta
+            # o campo no create_model; sem ajustar, as chaves voltariam por ali.
+            attributes = dict(getattr(original, "_attributes_set", {}))
+            if kept:
+                attributes["json_schema_extra"] = kept
+            else:
+                attributes.pop("json_schema_extra", None)
+            info._attributes_set = attributes
+        changed = changed or annotation != info.annotation
+        fields[name] = (annotation, info)
+
+    if not changed:
+        return model_class
+
+    stripped = create_model(model_class.__name__, __base__=BaseModel, **fields)
+    setattr(
+        stripped,
+        _GENERATED_JUSTIFICATION_FIELDS_ATTR,
+        _generated_justification_fields(model_class),
+    )
+    return stripped
+
+
+def _strip_annotation(annotation):
+    """A anotação com os submodelos limpos por `_strip_internal_schema_extra`.
+
+    O achatamento só expande `BaseModel` direto ou `Optional[BaseModel]`; o
+    submodelo dentro de lista, que código escrito à mão pode trazer, segue para
+    o provider em `$defs` com o `json_schema_extra` dos seus campos.
+    """
+    from pydantic import BaseModel
+
+    origin = get_origin(annotation)
+    if origin is list:
+        return list[_strip_annotation(get_args(annotation)[0])]
+    if origin is Union:
+        return Union[tuple(_strip_annotation(a) for a in get_args(annotation))]  # type: ignore[misc]
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return _strip_internal_schema_extra(annotation)
+    return annotation
+
+
 # Separador usado para achatar nested BaseModels em top-level (ver
 # _flatten_nested_basemodels abaixo). Dois underscores minimizam colisão com
 # nomes de campo reais (q2_id_..., q24a_...).
@@ -1047,6 +1140,7 @@ def _prepare_llm_model(
     model_class, nested_field_map = _flatten_nested_basemodels(model_class)
     if include_justifications:
         model_class = _extend_model_with_justifications(model_class)
+    model_class = _strip_internal_schema_extra(model_class)
     return _PreparedLlmModel(
         model_class=model_class,
         nested_field_map=nested_field_map,
