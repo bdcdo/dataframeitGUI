@@ -75,8 +75,8 @@ const subfields: fc.Arbitrary<SubfieldDef[]> = fc.uniqueArray(
 const target = fc.constantFrom<PydanticFieldTarget>("all", "llm_only", "human_only", "none");
 
 // As escolhas independentes que definem um campo. `buildField` descarta as que
-// não fazem sentido para o tipo sorteado (opções em texto, `allow_other` fora
-// de escolha, subcampos fora de texto), então todo campo construído está na
+// não fazem sentido para o tipo sorteado (`allow_other` fora de escolha,
+// subcampos fora de texto), então todo campo construído está na
 // forma canônica que a GUI grava, e trocar uma escolha só por outra (o que o
 // teste de injetividade faz) continua produzindo um campo válido.
 export interface FieldSpec {
@@ -85,6 +85,8 @@ export interface FieldSpec {
   type: PydanticField["type"];
   choiceOptions: string[];
   dateOptions: string[] | undefined;
+  // As "respostas padronizadas" do campo de texto.
+  textOptions: string[] | undefined;
   description: string;
   help_text: string | undefined;
   target: PydanticFieldTarget | undefined;
@@ -132,6 +134,7 @@ export function fieldSpec(triggers: PydanticField[]): fc.Arbitrary<FieldSpec> {
     type: fc.constantFrom<PydanticField["type"]>("single", "multi", "text", "date"),
     choiceOptions: options,
     dateOptions: optional(options),
+    textOptions: optional(options),
     description: nonBlankText,
     help_text: optional(trimmedText),
     target: optional(target),
@@ -154,9 +157,7 @@ export function buildField(spec: FieldSpec): PydanticField {
     type: spec.type,
     options: isChoice
       ? spec.choiceOptions
-      : spec.type === "date"
-        ? (spec.dateOptions ?? null)
-        : null,
+      : ((spec.type === "date" ? spec.dateOptions : spec.textOptions) ?? null),
     description: spec.description,
     help_text: spec.help_text,
     target: spec.target,

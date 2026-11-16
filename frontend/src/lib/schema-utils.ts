@@ -107,15 +107,15 @@ function fieldExtra(field: PydanticField): string {
   }
   if (field.type === "date") {
     extras.push(`"field_type": "date"`);
-    // Date fields carry options as sentinel values (ex: "Não identificável")
-    // rendered alongside the date picker. They must be carried in
-    // json_schema_extra because the annotation itself is `str`, not Literal.
-    if (field.options && field.options.length > 0) {
-      const opts = field.options
-        .map((o) => `"${escapeString(o)}"`)
-        .join(", ");
-      extras.push(`"options": [${opts}]`);
-    }
+  }
+  // Em data (sentinelas como "Não identificável") e em texto (respostas
+  // padronizadas) a anotação é `str`, e não Literal: as opções só chegam ao
+  // código por aqui. Entram no hash do campo, então sem elas o código não
+  // reconstrói o campo (#747). Só a lista não vazia sai, e o texto fica
+  // byte-idêntico para quem não as usa.
+  if ((field.type === "date" || field.type === "text") && field.options?.length) {
+    const opts = field.options.map((o) => `"${escapeString(o)}"`).join(", ");
+    extras.push(`"options": [${opts}]`);
   }
   if ((field.type === "single" || field.type === "multi") && resolveAllowOther(field.allow_other)) {
     extras.push(`"allowOther": True`);

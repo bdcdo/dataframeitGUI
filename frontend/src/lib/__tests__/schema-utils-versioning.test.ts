@@ -705,6 +705,27 @@ describe("generatePydanticCode round-trip surface", () => {
     expect(code).not.toContain('"condition"');
   });
 
+  // As respostas padronizadas do campo de texto entram no hash do campo, e o
+  // código tem de carregá-las para reconstruí-lo (#747). Sem elas o texto fica
+  // byte-idêntico, porque `pydantic_hash` é sha256 dele.
+  it("emits the options of a text field, only when it has them", () => {
+    const id = "00000000-0000-4000-8000-0000000000ae";
+    const text = { id, name: "q1", type: "text" as const, help_text: "Ajuda" };
+    const semOpcoes = generatePydanticCode([baseField({ ...text, options: null })]);
+    const listaVazia = generatePydanticCode([baseField({ ...text, options: [] })]);
+    const comOpcoes = generatePydanticCode([
+      baseField({ ...text, options: ["Não consta", 'Com "aspas"'] }),
+    ]);
+    expect(semOpcoes).not.toContain('"options"');
+    expect(listaVazia).toBe(semOpcoes);
+    expect(comOpcoes).toContain(
+      `q1: str = Field(description="x. Instrucoes: Ajuda", json_schema_extra={"id": "${id}", "options": ["Não consta", "Com \\"aspas\\""], "help_text": "Ajuda"})`,
+    );
+    expect(
+      comOpcoes.replace(', "options": ["Não consta", "Com \\"aspas\\""]', ""),
+    ).toBe(semOpcoes);
+  });
+
   it("emits required in json_schema_extra when the field is optional", () => {
     const code = generatePydanticCode([
       baseField({ name: "q1", options: ["A", "B"], required: false }),

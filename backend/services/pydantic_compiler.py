@@ -138,14 +138,14 @@ def _normalize_optional_str(raw) -> str | None:
 def _resolve_field_type_and_options(
     field_type: str, options: list[str] | None, extra: dict
 ) -> tuple[str, list[str] | None]:
-    """Aplica override explícito de tipo e sentinelas de opções de campo date."""
+    """Aplica override explícito de tipo e as opções que viajam no extra."""
     # Allow json_schema_extra to override the inferred field type (e.g. date)
     explicit_type = extra.get("field_type")
     if explicit_type:
         field_type = explicit_type
-    # Date fields carry options as sentinels in json_schema_extra because the
-    # annotation itself is `str`, not Literal.
-    if field_type == "date":
+    # Em data (sentinelas) e em texto (respostas padronizadas) a anotação é
+    # `str`, e não Literal: as opções vêm de json_schema_extra.
+    if field_type in ("date", "text"):
         raw_opts = extra.get("options")
         if isinstance(raw_opts, (list, tuple)) and raw_opts:
             options = [str(o) for o in raw_opts]

@@ -614,6 +614,30 @@ class Analysis(BaseModel):
     assert f["options"] == ["Não identificável"]
 
 
+def test_text_field_options_round_trip():
+    """As respostas padronizadas de campo de texto vêm de json_schema_extra,
+    como as sentinelas de data, e entram no hash do campo (#747)."""
+    code = """from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    motivo: str = Field(
+        description="Motivo",
+        json_schema_extra={"options": ["Não consta", "Outro"]},
+    )
+    livre: str = Field(description="Livre")
+"""
+    result = compile_pydantic(code, generate_missing_ids=True)
+    assert result["valid"], result["errors"]
+    motivo = _field(result, "motivo")
+    assert motivo["type"] == "text"
+    assert motivo["options"] == ["Não consta", "Outro"]
+    assert motivo["hash"] == _field_hash(
+        "motivo", "text", ["Não consta", "Outro"], "Motivo"
+    )
+    assert motivo["hash"] != _field_hash("motivo", "text", None, "Motivo")
+    assert _field(result, "livre")["options"] is None
+
+
 def test_date_description_strips_generated_suffixes():
     """generatePydanticCode appends ". Formato: DD/MM/AAAA..." and, when
     options exist, ". Caso não seja possível informar a data, usar um dos
