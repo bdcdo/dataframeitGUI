@@ -927,6 +927,8 @@ describe("saveResponse — falha ao sincronizar o assignment de codificação", 
     );
     consoleError.mockRestore();
     expect(state.assignmentUpdatePayload?.status).toBe("concluido");
+    // A resposta foi gravada: as telas que a mostram são revalidadas.
+    expect(revalidatePath).toHaveBeenCalledWith("/projects/proj-1/analyze/code");
   });
 
   it("UPDATE que mantém o assignment em andamento falha: copy pt-BR, texto do banco só no log", async () => {

@@ -549,9 +549,10 @@ async function runSaveAttempt({
     snapshot,
     roundId: expectedRoundId,
   });
-  if (syncErr) return { success: false, error: syncErr };
-
+  // A resposta já está gravada mesmo quando o sync do assignment falha: as
+  // telas que a mostram são revalidadas nos dois casos.
   revalidateAfterSave(projectId);
+  if (syncErr) return { success: false, error: syncErr };
   return { success: true, missingRequiredFields };
 }
 
