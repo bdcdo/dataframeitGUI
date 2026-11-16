@@ -117,30 +117,19 @@ export function ModelConfigCard({
     startTransition(async () => {
       setOptimisticAmbiguities(checked);
       try {
-        const toggle = (baseline: SchemaBaselineIdentity) =>
-          toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked, baseline);
-        let r = await toggle(schemaBaseline);
-        // O servidor recomputa a mutação sobre o schema atual (põe ou tira o
-        // campo pelo nome), então não há edição local que o conflito possa
-        // atropelar: repetir uma vez sobre a revisão devolvida é seguro.
-        // O conflito também provou que as props desta página estão defasadas
-        // (o Switch e a revisão), seja qual for o resultado da repetição; e um
-        // toggle que o remoto já tinha aplicado volta `saved` sem commit, logo
-        // sem revalidação.
-        if (r.status === "conflict") {
-          r = await toggle({ revision: r.current.revision });
-          refresh();
-        }
+        const r = await toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked, schemaBaseline);
         if (r.status === "error") {
           toast.error(r.message);
           return;
         }
         if (r.status === "conflict") {
+          refresh();
           toast.error(
             "O schema mudou em outra sessão. Recarregue a página antes de alterar este campo.",
           );
           return;
         }
+        refresh();
         toast.success(
           checked
             ? "Campo de ambiguidades adicionado"

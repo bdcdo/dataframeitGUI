@@ -73,6 +73,7 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
     );
     expect(toastSuccess).toHaveBeenCalledWith("Campo de ambiguidades adicionado");
     expect(toastError).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("reverte o estado otimista e mostra erro quando a action falha", async () => {
@@ -97,17 +98,12 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
 
   // Ligar/desligar o campo é recomputado no servidor sobre o schema atual, então
   // um conflito de revisão não tem edição local a preservar: repetir sobre a
-  // revisão devolvida resolve sem mandar o usuário recarregar a página.
-  it("repete uma vez sobre a revisão atual quando o schema mudou em outra sessão", async () => {
-    toggleLlmField
-      .mockResolvedValueOnce({
-        status: "conflict",
-        current: { fields: [], version: "0.2.0", revision: 3 },
-      })
-      .mockResolvedValueOnce({
-        status: "saved",
-        snapshot: { fields: [], version: "0.3.0", revision: 4 },
-      });
+  // O retry acontece dentro da action; o card só recebe o resultado final.
+  it("sucesso depois de retry no servidor recarrega as props com uma chamada", async () => {
+    toggleLlmField.mockResolvedValue({
+      status: "saved",
+      snapshot: { fields: [], version: "0.3.0", revision: 4 },
+    });
     const user = userEvent.setup();
     render(<ModelConfigCard {...baseProps} />);
 
@@ -116,19 +112,19 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
     await waitFor(() =>
       expect(toastSuccess).toHaveBeenCalledWith("Campo de ambiguidades adicionado"),
     );
-    expect(toggleLlmField).toHaveBeenNthCalledWith(
-      2,
+    expect(toggleLlmField).toHaveBeenCalledWith(
       "p1",
       LLM_AMBIGUITIES_FIELD,
       true,
-      { revision: 3 },
+      { revision: 0 },
     );
+    expect(toggleLlmField).toHaveBeenCalledTimes(1);
     expect(toastError).not.toHaveBeenCalled();
     // O conflito provou que as props desta página estão defasadas.
     expect(refresh).toHaveBeenCalled();
   });
 
-  it("pede para recarregar quando o schema muda de novo durante a repetição", async () => {
+  it("pede para recarregar quando o servidor devolve segunda colisão", async () => {
     toggleLlmField.mockResolvedValue({
       status: "conflict",
       current: { fields: [], version: "0.2.0", revision: 3 },
@@ -143,7 +139,7 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
         "O schema mudou em outra sessão. Recarregue a página antes de alterar este campo.",
       ),
     );
-    expect(toggleLlmField).toHaveBeenCalledTimes(2);
+    expect(toggleLlmField).toHaveBeenCalledTimes(1);
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(refresh).toHaveBeenCalled();
   });

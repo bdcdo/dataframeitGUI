@@ -519,6 +519,7 @@ async function persistSchema(
   if ("result" in prepared) return prepared.result;
   if ("unchanged" in prepared) {
     if (!suggestionId) {
+      revalidateSchemaConsumers(projectId);
       return { status: "saved", snapshot: projectSnapshot(context.project) };
     }
     const resolved = await resolveSuggestionWithoutCommit(
@@ -855,21 +856,30 @@ export async function toggleLlmField(
   enabled: boolean,
   expectedBaseline: SchemaBaselineIdentity,
 ): Promise<SchemaSaveResult> {
-  const loaded = await loadAuthenticatedSchemaContext(projectId, expectedBaseline);
-  if ("result" in loaded) return loaded.result;
-  let fields = loaded.context.oldFields;
-
-  if (enabled) {
-    if (!fields.some((f) => f.name === fieldDef.name)) {
-      // A definição padrão não carrega identidade: o id nasce aqui, quando o
-      // campo entra no schema deste projeto.
-      fields = [...fields, { ...fieldDef, id: generateFieldId() }];
+  let baseline = expectedBaseline;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const loaded = await loadAuthenticatedSchemaContext(projectId, baseline);
+    let result: SchemaSaveResult;
+    if ("result" in loaded) {
+      result = loaded.result;
+    } else {
+      let fields = loaded.context.oldFields;
+      if (enabled) {
+        if (!fields.some((f) => f.name === fieldDef.name)) {
+          // A definição padrão não carrega identidade: o id nasce aqui, quando
+          // o campo entra no schema deste projeto.
+          fields = [...fields, { ...fieldDef, id: generateFieldId() }];
+        }
+      } else {
+        fields = fields.filter((f) => f.name !== fieldDef.name);
+      }
+      // react-doctor-disable-next-line react-doctor/async-await-in-loop
+      result = await persistSchema(projectId, fields, baseline, loaded);
     }
-  } else {
-    fields = fields.filter((f) => f.name !== fieldDef.name);
+    if (result.status !== "conflict" || attempt === 1) return result;
+    baseline = { revision: result.current.revision };
   }
-
-  return persistSchema(projectId, fields, expectedBaseline, loaded);
+  throw new Error("retry de schema esgotado");
 }
 
 /**

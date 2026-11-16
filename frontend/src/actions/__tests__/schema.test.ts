@@ -11,6 +11,8 @@ import {
 import { EMPTY_BASELINE, FIELD, projectRow } from "./schema-test-fixtures";
 import { ApiError } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
+import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
+import { revalidatePath } from "next/cache";
 
 const state = vi.hoisted(() => ({
   writes: [] as WriteCall[],
@@ -49,6 +51,7 @@ import {
   saveLlmConfig,
   savePrompt,
   saveSchemaFromGUI,
+  toggleLlmField,
 } from "../schema";
 
 function commitRow(overrides: Record<string, unknown> = {}) {
@@ -72,6 +75,40 @@ beforeEach(() => {
   state.rpcResults = {};
   fetchMock.mockReset();
   resyncMock.mockClear();
+  vi.mocked(revalidatePath).mockClear();
+});
+
+describe("toggleLlmField — retry CAS no servidor", () => {
+  it("recalcula sobre a revisão atual após conflito inicial e faz um único commit", async () => {
+    state.tableData = { projects: [projectRow({ schema_revision: 3 })] };
+    state.rpcResults = { commit_project_schema: { data: commitRow({ schema_revision: 4 }) } };
+
+    const result = await toggleLlmField("p1", LLM_AMBIGUITIES_FIELD, true, EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(state.rpcs.filter((rpc) => rpc.fn === "commit_project_schema")).toHaveLength(1);
+    expect(state.rpcs.find((rpc) => rpc.fn === "commit_project_schema")?.args).toMatchObject({ p_expected_revision: 3 });
+  });
+
+  it("segunda colisão devolve conflito sem repetir UPDATE", async () => {
+    state.tableData = { projects: [projectRow({ schema_revision: 3 })] };
+    state.rpcResults = { commit_project_schema: { data: commitRow({ status: "conflict", schema_revision: 4 }) } };
+
+    const result = await toggleLlmField("p1", LLM_AMBIGUITIES_FIELD, true, EMPTY_BASELINE);
+
+    expect(result.status).toBe("conflict");
+    expect(state.rpcs.filter((rpc) => rpc.fn === "commit_project_schema")).toHaveLength(1);
+  });
+
+  it("toggle já aplicado volta saved sem RPC e revalida as props", async () => {
+    state.tableData = { projects: [projectRow({ pydantic_fields: [{ ...LLM_AMBIGUITIES_FIELD, id: FIELD.id }] })] };
+
+    const result = await toggleLlmField("p1", LLM_AMBIGUITIES_FIELD, true, EMPTY_BASELINE);
+
+    expect(result.status).toBe("saved");
+    expect(state.rpcs.filter((rpc) => rpc.fn === "commit_project_schema")).toHaveLength(0);
+    expect(revalidatePath).toHaveBeenCalledWith("/projects/p1/llm/configure");
+  });
 });
 
 // Uma mudança de schema pode tirar a validade de vereditos (hash da pergunta,
