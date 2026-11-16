@@ -49,27 +49,11 @@ def _get_jwks_client() -> jwt.PyJWKClient:
     return _jwks_client
 
 
-def _allowed_algorithms() -> list[str]:
-    """Algoritmos aceitos, derivados da config (fail-closed).
-
-    RS256 é o mecanismo de produção (JWKS do Clerk). HS256 (Supabase JWT
-    secret) só é aceito quando o JWKS NÃO está configurado — i.e., no estado
-    de rollback. Com o JWKS setado, um token forjado com `alg=HS256` (mesmo de
-    posse do secret legado vazado) cai fora da allowlist e é rejeitado, fechando
-    o downgrade de algoritmo.
-    """
-    if settings.clerk_jwks_url:
-        return ["RS256"]
-    if settings.supabase_jwt_secret:
-        return ["HS256"]
-    return []
-
-
 def _require_issuer() -> None:
     """Exige `clerk_jwt_issuer` quando a verificação é por JWKS (fail-closed).
 
-    Mesmo idioma de `_allowed_algorithms`: config incompleta é problema do
-    servidor, não do caller, então vira 503 — não 401 nem liberação.
+    Mesmo idioma do JWKS ausente em `verify_jwt`: config incompleta é problema
+    do servidor, não do caller, então vira 503 — não 401 nem liberação.
 
     Sem `iss` validado, o único sinal de que um token veio da instância errada
     seria o `kid` ausente do JWKS, que `verify_jwt` traduz (corretamente, para
@@ -95,7 +79,7 @@ def _require_issuer() -> None:
 
 def _decode_kwargs() -> dict:
     # require=["exp"]: rejeita token sem claim de expiração — sem isto, um token
-    # sem `exp` jamais expiraria. Vale para HS256 e RS256 (defesa em profundidade).
+    # sem `exp` jamais expiraria.
     options: dict = {"require": ["exp"]}
     # O session token do Clerk não emite `aud`; o PyJWT exige desligar a checagem
     # explicitamente, senão rejeita todo token por claim ausente. O papel que o
@@ -107,26 +91,21 @@ def _decode_kwargs() -> dict:
     # leeway absorve skew de relógio e expiração de borda: o session token expira
     # em ~60s e é pollado por minutos, então uma diferença de alguns segundos
     # entre Clerk e o backend não deve derrubar uma run em curso.
-    kwargs: dict = {"leeway": settings.jwt_leeway_seconds}
-    # `issuer` só entra se configurado. No caminho RS256 isso é sempre verdade
-    # (`_require_issuer` cobra antes), mas no de rollback HS256 o issuer segue
-    # opcional — escolha, não esquecimento: ali a chave é o Supabase JWT secret,
-    # que não é emitido pelo Clerk e não tem instância dev/prod para separar.
-    # O custo é que o rollback fica sem `iss` E sem `aud` (que este PR removeu).
-    # O único token HS256 que um terceiro possui assinado com esse secret é a
-    # anon key do Supabase, que não carrega `supabase_uid` e para no 503 abaixo.
-    # Ver test_verify_jwt_hs256_nao_exige_issuer, que fixa esta decisão.
-    if settings.clerk_jwt_issuer:
-        kwargs["issuer"] = settings.clerk_jwt_issuer
-    kwargs["options"] = options
-    return kwargs
+    # `issuer` nunca chega vazio aqui: `verify_jwt` chama `_require_issuer`
+    # antes de decodificar.
+    return {
+        "leeway": settings.jwt_leeway_seconds,
+        "issuer": settings.clerk_jwt_issuer,
+        "options": options,
+    }
 
 
 def verify_jwt(token: str) -> AuthUser:
     """Valida assinatura/exp/iss do JWT e retorna o usuário.
 
-    Agnóstico ao algoritmo: HS256 é validado com o Supabase JWT secret
-    (integração legada Clerk↔Supabase); RS256 via JWKS do Clerk.
+    Só RS256, com a chave pública vinda do JWKS do Clerk. Qualquer outro
+    algoritmo é recusado antes do decode — inclusive HS256, o que fecha o
+    downgrade de algoritmo (token assinado com um segredo simétrico vazado).
     """
     try:
         header = jwt.get_unverified_header(token)
@@ -136,15 +115,14 @@ def verify_jwt(token: str) -> AuthUser:
         ) from e
 
     alg = header.get("alg")
-    allowed = _allowed_algorithms()
-    if not allowed:
-        # Nenhum mecanismo de verificação configurado: fail-closed (503, não 401),
+    if not settings.clerk_jwks_url:
+        # Sem JWKS não há como verificar token nenhum: fail-closed (503, não 401),
         # distinguindo "servidor mal configurado" de "credencial inválida".
         raise HTTPException(
             status_code=503, detail="Autenticação não configurada no servidor"
         )
-    if alg not in allowed:
-        # Antes de `_require_issuer`: um algoritmo fora da allowlist é recusado
+    if alg != "RS256":
+        # Antes de `_require_issuer`: outro algoritmo é recusado
         # independentemente da config de issuer — o token é inaceitável de
         # qualquer forma, e o 401 não deve virar 503 conforme o issuer.
         raise HTTPException(
@@ -155,33 +133,23 @@ def verify_jwt(token: str) -> AuthUser:
     _require_issuer()
 
     try:
-        if alg == "HS256":
-            claims = jwt.decode(
-                token,
-                settings.supabase_jwt_secret,
-                algorithms=["HS256"],
-                **_decode_kwargs(),
-            )
-        else:  # RS256 — único outro valor possível na allowlist
-            try:
-                signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
-            except jwt.PyJWKClientError as e:
-                # JWKS indisponível (rede/5xx do Clerk) ou kid não encontrado:
-                # fail-closed com 503 (não 401), igual aos guards de banco, para
-                # não disfarçar uma indisponibilidade de upstream como "token
-                # inválido" e disparar re-login inútil em massa.
-                logger.warning("Falha ao resolver signing key via JWKS: %s", e)
-                raise HTTPException(
-                    status_code=503, detail="Não foi possível verificar autorização"
-                ) from e
-            claims = jwt.decode(
-                token,
-                signing_key.key,
-                algorithms=["RS256"],
-                **_decode_kwargs(),
-            )
-    except HTTPException:
-        raise
+        signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            **_decode_kwargs(),
+        )
+    except jwt.PyJWKClientError as e:
+        # JWKS indisponível (rede/5xx do Clerk) ou kid não encontrado:
+        # fail-closed com 503 (não 401), igual aos guards de banco, para
+        # não disfarçar uma indisponibilidade de upstream como "token
+        # inválido" e disparar re-login inútil em massa. Vem antes do
+        # `PyJWTError` porque é subclasse dele.
+        logger.warning("Falha ao resolver signing key via JWKS: %s", e)
+        raise HTTPException(
+            status_code=503, detail="Não foi possível verificar autorização"
+        ) from e
     except jwt.PyJWTError as e:
         # Cobre assinatura inválida, expiração e issuer/audience errados.
         raise HTTPException(
