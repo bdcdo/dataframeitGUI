@@ -171,6 +171,35 @@ describe("CodingDraftBanner — a chegada da oferta é anunciada", () => {
 });
 
 describe("CodingDraftBanner — oferta seguinte e idade", () => {
+  it("atualiza a idade visível com a aba parada e ao voltar do segundo plano, sem reanunciar", async () => {
+    const start = resumable.updatedAt + 5 * 60_000;
+    vi.setSystemTime(start);
+    const { unmount } = render(
+      <CodingDraftBanner recovery={resumable} fields={FIELDS} onRestore={() => {}} onDiscard={() => {}} offeredAt={start} />,
+    );
+    settle();
+    const live = screen.getByRole("status");
+    const announced = live.textContent;
+    const visibleAge = () => screen.getAllByText(/alterações não enviadas/).find((el) => !live.contains(el))?.textContent;
+    expect(visibleAge()).toContain("há 5 minutos");
+
+    await act(() => vi.advanceTimersByTime(60_000));
+    expect(visibleAge()).toContain("há 6 minutos");
+    expect(live.textContent).toBe(announced);
+
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    vi.setSystemTime(start + 2 * 60 * 60_000);
+    await act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(visibleAge()).toContain("há 6 minutos");
+    visibility.mockReturnValue("visible");
+    await act(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(visibleAge()).toContain("há 2 horas");
+    expect(live.textContent).toBe(announced);
+    visibility.mockRestore();
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   // De um documento com rascunho para outro, a frase pode ser a mesma ("há 2
   // horas"). Sem trocar os nós, o DOM da região não muda e o leitor de tela
   // não anuncia a oferta nova.

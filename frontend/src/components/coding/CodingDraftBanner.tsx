@@ -108,6 +108,7 @@ export function CodingDraftBanner({
   offeredAt,
 }: CodingDraftBannerProps) {
   const [regionSettled, setRegionSettled] = useState(false);
+  const [clock, setClock] = useState(offeredAt);
   useEffect(() => {
     const timer = setTimeout(() => setRegionSettled(true), LIVE_REGION_SETTLE_MS);
     return () => clearTimeout(timer);
@@ -115,6 +116,19 @@ export function CodingDraftBanner({
 
   const offer =
     recovery.kind === "resumable" || recovery.kind === "diverged" ? recovery : null;
+  const hasOffer = offer !== null;
+  useEffect(() => {
+    if (!hasOffer) return;
+    const refreshClock = () => {
+      if (document.visibilityState === "visible") setClock(Date.now());
+    };
+    const timer = setInterval(refreshClock, 60_000);
+    document.addEventListener("visibilitychange", refreshClock);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshClock);
+    };
+  }, [hasOffer]);
   const announced = regionSettled ? offer : null;
 
   return (
@@ -157,7 +171,7 @@ export function CodingDraftBanner({
           <div className="flex items-start gap-2">
             <FileClock className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
             <div className="flex-1" aria-hidden>
-              <DraftAge offer={offer} reference={offeredAt} />
+              <DraftAge offer={offer} reference={Math.max(offeredAt, clock)} />
             </div>
 
             <Button size="sm" variant="default" onClick={onRestore}>
