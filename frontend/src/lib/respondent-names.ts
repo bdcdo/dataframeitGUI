@@ -17,7 +17,7 @@ interface AuthoredRow {
 }
 
 /** id do membro -> nome do perfil; só entra quem tem nome. */
-export type ProfileNames = ReadonlyMap<string, string>;
+type ProfileNames = ReadonlyMap<string, string>;
 
 // Nome do perfil, ou `null` enquanto ele não tem nome. O trim impede que um
 // nome só de espaços conte como nome.
@@ -85,10 +85,8 @@ export function withProfileNames<T extends AuthoredRow>(
   rows: readonly T[] | null | undefined,
   names: ProfileNames,
 ): T[] {
-  return (rows ?? []).map((row) => {
-    const name = respondentDisplayName(row, names);
-    return name === (row.respondent_name ?? null)
-      ? row
-      : { ...row, respondent_name: name };
-  });
+  return (rows ?? []).map((row) => ({
+    ...row,
+    respondent_name: respondentDisplayName(row, names),
+  }));
 }

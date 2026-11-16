@@ -100,12 +100,12 @@ describe("respondentDisplayName / withProfileNames", () => {
     expect(respondentDisplayName(row, names)).toBe(expected);
   });
 
-  it("troca só o nome, preserva as demais colunas e a linha que não muda", () => {
+  it("troca só o nome e preserva as demais colunas", () => {
     const changed = human({ id: "r1", answers: { a: 1 } });
     const untouched = human({ respondent_type: "llm", respondent_name: "gpt-x" });
     const [first, second] = withProfileNames([changed, untouched], names);
     expect(first).toEqual({ ...changed, respondent_name: "Ana Lima" });
-    expect(second).toBe(untouched);
+    expect(second).toEqual(untouched);
   });
 
   it("aceita leitura sem linhas", () => {

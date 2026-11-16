@@ -1,4 +1,7 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import {
+  createSupabaseServer,
+  type SupabaseServerClient,
+} from "@/lib/supabase/server";
 import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
 import { coordinatorGate } from "@/lib/project-access";
@@ -22,7 +25,7 @@ import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
 
 // Títulos de docs excluídos referenciados por exclusion_requests resolvidas.
 async function loadExcludedDocTitles(
-  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  supabase: SupabaseServerClient,
   exclusionRows: readonly ProjectCommentRow[],
   docMap: ReadonlyMap<string, string>,
 ): Promise<Map<string, string>> {
