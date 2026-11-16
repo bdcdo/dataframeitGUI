@@ -43,7 +43,11 @@ import {
 } from "@/lib/auto-review-backlog";
 import type { ValueEquivalencesByField } from "@/lib/equivalence";
 import type { PydanticField } from "@/lib/types";
-import type { Violation } from "@/lib/unique-index-violations";
+
+interface Violation {
+  key: string;
+  detail: string;
+}
 
 /** Metadados leves de uma resposta corrente e completa (fase 1). */
 export interface CoverageResponseMeta {
