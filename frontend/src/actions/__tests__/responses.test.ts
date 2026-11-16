@@ -68,6 +68,8 @@ interface State {
   schemaVersion: { major: number; minor: number; patch: number };
   documentExcludedAt: string | null;
   automationMode: string | null;
+  // Linha de `profiles` de quem grava; `null` = leitura sem linha.
+  profile: { first_name: string | null; last_name: string | null } | null;
 }
 
 let state: State;
@@ -93,6 +95,7 @@ beforeEach(() => {
     schemaVersion: { major: 1, minor: 0, patch: 0 },
     documentExcludedAt: null,
     automationMode: null,
+    profile: { first_name: "Test", last_name: "User" },
   };
   vi.mocked(revalidatePath).mockClear();
   drainAutoReviewReconciliationRequests.mockClear();
@@ -116,9 +119,7 @@ vi.mock("@/lib/supabase/server", () => ({
         return {
           select: () => ({
             eq: () => ({
-              single: async () => ({
-                data: { first_name: "Test", last_name: "User" },
-              }),
+              single: async () => ({ data: state.profile }),
             }),
           }),
         };
@@ -690,6 +691,45 @@ describe("saveResponse — documento excluído (fora do escopo aprovado)", () =>
     const saveResponse = await loadSaveResponse();
     const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
     expect(r.success).toBe(true);
+  });
+});
+
+describe("saveResponse — autoria acompanha o perfil (#622)", () => {
+  // `respondent_name` da linha corrente, que é o que as telas exibem.
+  function displayedAuthorship(): unknown {
+    return {
+      ...state.responseInsertPayload,
+      ...state.responseUpdatePayload,
+    }.respondent_name;
+  }
+
+  it("quem grava antes de preencher o perfil troca o e-mail pelo nome ao gravar de novo", async () => {
+    state.profile = { first_name: null, last_name: null };
+    const saveResponse = await loadSaveResponse();
+    await saveResponse("proj-1", "doc-1", { q1: "a" });
+    expect(displayedAuthorship()).toBe("u@test.com");
+
+    state.profile = { first_name: "Ana", last_name: "Lima" };
+    state.existingResponse = { id: "resp-1", is_partial: false, answers: { q1: "a" } };
+    const r = await saveResponse("proj-1", "doc-1", { q1: "b" });
+
+    expect(r.success).toBe(true);
+    expect(displayedAuthorship()).toBe("Ana Lima");
+  });
+
+  it.each([
+    // Leitura do perfil sem linha, ou que falhou.
+    ["ausente", null],
+    ["só com espaços", { first_name: " ", last_name: null }],
+  ])("perfil %s não sobrescreve a autoria já gravada", async (_caso, profile) => {
+    state.profile = profile;
+    state.existingResponse = { id: "resp-1", is_partial: false, answers: { q1: "a" } };
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", { q1: "b" });
+
+    expect(r.success).toBe(true);
+    expect(state.responseUpdatePayload).not.toBeNull();
+    expect(state.responseUpdatePayload).not.toHaveProperty("respondent_name");
   });
 });
 

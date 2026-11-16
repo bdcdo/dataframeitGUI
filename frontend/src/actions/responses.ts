@@ -241,7 +241,10 @@ interface PersistResponseRowParams {
   projectId: string;
   documentId: string;
   effectiveId: string;
-  respondentName: string;
+  /** Nome do perfil; `null` enquanto o perfil não tem nome. */
+  profileName: string | null;
+  /** Autoria de quem ainda não tem nome no perfil. Só vale para o INSERT. */
+  fallbackName: string;
   payload: Record<string, unknown>;
   roundId: string;
 }
@@ -285,16 +288,21 @@ async function persistResponseRow({
   projectId,
   documentId,
   effectiveId,
-  respondentName,
+  profileName,
+  fallbackName,
   payload,
   roundId,
 }: PersistResponseRowParams): Promise<PersistOutcome> {
+  // O UPDATE leva o nome para a autoria acompanhar o perfil preenchido depois
+  // da primeira gravação (#622); sem nome no perfil, não toca a autoria.
+  const updatePayload =
+    profileName === null ? payload : { ...payload, respondent_name: profileName };
   // O payload não toca coluna-chave, então este UPDATE não dispara
   // enforce_comparison_response_actor_trigger, que só observa project_id,
   // document_id, respondent_id, respondent_type e is_latest.
   const { data: updated, error: updErr } = await supabase
     .from("responses")
-    .update(payload)
+    .update(updatePayload)
     .eq("project_id", projectId)
     .eq("document_id", documentId)
     .eq("respondent_id", effectiveId)
@@ -310,7 +318,7 @@ async function persistResponseRow({
     document_id: documentId,
     respondent_id: effectiveId,
     respondent_type: "humano",
-    respondent_name: respondentName,
+    respondent_name: profileName ?? fallbackName,
     is_latest: true,
     ...payload,
   });
@@ -497,8 +505,6 @@ async function runSaveAttempt({
     };
   }
 
-  const respondentName = resolveRespondentName(profile, userEmail);
-
   const fields = (project?.pydantic_fields as PydanticField[]) || [];
   const { snapshot, missingRequiredFields, payload } = buildSaveWrite({
     fields,
@@ -514,7 +520,8 @@ async function runSaveAttempt({
     projectId,
     documentId,
     effectiveId,
-    respondentName,
+    profileName: resolveProfileName(profile),
+    fallbackName: userEmail,
     payload,
     roundId: expectedRoundId,
   });
@@ -596,17 +603,19 @@ async function syncAssignmentAfterSave({
   return error;
 }
 
-// Nome exibido como autoria da resposta. O e-mail é o fallback de quem ainda
-// não preencheu o perfil.
-function resolveRespondentName(
+// Nome exibido como autoria da resposta, ou `null` enquanto o perfil não tem
+// nome — caso em que o INSERT recorre ao e-mail.
+function resolveProfileName(
   profile:
     { first_name: string | null; last_name: string | null } | null | undefined,
-  userEmail: string,
-): string {
-  return (
-    [profile?.first_name, profile?.last_name].filter(Boolean).join(" ") ||
-    userEmail
-  );
+): string | null {
+  // O trim impede que um nome só de espaços conte como nome e, no UPDATE,
+  // apague a autoria gravada.
+  const name = [profile?.first_name, profile?.last_name]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(" ");
+  return name || null;
 }
 
 // Duas tentativas, não mais: o conflito só acontece quando outra sessão criou
