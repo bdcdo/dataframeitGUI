@@ -1,23 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import {
-  makeSupabaseMock,
-  type FilterCall,
+  makeFilterAwareSupabaseMock,
+  type ReadCall,
   type RpcCall,
-  type TableResult,
-  type TableResults,
+  type RpcResult,
+  type QueryError,
   type WriteCall,
-} from "./supabase-mock";
-import { EMPTY_BASELINE, FIELD, PROJECT_SELECT } from "./schema-test-fixtures";
+} from "@/test-utils/supabase-mock";
+import { EMPTY_BASELINE, FIELD, projectRow } from "./schema-test-fixtures";
 import { ApiError } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
 
 const state = vi.hoisted(() => ({
   writes: [] as WriteCall[],
   rpcs: [] as RpcCall[],
-  filters: [] as FilterCall[],
-  tables: undefined as TableResults | undefined,
-  rpcResults: undefined as Record<string, TableResult | TableResult[]> | undefined,
+  reads: [] as ReadCall[],
+  tableData: {} as Record<string, unknown[]>,
+  queryErrors: {} as Record<string, QueryError>,
+  rpcResults: {} as Record<string, RpcResult>,
 }));
 const fetchMock = vi.hoisted(() => vi.fn());
 // Espião na fronteira: a regra da ressincronização tem teste próprio
@@ -30,12 +31,14 @@ vi.mock("@/lib/auth", () => ({ getAuthUser: async () => ({ id: "userCoord" }) })
 vi.mock("@/lib/api-server", () => ({ fetchFastAPIServer: fetchMock }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({
-      tableResults: state.tables,
+    makeFilterAwareSupabaseMock({
+      tableData: state.tableData,
+      queryErrors: state.queryErrors,
       writeCalls: state.writes,
       rpcCalls: state.rpcs,
-      filterCalls: state.filters,
+      readCalls: state.reads,
       rpcResults: state.rpcResults,
+      projectColumns: true,
     }),
 }));
 
@@ -63,9 +66,10 @@ function commitRow(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   state.writes = [];
   state.rpcs = [];
-  state.filters = [];
-  state.tables = undefined;
-  state.rpcResults = undefined;
+  state.reads = [];
+  state.tableData = {};
+  state.queryErrors = {};
+  state.rpcResults = {};
   fetchMock.mockReset();
   resyncMock.mockClear();
 });
@@ -76,7 +80,7 @@ beforeEach(() => {
 // campos pendentes.
 describe("gravar o schema ressincroniza os assignments de comparação", () => {
   it("save gravado dispara a ressincronização do projeto", async () => {
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     state.rpcResults = { commit_project_schema: { data: commitRow() } };
 
     const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
@@ -89,7 +93,7 @@ describe("gravar o schema ressincroniza os assignments de comparação", () => {
   it("falha da ressincronização não desfaz o save", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     resyncMock.mockRejectedValueOnce(new Error("rede"));
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     state.rpcResults = { commit_project_schema: { data: commitRow() } };
 
     const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
@@ -103,7 +107,7 @@ describe("gravar o schema ressincroniza os assignments de comparação", () => {
     ["conflito", { data: commitRow({ status: "conflict", schema_revision: 4 }) }],
     ["erro", { error: { message: "histórico indisponível" } }],
   ])("save com %s não ressincroniza", async (_label, rpcResult) => {
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     state.rpcResults = { commit_project_schema: rpcResult };
 
     await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
@@ -114,23 +118,16 @@ describe("gravar o schema ressincroniza os assignments de comparação", () => {
   // A reconstrução do histórico reatribui a versão das respostas, e o piso de
   // versão da Comparação passa a contar outras respostas.
   it("reconstruir o histórico de versões ressincroniza", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          pydantic_fields: [FIELD],
-          schema_version_major: 0,
-          schema_version_minor: 1,
-          schema_version_patch: 0,
-          schema_revision: 3,
-        },
-      },
-      schema_change_log: {
-        data: [{
-          id: "log-1", field_name: "q1", before_value: {}, after_value: FIELD,
-          created_at: "2026-01-01T00:00:00.000Z", change_type: null,
-        }],
-      },
-      responses: { data: [] },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        schema_revision: 3,
+      })],
+      schema_change_log: [{
+        id: "log-1", project_id: "p1", field_name: "q1", before_value: {}, after_value: FIELD,
+        created_at: "2026-01-01T00:00:00.000Z", change_type: null,
+      }],
+      responses: [],
     };
     state.rpcResults = { apply_schema_backfill: { data: commitRow({ schema_revision: 4, pydantic_fields: [FIELD] }) } };
 
@@ -142,15 +139,12 @@ describe("gravar o schema ressincroniza os assignments de comparação", () => {
   });
 
   it("publicar MAJOR ressincroniza: o piso de versão muda a divergência", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          ...(PROJECT_SELECT.data as object),
-          pydantic_fields: [FIELD],
-          pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
-          schema_revision: 7,
-        },
-      },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
+        schema_revision: 7,
+      })],
     };
     state.rpcResults = { commit_project_schema: { data: commitRow({ schema_revision: 8, schema_version_major: 1 }) } };
 
@@ -163,7 +157,7 @@ describe("gravar o schema ressincroniza os assignments de comparação", () => {
 
 describe("saveSchemaFromGUI", () => {
   it("persiste schema e histórico numa única RPC e devolve snapshot canônico", async () => {
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     state.rpcResults = { commit_project_schema: { data: commitRow() } };
 
     const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
@@ -194,10 +188,8 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("permite o primeiro save quando o projeto parte do schema vazio canônico", async () => {
-    state.tables = {
-      projects: {
-        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [] },
-      },
+    state.tableData = {
+      projects: [projectRow({ pydantic_fields: [] })],
     };
     state.rpcResults = { commit_project_schema: { data: commitRow() } };
 
@@ -208,15 +200,12 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("baseline antigo retorna conflito antes de calcular ou escrever", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          ...(PROJECT_SELECT.data as Record<string, unknown>),
-          schema_revision: 2,
-          schema_version_minor: 3,
-          pydantic_fields: [FIELD],
-        },
-      },
+    state.tableData = {
+      projects: [projectRow({
+        schema_revision: 2,
+        schema_version_minor: 3,
+        pydantic_fields: [FIELD],
+      })],
     };
 
     const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
@@ -230,7 +219,7 @@ describe("saveSchemaFromGUI", () => {
 
   it("corrida depois da leitura mapeia o snapshot remoto retornado pela RPC", async () => {
     const remote = { ...FIELD, description: "Mudança remota" };
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     state.rpcResults = {
       commit_project_schema: {
         data: commitRow({
@@ -251,7 +240,7 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("falha transacional só pode retornar error, nunca saved + error", async () => {
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     state.rpcResults = {
       commit_project_schema: { error: { message: "histórico indisponível" } },
     };
@@ -267,7 +256,7 @@ describe("saveSchemaFromGUI", () => {
   // pt-BR. A mensagem crua do Postgres vai para o log do servidor, não ao toast.
   it("erro de contrato da RPC não vaza a mensagem do Postgres", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     state.rpcResults = {
       commit_project_schema: {
         error: {
@@ -290,10 +279,8 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("recusa schema vazio na fronteira canônica", async () => {
-    state.tables = {
-      projects: {
-        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [FIELD] },
-      },
+    state.tableData = {
+      projects: [projectRow({ pydantic_fields: [FIELD] })],
     };
     const result = await saveSchemaFromGUI("p1", [], {
       revision: 0,
@@ -303,10 +290,8 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("save sem mudanças mantém a revisão e não chama a RPC", async () => {
-    state.tables = {
-      projects: {
-        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [FIELD] },
-      },
+    state.tableData = {
+      projects: [projectRow({ pydantic_fields: [FIELD] })],
     };
     const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
     expect(result).toEqual({
@@ -317,7 +302,7 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("rejeita propriedades desconhecidas recebidas do cliente", async () => {
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     const malformed = [{ ...FIELD, unexpected: "client input" }] as unknown as PydanticField[];
     const result = await saveSchemaFromGUI("p1", malformed, EMPTY_BASELINE);
     expect(result).toMatchObject({ status: "error", message: expect.stringMatching(/inválido/i) });
@@ -335,10 +320,8 @@ describe("saveSchemaFromGUI", () => {
       name: "q2",
       description: "",
     };
-    state.tables = {
-      projects: {
-        data: { ...(PROJECT_SELECT.data as object), pydantic_fields: [FIELD, legacy] },
-      },
+    state.tableData = {
+      projects: [projectRow({ pydantic_fields: [FIELD, legacy] })],
     };
 
     const result = await saveSchemaFromGUI(
@@ -358,7 +341,7 @@ describe("saveSchemaFromGUI", () => {
   // Erro estrutural do Zod vem com texto em inglês ("Unrecognized key"): não
   // vai ao toast pt-BR, mas o número do campo sim.
   it("erro estrutural nomeia o campo sem expor o texto do Zod", async () => {
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     const malformed = [{ ...FIELD, unexpected: "client input" }] as unknown as PydanticField[];
 
     const result = await saveSchemaFromGUI("p1", malformed, EMPTY_BASELINE);
@@ -370,7 +353,7 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("toast lista no máximo três erros e conta o resto", async () => {
-    state.tables = { projects: PROJECT_SELECT };
+    state.tableData = { projects: [projectRow()] };
     const blank = (n: number): PydanticField => ({
       ...FIELD,
       id: `00000000-0000-4000-8000-00000000000${n}`,
@@ -393,13 +376,8 @@ describe("saveSchemaFromGUI", () => {
   });
 
   it("não tenta salvar quando o schema persistido viola o contrato", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          ...(PROJECT_SELECT.data as object),
-          pydantic_fields: [FIELD, { ...FIELD, description: "Duplicado" }],
-        },
-      },
+    state.tableData = {
+      projects: [projectRow({ pydantic_fields: [FIELD, { ...FIELD, description: "Duplicado" }] })],
     };
 
     const result = await saveSchemaFromGUI("p1", [FIELD], EMPTY_BASELINE);
@@ -414,16 +392,13 @@ describe("saveSchemaFromGUI", () => {
 
 describe("publishMajorVersion", () => {
   it("publica MAJOR e histórico na mesma RPC", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          ...(PROJECT_SELECT.data as object),
-          pydantic_fields: [FIELD],
-          pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
-          schema_version_minor: 18,
-          schema_revision: 7,
-        },
-      },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        pydantic_code: "class Analysis(BaseModel):\n    q1: str\n",
+        schema_version_minor: 18,
+        schema_revision: 7,
+      })],
     };
     state.rpcResults = {
       commit_project_schema: {
@@ -461,15 +436,12 @@ describe("publishMajorVersion", () => {
   // A RPC deriva pydantic_hash do código; sem código o hash sairia nulo, que
   // compare-version.ts lê como "projeto anterior ao versionamento".
   it("recusa publicar MAJOR em projeto sem schema salvo", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          ...(PROJECT_SELECT.data as object),
-          pydantic_fields: [FIELD],
-          pydantic_code: null,
-          schema_revision: 7,
-        },
-      },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        pydantic_code: null,
+        schema_revision: 7,
+      })],
     };
 
     const result = await publishMajorVersion("p1", { revision: 7 });
@@ -482,14 +454,11 @@ describe("publishMajorVersion", () => {
   });
 
   it("não publica sobre uma revisão que o usuário nunca viu", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          ...(PROJECT_SELECT.data as object),
-          schema_revision: 8,
-          schema_version_minor: 19,
-        },
-      },
+    state.tableData = {
+      projects: [projectRow({
+        schema_revision: 8,
+        schema_version_minor: 19,
+      })],
     };
     const result = await publishMajorVersion("p1", {
       revision: 7,
@@ -503,32 +472,26 @@ describe("publishMajorVersion", () => {
 });
 
 describe("backfillSchemaVersionHistory", () => {
-  // Tabelas que o backfill paginou (o filtro por projeto é a assinatura delas).
+  // Tabelas cujas leituras paginadas o backfill resolveu.
   const pagedTables = () =>
-    state.filters.filter((f) => f.table !== "projects").map((f) => f.table);
+    state.reads.filter((r) => r.table !== "projects").map((r) => r.table);
 
   it("calcula em TypeScript e aplica logs, respostas e revisão numa única RPC", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          pydantic_fields: [FIELD],
-          schema_version_major: 0,
-          schema_version_minor: 1,
-          schema_version_patch: 0,
-          schema_revision: 3,
-        },
-      },
-      schema_change_log: {
-        data: [{
-          id: "log-1",
-          field_name: "q1",
-          before_value: {},
-          after_value: FIELD,
-          created_at: "2026-01-01T00:00:00.000Z",
-          change_type: null,
-        }],
-      },
-      responses: { data: [] },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        schema_revision: 3,
+      })],
+      schema_change_log: [{
+        id: "log-1",
+        project_id: "p1",
+        field_name: "q1",
+        before_value: {},
+        after_value: FIELD,
+        created_at: "2026-01-01T00:00:00.000Z",
+        change_type: null,
+      }],
+      responses: [],
     };
     state.rpcResults = {
       apply_schema_backfill: {
@@ -560,18 +523,13 @@ describe("backfillSchemaVersionHistory", () => {
   // reportaria como falha uma escrita que aconteceu — e o backfill é a
   // ferramenta de projeto legado, logo é quem mais encontra schema inválido.
   it("recusa schema persistido inválido antes de chamar a RPC", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          pydantic_fields: [{ ...FIELD, propriedadeDesconhecida: true }],
-          schema_version_major: 0,
-          schema_version_minor: 1,
-          schema_version_patch: 0,
-          schema_revision: 3,
-        },
-      },
-      schema_change_log: { data: [] },
-      responses: { data: [] },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [{ ...FIELD, propriedadeDesconhecida: true }],
+        schema_revision: 3,
+      })],
+      schema_change_log: [],
+      responses: [],
     };
 
     const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
@@ -590,21 +548,15 @@ describe("backfillSchemaVersionHistory", () => {
   // errcode) — eram o único ponto do backfill que entregava texto do Postgres
   // ao toast pt-BR.
   it("não vaza a mensagem crua do Postgres quando a paginação falha", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          pydantic_fields: [FIELD],
-          schema_version_major: 0,
-          schema_version_minor: 1,
-          schema_version_patch: 0,
-          schema_revision: 3,
-        },
-      },
-      schema_change_log: {
-        error: { message: "canceling statement due to statement timeout" },
-      },
-      responses: { data: [] },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        schema_revision: 3,
+      })],
+      schema_change_log: [],
+      responses: [],
     };
+    state.queryErrors["schema_change_log:select"] = { message: "canceling statement due to statement timeout" };
 
     const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
 
@@ -619,13 +571,7 @@ describe("backfillSchemaVersionHistory", () => {
   // "Projeto não encontrado ou sem permissão", sem log nenhum.
   it("falha na leitura do projeto não vira copy de permissão", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    state.tables = {
-      projects: {
-        error: { code: "57014", message: "canceling statement due to statement timeout" },
-      },
-      schema_change_log: { data: [] },
-      responses: { data: [] },
-    };
+    state.queryErrors["projects:select"] = { code: "57014", message: "canceling statement due to statement timeout" };
 
     const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
 
@@ -645,10 +591,10 @@ describe("backfillSchemaVersionHistory", () => {
   // chegasse antes trocava a copy da leitura pela genérica do backfill.
   it("falha na leitura do projeto não pagina log nem respostas", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    state.tables = {
-      projects: { error: { code: "57014", message: "statement timeout" } },
-      schema_change_log: { error: { code: "57014", message: "statement timeout" } },
-      responses: { error: { code: "57014", message: "statement timeout" } },
+    state.queryErrors = {
+      "projects:select": { code: "57014", message: "statement timeout" },
+      "schema_change_log:select": { code: "57014", message: "statement timeout" },
+      "responses:select": { code: "57014", message: "statement timeout" },
     };
 
     const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
@@ -665,19 +611,15 @@ describe("backfillSchemaVersionHistory", () => {
   // com o texto do runtime em inglês: vai para o log, e o toast recebe a copy.
   it("exceção inesperada não chega crua ao toast", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    state.tables = {
-      projects: {
-        data: {
-          pydantic_fields: [FIELD],
-          schema_version_major: 0,
-          schema_version_minor: 1,
-          schema_version_patch: 0,
-          schema_revision: 3,
-        },
-      },
-      schema_change_log: { data: [] },
-      // Linha nula: o casamento de versões lê propriedade de null e lança TypeError.
-      responses: { data: [null] },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        schema_revision: 3,
+      })],
+      schema_change_log: [],
+      // A linha passa pelo filtro, mas o timestamp malformado falha no
+      // casamento de versões, depois da leitura paginada.
+      responses: [{ id: "bad", project_id: "p1", created_at: Symbol("bad"), answer_field_hashes: null, version_inferred_from: null }],
     };
 
     const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
@@ -687,17 +629,18 @@ describe("backfillSchemaVersionHistory", () => {
       message: copyWithRef("Não foi possível reconstruir o histórico. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedLine("[schema] backfill falhou", { message: expect.stringMatching(/null/) }),
+      loggedLine("[schema] backfill falhou", { message: expect.stringMatching(/Symbol/) }),
     );
+    expect(pagedTables()).toEqual(["schema_change_log", "responses"]);
     expect(state.rpcs).toHaveLength(0);
     consoleError.mockRestore();
   });
 
   it("projeto ausente ou filtrado pela RLS mantém a copy de permissão", async () => {
-    state.tables = {
-      projects: { data: null },
-      schema_change_log: { data: [] },
-      responses: { data: [] },
+    state.tableData = {
+      projects: [],
+      schema_change_log: [],
+      responses: [],
     };
 
     const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
@@ -713,18 +656,13 @@ describe("backfillSchemaVersionHistory", () => {
   // se fosse resultado próprio: stateAfterSave o tratava como rascunho da
   // sessão e o save seguinte revertia em silêncio o schema de outra sessão.
   it("não reconstrói sobre uma revisão que a aba nunca viu", async () => {
-    state.tables = {
-      projects: {
-        data: {
-          pydantic_fields: [FIELD],
-          schema_version_major: 0,
-          schema_version_minor: 1,
-          schema_version_patch: 0,
-          schema_revision: 5,
-        },
-      },
-      schema_change_log: { data: [] },
-      responses: { data: [] },
+    state.tableData = {
+      projects: [projectRow({
+        pydantic_fields: [FIELD],
+        schema_revision: 5,
+      })],
+      schema_change_log: [],
+      responses: [],
     };
 
     const result = await backfillSchemaVersionHistory("p1", { revision: 3 });
@@ -782,7 +720,7 @@ describe("erro de servidor não chega cru ao toast", () => {
     ],
   ])("%s", async (_, run, copy) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    state.tables = { projects: { error: postgresError } };
+    state.queryErrors["projects:update"] = postgresError;
 
     const result = await run();
 
@@ -840,19 +778,23 @@ describe("erro de servidor não chega cru ao toast", () => {
 
 describe("savePrompt / saveLlmConfig", () => {
   it("mantém as mensagens específicas quando RLS filtra o update", async () => {
-    state.tables = { projects: { data: [] } };
-    await expect(savePrompt("p1", "prompt")).resolves.toMatchObject({
-      error: expect.stringMatching(/salvar o prompt/i),
+    state.tableData = { projects: [] };
+    await expect(savePrompt("p1", "prompt")).resolves.toEqual({
+      error: "Não foi possível salvar o prompt: sem permissão para alterar este projeto.",
     });
     // Config válida de propósito: com provider ou modelo fora do registry a
     // action recusa antes de tocar no banco, e este teste passaria a medir a
     // validação em vez do caminho de RLS que ele existe para cobrir.
-    state.tables = { projects: { data: [] } };
+    state.tableData = { projects: [] };
     await expect(saveLlmConfig("p1", {
       llm_provider: "google_genai",
       llm_model: "gemini-3.7-flash",
       llm_kwargs: {},
-    })).resolves.toMatchObject({ error: expect.stringMatching(/configuração do LLM/i) });
+    })).resolves.toEqual({ error: "Não foi possível salvar a configuração do LLM: sem permissão para alterar este projeto." });
+    expect(state.writes.map((write) => write.filters)).toEqual([
+      [["eq", "id", "p1"]],
+      [["eq", "id", "p1"]],
+    ]);
   });
 
   // A coluna `llm_model` ia crua ao provider, sem validação em ponto algum do
@@ -886,7 +828,7 @@ describe("savePrompt / saveLlmConfig", () => {
     // `buildKwargsForCapabilities` só roda nos handlers de troca da UI, nunca
     // no mount, então sem esta limpeza o thinking_level herdado sobreviveria na
     // coluna e o provider responderia 400 em todo documento da run.
-    state.tables = { projects: { data: [{ id: "p1" }] } };
+    state.tableData = { projects: [{ id: "p1" }] };
     const result = await saveLlmConfig("p1", {
       llm_provider: "google_genai",
       llm_model: "gemini-2.5-flash-lite",
@@ -897,6 +839,7 @@ describe("savePrompt / saveLlmConfig", () => {
       {
         table: "projects",
         op: "update",
+        filters: [["eq", "id", "p1"]],
         payload: {
           llm_provider: "google_genai",
           llm_model: "gemini-2.5-flash-lite",
