@@ -1,12 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { errorCode, errorDetail } from "@/lib/server-error";
+import { describe, expect, it, vi } from "vitest";
+import { maskedServerError } from "@/test-utils/masked-server-error";
+import { caughtErrorCopy, errorCode, errorDetail, withErrorCode } from "@/lib/server-error";
 import {
   classifyNotFound,
   describeErrorScreen,
   describeFinalUrl,
   describeNavigation,
+  describeToastCode,
+  isToastCode,
   readRscPayload,
   redactUrl,
+  TOAST_CODE_PATTERN,
   type NavigationRecord,
 } from "../../../e2e/navigation-diagnostics";
 
@@ -201,5 +205,42 @@ describe("describeErrorScreen", () => {
     expect(describeErrorScreen(`Algo deu errado ${errorDetail(new Error("falhou"))}`)).toBeNull();
     expect(describeErrorScreen("Resumo do documento\nObservação livre")).toBeNull();
     expect(describeErrorScreen("")).toBeNull();
+  });
+});
+
+// O toast recebe a copy dos produtores reais: `caughtErrorCopy` no servidor
+// (este arquivo roda em node, sem `window`, como a Server Action) e
+// `withErrorCode` no cliente. O código lido do fim da copy tem de ser o da
+// linha `[erro X]` do log.
+describe("código do toast", () => {
+  const pattern = new RegExp(TOAST_CODE_PATTERN);
+
+  it("lê da copy do servidor o mesmo código que a linha do log", () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const copy = caughtErrorCopy("[coding] salvar falhou", new Error("rls"), "Erro ao salvar");
+      const code = pattern.exec(copy)?.[1];
+      expect(code).toBeDefined();
+      expect(String(log.mock.calls[0]?.[0])).toMatch(new RegExp(`^\\[erro ${code}\\] `));
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("lê da copy do cliente o código do digest", () => {
+    const error = maskedServerError();
+    expect(pattern.exec(withErrorCode(error, "Erro ao enviar"))?.[1]).toBe(errorCode(error));
+  });
+
+  it("copy sem código não casa", () => {
+    expect(pattern.exec(withErrorCode(new Error("rede"), "Erro ao enviar"))).toBeNull();
+    expect(pattern.exec("Respostas salvas")).toBeNull();
+  });
+
+  it("o binding só aceita o formato do código, e a linha aponta o log", () => {
+    expect(isToastCode("0vhqbt")).toBe(true);
+    expect(isToastCode("Erro ao salvar — código 0vhqbt")).toBe(false);
+    expect(isToastCode({ code: "0vhqbt" })).toBe(false);
+    expect(describeToastCode("0vhqbt")).toContain('"[erro 0vhqbt]"');
   });
 });

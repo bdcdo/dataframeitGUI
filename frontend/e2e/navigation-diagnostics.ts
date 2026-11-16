@@ -137,17 +137,93 @@ const LOGIN_PATH = /^\/(?:auth\/login|sign-in)(?:\/|$)/;
 // Código que `errorDetail` (src/lib/server-error.ts) põe no painel de erro do
 // app, o mesmo da linha `[erro <código>]` que o `onRequestError`
 // (src/instrumentation.ts) loga. O código é hash do erro, não pista da origem:
-// só o log diz por que o servidor falhou (#527).
-const ERROR_SCREEN_CODE = /Código do erro: ([0-9a-z]+)/;
+// só o log diz por que o servidor falhou (#527). `formatErrorCode` dá 6 ou 7
+// caracteres em base 36 (o digest tem 32 bits).
+const ERROR_CODE = "[0-9a-z]{6,7}";
+const ERROR_SCREEN_CODE = new RegExp(`Código do erro: (${ERROR_CODE})`);
+
+function logLineHint(code: string): string {
+  return (
+    `a linha "[erro ${code}]" do log do servidor ([WebServer] nesta saída, ` +
+    "ou o terminal do servidor reaproveitado) traz a mensagem e o stack"
+  );
+}
 
 export function describeErrorScreen(pageText: string): string | null {
   const code = ERROR_SCREEN_CODE.exec(pageText)?.[1];
   if (!code) return null;
-  return (
-    `tela de erro de servidor, código ${code}: a linha "[erro ${code}]" do ` +
-    "log do servidor ([WebServer] nesta saída, ou o terminal do servidor " +
-    "reaproveitado) traz a mensagem e o stack"
-  );
+  return `tela de erro de servidor, código ${code}: ${logLineHint(code)}`;
+}
+
+// Falha de Server Action não chega ao boundary: vira toast fora do `<main>`,
+// com o código na copy (`appendErrorCode` em src/lib/server-error.ts, pelo
+// `serverErrorCopy`/`caughtErrorCopy` do servidor ou pelo `withErrorCode` do
+// cliente), o mesmo da linha `[erro <código>]` do log. O toast some em 4 s (o
+// default do sonner), antes de o spec desistir de esperar, então o código é
+// colhido enquanto ele aparece, e não no teardown.
+export const TOAST_CODE_PATTERN = `— código (${ERROR_CODE})(?![0-9a-z])`;
+const TOAST_CODE_ONLY = new RegExp(`^${ERROR_CODE}$`);
+
+interface ToastCodeWatch {
+  /** Nome da função que `context.exposeBinding` pôs na página. */
+  binding: string;
+  pattern: string;
+}
+
+// Roda dentro da página, via `addInitScript`: o Playwright a serializa, então
+// não pode usar nada de fora dela. Só o código sai da página; o texto do toast,
+// que pode trazer dado do usuário, fica nela. Para não pesar no teste que
+// passa, só o frame do topo (onde mora o Toaster) observa, e só lote de
+// mutações que toca o toaster faz a busca.
+export function watchToastCodes({ binding, pattern }: ToastCodeWatch): void {
+  if (window !== window.top) return;
+  const toaster = "[data-sonner-toaster]";
+  const codePattern = new RegExp(pattern, "g");
+  const seen = new Set<string>();
+  const touchesToaster = (record: MutationRecord): boolean => {
+    const target = record.target instanceof Element ? record.target : record.target.parentElement;
+    if (target?.closest(toaster)) return true;
+    // O `<ol>` do toaster só nasce com o primeiro toast; os ancestrais dos nós
+    // inseridos são os do `target`, já conferidos acima.
+    for (const node of record.addedNodes) {
+      if (node instanceof Element && node.matches(toaster)) return true;
+    }
+    return false;
+  };
+  new MutationObserver((records) => {
+    if (!records.some(touchesToaster)) return;
+    // Título e descrição um a um: o `textContent` do toast inteiro cola o fim
+    // do título no começo da descrição. A regra contra consulta do DOM no
+    // navegador protege de pegar a primeira cópia, que pode ser a órfã de um
+    // segmento de Suspense; aqui todas as cópias são lidas, e um init script
+    // não tem locator nem visivel().
+    // eslint-disable-next-line no-restricted-syntax
+    for (const element of document.querySelectorAll(
+      "[data-sonner-toast] [data-title], [data-sonner-toast] [data-description]",
+    )) {
+      for (const [, code] of (element.textContent ?? "").matchAll(codePattern)) {
+        if (seen.has(code)) continue;
+        seen.add(code);
+        const report = (window as unknown as Record<string, unknown>)[binding];
+        // Página fechando: a chamada falha, e o código perdido não derruba o app.
+        if (typeof report === "function") {
+          Promise.resolve()
+            .then(() => report(code))
+            .catch(() => undefined);
+        }
+      }
+    }
+  }).observe(document, { childList: true, subtree: true, characterData: true });
+}
+
+// Do lado do teste, o binding só aceita o formato do código: o que mais a
+// página mandasse não chega à saída.
+export function isToastCode(value: unknown): value is string {
+  return typeof value === "string" && TOAST_CODE_ONLY.test(value);
+}
+
+export function describeToastCode(code: string): string {
+  return `toast com código ${code}: ${logLineHint(code)}`;
 }
 
 // URL final do frame principal de uma página, para o teste que falhou: é ela
