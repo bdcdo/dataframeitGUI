@@ -2,10 +2,10 @@ import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vite
 import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { AUTOMATION_MODES } from "@/lib/types";
 import {
-  makeSupabaseMock,
+  makeFilterAwareSupabaseMock,
   type RpcCall,
   type WriteCall,
-} from "./supabase-mock";
+} from "@/test-utils/supabase-mock";
 
 // O modo de automação nas actions de projeto. Os modos aceitos por
 // createProject e updateProject saem de AUTOMATION_MODES (lib/types.ts); a
@@ -16,9 +16,10 @@ import {
 
 const hoisted = vi.hoisted(() => ({
   redirect: vi.fn(),
+  revalidatePath: vi.fn(),
 }));
 
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/cache", () => ({ revalidatePath: hoisted.revalidatePath }));
 // redirect real lança NEXT_REDIRECT; o dublê só registra o destino.
 vi.mock("next/navigation", () => ({ redirect: hoisted.redirect }));
 vi.mock("@/lib/auth", () => ({
@@ -31,7 +32,7 @@ let dbError: { code?: string; message: string } | null;
 
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({
+    makeFilterAwareSupabaseMock({
       rpcCalls,
       writeCalls,
       rpcResults: {
@@ -39,10 +40,10 @@ vi.mock("@/lib/supabase/server", () => ({
           ? { error: dbError }
           : { data: "project-1" },
       },
-      // updateOrThrow exige ao menos uma linha devolvida pelo UPDATE.
-      tableResults: {
-        projects: dbError ? { error: dbError } : { data: [{ id: "project-1" }] },
-      },
+      // updateOrThrow exige ao menos uma linha alcançada pelo UPDATE, que só
+      // alcança o projeto pedido.
+      tableData: { projects: [{ id: "project-1" }, { id: "project-2" }] },
+      queryErrors: { "projects:update": dbError },
     }),
 }));
 
@@ -51,6 +52,7 @@ beforeEach(() => {
   writeCalls = [];
   dbError = null;
   hoisted.redirect.mockClear();
+  hoisted.revalidatePath.mockClear();
 });
 
 function form(fields: Record<string, string>): FormData {
@@ -102,7 +104,12 @@ describe("updateProject — modo de automação", () => {
   it.each(AUTOMATION_MODES.map((m) => m.value))("grava '%s'", async (mode) => {
     expect(await updateMode(mode)).toEqual({});
     expect(writeCalls).toEqual([
-      { table: "projects", op: "update", payload: { automation_mode: mode } },
+      {
+        table: "projects",
+        op: "update",
+        payload: { automation_mode: mode },
+        filters: [["eq", "id", "project-1"]],
+      },
     ]);
   });
 
@@ -111,6 +118,17 @@ describe("updateProject — modo de automação", () => {
       error: "Modo de automação inválido.",
     });
     expect(writeCalls).toEqual([]);
+  });
+
+  // O UPDATE que não alcança linha (projeto inexistente, ou a RLS escondendo
+  // o projeto) não é sucesso.
+  it("projeto que o UPDATE não alcança vira erro de permissão", async () => {
+    const { updateProject } = await import("@/actions/projects");
+    expect(await updateProject("project-x", { name: "Novo" })).toEqual({
+      error: "Sem permissão para alterar as configurações deste projeto.",
+    });
+    expect(writeCalls.map((w) => w.filters)).toEqual([[["eq", "id", "project-x"]]]);
+    expect(hoisted.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("sem automation_mode não é barrado pela validação", async () => {
@@ -165,10 +183,10 @@ describe("a lista de modos acompanha AUTOMATION_MODES", () => {
 describe("erro do banco não chega cru ao toast", () => {
   it.each([
     ["createProject", async () => (await import("@/actions/projects")).createProject(null, form({ name: "Projeto" })),
-      "Não foi possível criar o projeto. Tente novamente."],
+      "Não foi possível criar o projeto. Tente novamente.", []],
     ["updateProject", async () => (await import("@/actions/projects")).updateProject("project-1", { name: "Novo" }),
-      "Não foi possível salvar o projeto. Tente novamente."],
-  ])("%s", async (_, run, copy) => {
+      "Não foi possível salvar o projeto. Tente novamente.", [[["eq", "id", "project-1"]]]],
+  ])("%s", async (_, run, copy, writeFilters) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     dbError = { code: "57014", message: "canceling statement due to statement timeout" };
 
@@ -176,6 +194,8 @@ describe("erro do banco não chega cru ao toast", () => {
     expect(consoleError).toHaveBeenCalledWith(
       loggedLine(/\[projects\] .* falhou/, dbError),
     );
+    // O erro veio do banco: a escrita chegou a ele, e no projeto pedido.
+    expect(writeCalls.map((w) => w.filters)).toEqual(writeFilters);
     consoleError.mockRestore();
   });
 });

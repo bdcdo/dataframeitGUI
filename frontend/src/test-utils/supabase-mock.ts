@@ -7,8 +7,9 @@
 // registrada (#686) é migrar os testes que usam mocks cegos a filtro para
 // este motor, um arquivo por vez.
 
-// `filters`: os filtros da escrita (eq/neq/is/in), no mock filter-aware, para o
-// teste conferir quais linhas ela alcançaria.
+// `filters`: os filtros da escrita (eq/neq/is/not.is/in; `.match` vira um eq
+// por chave), no mock filter-aware, para o teste conferir quais linhas ela
+// alcançaria.
 export type WriteCall = {
   table: string;
   op: string;
@@ -53,7 +54,7 @@ export function callsOf(
   return writeCalls.filter((c) => c.op === op && (!table || c.table === table));
 }
 
-// Mock filter-aware: aplica eq/neq/is/not.is/in/limit/range às linhas de state.tableData[table]
+// Mock filter-aware: aplica eq/neq/is/not.is/in/match/limit/range às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Linha sem a coluna filtrada não passa
 // em .eq/.neq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada
 // linha do teste declara as colunas que a query filtra (`.not(c, "is", null)`
@@ -133,6 +134,13 @@ export function makeFilterAwareSupabaseMock(state: {
           return builder;
         };
       }
+      // `.match({ c: v, ... })`: um `.eq` por chave, e a chave `undefined` sai
+      // do filtro, como no postgrest-js (sem filtro nenhum, o UPDATE ou DELETE
+      // cai no 21000).
+      builder.match = (query: Record<string, unknown>) => {
+        for (const [c, v] of Object.entries(query)) if (v !== undefined) filterList.push(["eq", c, v]);
+        return builder;
+      };
       // `.not(c, "is", v)`: `NOT (c IS v)`. É o único operador do `.not` que a
       // produção usa; outro falha alto, em vez de virar filtro que não filtra.
       builder.not = (c: string, operator: string, v: unknown) => {

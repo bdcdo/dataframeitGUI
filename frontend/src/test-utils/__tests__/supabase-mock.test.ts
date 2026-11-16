@@ -154,6 +154,21 @@ describe("makeFilterAwareSupabaseMock: escritas", () => {
     ]);
   });
 
+  it(".match vira um .eq por chave, registrado na escrita, e a chave undefined sai do filtro", async () => {
+    const writeCalls: WriteCall[] = [];
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { t: [{ id: "a", k: 1 }, { id: "b", k: 2 }] },
+      writeCalls,
+    });
+    const update = (q: Record<string, unknown>) =>
+      (client.from("t") as unknown as {
+        update(p: unknown): { match(q: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown }> };
+      }).update({ x: 1 }).match(q);
+    expect(await update({ id: "a", k: 1 })).toEqual({ data: [{ id: "a", k: 1 }], error: null });
+    expect(writeCalls[0].filters).toEqual([["eq", "id", "a"], ["eq", "k", 1]]);
+    expect(await update({ id: undefined })).toMatchObject({ data: null, error: { code: "21000" } });
+  });
+
   it("insert seguido de .single() devolve a linha escrita", async () => {
     const writeCalls: WriteCall[] = [];
     const table = makeFilterAwareSupabaseMock({
