@@ -2,10 +2,8 @@
 // do cluster retry/comparison (arbitration-retry, comparisons-retry,
 // auto-comparison, compare-sync, entre outros). Extraído dos mocks duplicados
 // desses arquivos (#387). Não é coletado pelo vitest (include cobre apenas
-// *.test.ts). Não confundir com `actions/__tests__/supabase-mock.ts`
-// (`makeSupabaseMock`), que resolve por nome de tabela e não filtra. A direção
-// registrada (#686) é migrar os testes que usam mocks cegos a filtro para
-// este motor, um arquivo por vez.
+// *.test.ts). A direção registrada (#686) é migrar os testes que usam mocks
+// cegos a filtro para este motor, um arquivo por vez.
 
 // Um filtro: [tipo, coluna, valor], na ordem das chamadas.
 type Filter = [string, string, unknown];

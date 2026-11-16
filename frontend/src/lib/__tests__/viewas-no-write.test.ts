@@ -8,12 +8,12 @@
 // viewAsUser como argumento extra.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedProjectAccessContext } from "@/lib/auth";
-import { createProjectIdentityActionHarness } from "@/actions/__tests__/project-identity-harness";
+import { createFilterAwareProjectIdentityActionHarness } from "@/actions/__tests__/project-identity-harness";
 
 const resolveMemberUserId = vi.hoisted(() =>
   vi.fn(async () => "canonical-member"),
 );
-const harness = createProjectIdentityActionHarness(resolveMemberUserId);
+const harness = createFilterAwareProjectIdentityActionHarness(resolveMemberUserId);
 
 vi.mock("next/cache", () => ({
   revalidatePath: vi.fn(),
@@ -62,6 +62,7 @@ describe("resolveProjectQueueIdentity — viewAs é somente leitura", () => {
       isImpersonating: true,
     });
     expect(result.queueUserId).not.toBe(access.accountUserId);
+    expect(harness.supabase.writeCalls).toEqual([]);
   });
 
   it("não-master não pode trocar a fila pela URL", async () => {
@@ -83,10 +84,25 @@ describe("resolveProjectQueueIdentity — viewAs é somente leitura", () => {
 describe("saveResponse — escrita persiste o ator real, nunca o viewAs", () => {
   beforeEach(() => {
     harness.reset({
-      profiles: { data: { first_name: "Ana", last_name: "Souza" } },
-      responses: { data: null },
-      projects: {
-        data: {
+      profiles: [
+        { id: "canonical-member", first_name: "Ana", last_name: "Souza" },
+        { id: "member-viewed", first_name: "Outra", last_name: "Pessoa" },
+      ],
+      responses: [
+        {
+          id: "other-project", project_id: "project-2", document_id: "doc-1",
+          respondent_id: "canonical-member", respondent_type: "humano",
+          round_id: "round-1", is_latest: true,
+        },
+        {
+          id: "other-user", project_id: "project-1", document_id: "doc-1",
+          respondent_id: "member-viewed", respondent_type: "humano",
+          round_id: "round-1", is_latest: true,
+        },
+      ],
+      projects: [
+        {
+          id: "project-1",
           pydantic_hash: null,
           pydantic_fields: [],
           schema_version_major: 1,
@@ -96,8 +112,8 @@ describe("saveResponse — escrita persiste o ator real, nunca o viewAs", () => 
           current_round_id: "round-1",
           automation_mode: null,
         },
-      },
-      documents: { data: null },
+      ],
+      documents: [],
     });
     resolveMemberUserId.mockReset();
     resolveMemberUserId.mockResolvedValue("canonical-member");
@@ -130,9 +146,26 @@ describe("saveResponse — escrita persiste o ator real, nunca o viewAs", () => 
       (w) => w.table === "responses" && w.op === "insert",
     );
     expect(insert).toBeDefined();
-    const payload = insert!.payload as { respondent_id: string };
+    const payload = insert!.payload as { respondent_id: string; project_id: string };
     expect(payload.respondent_id).toBe("canonical-member");
     expect(payload.respondent_id).not.toBe("member-viewed");
+    expect(payload.project_id).toBe("project-1");
+    expect(harness.supabase.writeCalls.filter((w) => w.table === "responses" && w.op === "update")).toEqual([
+      expect.objectContaining({
+        filters: expect.arrayContaining([
+          ["eq", "project_id", "project-1"],
+          ["eq", "document_id", "doc-1"],
+          ["eq", "respondent_id", "canonical-member"],
+        ]),
+      }),
+    ]);
+    expect(harness.supabase.readCalls).toContainEqual(expect.objectContaining({
+      table: "responses",
+      filters: expect.arrayContaining([
+        ["eq", "project_id", "project-1"],
+        ["eq", "respondent_id", "canonical-member"],
+      ]),
+    }));
   });
 
   it("não grava quando a identidade canônica está indisponível", async () => {
