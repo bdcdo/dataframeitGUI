@@ -36,6 +36,8 @@ on:
 
 permissions:
   contents: read
+  # O runner confere que toda entrada de KNOWN_RED aponta para issue aberta.
+  issues: read
 
 concurrency:
   group: database-tests-${{ github.ref }}
@@ -73,3 +75,6 @@ jobs:
           version: "0.9.18"
       - name: Suítes de contrato do banco (run-db-tests.sh)
         run: npm run test:db
+        env:
+          # Sem token o `gh` da guarda de KNOWN_RED só avisaria e seguiria.
+          GH_TOKEN: ${{ github.token }}
