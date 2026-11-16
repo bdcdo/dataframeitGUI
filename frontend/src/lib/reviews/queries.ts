@@ -63,7 +63,6 @@ export interface ReviewComputationContext {
   responsesByDoc: Map<string, ResponseRow[]>;
   uniqueReviews: ReviewRow[];
   errorResolutions?: ErrorResolutionRow[];
-  profileMap: Map<string, string>;
   // true para cada tabela cuja query atingiu REVIEW_BASE_DATA_LIMIT — os
   // dados agregados podem estar silenciosamente errados. As paginas de
   // reviews renderizam um TruncationBanner quando alguma flag e true.
@@ -154,22 +153,6 @@ function getRespondentKey(r: {
     : r.respondent_name || "llm";
 }
 
-function getRespondentDisplayName(
-  r: {
-    respondent_id: string | null;
-    respondent_name: string | null;
-    respondent_type: string;
-  },
-  profileMap: Map<string, string>,
-) {
-  if (r.respondent_type === "humano") {
-    return r.respondent_id
-      ? profileMap.get(r.respondent_id) || r.respondent_name || "Pesquisador"
-      : r.respondent_name || "Pesquisador";
-  }
-  return r.respondent_name || "LLM";
-}
-
 /* ── Fetch base data ── */
 
 export const REVIEW_BASE_DATA_LIMIT = 50000;
@@ -228,7 +211,7 @@ export async function fetchReviewBaseData(
     { data: reviews },
     { data: documents },
     { data: errorResolutions, error: resolutionsError },
-    profileMap,
+    profileNames,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -279,7 +262,7 @@ export async function fetchReviewBaseData(
       document_id: r.document_id,
       respondent_id: r.respondent_id,
       respondent_type: r.respondent_type as "humano" | "llm",
-      respondent_name: respondentDisplayName(r, profileMap),
+      respondent_name: respondentDisplayName(r, profileNames),
       answers: r.answers as Record<string, unknown>,
       justifications: r.justifications as Record<string, string> | null,
       pydantic_hash: r.pydantic_hash,
@@ -303,7 +286,6 @@ export async function fetchReviewBaseData(
     responsesByDoc,
     uniqueReviews,
     errorResolutions,
-    profileMap,
     truncated,
   };
 }
@@ -421,7 +403,9 @@ export function computeReviewedDocuments(ctx: ReviewComputationContext): Reviewe
         const correct = isReviewedAnswerCorrect(answer, review, field.type);
         return {
           respondentKey: getRespondentKey(r),
-          respondentName: getRespondentDisplayName(r, ctx.profileMap),
+          respondentName:
+            r.respondent_name ||
+            (r.respondent_type === "humano" ? "Pesquisador" : "LLM"),
           respondentType: r.respondent_type,
           answer,
           justification: r.justifications?.[review.field_name] || null,

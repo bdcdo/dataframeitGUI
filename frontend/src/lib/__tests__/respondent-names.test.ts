@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchProfileNames,
   profileFullName,
+  readProfileNames,
   respondentDisplayName,
   withProfileNames,
 } from "@/lib/respondent-names";
@@ -60,6 +61,20 @@ describe("fetchProfileNames", () => {
     });
     expect(names.size).toBe(0);
     expect(logged).toHaveBeenCalledWith(expect.any(String), "sem acesso");
+  });
+});
+
+describe("readProfileNames", () => {
+  it("devolve o erro a quem filtra ou exporta por nome", async () => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { project_members: [] },
+      writeCalls: [],
+      queryErrors: { "project_members:select": { message: "sem acesso" } },
+    }) as never;
+    expect(await readProfileNames(client, "p1")).toEqual({
+      data: new Map(),
+      error: { message: "sem acesso" },
+    });
   });
 });
 

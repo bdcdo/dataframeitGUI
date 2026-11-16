@@ -34,31 +34,41 @@ export function profileFullName(
 // Parte dos membros do projeto, e não dos ids das respostas, para correr em
 // paralelo com a leitura das respostas. `respondent_id` é sempre o membro
 // canônico, e a RLS de `profiles` só mostra colegas de projeto: quem saiu do
-// projeto fica com o nome gravado. Falha de leitura também: a tela segue
-// usável com o nome gravado, e o erro vai para o log.
-export async function fetchProfileNames(
+// projeto fica com o nome gravado.
+export async function readProfileNames(
   supabase: Pick<SupabaseServerClient, "from">,
   projectId: string,
-): Promise<Map<string, string>> {
+): Promise<{ data: Map<string, string>; error: { message: string } | null }> {
   const { data, error } = await supabase
     .from("project_members")
     .select("user_id, profiles(first_name, last_name)")
     .eq("project_id", projectId);
-  if (error) {
-    console.error(
-      "fetchProfileNames: leitura dos perfis falhou; a autoria fica com o nome gravado",
-      error.message,
-    );
-    return new Map();
-  }
   const names = new Map<string, string>();
+  if (error) return { data: names, error };
   for (const row of data ?? []) {
     const name = profileFullName(
       row.profiles as unknown as ProfileNameParts | null,
     );
     if (name) names.set(row.user_id, name);
   }
-  return names;
+  return { data: names, error: null };
+}
+
+// Para as telas que só exibem o nome: a leitura que falha deixa a tela usável
+// com o nome gravado, e o erro vai para o log. Quem filtra ou exporta por nome
+// usa `readProfileNames` e trata o erro: lá, nome misturado é resultado errado.
+export async function fetchProfileNames(
+  supabase: Pick<SupabaseServerClient, "from">,
+  projectId: string,
+): Promise<Map<string, string>> {
+  const { data, error } = await readProfileNames(supabase, projectId);
+  if (error) {
+    console.error(
+      "fetchProfileNames: leitura dos perfis falhou; a autoria fica com o nome gravado",
+      error.message,
+    );
+  }
+  return data;
 }
 
 export function respondentDisplayName(

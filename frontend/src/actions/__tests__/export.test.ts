@@ -285,6 +285,21 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
     );
     consoleError.mockRestore();
   });
+
+  // Sem os nomes do perfil a planilha sairia com a mesma pessoa sob dois
+  // nomes, sem aviso: a exportação falha como nas demais leituras.
+  it("falha na leitura dos nomes do perfil não gera planilha com autoria misturada", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    server = {
+      tableData: withOthers({ projects: [projectRow()] }),
+      queryErrors: { "project_members:select": { message: "boom nos membros" } },
+    };
+    const getExportDataset = await loadAction();
+    expect(await getExportDataset("proj-1")).toEqual({
+      error: copyWithRef("Não foi possível carregar os dados da exportação. Tente novamente."),
+    });
+    consoleError.mockRestore();
+  });
 });
 
 // A ligação com o banco das duas fontes de julgamento que o export lê além das

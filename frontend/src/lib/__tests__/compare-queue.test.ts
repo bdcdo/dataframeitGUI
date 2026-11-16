@@ -771,6 +771,9 @@ describe("loadCompareQueue: falha de qualquer fonte vira erro, não fila vazia",
     "schema_change_log",
     "assignments",
     "value_equivalences",
+    // Sem os nomes do perfil, o filtro por respondente compararia o nome
+    // gravado e deixaria documentos de fora sem aviso.
+    "project_members",
     "documents",
     "reviews",
     "project_comments",

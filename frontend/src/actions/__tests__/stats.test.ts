@@ -110,6 +110,22 @@ describe("fetchGabaritoForComment — respostas atuais e erro de leitura", () =>
     });
   });
 
+  // #622: o nome gravado na resposta congela o que o perfil tinha no dia.
+  it("mostra o nome do perfil no lugar do e-mail gravado na resposta", async () => {
+    tableData.responses = [
+      { id: "r1", project_id: "p1", document_id: "doc1", is_latest: true, respondent_id: "ana",
+        respondent_name: "ana@example.com", respondent_type: "humano", answers: { q1: "A" } },
+    ];
+    tableData.project_members = [
+      { project_id: "p1", user_id: "ana", profiles: { first_name: "Ana", last_name: "Lima" } },
+    ];
+    const { fetchGabaritoForComment } = await loadStats();
+
+    const r = await fetchGabaritoForComment("p1", "doc1", "q1", null);
+
+    expect(r.answers.map((a) => a.respondentName)).toEqual(["Ana Lima"]);
+  });
+
   // Antes, a leitura com erro devolvia o gabarito vazio, como se ninguém
   // tivesse respondido (P3).
   it("devolve a copy pt-BR, e não um gabarito vazio sem aviso", async () => {

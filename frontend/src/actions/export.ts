@@ -12,7 +12,7 @@ import { serverErrorCopy } from "@/lib/server-error";
 import type { ErrorResolutionRow } from "@/lib/error-resolution";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import { usesAutoReviewSource } from "@/lib/llm-error-metrics";
-import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
+import { readProfileNames, withProfileNames } from "@/lib/respondent-names";
 import {
   assembleExport,
   type ExportDataset,
@@ -61,7 +61,7 @@ export async function getExportDataset(
     { data: errorResolutions, error: resolutionsError },
     { data: equivalences, error: equivalencesError },
     { data: comparisons, error: comparisonsError },
-    profileNames,
+    { data: profileNames, error: profileNamesError },
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -107,7 +107,7 @@ export async function getExportDataset(
         .eq("project_id", projectId)
         .eq("type", "comparacao"),
     ),
-    fetchProfileNames(supabase, projectId),
+    readProfileNames(supabase, projectId),
   ]);
 
   const error = [
@@ -118,6 +118,7 @@ export async function getExportDataset(
     resolutionsError,
     equivalencesError,
     comparisonsError,
+    profileNamesError,
   ].find(Boolean);
   if (error) return { error: serverErrorCopy("[export] leitura falhou", error, { generic: EXPORT_READ_FAILED }) };
   if (!project) return { error: "Projeto não encontrado." };

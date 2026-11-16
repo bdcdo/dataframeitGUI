@@ -41,7 +41,7 @@ function results(resolutions: ErrorResolutionRow[], autoReview = false, llmValue
     projectPydanticHash: null, currentFieldHashes: {}, fieldMap: new Map([["x", field]]),
     docMap: new Map([["doc1", "Documento"]]), responsesByDoc: new Map([["doc1", currentResponses]]),
     uniqueReviews: gabaritoReviews(reviews, new Map([["x", field]])),
-    errorResolutions: resolutions, profileMap: new Map(),
+    errorResolutions: resolutions,
     truncated: { responses: false, reviews: false, documents: false } };
   return { metrics, exported, gabarito: computeReviewedDocuments(ctx) };
 }

@@ -13,7 +13,7 @@ import {
   type ValueEquivalencesByField,
 } from "@/lib/equivalence";
 import { comparisonSet, type ComparisonSet } from "@/lib/comparison-set";
-import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
+import { readProfileNames, withProfileNames } from "@/lib/respondent-names";
 import {
   assignedCompareDocIds,
   compareDefaultsForMode,
@@ -555,7 +555,7 @@ export async function loadCompareQueue(
     versionLogRead,
     assignmentsRead,
     equivalencesRead,
-    profileNames,
+    profileNamesRead,
     { ownMemberUserId, queueUserId, isImpersonating, isCoordinator },
   ] = await Promise.all([
     supabase
@@ -615,7 +615,7 @@ export async function loadCompareQueue(
     // Equivalências de valor: escopo do projeto, uma linha por par de valores
     // (centenas por projeto), então não há o que recortar por documento.
     fetchProjectValueEquivalences(supabase, projectId),
-    fetchProfileNames(supabase, projectId),
+    readProfileNames(supabase, projectId),
     identity,
   ]);
 
@@ -626,9 +626,11 @@ export async function loadCompareQueue(
     schema_change_log: versionLogRead,
     assignments: assignmentsRead,
     value_equivalences: equivalencesRead,
+    project_members: profileNamesRead,
   });
   if (readError) return readError;
   const project = projectRead.data;
+  const profileNames = profileNamesRead.data;
   // O nome vem do perfil antes de qualquer uso: é ele que o filtro por
   // respondente lista e compara, e com o nome gravado a mesma pessoa aparecia
   // duas vezes (e-mail e nome) conforme a data de cada resposta (#622).
