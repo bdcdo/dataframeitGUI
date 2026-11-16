@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { loadE2eEnvironment } from "../worktree-env/env-contract.mjs";
+import { LOCAL_SUPABASE_HOST } from "./local-supabase";
 
 // O começo comum dos geradores de fixture E2E (coding, compare e
 // llm-decisions), que cada um repetia: carregar o ambiente com a precedência
@@ -33,7 +34,7 @@ export function fixtureEnvironment(
     throw new Error("NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY ausentes");
   }
   const host = new URL(url).hostname;
-  if (localOnly && !/^(localhost|127\.0\.0\.1)$/.test(host)) {
+  if (localOnly && !LOCAL_SUPABASE_HOST.test(host)) {
     throw new Error(
       `NEXT_PUBLIC_SUPABASE_URL aponta para ${host}: esta fixture só é criada no Supabase local (ver E2E_ENV_PATH em .env.e2e.example)`,
     );

@@ -7,6 +7,7 @@ import ExcelJS from "exceljs";
 import { withClerkCleanup } from "./clerk-cleanup";
 import { test } from "./fixture-lock-test";
 import { visivel } from "./visivel";
+import { LOCAL_SUPABASE_HOST } from "../scripts/e2e-fixtures/local-supabase";
 
 test.describe.configure({ mode: "serial" });
 const projectIds = (process.env.E2E_LLM_DECISIONS_PROJECT_IDS ?? "").split(",").filter(Boolean);
@@ -32,7 +33,7 @@ for (const [index, mode] of ["compare_llm", "auto_review_llm"].entries()) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     test.skip(!projectId || !email || !url || !key, "Requer fixtures locais em E2E_LLM_DECISIONS_PROJECT_IDS.");
-    expect(new URL(url!).hostname, "Este teste escreve somente no banco local de fixtures").toMatch(/^(localhost|127\.0\.0\.1)$/);
+    expect(new URL(url!).hostname, "Este teste escreve somente no banco local de fixtures").toMatch(LOCAL_SUPABASE_HOST);
     // O banco local também é compartilhado entre worktrees desta máquina.
     await holdFixtureLock(projectId);
     const admin = createClient(url!, key!);
