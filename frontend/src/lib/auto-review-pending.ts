@@ -27,29 +27,36 @@ export type PendingAutoReviewsResult =
   | { data: PendingAutoReviews; error: null }
   | { data: null; error: { message: string } };
 
-// Pendente é o que a fila do revisor mostra (analyze/auto-revisao): revisão
-// corrente, sem veredito próprio, de documento que não foi excluído. Lê só o
-// dono e o documento de cada linha e agrega aqui: agregar no banco pediria
-// função SQL nova, e uma contagem por membro seria uma requisição para cada um.
-// A RLS do coordenador enxerga o projeto inteiro.
-// A regra mora também na fila: os filtros de field_reviews em
-// analyze/auto-revisao/page.tsx e o de exclusão em lib/review-queue.ts. Mudou
-// lá, muda aqui.
+// A regra de "pendente", num lugar só: revisão corrente, sem veredito próprio,
+// de documento que não foi excluído nem está com exclusão pendente. A aba
+// (analyze/layout.tsx), a fila do revisor (analyze/auto-revisao/page.tsx) e o
+// contador abaixo partem todos daqui; cada um só acrescenta o dono e o
+// recorte. A projeção é fixa (literal) para o postgrest-js tipar a linha.
+export function pendingAutoReviewsQuery(
+  client: SupabaseServerClient,
+  projectId: string,
+) {
+  return client
+    .from("field_reviews")
+    .select(
+      "id, document_id, self_reviewer_id, documents!inner(excluded_at, exclusion_pending_at)",
+    )
+    .eq("project_id", projectId)
+    .is("superseded_at", null)
+    .is("self_verdict", null)
+    .is("documents.excluded_at", null)
+    .is("documents.exclusion_pending_at", null);
+}
+
+// Lê só o dono e o documento de cada linha e agrega aqui: agregar no banco
+// pediria função SQL nova, e uma contagem por membro seria uma requisição para
+// cada um. A RLS do coordenador enxerga o projeto inteiro.
 export async function fetchPendingAutoReviews(
   client: SupabaseServerClient,
   projectId: string,
 ): Promise<PendingAutoReviewsResult> {
   const { data, error } = await fetchAllAfterId<PendingRow>(() =>
-    client
-      .from("field_reviews")
-      .select(
-        "id, document_id, self_reviewer_id, documents!inner(excluded_at, exclusion_pending_at)",
-      )
-      .eq("project_id", projectId)
-      .is("superseded_at", null)
-      .is("self_verdict", null)
-      .is("documents.excluded_at", null)
-      .is("documents.exclusion_pending_at", null),
+    pendingAutoReviewsQuery(client, projectId),
   );
   if (error) return { data: null, error };
 

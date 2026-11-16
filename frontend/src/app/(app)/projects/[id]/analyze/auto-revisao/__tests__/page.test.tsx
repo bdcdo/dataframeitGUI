@@ -63,6 +63,8 @@ function seedQueue(ownerId: string) {
         human_answer_snapshot: "A",
         llm_answer_snapshot: "B",
         llm_justification_snapshot: "Justificativa",
+        "documents.excluded_at": null,
+        "documents.exclusion_pending_at": null,
       },
     ],
   };

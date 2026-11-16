@@ -55,6 +55,8 @@ beforeEach(() => {
         self_reviewer_id: "canonical-member",
         superseded_at: null,
         self_verdict: null,
+        "documents.excluded_at": null,
+        "documents.exclusion_pending_at": null,
       },
     ],
   };
@@ -100,4 +102,25 @@ describe("AnalyzeLayout — identidade efetiva da fila", () => {
       showCompare: false,
     });
   });
+});
+
+// A aba aparecia para uma fila que abria vazia: o probe não descontava
+// documento excluído, e a fila desconta.
+describe("AnalyzeLayout — pendência só de documento fora da fila", () => {
+  it.each(["documents.excluded_at", "documents.exclusion_pending_at"])(
+    "esconde a aba quando a única pendência é de documento com %s",
+    async (column) => {
+      Object.assign(tableData.field_reviews[0] as object, {
+        [column]: "2026-11-01T00:00:00Z",
+      });
+      const layout = await loadLayout();
+
+      const result = await layout({
+        children: <div>Conteúdo</div>,
+        params: Promise.resolve({ id: "project-1" }),
+      });
+
+      expect(getAnalyzeNavProps(result).showAutoReview).toBe(false);
+    },
+  );
 });

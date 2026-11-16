@@ -13,6 +13,7 @@ import {
 } from "@/lib/review-queue";
 import type { PydanticField } from "@/lib/types";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { pendingAutoReviewsQuery } from "@/lib/auto-review-pending";
 import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm";
 
 interface MemberRow {
@@ -121,13 +122,10 @@ export default async function AutoReviewRoute({
   const [{ data: project }, { data: pendingReviews }, { data: memberRows }] =
     await Promise.all([
       supabase.from("projects").select("pydantic_fields").eq("id", id).single(),
-      supabase
-        .from("field_reviews")
-        .select("document_id")
-        .eq("project_id", id)
-        .eq("self_reviewer_id", queueUserId)
-        .is("superseded_at", null)
-        .is("self_verdict", null),
+      pendingAutoReviewsQuery(supabase, id).eq(
+        "self_reviewer_id",
+        queueUserId,
+      ),
       isCoordinator
         ? supabase
             .from("project_members")

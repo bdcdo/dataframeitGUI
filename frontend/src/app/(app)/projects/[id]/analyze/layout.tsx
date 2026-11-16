@@ -4,6 +4,7 @@ import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { computeAnalyzeTabVisibility } from "@/lib/analyze-tabs";
+import { pendingAutoReviewsQuery } from "@/lib/auto-review-pending";
 import type { AutomationMode } from "@/lib/types";
 
 export default async function AnalyzeLayout({
@@ -32,13 +33,8 @@ export default async function AnalyzeLayout({
     { data: comparacaoRow },
     { data: project },
   ] = await Promise.all([
-    supabase
-      .from("field_reviews")
-      .select("id")
-      .eq("project_id", id)
+    pendingAutoReviewsQuery(supabase, id)
       .eq("self_reviewer_id", memberUserId)
-      .is("superseded_at", null)
-      .is("self_verdict", null)
       .limit(1)
       .maybeSingle(),
     supabase
