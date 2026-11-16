@@ -12,8 +12,9 @@ import {
 } from "@/lib/auto-comparison";
 import type { ComparisonMode } from "@/lib/comparison-set";
 
-// Re-sorteia revisores para todo documento divergente sem comparação ativa
-// (o "backlog" sem revisor). Disparada por setCanCompare ao habilitar/desabilitar
+// Re-sorteia revisores para todo documento divergente sem comparação ativa e
+// sem comparação concluída na rodada que ainda cubra a divergência (o
+// "backlog" sem revisor). Disparada por setCanCompare ao habilitar/desabilitar
 // um membro, para drenar o backlog acumulado enquanto não havia ninguém elegível.
 // Espelha retryPendingArbitrations (actions/field-reviews.ts:1119).
 //

@@ -223,6 +223,43 @@ describe("retryPendingComparisons — atribui backlog divergente", () => {
     expect(r.stillNoPool).toBe(1);
   });
 
+  it("doc já comparado e concluído na rodada não ganha segundo revisor (#748)", async () => {
+    // userC concluiu a comparação; as respostas seguem divergentes porque o
+    // veredito não as altera. userD é elegível e receberia a comparação nova.
+    tableData.projects = [makeProjectRow({ current_round_id: "round-1" })];
+    setHumanResponses("A", "B");
+    tableData.project_members = [makeProjectMember("userC"), makeProjectMember("userD")];
+    tableData.assignments = [
+      {
+        id: "a1",
+        project_id: "p1",
+        document_id: "doc1",
+        user_id: "userC",
+        type: "comparacao",
+        status: "concluido",
+        round_id: "round-1",
+      },
+    ];
+
+    tableData.reviews = [
+      {
+        id: "rev1",
+        project_id: "p1",
+        document_id: "doc1",
+        reviewer_id: "userC",
+        field_name: "q1",
+        verdict: "A",
+        field_hash: "q1-hash",
+        chosen_response_id: null,
+      },
+    ];
+
+    const r = await runRetry();
+
+    expect(r).toEqual({ success: true, assigned: 0, stillNoPool: 0 });
+    expect(assignmentCalls()).toHaveLength(0);
+  });
+
   it("doc em consenso → nada a atribuir", async () => {
     const r = await runRetryWithEligibleReviewer("A", "A");
     expect(r.success).toBe(true);

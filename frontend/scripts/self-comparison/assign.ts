@@ -7,7 +7,8 @@
  *   npm run assign:self-comparison -- --project <id> --user <id> \
  *     --approved-by <id> (--backlog | --documents <id,id,...>) [--dry-run]
  *
- * `--backlog`: os documentos divergentes sem comparação ativa que o
+ * `--backlog`: os documentos divergentes sem comparação ativa, e sem
+ * comparação concluída na rodada que ainda cubra a divergência, que o
  * pesquisador codificou (a mesma varredura do re-sorteio de comparações).
  * `--approved-by`: o coordenador que libera; o banco recusa quem não for
  * coordenador ou criador do projeto. `--dry-run` só lê e lista.

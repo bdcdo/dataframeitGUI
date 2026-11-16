@@ -44,6 +44,11 @@ const ACTIVE_COMPARACAO_INDEX = "assignments_one_active_comparacao_per_doc";
 
 export const COMPARE_PROJECT_SELECT =
   "pydantic_fields, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch";
+// As colunas de `reviews` que a regra do fecho lê (`ValidatableReview`), mais
+// as que identificam a linha. Exportada com `CompareReviewRow` para a
+// varredura do backlog (auto-comparison.ts) ler o mesmo que o fecho.
+export const COMPARE_REVIEW_SELECT =
+  "id, document_id, reviewer_id, field_name, verdict, field_hash, chosen_response_id";
 export const COMPARE_RESPONSE_SELECT =
   "id, document_id, respondent_type, respondent_id, is_latest, is_partial, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, answers, answer_field_hashes";
 
@@ -203,7 +208,7 @@ interface AssignmentRow extends ReopenCandidate {
   document_id: string;
 }
 
-interface ReviewRow extends ValidatableReview {
+export interface CompareReviewRow extends ValidatableReview {
   id: string;
   document_id: string;
   reviewer_id: string | null;
@@ -221,7 +226,7 @@ interface ProjectCompareState {
   project: CompareProjectRow;
   assignments: AssignmentRow[];
   responses: ResponseRow[];
-  reviews: ReviewRow[];
+  reviews: CompareReviewRow[];
   equivalencesByField: ValueEquivalencesByField;
 }
 
@@ -271,7 +276,6 @@ async function loadProjectCompareState(
 
   // Com recorte, só os documentos que têm comparação a recalcular.
   const documentIds = onlyDocumentIds === null ? null : [...new Set(assignments.map((row) => row.document_id))];
-  const reviewColumns = "id, document_id, reviewer_id, field_name, verdict, field_hash, chosen_response_id";
   const [responses, reviews, equivalences] = await Promise.all([
     readProjectRows<ResponseRow>(
       documentIds,
@@ -280,12 +284,12 @@ async function loadProjectCompareState(
       (ids) => fetchAllAfterId<ResponseRow>(() => supabase
         .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId).in("document_id", ids)),
     ),
-    readProjectRows<ReviewRow>(
+    readProjectRows<CompareReviewRow>(
       documentIds,
-      () => fetchAllAfterId<ReviewRow>(() => supabase
-        .from("reviews").select(reviewColumns).eq("project_id", projectId)),
-      (ids) => fetchAllAfterId<ReviewRow>(() => supabase
-        .from("reviews").select(reviewColumns).eq("project_id", projectId).in("document_id", ids)),
+      () => fetchAllAfterId<CompareReviewRow>(() => supabase
+        .from("reviews").select(COMPARE_REVIEW_SELECT).eq("project_id", projectId)),
+      (ids) => fetchAllAfterId<CompareReviewRow>(() => supabase
+        .from("reviews").select(COMPARE_REVIEW_SELECT).eq("project_id", projectId).in("document_id", ids)),
     ),
     fetchProjectValueEquivalences(supabase, projectId),
   ]);
