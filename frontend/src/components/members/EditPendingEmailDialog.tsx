@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { withErrorCode } from "@/lib/server-error";
+import { withActionTimeout } from "@/lib/action-timeout";
 import type { MemberRow } from "./member-list-utils";
 
 interface EditPendingEmailDialogProps {
@@ -35,10 +36,8 @@ export function EditPendingEmailDialog({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const result = await updatePendingMemberEmail(
-        projectId,
-        member.user_id,
-        email,
+      const result = await withActionTimeout(
+        updatePendingMemberEmail(projectId, member.user_id, email),
       );
       if (result.error) {
         toast.error(result.error);

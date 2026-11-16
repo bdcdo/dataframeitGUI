@@ -1,15 +1,15 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { DocPager } from "@/components/shared/DocPager";
 
 interface SplitViewNavBarProps {
   title: string;
   onBack: () => void;
   docIndex: number;
   docCount: number;
-  onPrev: () => void;
-  onNext: () => void;
+  onNavigate: (index: number) => void;
 }
 
 export function SplitViewNavBar({
@@ -17,8 +17,7 @@ export function SplitViewNavBar({
   onBack,
   docIndex,
   docCount,
-  onPrev,
-  onNext,
+  onNavigate,
 }: SplitViewNavBarProps) {
   return (
     <div className="flex items-center justify-between border-b px-4 py-2">
@@ -29,31 +28,12 @@ export function SplitViewNavBar({
         </Button>
         <span className="text-sm text-muted-foreground">{title}</span>
       </div>
-      <div className="flex items-center gap-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          disabled={docIndex === 0}
-          onClick={onPrev}
-          title="Documento anterior"
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          {docIndex + 1}/{docCount}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          disabled={docIndex === docCount - 1}
-          onClick={onNext}
-          title="Próximo documento"
-        >
-          <ChevronRight className="size-4" />
-        </Button>
-      </div>
+      <DocPager
+        index={docIndex}
+        total={docCount}
+        onNavigate={onNavigate}
+        buttonClassName="size-7"
+      />
     </div>
   );
 }

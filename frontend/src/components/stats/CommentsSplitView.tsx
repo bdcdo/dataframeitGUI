@@ -46,8 +46,7 @@ export function CommentsSplitView({
         onBack={onBack}
         docIndex={docIndex}
         docCount={docGroups.length}
-        onPrev={() => setDocIndex((i) => i - 1)}
-        onNext={() => setDocIndex((i) => i + 1)}
+        onNavigate={setDocIndex}
       />
 
       <ResizablePanelGroup className="flex-1">

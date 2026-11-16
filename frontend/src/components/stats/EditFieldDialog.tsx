@@ -33,7 +33,6 @@ import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
 import {
   applyFormEdits,
   saveMergedEdit,
-  strippedConditionsNotice,
   type SubmitOutcome,
 } from "./edit-field-save";
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
@@ -164,8 +163,11 @@ export function EditFieldDialog({
   // em outra sessão depois que o diálogo abriu. Ancorá-la no base capturado
   // esconderia exatamente a dependência que o usuário não tem como ver.
   //
-  // O strip de `applyFormEdits` roda sobre o base; a condição criada em outra
-  // sessão é limpa no merge de `saveMergedEdit`, que avisa quais foram (#599).
+  // A contrapartida é que o strip de `applyFormEdits` roda sobre o base, então
+  // uma condição que só existe no remoto sobrevive apontando para a opção
+  // removida. O save recusa isso (`validateConditionValues` em pydantic-field),
+  // então é fail-closed e não schema inconsistente — mas a mensagem culpa o
+  // campo, não a concorrência. Ver issue #599.
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
     fieldName,
@@ -235,9 +237,6 @@ export function EditFieldDialog({
             ? "Sugestão aprovada e campo atualizado"
             : "Campo atualizado",
         );
-        if (saved.strippedFieldNames.length > 0) {
-          toast.warning(strippedConditionsNotice(saved.strippedFieldNames));
-        }
         onOpenChange(false);
         refresh();
       } catch (e) {

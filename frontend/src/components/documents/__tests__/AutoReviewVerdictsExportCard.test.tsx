@@ -68,9 +68,9 @@ beforeAll(() => {
   return warmUpJsdom({ select: true });
 }, 30_000);
 
-// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs). O
-// `import("exceljs")` do download está no componente, onde a regra não olha:
-// frio, dentro do teste, ele estourava os 5 s com a suíte disputando a CPU.
+// Carga a frio fora do primeiro teste (eslint-rules/test-cold-imports.mjs, que
+// cobra o `import("exceljs")` do download do componente): frio, dentro do
+// teste, ele estourava os 5 s com a suíte disputando a CPU.
 beforeAll(async () => {
   await import("exceljs");
 }, 30_000);

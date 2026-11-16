@@ -236,7 +236,7 @@ vi.mock("@/components/coding/FullscreenNav", () => ({
 
 import { toast } from "sonner";
 import { ComparePage } from "@/components/compare/ComparePage";
-import { SAVE_TIMEOUT_MS } from "@/components/compare/useCompareVerdicts";
+import { ACTION_TIMEOUT_MESSAGE, ACTION_TIMEOUT_MS } from "@/lib/action-timeout";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewsByDoc } from "@/lib/compare-reviews";
 import { pendingVerdictLabel, type CompareResponse, type PendingVerdict } from "@/components/compare/compare-types";
@@ -917,10 +917,11 @@ describe("ComparePage — vereditos e equivalências (useCompareVerdicts)", () =
       );
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(SAVE_TIMEOUT_MS);
+        await vi.advanceTimersByTimeAsync(ACTION_TIMEOUT_MS);
       });
 
       expect(toast.error).toHaveBeenCalledTimes(1);
+      expect(toast.error).toHaveBeenCalledWith(ACTION_TIMEOUT_MESSAGE);
       expect(screen.getByTestId("confirm-verdict")).toHaveProperty(
         "disabled",
         false,

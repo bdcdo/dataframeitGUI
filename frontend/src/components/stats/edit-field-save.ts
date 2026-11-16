@@ -76,60 +76,13 @@ export function applyFormEdits(
   const baseField = baseFields.find((f) => f.name === fieldName);
   if (!baseField) return baseFields;
   const edited = editedFieldFromForm(baseField, form);
-  return stripRemovedOptions(
-    baseFields.map((f) => (f.name === fieldName ? edited : f)),
-    fieldName,
-    baseField.options,
-    new Set(form.options),
-  );
-}
-
-function stripRemovedOptions(
-  fields: PydanticField[],
-  triggerName: string,
-  before: string[] | null | undefined,
-  kept: Set<string>,
-): PydanticField[] {
-  let stripped = fields;
-  for (const option of before ?? []) {
-    if (!kept.has(option)) {
-      stripped = stripOptionFromConditions(stripped, triggerName, option);
-    }
+  let fields = baseFields.map((f) => (f.name === fieldName ? edited : f));
+  const kept = new Set(form.options);
+  const removedOpts = (baseField.options ?? []).filter((o) => !kept.has(o));
+  for (const removed of removedOpts) {
+    fields = stripOptionFromConditions(fields, fieldName, removed);
   }
-  return stripped;
-}
-
-// O strip de `applyFormEdits` só alcança as condições do base; este repete o
-// strip sobre o merge, onde chegam as que outra sessão criou com o diálogo
-// aberto (#599). Só para opção que a edição local tirou e o campo mesclado, com
-// lista de opções, também não tem. Como as condições do base já saíram limpas,
-// todo campo alterado aqui veio de outra sessão: os nomes voltam para o aviso.
-function stripLocallyRemovedOptions(
-  baseFields: PydanticField[],
-  localFields: PydanticField[],
-  mergedFields: PydanticField[],
-): { fields: PydanticField[]; strippedFieldNames: string[] } {
-  const baseById = new Map(baseFields.map((f) => [f.id, f]));
-  const mergedById = new Map(mergedFields.map((f) => [f.id, f]));
-  let fields = mergedFields;
-  for (const local of localFields) {
-    const before = baseById.get(local.id)?.options;
-    const trigger = mergedById.get(local.id);
-    if (local.options === before || !trigger?.options) continue;
-    const kept = new Set([...(local.options ?? []), ...trigger.options]);
-    fields = stripRemovedOptions(fields, trigger.name, before, kept);
-  }
-  const strippedFieldNames = fields
-    .filter((f) => f !== mergedById.get(f.id))
-    .map((f) => f.name);
-  return { fields, strippedFieldNames };
-}
-
-export function strippedConditionsNotice(fieldNames: string[]): string {
-  const names = fieldNames.map((name) => `"${name}"`).join(", ");
-  return fieldNames.length === 1
-    ? `A condição de ${names}, criada em outra sessão, dependia da opção removida e foi limpa.`
-    : `As condições de ${names}, criadas em outra sessão, dependiam da opção removida e foram limpas.`;
+  return fields;
 }
 
 // Um conflito aqui é colisão real: a mesma propriedade editada no diálogo e em
@@ -159,7 +112,7 @@ export type SubmitOutcome =
 // sair por `throw` obrigava o `try/catch` do chamador a servir a erro de domínio
 // e a queda de rede ao mesmo tempo.
 export type SaveMergedEditResult =
-  | { status: "saved"; strippedFieldNames: string[] }
+  | { status: "saved" }
   | { status: "blocked"; message: string }
   | { status: "error"; message: string };
 
@@ -181,23 +134,22 @@ export async function saveMergedEdit(
     baseline: SchemaBaselineIdentity,
   ) => Promise<SubmitOutcome>,
 ): Promise<SaveMergedEditResult> {
-  const prepare = (remote: PydanticField[]) => {
-    const merged = mergeSchemas(baseFields, localFields, remote);
-    const blocked = unresolvedSchemaConflicts(merged);
-    if (blocked.length > 0) {
-      return { blocked: conflictBlockMessage(blocked) } as const;
-    }
-    return stripLocallyRemovedOptions(baseFields, localFields, merged.fields);
-  };
+  const merged = mergeSchemas(baseFields, localFields, allFields);
+  const blocked = unresolvedSchemaConflicts(merged);
+  if (blocked.length > 0) {
+    return { status: "blocked", message: conflictBlockMessage(blocked) };
+  }
 
-  let payload = prepare(allFields);
-  if ("blocked" in payload) return { status: "blocked", message: payload.blocked };
-  let result = await submit(payload.fields, baseline);
+  let result = await submit(merged.fields, baseline);
   if (result.status === "conflict") {
-    const revision = result.current.revision;
-    payload = prepare(result.current.fields);
-    if ("blocked" in payload) return { status: "blocked", message: payload.blocked };
-    result = await submit(payload.fields, { revision });
+    const remerged = mergeSchemas(baseFields, localFields, result.current.fields);
+    const reblocked = unresolvedSchemaConflicts(remerged);
+    if (reblocked.length > 0) {
+      return { status: "blocked", message: conflictBlockMessage(reblocked) };
+    }
+    result = await submit(remerged.fields, {
+      revision: result.current.revision,
+    });
   }
   if (result.status === "conflict") {
     return { status: "error", message: STALE_RETRY_FAILED_MESSAGE };
@@ -205,5 +157,5 @@ export async function saveMergedEdit(
   if (result.status === "error") {
     return { status: "error", message: result.message };
   }
-  return { status: "saved", strippedFieldNames: payload.strippedFieldNames };
+  return { status: "saved" };
 }

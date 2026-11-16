@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { beforeAll, describe, expect, it } from "vitest";
 
 import { RULE_NAME } from "../../../eslint-rules/test-cold-imports.mjs";
 import { RULE_NAME as WARM_UP_RULE_NAME } from "../../../eslint-rules/test-jsdom-warm-up.mjs";
@@ -182,6 +187,159 @@ describe("regra de import() a frio em arquivos de teste", () => {
         "src/components/__tests__/Example.test.tsx",
       ),
     ).resolves.toEqual(["coldImport"]);
+  });
+});
+
+// O import() que o módulo testado faz quando roda (#858: o download XLSX que
+// carregava o exceljs no primeiro clique). A regra resolve o caminho e lê o
+// arquivo: os módulos ficam numa pasta temporária fora do repositório, e o
+// teste lintado os importa por caminho relativo.
+describe("regra de import() a frio no módulo testado", () => {
+  const testFile = "src/components/__tests__/Example.test.tsx";
+  const testDir = fileURLToPath(new URL("../../components/__tests__/", import.meta.url));
+  let fixtures = "";
+
+  beforeAll(() => {
+    const root = mkdtempSync(path.join(tmpdir(), "cold-imports-"));
+    fixtures = path.relative(testDir, root);
+    const files: Record<string, string> = {
+      "Download.tsx": `
+        import { helper } from "./helper";
+        export async function download() {
+          const ExcelJS = (await import("exceljs")).default;
+          return [ExcelJS, helper];
+        }
+      `,
+      "Lazy.tsx": `
+        import dynamic from "next/dynamic";
+        export const Editor = dynamic(() => import("@monaco-editor/react"));
+      `,
+      "Local.ts": `
+        export async function load() {
+          return import("./helper");
+        }
+      `,
+      "Collection.ts": `export const lib = await import("exceljs");`,
+      "helper.ts": `export const helper = 1;`,
+      "cases.json": `{"a": 1}`,
+    };
+    for (const [name, code] of Object.entries(files)) {
+      writeFileSync(path.join(root, name), code);
+    }
+    return () => rmSync(root, { recursive: true, force: true });
+  });
+
+  const idsFor = (code: string) => messageIdsFor(code, testFile);
+
+  it("reprova o import() do componente que o teste não carrega e nomeia os dois", async () => {
+    const messages = await messagesFor(
+      `
+        import { download } from "${fixtures}/Download";
+        download();
+      `,
+      testFile,
+    );
+    expect(messages.map((message) => message.messageId)).toEqual(["coldModuleImport"]);
+    expect(messages[0]?.message).toContain(`"${fixtures}/Download" faz import("exceljs")`);
+  });
+
+  it("aceita o especificador carregado num beforeAll do topo ou mockado com fábrica", async () => {
+    await expect(
+      idsFor(`
+        import { beforeAll } from "vitest";
+        import { download } from "${fixtures}/Download";
+        beforeAll(() => import("exceljs"), 30_000);
+        download();
+      `),
+    ).resolves.toEqual([]);
+    await expect(
+      idsFor(`
+        import { vi } from "vitest";
+        import { download } from "${fixtures}/Download";
+        vi.mock("exceljs", () => ({ default: {} }));
+        download();
+      `),
+    ).resolves.toEqual([]);
+  });
+
+  // vi.mock sem fábrica automocka a partir do módulo real, que carrega.
+  it("não conta vi.mock sem fábrica", async () => {
+    await expect(
+      idsFor(`
+        import { vi } from "vitest";
+        import { download } from "${fixtures}/Download";
+        vi.mock("exceljs");
+        download();
+      `),
+    ).resolves.toEqual(["coldModuleImport"]);
+  });
+
+  it("ignora o módulo testado mockado com fábrica e o import só de tipo", async () => {
+    await expect(
+      idsFor(`
+        import { vi } from "vitest";
+        import { download } from "${fixtures}/Download";
+        import type { Editor } from "${fixtures}/Lazy";
+        vi.mock("${fixtures}/Download", () => ({ download: () => null }));
+        let editor: typeof Editor;
+        download();
+      `),
+    ).resolves.toEqual([]);
+  });
+
+  it("ignora o import() passado a função de módulo mockado com fábrica", async () => {
+    await expect(
+      idsFor(`
+        import { Editor } from "${fixtures}/Lazy";
+        Editor();
+      `),
+    ).resolves.toEqual(["coldModuleImport"]);
+    await expect(
+      idsFor(`
+        import { vi } from "vitest";
+        import { Editor } from "${fixtures}/Lazy";
+        vi.mock("next/dynamic", () => ({ default: () => () => null }));
+        Editor();
+      `),
+    ).resolves.toEqual([]);
+  });
+
+  it("resolve o import() local do componente contra o carregado pelo teste", async () => {
+    await expect(
+      idsFor(`
+        import { load } from "${fixtures}/Local";
+        load();
+      `),
+    ).resolves.toEqual(["coldModuleImport"]);
+    await expect(
+      idsFor(`
+        import { load } from "${fixtures}/Local";
+        import { helper } from "${fixtures}/helper";
+        load(helper);
+      `),
+    ).resolves.toEqual([]);
+  });
+
+  it("não cobra o import() da coleta, helpers de src/test-utils nem JSON", async () => {
+    await expect(
+      idsFor(`
+        import { lib } from "${fixtures}/Collection";
+        import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
+        import cases from "${fixtures}/cases.json";
+        lib(warmUpJsdom, cases);
+      `),
+    ).resolves.toEqual([]);
+  });
+
+  // O alias resolve para src/, como no Vitest: o ExportCard real faz
+  // import("exceljs") no download.
+  it("resolve o alias @/ para o arquivo em src", async () => {
+    await expect(
+      idsFor(`
+        import { ExportCard } from "@/components/documents/ExportCard";
+        ExportCard();
+      `),
+    ).resolves.toEqual(["coldModuleImport"]);
   });
 });
 

@@ -30,6 +30,7 @@ import type {
 } from "@/components/arbitration/ArbitrationPage";
 import type { ArbitrationVerdict } from "@/lib/types";
 import { maskedServerError } from "@/test-utils/masked-server-error";
+import { ACTION_TIMEOUT_MESSAGE, ACTION_TIMEOUT_MS } from "@/lib/action-timeout";
 
 function field(
   fieldReviewId: string,
@@ -452,5 +453,56 @@ describe("useArbitrationDoc — action que rejeita", () => {
     expect(result.current.submitting).toBe(false);
     expect(onNavigate).not.toHaveBeenCalled();
     expect(result.current.comments).toEqual({ f1: "c" });
+  });
+});
+
+// Action que nunca responde (fetch descartado num redeploy): o prazo do envio
+// destrava o botão e avisa, em vez de deixar o `await` pendurado.
+describe("useArbitrationDoc — action que nunca responde", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("veredito cego: avisa, destrava e mantém as escolhas", async () => {
+    submitBlindVerdicts.mockReturnValue(new Promise(() => {}));
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", null)]));
+    act(() => result.current.onChooseBlind("f1", "b"));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let submit!: Promise<void>;
+    act(() => {
+      submit = result.current.handleBlindSubmit();
+    });
+    expect(result.current.submitting).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ACTION_TIMEOUT_MS);
+      await submit;
+    });
+    expect(toastError).toHaveBeenCalledWith(ACTION_TIMEOUT_MESSAGE);
+    expect(result.current.submitting).toBe(false);
+    expect(result.current.blindChoices).toEqual({ f1: "b" });
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("veredito final: avisa, destrava e não navega", async () => {
+    submitFinalVerdicts.mockReturnValue(new Promise(() => {}));
+    const onNavigate = vi.fn();
+    const { result } = setup(makeDoc("d1", [field("f1", "q1", "humano")]), {
+      docsLength: 2,
+      onNavigate,
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let submit!: Promise<void>;
+    act(() => {
+      submit = result.current.handleFinalSubmit();
+    });
+    expect(result.current.submitting).toBe(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ACTION_TIMEOUT_MS);
+      await submit;
+    });
+    expect(toastError).toHaveBeenCalledWith(ACTION_TIMEOUT_MESSAGE);
+    expect(result.current.submitting).toBe(false);
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 });

@@ -14,6 +14,10 @@ const hoisted = vi.hoisted(() => ({
 vi.mock("@/actions/export", () => ({
   getExportDataset: (...a: unknown[]) => hoisted.getExportDataset(...(a as [])),
 }));
+// Nenhum teste deste arquivo baixa o XLSX, único caminho do import("exceljs")
+// do componente (eslint-rules/test-cold-imports.mjs): o mock vazio não carrega
+// o exceljs, e um teste de XLSX novo falha alto até ganhar um mock de verdade.
+vi.mock("exceljs", () => ({}));
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));

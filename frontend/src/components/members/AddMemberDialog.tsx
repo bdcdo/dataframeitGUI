@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { addMember } from "@/actions/members";
 import { toast } from "sonner";
 import { withErrorCode } from "@/lib/server-error";
+import { withActionTimeout } from "@/lib/action-timeout";
 
 interface AddMemberDialogProps {
   projectId: string;
@@ -21,7 +22,7 @@ export function AddMemberDialog({ projectId }: AddMemberDialogProps) {
   const handleAdd = async () => {
     setLoading(true);
     try {
-      const result = await addMember(projectId, email, role);
+      const result = await withActionTimeout(addMember(projectId, email, role));
       if (result?.error) {
         toast.error(result.error);
         return;

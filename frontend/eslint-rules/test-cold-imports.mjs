@@ -34,6 +34,23 @@
 // fábrica roda quando o módulo mockado é importado, e esse import é o que a
 // regra confere.
 //
+// O mesmo vale para o `import()` que o próprio módulo testado faz quando roda,
+// como o `(await import("exceljs")).default` de um botão de download (#858):
+// o primeiro clique do teste paga a carga. Para cada import estático local do
+// teste (`@/...` ou relativo) que carrega o módulo, a regra lê o arquivo e
+// cobra cada `import()` de dentro de função dele como se estivesse no teste,
+// com uma folga a mais: conta como carregado o especificador que o teste
+// mocka com fábrica (`vi.mock("exceljs", () => ...)`), porque a fábrica não
+// carrega o módulo real. O `import()` passado a uma função importada de um
+// módulo que o teste mocka com fábrica, como o `dynamic(() => import("x"))`
+// com `vi.mock("next/dynamic", ...)`, não roda e fica de fora, assim como o
+// módulo testado que o próprio teste mocka com fábrica. A comparação resolve
+// os caminhos locais dos dois lados; o especificador de pacote é comparado
+// pelo texto. Só o primeiro nível é lido: o `import()` de um módulo que o
+// testado importa não é visto. E a regra não sabe se algum teste aciona o
+// caminho do `import()`; quando nenhum aciona, o mock com fábrica resolve sem
+// custo e falha alto se um teste novo passar a acionar o caminho.
+//
 // A análise é sintática e tem limites conhecidos, nenhum com instância na
 // suíte quando a regra entrou: aceita como carga um `import()` que nunca roda
 // (atrás de `if (false)` ou de um `return` anterior, ou num `beforeAll` local
@@ -43,7 +60,27 @@
 // reavalie o módulo (medido, o maior desses testes levou 0,3 s com 15% de um
 // núcleo).
 
+import { readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import tseslint from "typescript-eslint";
+
 const RULE_NAME = "warm-dynamic-imports";
+
+const SRC_ROOT = fileURLToPath(new URL("../src/", import.meta.url));
+// Os helpers de teste ficam de fora: o `import()` deles é aquecimento
+// chamado num beforeAll, como o de `warmUpJsdom`.
+const TEST_UTILS_ROOT = path.join(SRC_ROOT, "test-utils") + path.sep;
+const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
+const RESOLVE_SUFFIXES = [
+  "",
+  ...EXTENSIONS,
+  ...EXTENSIONS.map((extension) => `/index${extension}`),
+];
+// Só módulos de código são lidos: um `import x from "./casos.json"` resolve
+// para um arquivo que o parser de TypeScript não lê.
+const CODE_FILE = /\.(?:[mc]?[jt]s|[jt]sx)$/;
 
 const FUNCTION_TYPES = new Set([
   "ArrowFunctionExpression",
@@ -54,7 +91,11 @@ const FUNCTION_TYPES = new Set([
 const MOCK_FACTORY_METHODS = new Set(["mock", "doMock"]);
 
 function literalSpecifier(node) {
-  const source = node.source;
+  return literalString(node.source);
+}
+
+// O texto de um literal de string ou de um template sem `${}`, ou null.
+function literalString(source) {
   if (source.type === "Literal" && typeof source.value === "string") {
     return source.value;
   }
@@ -188,6 +229,132 @@ function staticImportLoads(context, node) {
   });
 }
 
+function isLocalSpecifier(specifier) {
+  return specifier.startsWith(".") || specifier.startsWith("@/");
+}
+
+// Caminho do arquivo de um especificador local, como o Vitest o resolve
+// (alias `@/` para src/), ou null quando não há arquivo.
+const resolveCache = new Map();
+
+function resolveLocal(specifier, fromFile) {
+  const base = specifier.startsWith("@/")
+    ? path.join(SRC_ROOT, specifier.slice(2))
+    : path.resolve(path.dirname(fromFile), specifier);
+  if (!resolveCache.has(base)) {
+    const file = RESOLVE_SUFFIXES.map((suffix) => base + suffix).find(
+      (candidate) => statSync(candidate, { throwIfNoEntry: false })?.isFile(),
+    );
+    resolveCache.set(base, file ?? null);
+  }
+  return resolveCache.get(base);
+}
+
+// Identidade do módulo para comparar os dois lados: o arquivo, quando o
+// especificador é local, ou o próprio texto, quando é de pacote.
+function moduleKey(specifier, fromFile) {
+  if (!isLocalSpecifier(specifier)) return specifier;
+  return resolveLocal(specifier, fromFile) ?? specifier;
+}
+
+function walk(node, visitorKeys, ancestors, visit) {
+  visit(node, ancestors);
+  ancestors.push(node);
+  for (const key of visitorKeys[node.type] ?? []) {
+    const child = node[key];
+    const children = Array.isArray(child) ? child : [child];
+    for (const item of children) {
+      if (item && typeof item.type === "string") {
+        walk(item, visitorKeys, ancestors, visit);
+      }
+    }
+  }
+  ancestors.pop();
+}
+
+// Os `import()` de dentro de função de um módulo, cada um com o módulo de que
+// vem a função a que ele é passado (o "next/dynamic" de `dynamic(() =>
+// import("x"))`), quando há. Cache por arquivo e mtime: o mesmo componente é
+// importado por vários testes.
+const runtimeImportsCache = new Map();
+
+function runtimeImportsOf(file) {
+  const mtime = statSync(file).mtimeMs;
+  const cached = runtimeImportsCache.get(file);
+  if (cached?.mtime === mtime) return cached.imports;
+  const code = readFileSync(file, "utf8");
+  // Quase nenhum módulo tem import(): o parse fica para os que têm.
+  if (!/\bimport\s*\(/.test(code)) {
+    runtimeImportsCache.set(file, { mtime, imports: [] });
+    return [];
+  }
+  const { ast, visitorKeys } = tseslint.parser.parseForESLint(code, {
+    ecmaVersion: "latest",
+    sourceType: "module",
+    ecmaFeatures: { jsx: file.endsWith("x") },
+  });
+  const importedFrom = new Map();
+  for (const statement of ast.body) {
+    if (statement.type !== "ImportDeclaration") continue;
+    for (const specifier of statement.specifiers) {
+      importedFrom.set(specifier.local.name, statement.source.value);
+    }
+  }
+  const imports = [];
+  walk(ast, visitorKeys, [], (node, ancestors) => {
+    if (node.type !== "ImportExpression") return;
+    if (!ancestors.some((ancestor) => FUNCTION_TYPES.has(ancestor.type))) return;
+    const specifier = literalSpecifier(node);
+    if (specifier === null) return;
+    const loaders = ancestors
+      .filter(
+        (ancestor) =>
+          ancestor.type === "CallExpression" &&
+          ancestor.callee.type === "Identifier" &&
+          importedFrom.has(ancestor.callee.name),
+      )
+      .map((call) => importedFrom.get(call.callee.name));
+    imports.push({ specifier, loaders });
+  });
+  runtimeImportsCache.set(file, { mtime, imports });
+  return imports;
+}
+
+// O especificador de `vi.mock("x", fábrica)`, ou null.
+function mockedWithFactory(call) {
+  if (!isMockFactoryCall(call) || call.arguments.length < 2) return null;
+  return literalString(call.arguments[0]);
+}
+
+// Os `import()` de dentro de função dos módulos locais que o teste importa,
+// cobrados contra o que o teste carrega antes dos testes ou mocka com fábrica.
+function reportColdModuleImports(context, { testedModules, warmed, mocked }) {
+  const filename = context.filename;
+  const mockedKeys = new Set(
+    [...mocked].map((specifier) => moduleKey(specifier, filename)),
+  );
+  const loaded = new Set([
+    ...[...warmed].map((specifier) => moduleKey(specifier, filename)),
+    ...mockedKeys,
+  ]);
+  const skipped = (file, loaders) =>
+    loaded.has(file) ||
+    loaders.some((loader) => mockedKeys.has(moduleKey(loader, file)));
+  for (const node of testedModules) {
+    const file = resolveLocal(node.source.value, filename);
+    if (file === null || !CODE_FILE.test(file)) continue;
+    if (file.startsWith(TEST_UTILS_ROOT) || mockedKeys.has(file)) continue;
+    for (const { specifier, loaders } of runtimeImportsOf(file)) {
+      if (skipped(moduleKey(specifier, file), loaders)) continue;
+      context.report({
+        node,
+        messageId: "coldModuleImport",
+        data: { module: node.source.value, specifier },
+      });
+    }
+  }
+}
+
 const warmDynamicImports = {
   meta: {
     type: "problem",
@@ -201,15 +368,25 @@ const warmDynamicImports = {
         'O primeiro import("{{specifier}}") roda dentro de um teste e conta contra o timeout dele. Carregue o módulo antes dos testes, com import estático usado como valor ou com um beforeAll no topo do arquivo que faça await import("{{specifier}}") e tenha prazo próprio, como 30_000.',
       dynamicSpecifier:
         "import() com especificador calculado não deixa conferir se o módulo foi carregado antes dos testes. Use um literal.",
+      coldModuleImport:
+        '"{{module}}" faz import("{{specifier}}") quando roda, e o primeiro desses imports dentro de um teste conta contra o timeout dele. Carregue "{{specifier}}" antes dos testes, como no caso de import() no próprio teste, ou mocke-o com vi.mock e fábrica (também quando nenhum teste do arquivo aciona esse import()).',
     },
   },
   create(context) {
     const warmed = new Set();
     const pending = [];
+    const testedModules = [];
+    const mocked = new Set();
 
     return {
       ImportDeclaration(node) {
-        if (staticImportLoads(context, node)) warmed.add(node.source.value);
+        if (!staticImportLoads(context, node)) return;
+        warmed.add(node.source.value);
+        if (isLocalSpecifier(node.source.value)) testedModules.push(node);
+      },
+      "Program > ExpressionStatement"(node) {
+        const specifier = mockedWithFactory(node.expression);
+        if (specifier !== null) mocked.add(specifier);
       },
       ImportExpression(node) {
         const timing = importTiming(node);
@@ -229,6 +406,7 @@ const warmDynamicImports = {
           if (warmed.has(specifier)) continue;
           context.report({ node, messageId: "coldImport", data: { specifier } });
         }
+        reportColdModuleImports(context, { testedModules, warmed, mocked });
       },
     };
   },

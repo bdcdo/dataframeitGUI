@@ -7,9 +7,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { DocPager } from "@/components/shared/DocPager";
 
 export interface RespondentOption {
   id: string;
@@ -36,8 +35,7 @@ interface VerdictsHeaderProps {
   isPending: boolean;
   docCount: number;
   docIndex: number;
-  onPrev: () => void;
-  onNext: () => void;
+  onNavigate: (index: number) => void;
 }
 
 export function VerdictsHeader({
@@ -53,8 +51,7 @@ export function VerdictsHeader({
   isPending,
   docCount,
   docIndex,
-  onPrev,
-  onNext,
+  onNavigate,
 }: VerdictsHeaderProps) {
   return (
     <div className="border-b px-4 py-2 space-y-1.5">
@@ -101,31 +98,12 @@ export function VerdictsHeader({
             </Select>
           )}
           {docCount > 0 && (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                disabled={docIndex === 0}
-                onClick={onPrev}
-                aria-label="Documento anterior"
-              >
-                <ChevronLeft className="size-4" />
-              </Button>
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {docIndex + 1}/{docCount}
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-7"
-                disabled={docIndex === docCount - 1}
-                onClick={onNext}
-                aria-label="Próximo documento"
-              >
-                <ChevronRight className="size-4" />
-              </Button>
-            </>
+            <DocPager
+              index={docIndex}
+              total={docCount}
+              onNavigate={onNavigate}
+              buttonClassName="size-7"
+            />
           )}
         </div>
       </div>

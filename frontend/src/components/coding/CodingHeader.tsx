@@ -4,8 +4,6 @@ import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
   CircleDashed,
   CircleDot,
   Maximize2,
@@ -25,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { CopyLinkButton } from "@/components/ui/CopyLinkButton";
 import { RunLlmButton } from "@/components/shared/RunLlmButton";
+import { DocPager } from "@/components/shared/DocPager";
 import { CURRENT_FILTER_VALUE, isCurrentFilter, type DocRoundStatus } from "@/lib/rounds";
 import { cn } from "@/lib/utils";
 import type { RoundFilterData, CodingSortMode } from "./CodingPage";
@@ -269,29 +268,11 @@ function AssignedDocSection({
         <RoundStatusTag status={doc.roundStatus} />
       </div>
       <div className="flex items-center gap-1 shrink-0">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6 disabled:opacity-50"
-          onClick={() => doc.onNavigate(doc.index - 1)}
-          disabled={doc.index === 0}
-          title="Documento anterior"
-        >
-          <ChevronLeft className="size-4" />
-        </Button>
-        <span className="tabular-nums text-muted-foreground text-xs">
-          {doc.index + 1}/{doc.total}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-6 disabled:opacity-50"
-          onClick={() => doc.onNavigate(doc.index + 1)}
-          disabled={doc.index === doc.total - 1}
-          title="Próximo documento"
-        >
-          <ChevronRight className="size-4" />
-        </Button>
+        <DocPager
+          index={doc.index}
+          total={doc.total}
+          onNavigate={doc.onNavigate}
+        />
         <Button
           variant="ghost"
           size="icon"

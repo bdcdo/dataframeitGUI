@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const mocks = vi.hoisted(() => ({
@@ -44,6 +44,7 @@ vi.mock("../AutoReviewFieldPanel", () => ({
 import { AutoReviewPageContent } from "../AutoReviewPageContent";
 import type { AutoReviewDoc } from "../AutoReviewPage";
 import { maskedServerError } from "@/test-utils/masked-server-error";
+import { ACTION_TIMEOUT_MESSAGE, ACTION_TIMEOUT_MS } from "@/lib/action-timeout";
 
 // Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
 beforeAll(() => warmUpJsdom(), 30_000);
@@ -57,6 +58,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 const doc: AutoReviewDoc = {
@@ -129,6 +131,23 @@ describe("AutoReviewPageContent — envio", () => {
     const button = screen.getByRole("button", { name: "Enviar" });
     expect((button as HTMLButtonElement).disabled).toBe(false);
     // As escolhas ficam para o pesquisador tentar de novo.
+    expect(setChoices).not.toHaveBeenCalled();
+    expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it("libera o botão e avisa quando a action nunca responde", async () => {
+    mocks.submitAutoReview.mockReturnValue(new Promise(() => {}));
+    const { setChoices } = renderContent();
+    const button = screen.getByRole("button", { name: "Enviar" }) as HTMLButtonElement;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fireEvent.click(button);
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(button.disabled).toBe(true);
+
+    await act(() => vi.advanceTimersByTimeAsync(ACTION_TIMEOUT_MS));
+
+    expect(mocks.toastError).toHaveBeenCalledWith(ACTION_TIMEOUT_MESSAGE);
+    expect(button.disabled).toBe(false);
     expect(setChoices).not.toHaveBeenCalled();
     expect(mocks.refresh).not.toHaveBeenCalled();
   });

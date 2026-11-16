@@ -227,8 +227,7 @@ function MyVerdictsViewInner({
         isPending={isPending}
         docCount={docGroups.length}
         docIndex={docIndex}
-        onPrev={() => goToIndex(docIndex - 1)}
-        onNext={() => goToIndex(docIndex + 1)}
+        onNavigate={goToIndex}
       />
 
       {docGroups.length === 0 || !currentGroup ? (

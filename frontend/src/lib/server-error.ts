@@ -1,4 +1,5 @@
 import { errorMessage } from "@/lib/utils";
+import { ActionTimeoutError, ACTION_TIMEOUT_MESSAGE } from "@/lib/action-timeout";
 
 // Erro de servidor numa Server Action (Postgres, PostgREST, backend): o texto
 // é diagnóstico de desenvolvedor, em inglês, e não serve ao toast pt-BR, mas
@@ -116,7 +117,9 @@ export const STALE_PAGE_ERROR =
 // servidor vira a copy pt-BR do fluxo com o código; erro do próprio cliente
 // mantém a mensagem, como antes.
 export function actionErrorMessage(error: unknown, fallback: string): string {
-  if (isStaleActionError(error) || errorCode(error)) return withErrorCode(error, fallback);
+  if (isStaleActionError(error) || error instanceof ActionTimeoutError || errorCode(error)) {
+    return withErrorCode(error, fallback);
+  }
   return errorMessage(error) || fallback;
 }
 
@@ -125,6 +128,7 @@ export function actionErrorMessage(error: unknown, fallback: string): string {
 // copy, em vez de trocá-la pela mensagem em inglês como `actionErrorMessage`.
 export function withErrorCode(error: unknown, copy: string): string {
   if (isStaleActionError(error)) return STALE_PAGE_ERROR;
+  if (error instanceof ActionTimeoutError) return ACTION_TIMEOUT_MESSAGE;
   const code = errorCode(error);
   return code ? appendErrorCode(copy, code) : copy;
 }
