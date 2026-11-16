@@ -7,8 +7,6 @@ from pydantic import (
     AfterValidator,
     BaseModel,
     Field,
-    StringConstraints,
-    field_validator,
     model_validator,
 )
 
@@ -27,7 +25,6 @@ from services.llm_runner import (
     init_job,
     mark_stale_runs_as_error,
     run_llm,
-    run_llm_fields,
 )
 from services.supabase_client import get_supabase
 
@@ -47,20 +44,12 @@ def _reject_duplicate_document_ids(values: list[uuid.UUID]) -> list[uuid.UUID]:
     return _ensure_unique(values, "document_ids")
 
 
-# Uniqueness travels with the type so both request models inherit it from one
-# place; only the reject reason (dunder names) differs for field_names below.
+# Uniqueness travels with the type, so any request model that takes document
+# ids inherits it from one place.
 DocumentIds = Annotated[
     list[uuid.UUID],
     Field(min_length=1, max_length=10_000),
     AfterValidator(_reject_duplicate_document_ids),
-]
-FieldName = Annotated[
-    str,
-    StringConstraints(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
-    ),
 ]
 
 
@@ -84,19 +73,6 @@ class RunRequest(StrictRequestModel):
         if self.filter_mode == "max_responses" and self.max_response_count is None:
             raise ValueError("max_response_count is required for max_responses")
         return self
-
-
-class RunFieldRequest(StrictRequestModel):
-    project_id: uuid.UUID
-    field_names: Annotated[list[FieldName], Field(min_length=1, max_length=500)]
-    document_ids: DocumentIds | None = None
-
-    @field_validator("field_names")
-    @classmethod
-    def field_names_are_unique(cls, value: list[str]) -> list[str]:
-        if any(name.startswith("__") and name.endswith("__") for name in value):
-            raise ValueError("field_names must not contain reserved dunder names")
-        return _ensure_unique(value, "field_names")
 
 
 class RunResponse(BaseModel):
@@ -160,30 +136,6 @@ async def run(
         req.filter_mode,
         req.max_response_count,
         req.sample_size,
-    )
-    return {"job_id": job_id}
-
-
-@router.post("/run-field", response_model=RunResponse)
-async def run_field(
-    req: RunFieldRequest,
-    background_tasks: BackgroundTasks,
-    user: AuthUser = Depends(require_authenticated_user),
-):
-    project_id = str(req.project_id)
-    document_ids = (
-        [str(document_id) for document_id in req.document_ids]
-        if req.document_ids is not None
-        else None
-    )
-    await run_in_threadpool(require_project_coordinator, project_id, user)
-    await run_in_threadpool(enforce_llm_rate_limit, project_id, user.id)
-    job_id = str(uuid.uuid4())
-    # filter_mode "all" porque run-field não tem semântica de subset; o
-    # subset é o conjunto de fields, não de docs.
-    init_job(job_id, project_id, "all")
-    background_tasks.add_task(
-        run_llm_fields, job_id, project_id, req.field_names, document_ids
     )
     return {"job_id": job_id}
 

@@ -2602,17 +2602,3 @@ def run_llm(
         _jobs[job_id]["error_line"] = line
         _jobs[job_id]["error_column"] = col
         logger.exception("LLM run %s failed", job_id)
-
-
-def run_llm_fields(
-    job_id: str,
-    project_id: str,
-    field_names: list[str],
-    document_ids: list[str] | None = None,
-):
-    """Re-run LLM only for specific fields.
-
-    Síncrona pelo mesmo motivo de `run_llm`: é ela que `BackgroundTasks`
-    recebe na rota /run-field.
-    """
-    run_llm(job_id, project_id, document_ids)

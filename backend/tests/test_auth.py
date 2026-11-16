@@ -604,25 +604,7 @@ def test_every_api_route_rejects_without_token(client):
             resp = client.request(method.upper(), concrete, json={})
             assert resp.status_code == 401, f"{method} {concrete} = {resp.status_code}"
             checked += 1
-    assert checked >= 6, f"esperava cobrir >=6 endpoints, cobriu {checked}"
-
-
-def test_run_field_forbidden_for_non_coordinator(client, monkeypatch):
-    # Token válido, mas não-coordenador → 403 antes de init_job/run_llm_fields.
-    use_supabase(
-        monkeypatch,
-        FakeSupabase(
-            master_users=[],
-            projects=[{"id": PROJECT, "created_by": "other"}],
-            project_members=[],
-        ),
-    )
-    resp = client.post(
-        "/api/llm/run-field",
-        json={"project_id": PROJECT, "field_names": ["a"]},
-        headers={"Authorization": f"Bearer {make_token()}"},
-    )
-    assert resp.status_code == 403
+    assert checked >= 5, f"esperava cobrir >=5 endpoints, cobriu {checked}"
 
 
 def test_cleanup_stale_forbidden_for_non_coordinator(client, monkeypatch):

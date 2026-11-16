@@ -36,8 +36,8 @@ class Settings(BaseSettings):
     # a setar no fly.toml.
     enable_docs: bool = False
 
-    # Fixed-window budget shared by POST /api/llm/run and /run-field. The
-    # counter lives in Postgres, so every Fly machine enforces the same limit.
+    # Fixed-window budget of POST /api/llm/run. The counter lives in
+    # Postgres, so every Fly machine enforces the same limit.
     llm_rate_limit_requests: int = Field(default=5, ge=1, le=10_000)
     llm_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86_400)
 

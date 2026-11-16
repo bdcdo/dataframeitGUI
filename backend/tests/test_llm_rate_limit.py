@@ -131,18 +131,8 @@ def client() -> TestClient:
         app.dependency_overrides.pop(require_authenticated_user, None)
 
 
-@pytest.mark.parametrize(
-    ("path", "payload"),
-    [
-        ("/api/llm/run", {"project_id": PROJECT_ID}),
-        (
-            "/api/llm/run-field",
-            {"project_id": PROJECT_ID, "field_names": ["q1"]},
-        ),
-    ],
-)
-def test_paid_routes_authorize_then_limit_then_initialize(
-    client: TestClient, monkeypatch, path: str, payload: dict
+def test_paid_route_authorizes_then_limits_then_initializes(
+    client: TestClient, monkeypatch
 ) -> None:
     events: list[str] = []
     monkeypatch.setattr(
@@ -165,9 +155,8 @@ def test_paid_routes_authorize_then_limit_then_initialize(
         events.append("background")
 
     monkeypatch.setattr(routes, "run_llm", background)
-    monkeypatch.setattr(routes, "run_llm_fields", background)
 
-    response = client.post(path, json=payload)
+    response = client.post("/api/llm/run", json={"project_id": PROJECT_ID})
 
     assert response.status_code == 200
     assert events == ["authorize", "limit", "init", "background"]
