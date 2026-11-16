@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 checker="$repo_root/.github/scripts/check-backend-fly-machines.sh"
 workflow="$repo_root/.github/workflows/fly-deploy.yml"
+vigia_workflow="$repo_root/.github/workflows/fly-vigia.yml"
 fly_config="$repo_root/backend/fly.toml"
 
 tmp_dir="$(mktemp -d)"
@@ -102,14 +103,54 @@ expect_failure run_checker post
 # permite que o default de alta disponibilidade recrie a segunda Machine. O
 # segundo argumento, opcional, substitui o timeout-minutes da espera para testar
 # o piso sem editar o workflow.
+#
+# Filas (#840): o deploy espera as runs de LLM por até 4 h, e o vigia da API
+# divide com ele um grupo de concorrência. A espera longa fica num job fora
+# desse grupo; dentro dele ficam só a releitura das runs, o preflight, o deploy
+# e o postflight.
 check_workflow() {
   ruby -ryaml -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+  vigia = YAML.safe_load(File.read(ENV.fetch("VIGIA_WORKFLOW")), aliases: true)
   trigger = workflow["on"] || workflow[true]
   paths = trigger.fetch("push").fetch("paths")
   abort("mudança no checker precisa disparar o workflow") unless paths.include?(".github/scripts/check-backend-fly-machines.sh")
-  steps = workflow.fetch("jobs").fetch("deploy").fetch("steps")
-  runs = steps.filter_map { |step| step["run"] }
+  jobs = workflow.fetch("jobs")
+  prepare_job = jobs["prepare"] or abort("workflow sem o job prepare: a espera das runs não pode ficar no job que segura a fila do vigia da API")
+  deploy_job = jobs.fetch("deploy")
+  # O grupo do vigia é lido do fly-vigia.yml, e não repetido aqui: o que
+  # importa é o deploy e o vigia da API estarem no mesmo.
+  machines_queue = vigia.fetch("jobs").fetch("api").fetch("concurrency")
+  # Vale para os dois lados da fila: com cancelamento ou sem `queue: max`, uma
+  # passada do vigia tiraria da fila um deploy pendente, e vice-versa.
+  abort("a fila do vigia da API não pode cancelar nem descartar pendente") unless machines_queue.slice("cancel-in-progress", "queue") == { "cancel-in-progress" => false, "queue" => "max" }
+  abort("o job deploy precisa da fila do vigia da API, sem cancelar e sem descartar pendente") unless deploy_job["concurrency"] == machines_queue
+  # Só o job deploy entra em grupo: o prepare (build e espera de até 4 h) ou
+  # qualquer job novo no grupo do vigia o deixaria na fila de novo.
+  jobs.each do |id, job|
+    abort("o job #{id} não pode ter grupo de concorrência: só o deploy divide a fila com o vigia da API") if id != "deploy" && job.key?("concurrency")
+  end
+  # O grupo do workflow vale para todos os jobs, o prepare inclusive; com o
+  # nome do grupo do vigia, a espera voltaria para a fila dele.
+  pipeline_group = workflow.fetch("concurrency").fetch("group")
+  # O Actions compara nome de grupo sem distinguir maiúsculas de minúsculas.
+  abort("o grupo do workflow não pode ser o do vigia da API") if pipeline_group.casecmp?(machines_queue.fetch("group"))
+  # Com expressão no nome (o id da run, o SHA), cada deploy teria o seu grupo
+  # e a fila entre eles acabaria.
+  abort("o grupo do workflow tem de ser um nome fixo") if pipeline_group.include?("${{")
+  # Job pulado não é falha: o deploy deixaria de acontecer sem abrir incidente.
+  [prepare_job, deploy_job].each do |job|
+    abort("os jobs prepare e deploy não podem ter if nem continue-on-error") if job.key?("if") || job.key?("continue-on-error")
+    # O piso de 245 min é do passo da espera; um teto no job o mataria no meio
+    # dela, ou entre a releitura e a troca.
+    abort("os jobs prepare e deploy não podem ter timeout-minutes próprio") if job.key?("timeout-minutes")
+  end
+  # Que esse grupo não cancela nem descarta deploy pendente está em
+  # test-deploy-failure-notification.sh.
+  abort("o job deploy precisa vir depois do prepare") unless Array(deploy_job["needs"]) == ["prepare"]
+  # Passos dos dois jobs na ordem em que rodam, cada um com o job de origem.
+  steps = [prepare_job, deploy_job].flat_map { |job| job.fetch("steps").map { |step| step.merge("job" => job) } }.select { |s| s["run"] }
+  runs = steps.map { |step| step["run"] }
   pre = runs.index { |run| run.include?("check-backend-fly-machines.sh pre") }
   # A espera pelas runs vem antes do deploy: trocar a Machine no meio de uma
   # run de horas mata o job, e o kill_timeout de 5 min não a cobre.
@@ -135,10 +176,28 @@ check_workflow() {
     abort("deploy sem #{arg}") unless deploy_run.include?(arg)
   end
   [build, deploy].each do |index|
-    step = steps.select { |s| s["run"] }.fetch(index)
+    step = steps.fetch(index)
     abort("#{step["name"]}: precisa rodar em backend, onde está o fly.toml") unless step["working-directory"] == "backend"
   end
-  wait_step = steps.select { |s| s["run"] }.fetch(wait_jobs)
+  wait_step = steps.fetch(wait_jobs)
+  abort("o build e a espera longa ficam no job prepare") unless [build, wait_jobs].all? { |index| steps.fetch(index)["job"].equal?(prepare_job) }
+  abort("preflight, deploy e postflight ficam no job deploy") unless [pre, deploy, post].all? { |index| steps.fetch(index)["job"].equal?(deploy_job) }
+  # Entre o fim da espera e a troca passam a subida do runner do segundo job
+  # e, no pior caso, uma passada do vigia. O job deploy relê as runs já dentro
+  # da fila, com o mesmo passo, para a troca vir logo depois de uma leitura.
+  recheck = steps.index { |step| step["job"].equal?(deploy_job) && step["run"].include?("active_jobs") }
+  abort("o job deploy precisa reler as runs antes do preflight") unless recheck && recheck < pre
+  abort("a releitura das runs tem de ser o mesmo passo da espera") unless steps.fetch(recheck).except("job") == wait_step.except("job")
+  # Dentro da fila do vigia só cabem estes quatro passos, mais o checkout e o
+  # setup do flyctl: qualquer outro trabalho ali é tempo da API sem vigia.
+  deploy_steps = deploy_job.fetch("steps")
+  abort("o job deploy só pode ter checkout, setup do flyctl, releitura, preflight, deploy e postflight") unless deploy_steps.size == 6 && deploy_steps.count { |step| step["run"] } == 4
+  # A releitura usa o prazo que o prepare calculou, e não outras 4 h: sem
+  # isso, uma run mais longa que o prazo seria esperada de novo dentro da fila.
+  # A comparação é com a string literal da expressão do Actions.
+  abort("o prepare precisa publicar o prazo da espera") unless wait_step["id"] == "wait_llm_runs" && prepare_job.dig("outputs", "wait_deadline") == "${{ steps.wait_llm_runs.outputs.deadline }}"
+  abort("o job deploy precisa receber o prazo do prepare em WAIT_DEADLINE") unless deploy_job.dig("env", "WAIT_DEADLINE") == "${{ needs.prepare.outputs.wait_deadline }}"
+  abort("o prepare não pode receber WAIT_DEADLINE: é ele que calcula o prazo") if [workflow, prepare_job, wait_step].any? { |scope| scope.fetch("env", {}).key?("WAIT_DEADLINE") }
   # Sem `shell: bash` explícito o Actions roda `bash -e` sem pipefail.
   abort("a espera precisa de shell: bash (pipefail)") unless wait_step["shell"] == "bash"
   # Depois do prazo de 4 h cabe mais uma volta da espera, de cerca de 4,5 min
@@ -149,10 +208,55 @@ check_workflow() {
 ' "$@"
 }
 
+export VIGIA_WORKFLOW="$vigia_workflow"
 check_workflow "$workflow"
 # O piso é 245, e não só "acima de 240".
 expect_failure check_workflow "$workflow" 244
 check_workflow "$workflow" 245
+
+# Casos vermelhos das filas. Cada um reescreve o workflow com uma mudança só e
+# tem de reprovar pela mensagem da regra, e não por outro motivo.
+expect_queue_failure() {
+  local expected_message="$1" mutation="$2" output
+  ruby -ryaml -e '
+    workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
+    jobs = workflow.fetch("jobs")
+    machines_queue = jobs.fetch("deploy").fetch("concurrency")
+    eval(ARGV.fetch(2))
+    File.write(ARGV.fetch(1), YAML.dump(workflow))
+  ' "$workflow" "$tmp_dir/mutated-workflow.yml" "$mutation"
+  if output="$(check_workflow "$tmp_dir/mutated-workflow.yml" 2>&1)"; then
+    echo "o contrato das filas deveria reprovar: $mutation" >&2
+    exit 1
+  fi
+  [[ $output == *"$expected_message"* ]] || { printf 'reprovou por outro motivo: %s\n%s\n' "$mutation" "$output" >&2; exit 1; }
+}
+
+# A forma anterior ao #840: o workflow inteiro, espera inclusive, na fila do vigia.
+expect_queue_failure "o grupo do workflow não pode ser o do vigia" 'workflow["concurrency"] = machines_queue'
+expect_queue_failure "o job prepare não pode ter grupo" 'jobs["prepare"]["concurrency"] = machines_queue'
+expect_queue_failure "o job notify-failure não pode ter grupo" 'jobs["notify-failure"]["concurrency"] = machines_queue'
+expect_queue_failure "o grupo do workflow tem de ser um nome fixo" 'workflow["concurrency"]["group"] += "-${{ github.run_id }}"'
+expect_queue_failure "os jobs prepare e deploy não podem ter if" 'jobs["deploy"]["if"] = "false"'
+expect_queue_failure "os jobs prepare e deploy não podem ter if" 'jobs["prepare"]["continue-on-error"] = true'
+expect_queue_failure "os jobs prepare e deploy não podem ter timeout-minutes" 'jobs["prepare"]["timeout-minutes"] = 60'
+expect_queue_failure "o grupo do workflow não pode ser o do vigia" 'workflow["concurrency"]["group"] = machines_queue["group"].upcase'
+# O deploy fora da fila do vigia: sem grupo ou cancelável.
+expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"].delete("concurrency")'
+expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"]["concurrency"] = machines_queue.merge("cancel-in-progress" => true)'
+expect_queue_failure "o job deploy precisa vir depois do prepare" 'jobs["deploy"].delete("needs")'
+# A espera longa de volta ao job que segura a fila.
+expect_queue_failure "o build e a espera longa ficam no job prepare" 'jobs["prepare"]["steps"].reject! { |s| s["run"]&.include?("active_jobs") }'
+# O preflight no job de fora: leria as Machines sem a fila do vigia.
+expect_queue_failure "preflight, deploy e postflight ficam no job deploy" 'jobs["prepare"]["steps"] << jobs["deploy"]["steps"].find { |s| s["run"]&.include?("machines.sh pre") }; jobs["deploy"]["steps"].reject! { |s| s["run"]&.include?("machines.sh pre") }'
+expect_queue_failure "o job deploy precisa reler as runs antes do preflight" 'jobs["deploy"]["steps"].reject! { |s| s["run"]&.include?("active_jobs") }'
+expect_queue_failure "a releitura das runs tem de ser o mesmo passo da espera" 'jobs["deploy"]["steps"].map! { |s| s["run"]&.include?("active_jobs") ? s.merge("timeout-minutes" => 5) : s }'
+expect_queue_failure "o job deploy só pode ter checkout, setup do flyctl" 'jobs["deploy"]["steps"] << { "run" => "sleep 600" }'
+expect_queue_failure "o job deploy só pode ter checkout, setup do flyctl" 'jobs["deploy"]["steps"] << { "uses" => "actions/cache@v4" }'
+# O prazo único da espera: sem ele, a releitura abriria outras 4 h na fila.
+expect_queue_failure "o job deploy precisa receber o prazo do prepare" 'jobs["deploy"].delete("env")'
+expect_queue_failure "o prepare precisa publicar o prazo da espera" 'jobs["prepare"].delete("outputs")'
+expect_queue_failure "o prepare não pode receber WAIT_DEADLINE" 'jobs["prepare"]["env"] = { "WAIT_DEADLINE" => "1" }'
 
 # Comportamento da espera: o `run` do passo é extraído do YAML e executado com
 # curl, sleep e date falsos, na mesma invocação que o Actions usa para
@@ -167,7 +271,7 @@ check_workflow "$workflow" 245
 wait_script="$tmp_dir/wait-jobs.sh"
 ruby -ryaml -e '
   workflow = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: true)
-  step = workflow.fetch("jobs").fetch("deploy").fetch("steps").find { |s| s["run"]&.include?("active_jobs") }
+  step = workflow.fetch("jobs").fetch("prepare").fetch("steps").find { |s| s["run"]&.include?("active_jobs") }
   File.write(ARGV.fetch(1), step.fetch("run"))
 ' "$workflow" "$wait_script"
 
@@ -199,13 +303,23 @@ echo "$clock"
 EOF
 chmod +x "$wait_bin/curl" "$wait_bin/sleep" "$wait_bin/date"
 
-run_wait() {
+# WAIT_ENV são as variáveis a mais de uma execução (o WAIT_DEADLINE do job
+# deploy); vazio, o passo roda como no job prepare. O GITHUB_OUTPUT é sempre um
+# arquivo novo, e nunca o do runner quando este teste roda no CI.
+wait_env=()
+run_wait_status() {
   printf '%s\n' "$@" >"$tmp_dir/curl-responses"
   rm -f "$tmp_dir/wait.curl" "$tmp_dir/wait.sleep"
   touch "$tmp_dir/wait.sleep"
+  : >"$tmp_dir/wait.output"
   echo 1700000000 >"$tmp_dir/wait.clock"
-  if ! wait_output="$(env "PATH=$wait_bin:$PATH" WAIT_LOG="$tmp_dir/wait" CURL_RESPONSES="$tmp_dir/curl-responses" \
-    timeout 120 bash --noprofile --norc -eo pipefail "$wait_script" 2>&1)"; then
+  wait_output="$(env -u WAIT_DEADLINE "PATH=$wait_bin:$PATH" WAIT_LOG="$tmp_dir/wait" CURL_RESPONSES="$tmp_dir/curl-responses" \
+    GITHUB_OUTPUT="$tmp_dir/wait.output" GITHUB_RUN_ATTEMPT=1 "${wait_env[@]}" \
+    timeout 120 bash --noprofile --norc -eo pipefail "$wait_script" 2>&1)"
+}
+
+run_wait() {
+  if ! run_wait_status "$@"; then
     printf 'a espera falhou ou estourou o tempo:\n%s\n' "$wait_output" >&2
     exit 1
   fi
@@ -246,6 +360,37 @@ assert_wait "Nenhuma run em curso." "10 60"
 mapfile -t endless_run < <(yes '{"status":"ok","active_jobs":1}' | head -n 121)
 run_wait "${endless_run[@]}"
 assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" "$(yes 60 | head -n 120 | paste -sd' ')"
+# O prepare publica a tentativa e o prazo que calculou: o relógio falso mais 4 h.
+[[ "$(cat "$tmp_dir/wait.output")" == "deadline=1:$((1700000000 + 4 * 60 * 60))" ]] || { echo "prazo publicado divergente: $(cat "$tmp_dir/wait.output")" >&2; exit 1; }
+
+# No job deploy o prazo vem do prepare. Run que já o estourou lá não é esperada
+# de novo dentro da fila do vigia: uma leitura, nenhum sleep.
+wait_env=(WAIT_DEADLINE=1:1700000000)
+run_wait "${endless_run[@]}"
+assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" ""
+# Só o job deploy reexecutado, horas depois: o prazo recebido é o da tentativa
+# 1 e esta é a 2. A run em curso ganha as 4 h inteiras, em vez de morrer na
+# troca por um prazo vencido antes de a reexecução começar.
+wait_env=(WAIT_DEADLINE=1:1700000000 GITHUB_RUN_ATTEMPT=2)
+run_wait "${endless_run[@]}"
+assert_wait "a espera recomeça com prazo novo" "$(yes 60 | head -n 120 | paste -sd' ')"
+# Run iniciada entre os dois jobs, com 5 min de prazo restantes: espera só o
+# resto (a 1ª leitura termina em +60 s; cada volta soma 120 s), e não outras 4 h.
+wait_env=(WAIT_DEADLINE=1:$((1700000000 + 300)))
+run_wait "${endless_run[@]}"
+assert_wait "Runs ainda em curso depois de 4 h; o deploy segue" "60 60"
+# Sem run, o prazo recebido não muda nada.
+run_wait '{"status":"ok","active_jobs":0}'
+assert_wait "Nenhuma run em curso." ""
+# Prazo vazio ou ilegível (output do prepare perdido) reprova o passo em vez de
+# abrir um prazo novo.
+for bad_deadline in "" "amanhã" "1700000000" "1:17e9"; do
+  wait_env=("WAIT_DEADLINE=$bad_deadline")
+  expect_failure run_wait_status '{"status":"ok","active_jobs":0}'
+  assert_wait "WAIT_DEADLINE sem o prazo" ""
+  [[ ! -e "$tmp_dir/wait.curl" ]] || { echo "prazo \"$bad_deadline\" recusado só depois de ler o /health" >&2; exit 1; }
+done
+wait_env=()
 
 # Contrato estático do fly.toml, conferido bloco a bloco sobre o TOML parseado
 # (regras e porquês em fly-toml-contract.py, compartilhado com o contrato do
