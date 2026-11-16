@@ -109,13 +109,22 @@ fi
 # serve tráfego, e recriá-la mataria a run de LLM em curso na API por causa de
 # crashes que já passaram. Pausa e retomada (eventos "suspension" e "start")
 # não são "exit" e não entram na conta.
+#
+# Entra também a Machine que já tem clone do vigia (nome `vigia-<id>`): é a
+# original de um conserto cujo destroy falhou (#839). Ela pode não parecer
+# mais presa, porque a recusa de start só aparece com a sonda vermelha, que o
+# clone deixou verde, e os crashes saem da janela; sem esta regra a Machine a
+# mais ficaria para sempre, com o vigia verde. Ela pode até ter voltado a
+# subir, e é destruída assim mesmo: com o clone de pé, uma das duas sobra.
 now_ms="$(($(date +%s) * 1000))"
 stuck_ids="$(jq -r \
   --argjson since "$((now_ms - crash_window_minutes * 60 * 1000))" \
   --argjson exits "$crash_exits" '
-  .[]
+  [.[].name] as $names
+  | .[]
   | select(
       .state == "failed"
+      or (.id as $id | $names | index("vigia-\($id)") != null)
       or (.state != "started"
           and ([.events[]?
                 | select(.type == "exit"
@@ -198,14 +207,60 @@ fi
 # e na mesma região, porque os gates de deploy recusam Machine fora de gru. O
 # clone herda a config da origem; quem escolhe o host é o scheduler do Fly, que
 # não põe a Machine nova num host sem capacidade para ela.
+#
+# O clone leva o nome `vigia-<id da original>`, e é por ele que a passada
+# seguinte sabe que o conserto ficou pela metade (#839): com o clone de pé, só
+# o destroy é repetido; com o clone fora de "started", nada é destruído, porque
+# seria trocar a original por uma Machine que não serve, e o vigia só avisa. O
+# nome é único por app no Fly, então clonar outra vez seria recusado lá.
+# Uma falha no destroy não interrompe o laço: as outras presas ainda são
+# consertadas nesta passada.
+#
+# O clone de um conserto pela metade não é consertado por conta própria
+# enquanto a original existir: cloná-lo e destruí-lo apagaria o nome que liga
+# os dois, e a Machine a mais ficaria sem aviso. O par é tratado pela original.
+#
+# A lista é lida de novo a cada Machine porque a sonda, os starts e cada clone
+# levam minutos, e o estado do clone decide se a original pode ser destruída.
 # O `</dev/null` tem o mesmo motivo do laço de start acima.
+repaired=""
 while read -r stuck_id; do
-  summary "$app: Machine $stuck_id presa; clonando em $region e destruindo a original."
-  flyctl machine clone "$stuck_id" -a "$app" --region "$region" </dev/null
-  flyctl machine destroy "$stuck_id" -a "$app" --force </dev/null
+  if ! machines_json="$(list_machines </dev/null)" || ! jq -e 'type == "array"' >/dev/null <<<"$machines_json"; then
+    summary "$app: não foi possível reler a lista de Machines antes de consertar $stuck_id; conserto interrompido."
+    exit 1
+  fi
+  if ! jq -e --arg id "$stuck_id" 'any(.[]; .id == $id)' >/dev/null <<<"$machines_json"; then
+    summary "$app: a Machine $stuck_id não está mais na app; nada a fazer com ela."
+    continue
+  fi
+  if jq -e --arg id "$stuck_id" '
+    (first(.[] | select(.id == $id) | .name) // "") as $name
+    | ($name | startswith("vigia-")) and any(.[]; .id == ($name | ltrimstr("vigia-")))
+  ' >/dev/null <<<"$machines_json"; then
+    continue
+  fi
+  clone_name="vigia-$stuck_id"
+  clone_state="$(jq -r --arg name "$clone_name" 'first(.[] | select(.name == $name) | .state) // empty' <<<"$machines_json")"
+  if [[ -z "$clone_state" ]]; then
+    summary "$app: Machine $stuck_id presa; clonando em $region como $clone_name e destruindo a original."
+    flyctl machine clone "$stuck_id" -a "$app" --region "$region" --name "$clone_name" </dev/null
+  elif [[ "$clone_state" == "started" ]]; then
+    summary "$app: Machine $stuck_id já tem o clone $clone_name, de passada anterior; destruindo só a original."
+  else
+    summary "$app: o clone $clone_name da Machine $stuck_id está \"$clone_state\", e não de pé; nada destruído, alguém precisa olhar."
+    continue
+  fi
+  repaired=1
+  if ! flyctl machine destroy "$stuck_id" -a "$app" --force </dev/null; then
+    summary "$app: o destroy da Machine $stuck_id falhou e a app ficou com uma Machine a mais, o clone $clone_name. A próxima passada repete só o destroy; até lá o deploy pode ser recusado pela contagem de Machines."
+  fi
 done <<<"$stuck_ids"
 
-if probe; then
+# Sem clone nem destroy nesta passada não há conserto a conferir, e a sonda
+# não roda: o par parado à espera de alguém repetiria o aviso a cada passada.
+if [[ -z "$repaired" ]]; then
+  summary "$app: nenhuma Machine clonada ou destruída nesta passada."
+elif probe; then
   summary "$app: health respondeu depois do conserto."
 else
   summary "$app: health segue sem responder depois do conserto."
