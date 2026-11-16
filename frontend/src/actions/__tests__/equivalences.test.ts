@@ -7,14 +7,17 @@ import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 // de aguardar o resultado. Hoje retornam `{ error? }`; estes testes travam
 // esse contrato — nenhuma das três pode voltar a lançar em vez de retornar.
 import {
-  makeSupabaseMock,
-  type TableResults,
+  makeFilterAwareSupabaseMock,
+  type QueryError,
   type WriteCall,
   type RpcCall,
-} from "./supabase-mock";
+  type ReadCall,
+} from "@/test-utils/supabase-mock";
 
 let writeCalls: WriteCall[];
-let serverTableResults: TableResults | undefined;
+let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError | null>;
+let readCalls: ReadCall[];
 let rpcCalls: RpcCall[];
 let rpcResults: Record<string, {
   data?: unknown;
@@ -31,11 +34,14 @@ vi.mock("@/lib/auth", () => ({
 }));
 vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
-    makeSupabaseMock({
-      tableResults: serverTableResults,
+    makeFilterAwareSupabaseMock({
+      tableData,
+      queryErrors,
       writeCalls,
+      readCalls,
       rpcCalls,
       rpcResults,
+      projectColumns: true,
     }),
 }));
 // syncCompareAssignment é best-effort e tem seu próprio teste dedicado
@@ -70,8 +76,10 @@ vi.mock("@/lib/value-equivalence-effects", () => ({
 beforeEach(() => {
   writeCalls = [];
   rpcCalls = [];
+  readCalls = [];
   rpcResults = {};
-  serverTableResults = undefined;
+  tableData = { projects: [{ id: "p1", pydantic_fields: [Q1_FIELD] }] };
+  queryErrors = {};
   mockSyncCompareAssignment.mockClear();
   mockPropagate.mockClear();
   afterCallbacks.length = 0;
@@ -87,30 +95,21 @@ function upsertsOn(table: string) {
 
 type Actions = Awaited<ReturnType<typeof loadActions>>;
 
-// A action lê, antes de desfazer, as equivalências do projeto (a alvo está
-// entre elas) e o campo, para calcular a classe de antes da remoção.
 const TARGET_EQUIVALENCE_ROW = {
-  id: "eq1", field_name: "q1", field_hash: "aaaaaaaaaaaa", value_a: "NI", value_b: "N/A", reviewer_id: "canonical-reviewer",
+  id: "eq1", project_id: "p1", field_name: "q1", field_hash: "aaaaaaaaaaaa", value_a: "NI", value_b: "N/A", reviewer_id: "canonical-reviewer",
 };
 const Q1_FIELD = {
   id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "text", options: null, description: "", hash: "aaaaaaaaaaaa",
-};
-const TARGET_EQUIVALENCE: TableResults = {
-  value_equivalences: {
-    data: [TARGET_EQUIVALENCE_ROW, { ...TARGET_EQUIVALENCE_ROW, id: "eq2", value_a: "N/A", value_b: "não se aplica" }],
-  },
-  projects: { data: { pydantic_fields: [Q1_FIELD] } },
 };
 
 const MARK_FAILED = "Não foi possível marcar as respostas como equivalentes. Tente novamente.";
 
 // As 3 actions de equivalences.ts falham do mesmo jeito (upsert/delete
 // retorna erro → `{ error }`, nunca lança); um caso por action evita repetir
-// o esqueleto "seta serverTableResults, chama a action, confere o retorno".
+// o esqueleto "prepara tabela, chama a action, confere o retorno".
 describe.each([
   {
     action: "confirmEquivalentVerdict",
-    tableResults: undefined,
     call: (fns: Actions) =>
       fns.confirmEquivalentVerdict({
         projectId: "p1",
@@ -129,7 +128,6 @@ describe.each([
   },
   {
     action: "markLlmEquivalent",
-    tableResults: undefined,
     call: (fns: Actions) =>
       fns.markLlmEquivalent("p1", "doc1", "q1", "llm1", "human1"),
     expectedError: MARK_FAILED,
@@ -138,15 +136,13 @@ describe.each([
   },
   {
     action: "unmarkEquivalencePair",
-    tableResults: TARGET_EQUIVALENCE,
     call: (fns: Actions) => fns.unmarkEquivalencePair("p1", "eq1"),
     expectedError: "Não foi possível desfazer a equivalência. Tente novamente.",
     extraChecks: undefined,
     rpcError: "delete pair boom",
   },
-])("$action — falha no upsert/delete", ({ action, tableResults, call, expectedError, extraChecks, rpcError }) => {
+])("$action — falha no upsert/delete", ({ action, call, expectedError, extraChecks, rpcError }) => {
   it("retorna { error }, não lança", async () => {
-    serverTableResults = tableResults;
     if (rpcError) {
       const rpcName = action === "unmarkEquivalencePair"
         ? "remove_value_equivalence"
@@ -225,9 +221,7 @@ beforeAll(async () => {
 
 describe("confirmEquivalentVerdict", () => {
   it("upsert em reviews falha após a equivalência já gravada → retorna { error }, não lança", async () => {
-    serverTableResults = {
-      reviews: { error: { message: "review upsert boom" } },
-    };
+    queryErrors["reviews:upsert"] = { message: "review upsert boom" };
     const { confirmEquivalentVerdict } = await loadActions();
 
     const result = await confirmEquivalentVerdict({
@@ -248,9 +242,6 @@ describe("confirmEquivalentVerdict", () => {
   });
 
   it("caminho feliz → retorna {}, grava a equivalência a partir das respostas e o chosen_response_id do gabarito", async () => {
-    serverTableResults = {
-      reviews: { error: null },
-    };
     rpcResults.record_value_equivalences = {
       data: [{ field_name: "q1", value_a: "N/A", value_b: "NI" }],
       error: null,
@@ -310,9 +301,6 @@ describe("confirmEquivalentVerdict: falha do sync pós-commit", () => {
   it("grava par e veredito, retorna {} e só loga", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockSyncCompareAssignment.mockRejectedValueOnce(new Error("sync boom"));
-    serverTableResults = {
-      reviews: { error: null },
-    };
     const { confirmEquivalentVerdict } = await loadActions();
 
     const result = await confirmEquivalentVerdict({
@@ -336,12 +324,11 @@ describe("confirmEquivalentVerdict: falha do sync pós-commit", () => {
 
 describe("confirmEquivalentVerdict: gabarito fora das opções atuais", () => {
   it("recusa antes de gravar par ou veredito", async () => {
-    serverTableResults = {
-      projects: { data: { pydantic_fields: [{
+    tableData = {
+      projects: [{ id: "p1", pydantic_fields: [{
         id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "single",
         options: ["Sim", "Não"], description: "", hash: "aaaaaaaaaaaa",
-      }] } },
-      reviews: { error: null },
+      }] }],
     };
     const { confirmEquivalentVerdict } = await loadActions();
 
@@ -356,12 +343,11 @@ describe("confirmEquivalentVerdict: gabarito fora das opções atuais", () => {
   });
 
   it("gabarito nas opções atuais grava", async () => {
-    serverTableResults = {
-      projects: { data: { pydantic_fields: [{
+    tableData = {
+      projects: [{ id: "p1", pydantic_fields: [{
         id: "00000000-0000-4000-8000-000000000001", name: "q1", type: "single",
         options: ["Sim", "Não"], description: "", hash: "aaaaaaaaaaaa",
-      }] } },
-      reviews: { error: null },
+      }] }],
     };
     const { confirmEquivalentVerdict } = await loadActions();
 
@@ -455,7 +441,6 @@ describe("unmarkEquivalencePair", () => {
   // Na Comparação, quem desfaz está num documento: o assignment dele ali
   // reflete a mudança já, sem esperar a propagação.
   it("com documento, sincroniza já o assignment de quem desfez nele", async () => {
-    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
     rpcResults.remove_value_equivalence = {
       data: [{ field_name: "q1", field_hash: "aaaaaaaaaaaa", value_a: "NI", value_b: "N/A" }],
       error: null,
@@ -474,7 +459,6 @@ describe("unmarkEquivalencePair", () => {
   // para autoridade que não bate. Antes deste guard a action retornava `{}` e
   // a revisora via "desfeito" sobre nada removido (classe do #178).
   it("RPC filtra por autoridade → retorna { error }, não sucesso silencioso", async () => {
-    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
     rpcResults.remove_value_equivalence = { data: [], error: null };
     const { unmarkEquivalencePair } = await loadActions();
 
@@ -488,7 +472,6 @@ describe("unmarkEquivalencePair", () => {
   });
 
   it("RPC aborta a transação → retorna { error } e não agenda propagação", async () => {
-    serverTableResults = structuredClone(TARGET_EQUIVALENCE);
     rpcResults.remove_value_equivalence = {
       error: { message: "remove boom" },
     };
@@ -505,15 +488,18 @@ describe("unmarkEquivalencePair", () => {
 
 describe("loadEquivalenceUsage", () => {
   it("por classe, os documentos em que ela funde respostas da versão atual", async () => {
-    serverTableResults = {
-      responses: { data: [
-        { id: "r1", document_id: "d1", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, value: "NI", documents: { title: "Doc 1", external_id: null } },
-        { id: "r2", document_id: "d1", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, value: "N/A", documents: { title: "Doc 1", external_id: null } },
-        { id: "r3", document_id: "d2", answer_field_hashes: { q1: "bbbbbbbbbbbb" }, value: "NI", documents: { title: "Doc 2", external_id: null } },
-        { id: "r4", document_id: "d2", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, value: "N/A", documents: { title: "Doc 2", external_id: null } },
-      ] },
-      value_equivalences: { data: [TARGET_EQUIVALENCE_ROW] },
-      projects: { data: { pydantic_fields: [Q1_FIELD] } },
+    tableData = {
+      responses: [
+        { id: "r1", project_id: "p1", is_latest: true, "answers->q1": "NI", "documents.excluded_at": null, document_id: "d1", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, documents: { title: "Doc 1", external_id: null } },
+        { id: "r2", project_id: "p1", is_latest: true, "answers->q1": "N/A", "documents.excluded_at": null, document_id: "d1", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, documents: { title: "Doc 1", external_id: null } },
+        { id: "r3", project_id: "p1", is_latest: true, "answers->q1": "NI", "documents.excluded_at": null, document_id: "d2", answer_field_hashes: { q1: "bbbbbbbbbbbb" }, documents: { title: "Doc 2", external_id: null } },
+        { id: "r4", project_id: "p1", is_latest: true, "answers->q1": "N/A", "documents.excluded_at": null, document_id: "d2", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, documents: { title: "Doc 2", external_id: null } },
+        { id: "r5", project_id: "other", is_latest: true, "answers->q1": "N/A", "documents.excluded_at": null, document_id: "d3", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, documents: { title: "Fora do projeto", external_id: null } },
+        { id: "r6", project_id: "p1", is_latest: false, "answers->q1": "N/A", "documents.excluded_at": null, document_id: "d3", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, documents: { title: "Fora da versão", external_id: null } },
+        { id: "r7", project_id: "p1", is_latest: true, "answers->q1": "NI", "documents.excluded_at": null, document_id: "d3", answer_field_hashes: { q1: "aaaaaaaaaaaa" }, documents: { title: "Só um lado válido", external_id: null } },
+      ],
+      value_equivalences: [TARGET_EQUIVALENCE_ROW],
+      projects: [{ id: "p1", pydantic_fields: [Q1_FIELD] }],
     };
     const { loadEquivalenceUsage } = await loadActions();
 
@@ -521,10 +507,16 @@ describe("loadEquivalenceUsage", () => {
 
     // d2 tem um dos lados respondido a outra versão da pergunta: não funde.
     expect(result).toEqual({ usage: { [JSON.stringify("n/a")]: [{ id: "d1", title: "Doc 1" }] } });
+    expect(readCalls.find((call) => call.table === "responses")?.filters).toEqual([
+      ["eq", "project_id", "p1"],
+      ["eq", "is_latest", true],
+      ["not.is", "answers->q1", null],
+      ["is", "documents.excluded_at", null],
+    ]);
   });
 
   it("nome de campo que não é identificador vira { error }, sem query", async () => {
-    serverTableResults = { value_equivalences: { data: [] }, projects: { data: { pydantic_fields: [] } } };
+    tableData = { value_equivalences: [], projects: [{ id: "p1", pydantic_fields: [] }] };
     const { loadEquivalenceUsage } = await loadActions();
 
     const result = await loadEquivalenceUsage("p1", "q1,answers");
