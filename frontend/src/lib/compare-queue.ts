@@ -400,9 +400,13 @@ function buildReviewsAndReviewedCounts(
   // Veredito que perdeu a validade vai para `staleReviews` e não conta: o
   // mesmo critério do Gabarito e do fecho (`syncCompareAssignment`), senão o
   // campo apareceria "já revisado" aqui enquanto some do Gabarito.
+  //
+  // E só os documentos da fila: o cliente não usa veredito de documento que
+  // não lista, e o reviewedCount só é medido nos qualificados.
   const myReviewsByDoc = new Map<string, Set<string>>();
   reviews?.forEach((r) => {
     if (r.reviewer_id !== userId) return;
+    if (!Object.hasOwn(qualifiedCoverageByDoc, r.document_id)) return;
     const info = {
       verdict: r.verdict,
       chosenResponseId: r.chosen_response_id ?? null,
@@ -586,11 +590,13 @@ export async function loadCompareQueue(
   if (readError) return readError;
   const project = projectRead.data;
   const allResponses = responsesRead.data;
+  const versionLog = versionLogRead.data;
   const allAssignments = assignmentsRead.data;
+  const allEquivalences = equivalencesRead.data;
 
   // fieldName -> equivalências de valor do projeto. Serve à divergência no
   // servidor e à fusão dos cards no cliente.
-  const equivalencesByField = groupValueEquivalencesByField(equivalencesRead.data);
+  const equivalencesByField = groupValueEquivalencesByField(allEquivalences);
 
   // Fail-CLOSED (ao contrario de comments/llm-insights): showAllQueue decide
   // quais documentos aparecem na fila — quem não pediu "todos" ve so os
@@ -656,8 +662,8 @@ export async function loadCompareQueue(
       equivalencesByField,
     });
 
-  // Fetch text + reviews + comment counts. Texto e veredito só dos documentos
-  // da fila: nada qualificado, nenhuma leitura.
+  // Fetch text + reviews + comment counts. Texto só dos documentos da fila,
+  // em lotes: nada qualificado, nenhuma leitura.
   const [textsRead, reviewsRead, commentsRead, suggestionsRead] = await Promise.all([
     fetchByDocumentChunks(qualifiedDocIds, (ids) =>
       fetchAllPaged<{ id: string; text: string }>(
@@ -674,20 +680,15 @@ export async function loadCompareQueue(
     // Só os reviews da identidade efetiva: a revisão é por revisor e este
     // fetch alimenta exclusivamente existingReviews/reviewedCount (ver
     // buildReviewsAndReviewedCounts). Vereditos de terceiros contaminavam o
-    // estado "já revisado" da tela e travavam o fecho do parecer. E só dos
-    // documentos da fila: o cliente não usa veredito de documento que não
-    // lista, e o reviewedCount só é medido nos qualificados.
-    fetchByDocumentChunks(qualifiedDocIds, (ids) =>
-      fetchAllPaged<ReviewRow>(
-        () =>
-          supabase
-            .from("reviews")
-            .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
-            .eq("project_id", projectId)
-            .eq("reviewer_id", queueUserId)
-            .in("document_id", ids),
-        ["id"],
-      ),
+    // estado "já revisado" da tela e travavam o fecho do parecer.
+    fetchAllPaged<ReviewRow>(
+      () =>
+        supabase
+          .from("reviews")
+          .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
+          .eq("project_id", projectId)
+          .eq("reviewer_id", queueUserId),
+      ["id"],
     ),
     fetchAllPaged<CommentCountRow>(
       () =>
@@ -716,13 +717,16 @@ export async function loadCompareQueue(
     schema_suggestions: suggestionsRead,
   });
   if (secondReadError) return secondReadError;
+  const reviews = reviewsRead.data;
+  const commentCounts = commentsRead.data;
+  const suggestionCounts = suggestionsRead.data;
 
   const textMap = new Map(textsRead.data.map((d) => [d.id, d.text]));
 
   // Reviews da identidade efetiva — na impersonação, o progresso exibido é o
   // do dono da fila, não o do master.
   const { existingReviews, staleReviews, coverageByDoc } = buildReviewsAndReviewedCounts(
-    reviewsRead.data,
+    reviews,
     queueUserId,
     qualifiedCoverageByDoc,
     divergentFields,
@@ -730,8 +734,8 @@ export async function loadCompareQueue(
   );
 
   const { commentCountsByKey, suggestionCountsByField } = buildCountsByKey(
-    commentsRead.data,
-    suggestionsRead.data,
+    commentCounts,
+    suggestionCounts,
   );
 
   return {
@@ -753,7 +757,7 @@ export async function loadCompareQueue(
       coverageByDoc: coverageByDoc,
       commentCountsByKey,
       suggestionCountsByField,
-      availableVersions: buildAvailableVersions(versionLogRead.data, allResponses),
+      availableVersions: buildAvailableVersions(versionLog, allResponses),
       latestMajorLabel: formatVersion(latestMajorAnchor(projectVersion)),
       currentProjectVersion: formatVersion(projectVersion),
       // Maps don't cross the RSC boundary.

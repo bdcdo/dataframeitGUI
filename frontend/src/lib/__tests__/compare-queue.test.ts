@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import { loadCompareQueue, type CompareQueueIdentity } from "@/lib/compare-queue";
 import type { PydanticField } from "@/lib/types";
 import { makeHumanResponse, makeProjectRow } from "@/test-utils/comparison-fixtures";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { makeFilterAwareSupabaseMock, type QueryError, type ReadCall } from "@/test-utils/supabase-mock";
 
 // A fila de comparação entra pelo carregador (#751): as buscas vão a um banco
@@ -11,6 +12,10 @@ import { makeFilterAwareSupabaseMock, type QueryError, type ReadCall } from "@/t
 // (`documents.excluded_at`) é a coluna com esse nome na linha da resposta.
 
 const PROJECT = "p1";
+
+// Os casos de erro silenciam o console.error com spy; ele não vaza para o
+// teste seguinte.
+afterEach(() => vi.restoreAllMocks());
 
 let fieldIdSeq = 0;
 function nextFieldId(): string {
@@ -121,49 +126,52 @@ function client(
   return makeFilterAwareSupabaseMock({ tableData, writeCalls: [], queryErrors, readCalls });
 }
 
-// O PostgREST corta toda leitura em `max_rows` (1000), mesmo com `.limit()`
-// maior, e não avisa. O mock não corta: este embrulho corta, para que leitura
-// sem paginação saia truncada aqui como sai em produção.
-const MAX_ROWS = 1000;
-function withMaxRows(base: MockClient): MockClient {
+type Builder = Record<string, unknown> & {
+  limit: (n: number) => unknown;
+  in: (c: string, v: unknown[]) => unknown;
+  range: (from: number, to: number) => unknown;
+};
+
+// Embrulha o mock, deixando `patch` trocar métodos do builder de cada leitura.
+function patchReads(base: MockClient, patch: (table: string, builder: Builder) => void): MockClient {
   return {
     ...base,
     from: (table: string) => {
-      const builder = base.from(table);
-      const limit = builder.limit as (n: number) => unknown;
-      builder.limit = (n: number) => limit(Math.min(n, MAX_ROWS));
-      limit(MAX_ROWS);
+      const builder = base.from(table) as Builder;
+      patch(table, builder);
       return builder;
     },
   };
 }
 
+// O PostgREST corta toda leitura em `max_rows` (1000), mesmo com `.limit()`
+// maior, e não avisa. O mock não corta: este embrulho corta, para que leitura
+// sem paginação saia truncada aqui como sai em produção.
+const MAX_ROWS = 1000;
+const withMaxRows = (base: MockClient) =>
+  patchReads(base, (_table, builder) => {
+    const limit = builder.limit;
+    builder.limit = (n) => limit(Math.min(n, MAX_ROWS));
+    limit(MAX_ROWS);
+  });
+
 // Falha uma leitura no meio do caminho: a página (`.range`) de `table` cujo
 // início e cujo lote (`.in`) satisfazem `when`. As anteriores dão certo.
-function failingRead(
-  table: string,
-  when: (read: { from: number; ids: readonly unknown[] | null }) => boolean,
-) {
-  return (base: MockClient): MockClient => ({
-    ...base,
-    from: (t: string) => {
-      const builder = base.from(t);
-      if (t !== table) return builder;
-      let ids: readonly unknown[] | null = null;
-      const inFilter = builder.in as (c: string, v: unknown[]) => unknown;
-      builder.in = (c: string, v: unknown[]) => {
-        ids = v;
-        return inFilter(c, v);
-      };
-      const range = builder.range as (from: number, to: number) => unknown;
-      builder.range = (from: number, to: number) =>
-        when({ from, ids })
-          ? Promise.resolve({ data: null, error: { message: "falha no meio" } })
-          : range(from, to);
-      return builder;
-    },
+type ReadPosition = { from: number; ids: readonly unknown[] | null };
+const failingRead = (table: string, when: (read: ReadPosition) => boolean) => (base: MockClient) =>
+  patchReads(base, (t, builder) => {
+    if (t !== table) return;
+    let ids: readonly unknown[] | null = null;
+    const { in: inFilter, range } = builder;
+    builder.in = (c, v) => {
+      ids = v;
+      return inFilter(c, v);
+    };
+    builder.range = (from, to) =>
+      when({ from, ids }) ? Promise.resolve({ data: null, error: { message: "falha no meio" } }) : range(from, to);
   });
-}
+const secondPage = (read: ReadPosition) => read.from >= 1000;
+const batchWith = (docId: string) => (read: ReadPosition) => read.ids?.includes(docId) ?? false;
 
 const COORDINATOR: CompareQueueIdentity = {
   ownMemberUserId: "me",
@@ -280,10 +288,14 @@ describe("loadCompareQueue: a fila final", () => {
     expect(props.responses.doc2).toBeUndefined();
   });
 
-
-  it("identidade que falha derruba o carregador", async () => {
+  it("identidade que falha derruba o carregador, mesmo com uma fonte em erro", async () => {
     await expect(
-      loadCompareQueue(client(tables({})) as never, PROJECT, Promise.reject(new Error("sem identidade")), ALL_QUEUE),
+      loadCompareQueue(
+        client(tables({}), { "responses:select": { message: "boom" } }) as never,
+        PROJECT,
+        Promise.reject(new Error("sem identidade")),
+        ALL_QUEUE,
+      ),
     ).rejects.toThrow("sem identidade");
   });
 });
@@ -638,9 +650,9 @@ describe("loadCompareQueue: vereditos e reviewedCount", () => {
 
 describe("loadCompareQueue: leituras completas, acima do teto do PostgREST", () => {
   // 600 documentos divergentes, todos na fila pessoal de "me": 1200 respostas,
-  // 1800 atribuições, 1200 vereditos (metade de outro revisor), 1100
-  // comentários, sugestões e entradas de log. Cada fonte passa das 1000 linhas
-  // que o PostgREST devolve por leitura.
+  // 1800 atribuições, 1100 vereditos de "me" (500 em documentos fora da fila)
+  // e 600 de outro revisor, 1100 comentários, sugestões e entradas de log.
+  // Cada fonte passa das 1000 linhas que o PostgREST devolve por leitura.
   const docIds = Array.from({ length: 600 }, (_, i) => `doc${String(i).padStart(4, "0")}`);
   const big: Seed = {
     responses: docIds.flatMap((id) => divergentPair(id)),
@@ -649,10 +661,13 @@ describe("loadCompareQueue: leituras completas, acima do teto do PostgREST", () 
       { document_id, user_id: "u1", type: "codificacao", status: "concluido" },
       { document_id, user_id: "u2", type: "codificacao", status: "concluido" },
     ]),
-    reviews: docIds.flatMap((document_id) => [
-      review({ document_id, chosen_response_id: `${document_id}-r1`, reviewer_id: "outro" }),
-      review({ document_id, chosen_response_id: `${document_id}-r1` }),
-    ]),
+    reviews: [
+      ...docIds.flatMap((document_id) => [
+        review({ document_id, chosen_response_id: `${document_id}-r1`, reviewer_id: "outro" }),
+        review({ document_id, chosen_response_id: `${document_id}-r1` }),
+      ]),
+      ...Array.from({ length: 500 }, (_, i) => review({ document_id: `fora${i}` })),
+    ],
     comments: Array.from({ length: 1100 }, (_, i) => ({ id: `c${i}`, document_id: "doc0000", field_name: "a", resolved_at: null })),
     suggestions: Array.from({ length: 1100 }, (_, i) => ({ id: `s${i}`, field_name: "a", status: "pending" })),
     versionLog: [
@@ -673,45 +688,39 @@ describe("loadCompareQueue: leituras completas, acima do teto do PostgREST", () 
     expect(props.availableVersions).toEqual(["3.0.0", "0.1.0"]);
   });
 
-  it("textos e vereditos vêm em lotes de até 100 documentos, da identidade efetiva, cobrindo toda a fila", async () => {
+  it("textos vêm em lotes de até 100 documentos, cobrindo toda a fila", async () => {
     const readCalls: ReadCall[] = [];
     await loadProps(big, { searchParams: MINE, readCalls });
-    for (const table of ["documents", "reviews"]) {
-      const batches = readCalls
-        .filter((c) => c.table === table)
-        .map((c) => c.filters.find(([kind]) => kind === "in")?.[2] as string[]);
-      expect(batches.length).toBeGreaterThan(1);
-      expect(batches.every((batch) => batch.length <= 100)).toBe(true);
-      expect(batches.flat().toSorted()).toEqual(docIds);
-    }
-    const reviewReads = readCalls.filter((c) => c.table === "reviews");
-    expect(reviewReads.every((c) => c.filters.some(([kind, col, v]) => kind === "eq" && col === "reviewer_id" && v === "me"))).toBe(true);
+    const batches = readCalls
+      .filter((c) => c.table === "documents")
+      .map((c) => c.filters.find(([kind]) => kind === "in")?.[2] as string[]);
+    expect(batches.length).toBeGreaterThan(1);
+    expect(batches.every((batch) => batch.length <= 100)).toBe(true);
+    expect(batches.flat().toSorted()).toEqual(docIds);
   });
 
   it.each([
-    ["a segunda página das respostas", "responses", (r: { from: number }) => r.from >= 1000],
-    ["a segunda página das atribuições", "assignments", (r: { from: number }) => r.from >= 1000],
-    ["a segunda página dos comentários", "project_comments", (r: { from: number }) => r.from >= 1000],
-    ["um lote do meio dos textos", "documents", (r: { ids: readonly unknown[] | null }) => r.ids?.includes("doc0250") ?? false],
-    ["um lote do meio dos vereditos", "reviews", (r: { ids: readonly unknown[] | null }) => r.ids?.includes("doc0250") ?? false],
+    ["a segunda página das respostas", "responses", secondPage],
+    ["a segunda página das atribuições", "assignments", secondPage],
+    ["a segunda página dos vereditos", "reviews", secondPage],
+    ["a segunda página dos comentários", "project_comments", secondPage],
+    ["um lote do meio dos textos", "documents", batchWith("doc0250")],
   ])("falha n%s: erro, e não uma fila parcial", async (_label, table, when) => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await load(big, { searchParams: MINE, wrap: failingRead(table, when) });
     expect(result.ok).toBe(false);
   });
 
-  it("nada qualificado: não busca texto nem veredito, e a fila sai vazia", async () => {
+  it("nada qualificado: não busca texto, não leva veredito, e a fila sai vazia", async () => {
     const readCalls: ReadCall[] = [];
-    const props = await loadProps({ responses: [response({ id: "r1" })] }, { readCalls });
+    const props = await loadProps({ responses: [response({ id: "r1" })], reviews: [review()] }, { readCalls });
     expect(props.documents).toEqual([]);
     expect(props.existingReviews).toEqual({});
-    expect(readCalls.filter((c) => c.table === "documents" || c.table === "reviews")).toEqual([]);
+    expect(readCalls.filter((c) => c.table === "documents")).toEqual([]);
   });
 });
 
 describe("loadCompareQueue: falha de qualquer fonte vira erro, não fila vazia", () => {
-  afterEach(() => vi.restoreAllMocks());
-
   it.each([
     "projects",
     "responses",
@@ -728,23 +737,10 @@ describe("loadCompareQueue: falha de qualquer fonte vira erro, não fila vazia",
       { responses: divergentPair("doc1") },
       { queryErrors: { [`${table}:select`]: { message: "detalhe interno do banco", code: "XX000" } } },
     );
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatch(/^Erro ao carregar a fila de comparação\. Tente novamente\. — código [0-9a-z]{6,7}$/);
-    expect(result.error).not.toContain("detalhe interno");
+    // A copy não traz a mensagem do banco, que vai só para o log.
+    expect(result).toEqual({ ok: false, error: copyWithRef("Erro ao carregar a fila de comparação. Tente novamente.") });
     expect(logged).toHaveBeenCalledOnce();
-    expect(String(logged.mock.calls[0][0])).toContain(`[compare-queue] leitura de ${table} falhou`);
-  });
-
-  it("identidade que falha continua derrubando o carregador, mesmo com outra fonte em erro", async () => {
-    await expect(
-      loadCompareQueue(
-        client(tables({}), { "responses:select": { message: "boom" } }) as never,
-        PROJECT,
-        Promise.reject(new Error("sem identidade")),
-        ALL_QUEUE,
-      ),
-    ).rejects.toThrow("sem identidade");
+    expect(logged).toHaveBeenCalledWith(loggedLine(`[compare-queue] leitura de ${table} falhou`, { code: "XX000" }));
   });
 });
 
