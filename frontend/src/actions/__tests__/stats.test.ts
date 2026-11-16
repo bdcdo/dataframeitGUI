@@ -8,11 +8,19 @@ import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 // withResolutionAction é testado uma vez (é idêntico nas 10); as demais 8
 // funções ganham 1 teste de fumaça de caminho feliz cada, o suficiente para
 // pegar regressão na migração pro wrapper.
-import { createSupabaseMockState } from "./supabase-mock";
+import { makeFilterAwareSupabaseMock, type QueryError, type WriteCall } from "@/test-utils/supabase-mock";
 import { resolutionFixture } from "@/lib/__tests__/error-resolution-fixture";
 import type { ErrorDecision } from "@/lib/error-resolution";
 
-const supabaseState = createSupabaseMockState();
+let tableData: Record<string, unknown[]>;
+let queryErrors: Record<string, QueryError>;
+let writeCalls: WriteCall[];
+
+function resetFixtures(rows: Record<string, unknown[]> = {}) {
+  tableData = rows;
+  queryErrors = {};
+  writeCalls = [];
+}
 
 const hoisted = vi.hoisted(() => ({
   rpc: vi.fn(),
@@ -27,11 +35,14 @@ vi.mock("@/lib/auth", () => ({
   getAuthUser: () => hoisted.getUser(),
 }));
 vi.mock("@/lib/supabase/server", () => ({
-  createSupabaseServer: async () => ({ ...supabaseState.createClient(), rpc: hoisted.rpc }),
+  createSupabaseServer: async () => ({
+    ...makeFilterAwareSupabaseMock({ tableData, queryErrors, writeCalls, projectColumns: true }),
+    rpc: hoisted.rpc,
+  }),
 }));
 
 beforeEach(() => {
-  supabaseState.reset();
+  resetFixtures();
   hoisted.rpc.mockReset();
   hoisted.revalidate.mockReset();
   hoisted.getUser.mockResolvedValue({ id: "user1" });
@@ -56,14 +67,13 @@ describe("withResolutionAction — guard (via resolveNote, idêntico nas 10 fun�
     const r = await resolveNote("p1", "resp1", "nota");
 
     expect(r).toEqual({ success: false, error: "Não autenticado" });
-    expect(supabaseState.writeCalls).toHaveLength(0);
+    expect(writeCalls).toHaveLength(0);
   });
 });
 
 describe("withResolutionAction — exceção na ação", () => {
   // O texto em inglês vai ao log com o code; o toast recebe a copy (#502).
   it("vira copy pt-BR com código", async () => {
-    supabaseState.reset();
     hoisted.getUser.mockRejectedValueOnce(
       Object.assign(new Error("fetch failed"), { code: "ECONNRESET" }),
     );
@@ -83,11 +93,27 @@ describe("withResolutionAction — exceção na ação", () => {
   });
 });
 
-describe("fetchGabaritoForComment — leitura que falha", () => {
+describe("fetchGabaritoForComment — respostas atuais e erro de leitura", () => {
+  it("mostra só respostas atuais do documento e projeto pedidos", async () => {
+    const current = { id: "current", project_id: "p1", document_id: "doc1", is_latest: true,
+      respondent_name: "Pesquisadora", respondent_type: "humano", answers: { q1: "A" } };
+    tableData.responses = [
+      current,
+      { ...current, id: "old", is_latest: false },
+      { ...current, id: "other-project", project_id: "other" },
+      { ...current, id: "other-doc", document_id: "other" },
+    ];
+    const { fetchGabaritoForComment } = await loadStats();
+
+    expect(await fetchGabaritoForComment("p1", "doc1", "q1", "current")).toEqual({
+      answers: [{ id: "current", respondentName: "Pesquisadora", respondentType: "humano", answer: "A", isChosen: true }],
+    });
+  });
+
   // Antes, a leitura com erro devolvia o gabarito vazio, como se ninguém
   // tivesse respondido (P3).
   it("devolve a copy pt-BR, e não um gabarito vazio sem aviso", async () => {
-    supabaseState.reset({ responses: { data: null, error: { message: "timeout", code: "57014" } } });
+    queryErrors["responses:select"] = { message: "timeout", code: "57014" };
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { fetchGabaritoForComment } = await loadStats();
 
@@ -111,7 +137,7 @@ describe("resolveNote / reopenNote", () => {
     const r = await resolveNote("p1", "resp1", "nota");
 
     expect(r).toEqual({ success: true });
-    expect(supabaseState.writeCalls).toEqual([
+    expect(writeCalls).toEqual([
       {
         table: "note_resolutions",
         op: "insert",
@@ -121,6 +147,7 @@ describe("resolveNote / reopenNote", () => {
           resolved_by: "user1",
           note: "nota",
         },
+        filters: [],
       },
     ]);
   });
@@ -131,28 +158,26 @@ describe("resolveNote / reopenNote", () => {
     await resolveNote("p1", "resp1");
 
     expect(
-      (supabaseState.writeCalls[0].payload as { note: string | null }).note,
+      (writeCalls[0].payload as { note: string | null }).note,
     ).toBeNull();
   });
 
   // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do
   // servidor, e a action devolve a copy do fluxo (#502).
   it.each([
-    ["resolveNote", "note_resolutions", (m: Stats) => m.resolveNote("p1", "resp1", "nota"),
+    ["resolveNote", "note_resolutions:insert", (m: Stats) => m.resolveNote("p1", "resp1", "nota"),
       "Não foi possível resolver a anotação. Tente novamente."],
-    ["reopenNote", "note_resolutions", (m: Stats) => m.reopenNote("p1", "resp1"),
+    ["reopenNote", "note_resolutions:delete", (m: Stats) => m.reopenNote("p1", "resp1"),
       "Não foi possível reabrir a resolução. Tente novamente."],
-    ["resolveReviewComment", "reviews", (m: Stats) => m.resolveReviewComment("rev1", "p1"),
+    ["resolveReviewComment", "reviews:update", (m: Stats) => m.resolveReviewComment("rev1", "p1"),
       "Não foi possível resolver o comentário. Tente novamente."],
-    ["reopenDuvida", "verdict_acknowledgments", (m: Stats) => m.reopenDuvida("p1", "rev1", "user2"),
+    ["reopenDuvida", "verdict_acknowledgments:update", (m: Stats) => m.reopenDuvida("p1", "rev1", "user2"),
       "Não foi possível atualizar a dúvida. Tente novamente."],
-    ["resolveDifficulty", "difficulty_resolutions", (m: Stats) => m.resolveDifficulty("p1", "resp1", "doc1"),
+    ["resolveDifficulty", "difficulty_resolutions:insert", (m: Stats) => m.resolveDifficulty("p1", "resp1", "doc1"),
       "Não foi possível resolver a dificuldade. Tente novamente."],
-  ])("%s: erro do Supabase → copy pt-BR, texto cru no log, sem revalidar", async (_, table, run, copy) => {
+  ])("%s: erro do Supabase → copy pt-BR, texto cru no log, sem revalidar", async (_, operation, run, copy) => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    supabaseState.tableResults = {
-      [table]: [{ error: { code: "57014", message: "canceling statement due to statement timeout" } }],
-    };
+    queryErrors[operation] = { code: "57014", message: "canceling statement due to statement timeout" };
 
     const r = await run(await loadStats());
 
@@ -165,22 +190,27 @@ describe("resolveNote / reopenNote", () => {
   });
 
   it("reopenNote: sucesso → delete e retorna success", async () => {
-    supabaseState.tableResults = {
-      note_resolutions: [{ data: [{ response_id: "resp1" }] }],
+    tableData = {
+      note_resolutions: [
+        { project_id: "p1", response_id: "resp1" },
+        { project_id: "other", response_id: "resp1" },
+        { project_id: "p1", response_id: "other" },
+      ],
     };
     const { reopenNote } = await loadStats();
 
     const r = await reopenNote("p1", "resp1");
 
     expect(r).toEqual({ success: true });
-    expect(supabaseState.writeCalls[0]).toMatchObject({
+    expect(writeCalls[0]).toMatchObject({
       table: "note_resolutions",
       op: "delete",
+      filters: [["eq", "project_id", "p1"], ["eq", "response_id", "resp1"]],
     });
   });
 
   it("reopenNote: nada afetado → error de not-found (sem permissão ou já reaberta)", async () => {
-    supabaseState.tableResults = { note_resolutions: [{ data: [] }] };
+    tableData = { note_resolutions: [] };
     const { reopenNote } = await loadStats();
 
     const r = await reopenNote("p1", "resp1");
@@ -193,46 +223,62 @@ describe("resolveNote / reopenNote", () => {
 });
 
 describe("resolveReviewComment / reopenReviewComment — smoke", () => {
+  const review = {
+    id: "rv1", project_id: "p1", document_id: "doc1", field_name: "q1",
+    verdict: "concordo", comment: "Comentário",
+  };
   it("resolveReviewComment: sucesso", async () => {
-    supabaseState.tableResults = { reviews: [{ data: [{ id: "rv1" }] }] };
+    tableData = { reviews: [review, { ...review, id: "other" }] };
     const { resolveReviewComment } = await loadStats();
 
     const r = await resolveReviewComment("rv1", "p1");
 
     expect(r).toEqual({ success: true });
+    expect(writeCalls[0].filters).toEqual([["eq", "id", "rv1"]]);
   });
 
   it("reopenReviewComment: sucesso", async () => {
-    supabaseState.tableResults = { reviews: [{ data: [{ id: "rv1" }] }] };
+    tableData = { reviews: [review, { ...review, id: "other" }] };
     const { reopenReviewComment } = await loadStats();
 
     const r = await reopenReviewComment("rv1", "p1");
 
     expect(r).toEqual({ success: true });
+    expect(writeCalls[0].filters).toEqual([["eq", "id", "rv1"]]);
   });
 });
 
 describe("resolveDuvida / reopenDuvida — smoke", () => {
   it("resolveDuvida: sucesso", async () => {
-    supabaseState.tableResults = {
-      verdict_acknowledgments: [{ data: [{ review_id: "rv1" }] }],
+    tableData = {
+      verdict_acknowledgments: [
+        { review_id: "rv1", respondent_id: "user2" },
+        { review_id: "other", respondent_id: "user2" },
+        { review_id: "rv1", respondent_id: "other" },
+      ],
     };
     const { resolveDuvida } = await loadStats();
 
     const r = await resolveDuvida("p1", "rv1", "user2");
 
     expect(r).toEqual({ success: true });
+    expect(writeCalls[0].filters).toEqual([["eq", "review_id", "rv1"], ["eq", "respondent_id", "user2"]]);
   });
 
   it("reopenDuvida: sucesso", async () => {
-    supabaseState.tableResults = {
-      verdict_acknowledgments: [{ data: [{ review_id: "rv1" }] }],
+    tableData = {
+      verdict_acknowledgments: [
+        { review_id: "rv1", respondent_id: "user2" },
+        { review_id: "other", respondent_id: "user2" },
+        { review_id: "rv1", respondent_id: "other" },
+      ],
     };
     const { reopenDuvida } = await loadStats();
 
     const r = await reopenDuvida("p1", "rv1", "user2");
 
     expect(r).toEqual({ success: true });
+    expect(writeCalls[0].filters).toEqual([["eq", "review_id", "rv1"], ["eq", "respondent_id", "user2"]]);
   });
 });
 
@@ -246,14 +292,19 @@ describe("resolveDifficulty / reopenDifficulty — smoke", () => {
   });
 
   it("reopenDifficulty: sucesso", async () => {
-    supabaseState.tableResults = {
-      difficulty_resolutions: [{ data: [{ response_id: "resp1" }] }],
+    tableData = {
+      difficulty_resolutions: [
+        { project_id: "p1", response_id: "resp1" },
+        { project_id: "other", response_id: "resp1" },
+        { project_id: "p1", response_id: "other" },
+      ],
     };
     const { reopenDifficulty } = await loadStats();
 
     const r = await reopenDifficulty("p1", "resp1");
 
     expect(r).toEqual({ success: true });
+    expect(writeCalls[0].filters).toEqual([["eq", "project_id", "p1"], ["eq", "response_id", "resp1"]]);
   });
 });
 
@@ -270,7 +321,7 @@ describe("resolveError / reopenError", () => {
       p_decision: "llm_correct", p_expected_context: row.context,
       p_expected_id: null, p_expected_resolved_at: null, p_note: "Conferido", p_value: null,
     });
-    expect(supabaseState.writeCalls).toHaveLength(0);
+    expect(writeCalls).toHaveLength(0);
     expect(hoisted.revalidate).toHaveBeenCalledWith("/projects/p1/reviews/gabarito");
   });
 
@@ -336,12 +387,28 @@ describe("resolveError / reopenError", () => {
     expect(hoisted.rpc).toHaveBeenCalledWith("set_error_resolution", expect.objectContaining({
       p_decision: null, p_expected_id: row.id, p_expected_resolved_at: row.resolved_at,
     }));
-    expect(supabaseState.writeCalls).toHaveLength(0);
+    expect(writeCalls).toHaveLength(0);
   });
 
   const prepareInput = { projectId: "p1", documentId: "doc1", fieldName: "x", llmResponseId: "rllm", preferredHumanResponseId: "rh", sourceKind: "comparacao" as const, sourceId: "review1", decision: "llm_correct" as const };
   function humansInRound(ids: string[], currentRoundId: string | null = "round1") {
-    supabaseState.reset({ projects: { data: { current_round_id: currentRoundId } }, responses: { data: ids.map((id) => ({ id })) } });
+    resetFixtures({
+      projects: [
+        { id: "p1", current_round_id: currentRoundId },
+        { id: "other", current_round_id: "other-round" },
+      ],
+      responses: [
+        ...ids.map((id) => ({
+          id, project_id: "p1", document_id: "doc1", respondent_type: "humano",
+          is_latest: true, round_id: currentRoundId,
+        })),
+        { id: "other-project", project_id: "other", document_id: "doc1", respondent_type: "humano", is_latest: true, round_id: currentRoundId },
+        { id: "other-doc", project_id: "p1", document_id: "other", respondent_type: "humano", is_latest: true, round_id: currentRoundId },
+        { id: "old", project_id: "p1", document_id: "doc1", respondent_type: "humano", is_latest: false, round_id: currentRoundId },
+        { id: "llm", project_id: "p1", document_id: "doc1", respondent_type: "llm", is_latest: true, round_id: currentRoundId },
+        { id: "other-round", project_id: "p1", document_id: "doc1", respondent_type: "humano", is_latest: true, round_id: "other-round" },
+      ],
+    });
   }
 
   it("preparar a confirmação lê contexto sem gravar decisão", async () => {
@@ -352,7 +419,7 @@ describe("resolveError / reopenError", () => {
     expect(hoisted.rpc).toHaveBeenCalledTimes(1);
     // A resposta que a arbitragem escolheu vence quando ainda é humana corrente.
     expect(hoisted.rpc).toHaveBeenCalledWith("llm_error_context", expect.objectContaining({ p_human_response_id: "rh" }));
-    expect(supabaseState.writeCalls).toHaveLength(0);
+    expect(writeCalls).toHaveLength(0);
   });
 
   it("sem a escolhida na rodada corrente, ancora na humana mais antiga da rodada (#733)", async () => {
