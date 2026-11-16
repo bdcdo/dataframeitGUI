@@ -347,10 +347,12 @@ export function mapProjectComments(
 // por documento; ele passa a responder também pelo filtro "Campos ambíguos".
 // O comentário de ambiguidade só sai quando algum card da revisão na célula
 // tem exatamente o texto dele e o mesmo estado (os dois abertos ou os dois
-// resolvidos); senão, segue como card próprio. A resolução de cada um é
-// separada (`reviews` e `project_comments`, com permissões próprias), e a
-// Comparação conta o comentário aberto da célula: escondido sob um card já
-// resolvido, ele ficaria aberto sem card na aba para resolvê-lo.
+// resolvidos); senão, segue como card próprio. Resolver ou reabrir o card
+// leva o comentário junto (`syncCoveredAmbiguityComment`, actions/stats.ts),
+// mas pelas permissões de quem clica, que podem não alcançar `project_comments`;
+// e o comentário também se resolve à parte. Como a Comparação conta o
+// comentário aberto da célula, escondido sob um card já resolvido ele ficaria
+// aberto sem card na aba para resolvê-lo.
 function cellKey(c: ReviewComment): string {
   return `${c.documentId}\u0000${c.fieldName}`;
 }

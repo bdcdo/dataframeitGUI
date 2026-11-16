@@ -136,7 +136,8 @@ export function CodingDraftBanner({
           controles ficam fora daqui pelo mesmo motivo do #634: dentro de live
           region, botão é ruído reanunciado.
           O conteúdo é keyed pela chegada da oferta (`offeredAt`, um instante
-          por documento aberto): de um documento para outro, a mesma frase
+          por chegada à tela: documento aberto ou saída do fullscreen): de um
+          documento para outro, a mesma frase
           ("há 2 horas") não mudaria o DOM, e o leitor não anunciaria a oferta
           nova. Com a key, os nós são trocados e a chegada é anunciada. */}
       <div role="status" className="sr-only">

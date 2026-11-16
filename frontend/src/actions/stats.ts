@@ -5,6 +5,7 @@ import { getAuthUser, type AuthUser } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
 import { caughtErrorCopy, serverErrorScope } from "@/lib/server-error";
+import { ambiguityCommentBody } from "@/lib/reviews/ambiguity-comment";
 import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
@@ -37,6 +38,46 @@ async function withResolutionAction(
   }
 }
 
+const REVIEW_CELL_COLUMNS = "id, project_id, document_id, field_name, verdict, comment";
+
+// O card da revisão com veredito "Ambíguo" responde também pelo comentário
+// kind='ambiguity' da célula que repete a nota dele, e o esconde na aba
+// Comentários (`buildOrderedComments`). Resolver ou reabrir o card leva esse
+// comentário junto; senão, ele seguiria aberto e contado na Comparação, sem
+// card que o mostrasse. Pelo cliente do usuário: a RLS de project_comments
+// decide (coordenador, autor ou `can_resolve`). Sem permissão, nenhuma linha
+// muda, e a aba volta a mostrar o comentário em card próprio, aberto. Ao
+// resolver, só o comentário ainda aberto: um já resolvido mantém quem o
+// resolveu.
+async function syncCoveredAmbiguityComment(
+  supabase: Awaited<ReturnType<typeof createSupabaseServer>>,
+  review: { project_id: string; document_id: string; field_name: string; verdict: string; comment: string | null },
+  patch: { resolved_at: string | null; resolved_by: string | null },
+): Promise<{ success: boolean; error?: string }> {
+  if (review.verdict !== "ambiguo") return { success: true };
+  let query = supabase
+    .from("project_comments")
+    .update(patch)
+    .eq("project_id", review.project_id)
+    .eq("document_id", review.document_id)
+    .eq("field_name", review.field_name)
+    .eq("kind", "ambiguity")
+    .eq("body", ambiguityCommentBody(review.comment));
+  if (patch.resolved_at !== null) query = query.is("resolved_at", null);
+  const { error } = await query;
+  if (error) {
+    return {
+      success: false,
+      error: statsServerError(
+        "comentário de ambiguidade da revisão",
+        error,
+        "O comentário da revisão foi atualizado, mas o de ambiguidade do campo não. Tente novamente.",
+      ),
+    };
+  }
+  return { success: true };
+}
+
 export async function resolveReviewComment(
   reviewId: string,
   projectId: string,
@@ -49,12 +90,15 @@ export async function resolveReviewComment(
         resolved_by: user.id,
       })
       .eq("id", reviewId)
-      .select("id");
+      .select(REVIEW_CELL_COLUMNS);
 
     if (error) return { success: false, error: statsServerError("resolver comentário", error, "Não foi possível resolver o comentário. Tente novamente.") };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para resolver este comentário" };
-    return { success: true };
+    return syncCoveredAmbiguityComment(supabase, data[0], {
+      resolved_at: new Date().toISOString(),
+      resolved_by: user.id,
+    });
   });
 }
 
@@ -70,12 +114,12 @@ export async function reopenReviewComment(
         resolved_by: null,
       })
       .eq("id", reviewId)
-      .select("id");
+      .select(REVIEW_CELL_COLUMNS);
 
     if (error) return { success: false, error: statsServerError("reabrir comentário", error, "Não foi possível reabrir o comentário. Tente novamente.") };
     if (!data || data.length === 0)
       return { success: false, error: "Sem permissão para reabrir este comentário" };
-    return { success: true };
+    return syncCoveredAmbiguityComment(supabase, data[0], { resolved_at: null, resolved_by: null });
   });
 }
 
