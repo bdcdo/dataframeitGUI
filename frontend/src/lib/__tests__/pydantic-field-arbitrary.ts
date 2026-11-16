@@ -76,9 +76,10 @@ const target = fc.constantFrom<PydanticFieldTarget>("all", "llm_only", "human_on
 
 // As escolhas independentes que definem um campo. `buildField` descarta as que
 // não fazem sentido para o tipo sorteado (`allow_other` fora de escolha,
-// subcampos fora de texto), então todo campo construído está na
-// forma canônica que a GUI grava, e trocar uma escolha só por outra (o que o
-// teste de injetividade faz) continua produzindo um campo válido.
+// subcampos fora de texto, opções em texto com subcampos), então todo campo
+// construído está na forma canônica que a GUI grava, e trocar uma escolha só
+// por outra (o que o teste de injetividade faz) continua produzindo um campo
+// válido.
 export interface FieldSpec {
   id: string;
   name: string;
@@ -151,13 +152,14 @@ export function fieldSpec(triggers: PydanticField[]): fc.Arbitrary<FieldSpec> {
 export function buildField(spec: FieldSpec): PydanticField {
   const isChoice = spec.type === "single" || spec.type === "multi";
   const hasSubfields = spec.type === "text" && spec.subfields !== undefined;
+  // Em texto, subcampos e respostas padronizadas são excludentes na GUI.
+  const textOptions = hasSubfields ? undefined : spec.textOptions;
+  const looseOptions = spec.type === "date" ? spec.dateOptions : textOptions;
   const field: PydanticField = {
     id: spec.id,
     name: spec.name,
     type: spec.type,
-    options: isChoice
-      ? spec.choiceOptions
-      : ((spec.type === "date" ? spec.dateOptions : spec.textOptions) ?? null),
+    options: isChoice ? spec.choiceOptions : (looseOptions ?? null),
     description: spec.description,
     help_text: spec.help_text,
     target: spec.target,

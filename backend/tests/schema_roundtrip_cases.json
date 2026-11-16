@@ -50,10 +50,7 @@
         "id": "3c0fcead-fbcf-8a11-9129-7c9d46324492",
         "name": "w",
         "type": "text",
-        "options": [
-          "}ã\n\\",
-          ".\t"
-        ],
+        "options": null,
         "description": "{😀",
         "help_text": "\\\r0😀",
         "subfields": [
@@ -70,10 +67,7 @@
         "id": "0000001c-fffa-8fff-bfff-fff8262b5ce5",
         "name": "h__s",
         "type": "text",
-        "options": [
-          "ã'Zãã\u001c\u001f\"",
-          "\u001fa\n0Z'\u001c\\"
-        ],
+        "options": null,
         "description": "_﻿",
         "help_text": "b:",
         "target": "all",
@@ -99,62 +93,23 @@
         "condition": {
           "field": "w",
           "not_in": [
-            "}ã\n\\"
+            -2.102364003387494e-18
           ]
         },
-        "justification_prompt": "\\a\u001f_",
-        "question_revision": 4
-      },
-      {
-        "id": "0000001d-0010-1000-8000-0005127cb726",
-        "name": "sm",
-        "type": "date",
-        "options": [
-          "ç\u001c{b\"\u001f\n",
-          "'\u001fZ\n0",
-          "Z\n'}b'﻿﻿b"
-        ],
-        "description": "}0\rZ'",
-        "help_text": "\\b",
-        "target": "llm_only",
-        "required": false,
-        "justification_prompt": "a\"0﻿\u001fã😀:ã",
-        "question_revision": 2,
-        "hash": "a69e7691f4fa"
-      },
-      {
-        "id": "fffffff1-0002-1000-ac83-4b365c70adc9",
-        "name": "ba",
-        "type": "date",
-        "options": [
-          "a_\u001c",
-          "0ã00a",
-          "ã"
-        ],
-        "description": "a.ã '_",
-        "target": "all",
-        "required": false,
-        "condition": {
-          "field": "sm",
-          "exists": true
-        },
-        "justification_prompt": "﻿\"{a",
-        "question_revision": 2
+        "question_revision": 1,
+        "hash": "aef14241b60a"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _w_fields(BaseModel):\n    r_0: Optional[str] = Field(default=None, description=\"ãZa}\")\n\nclass _h__s_fields(BaseModel):\n    c9i_3: str = Field(description=\"b.:﻿'\\\"\\\\:\")\n    r___4i: str = Field(description=\"_.{\\\\\\n\")\n    c7_9n_sk: Optional[str] = Field(default=None, description=\"\\\\\\n\\t\")\n\nclass Analysis(BaseModel):\n    w: _w_fields = Field(description=\"{😀. Instrucoes: \\\\\\r0😀\", json_schema_extra={\"id\": \"3c0fcead-fbcf-8a11-9129-7c9d46324492\", \"options\": [\"}ã\\n\\\\\", \".\\t\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"\\\\\\r0😀\", \"question_revision\": 9})\n    h__s: Optional[_h__s_fields] = Field(default=None, description=\"_﻿. Instrucoes: b:\", json_schema_extra={\"id\": \"0000001c-fffa-8fff-bfff-fff8262b5ce5\", \"options\": [\"ã'Zãã\u001c\u001f\\\"\", \"\u001fa\\n0Z'\u001c\\\\\"], \"help_text\": \"b:\", \"visible_if\": {\"field\": \"w\", \"not_in\": [\"}ã\\n\\\\\"]}, \"justification_prompt\": \"\\\\a\u001f_\", \"question_revision\": 4})\n    sm: str = Field(description=\"}0\\rZ'. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"ç\u001c{b\\\"\u001f\\n\\\", \\\"'\u001fZ\\n0\\\", \\\"Z\\n'}b'﻿﻿b\\\". Instrucoes: \\\\b\", json_schema_extra={\"id\": \"0000001d-0010-1000-8000-0005127cb726\", \"target\": \"llm_only\", \"required\": False, \"field_type\": \"date\", \"options\": [\"ç\u001c{b\\\"\u001f\\n\", \"'\u001fZ\\n0\", \"Z\\n'}b'﻿﻿b\"], \"help_text\": \"\\\\b\", \"justification_prompt\": \"a\\\"0﻿\u001fã😀:ã\", \"question_revision\": 2})\n    ba: Optional[str] = Field(default=None, description=\"a.ã '_. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"a_\u001c\\\", \\\"0ã00a\\\", \\\"ã\\\"\", json_schema_extra={\"id\": \"fffffff1-0002-1000-ac83-4b365c70adc9\", \"required\": False, \"field_type\": \"date\", \"options\": [\"a_\u001c\", \"0ã00a\", \"ã\"], \"visible_if\": {\"field\": \"sm\", \"exists\": True}, \"justification_prompt\": \"﻿\\\"{a\", \"question_revision\": 2})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _w_fields(BaseModel):\n    r_0: Optional[str] = Field(default=None, description=\"ãZa}\")\n\nclass _h__s_fields(BaseModel):\n    c9i_3: str = Field(description=\"b.:﻿'\\\"\\\\:\")\n    r___4i: str = Field(description=\"_.{\\\\\\n\")\n    c7_9n_sk: Optional[str] = Field(default=None, description=\"\\\\\\n\\t\")\n\nclass Analysis(BaseModel):\n    w: _w_fields = Field(description=\"{😀. Instrucoes: \\\\\\r0😀\", json_schema_extra={\"id\": \"3c0fcead-fbcf-8a11-9129-7c9d46324492\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"\\\\\\r0😀\", \"question_revision\": 9})\n    h__s: Optional[_h__s_fields] = Field(default=None, description=\"_﻿. Instrucoes: b:\", json_schema_extra={\"id\": \"0000001c-fffa-8fff-bfff-fff8262b5ce5\", \"help_text\": \"b:\", \"visible_if\": {\"field\": \"w\", \"not_in\": [-2.102364003387494e-18]}, \"question_revision\": 1})\n",
     "compiled": [
       {
         "id": "3c0fcead-fbcf-8a11-9129-7c9d46324492",
         "name": "w",
         "type": "text",
-        "options": [
-          "}ã\n\\",
-          ".\t"
-        ],
+        "options": null,
         "description": "{😀",
         "target": "all",
-        "hash": "c2d976ed2fde",
+        "hash": "45c0beb62473",
         "help_text": "\\\r0😀",
         "subfields": [
           {
@@ -170,13 +125,10 @@
         "id": "0000001c-fffa-8fff-bfff-fff8262b5ce5",
         "name": "h__s",
         "type": "text",
-        "options": [
-          "ã'Zãã\u001c\u001f\"",
-          "\u001fa\n0Z'\u001c\\"
-        ],
+        "options": null,
         "description": "_﻿",
         "target": "all",
-        "hash": "b049434b845d",
+        "hash": "aef14241b60a",
         "help_text": "b:",
         "subfields": [
           {
@@ -199,48 +151,10 @@
         "condition": {
           "field": "w",
           "not_in": [
-            "}ã\n\\"
+            -2.102364003387494e-18
           ]
         },
-        "justification_prompt": "\\a\u001f_",
-        "question_revision": 4
-      },
-      {
-        "id": "0000001d-0010-1000-8000-0005127cb726",
-        "name": "sm",
-        "type": "date",
-        "options": [
-          "ç\u001c{b\"\u001f\n",
-          "'\u001fZ\n0",
-          "Z\n'}b'﻿﻿b"
-        ],
-        "description": "}0\rZ'",
-        "target": "llm_only",
-        "hash": "a69e7691f4fa",
-        "help_text": "\\b",
-        "required": false,
-        "justification_prompt": "a\"0﻿\u001fã😀:ã",
-        "question_revision": 2
-      },
-      {
-        "id": "fffffff1-0002-1000-ac83-4b365c70adc9",
-        "name": "ba",
-        "type": "date",
-        "options": [
-          "a_\u001c",
-          "0ã00a",
-          "ã"
-        ],
-        "description": "a.ã '_",
-        "target": "all",
-        "hash": "11461dfaf99d",
-        "required": false,
-        "condition": {
-          "field": "sm",
-          "exists": true
-        },
-        "justification_prompt": "﻿\"{a",
-        "question_revision": 2
+        "question_revision": 1
       }
     ]
   },
@@ -541,9 +455,7 @@
         "id": "00000003-22b7-1b10-b1ff-b0753e36cee7",
         "name": "y_8s64",
         "type": "text",
-        "options": [
-          "{:😀Z\r"
-        ],
+        "options": null,
         "description": " :\rab\n_\u001c",
         "help_text": "'",
         "target": "all",
@@ -568,18 +480,16 @@
         "justification_prompt": ".ã'"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _y_8s64_fields(BaseModel):\n    f06_: str = Field(description=\"a\u001c\u001fç\\n\\\\a\\n:\u001c\")\n    s___3d5: str = Field(description=\":\\tã\\\\{_a\")\n    json: str = Field(description=\"0\\r:.ç😀\\t😀\")\n\nclass Analysis(BaseModel):\n    y_8s64: _y_8s64_fields = Field(description=\" :\\rab\\n_\u001c. Instrucoes: '\", json_schema_extra={\"id\": \"00000003-22b7-1b10-b1ff-b0753e36cee7\", \"required\": False, \"options\": [\"{:😀Z\\r\"], \"help_text\": \"'\", \"justification_prompt\": \".ã'\"})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _y_8s64_fields(BaseModel):\n    f06_: str = Field(description=\"a\u001c\u001fç\\n\\\\a\\n:\u001c\")\n    s___3d5: str = Field(description=\":\\tã\\\\{_a\")\n    json: str = Field(description=\"0\\r:.ç😀\\t😀\")\n\nclass Analysis(BaseModel):\n    y_8s64: _y_8s64_fields = Field(description=\" :\\rab\\n_\u001c. Instrucoes: '\", json_schema_extra={\"id\": \"00000003-22b7-1b10-b1ff-b0753e36cee7\", \"required\": False, \"help_text\": \"'\", \"justification_prompt\": \".ã'\"})\n",
     "compiled": [
       {
         "id": "00000003-22b7-1b10-b1ff-b0753e36cee7",
         "name": "y_8s64",
         "type": "text",
-        "options": [
-          "{:😀Z\r"
-        ],
+        "options": null,
         "description": " :\rab\n_\u001c",
         "target": "all",
-        "hash": "b86eb6b0a475",
+        "hash": "36313b909b47",
         "help_text": "'",
         "required": false,
         "subfields": [
@@ -842,10 +752,7 @@
         "id": "96f7104e-0011-1000-a580-357c00000019",
         "name": "j_0_pc",
         "type": "text",
-        "options": [
-          "b",
-          "ã\rbç\n0\t\u001c😀"
-        ],
+        "options": null,
         "description": "0\\._ \n ç\n",
         "help_text": "ãZ_",
         "target": "all",
@@ -860,17 +767,13 @@
         "subfield_rule": "at_least_one",
         "justification_prompt": "0{.ã\\\\",
         "question_revision": 7,
-        "hash": "413a65c0f5c5"
+        "hash": "db9a62cccd8e"
       },
       {
         "id": "0000000f-6a1f-1386-9181-b68700000001",
         "name": "q3i6_91",
         "type": "text",
-        "options": [
-          "Z\u001c\r.\"",
-          "}\tç0\r",
-          "a\n.{"
-        ],
+        "options": null,
         "description": "\t\t.:'\r\\\"😀\"",
         "required": false,
         "subfields": [
@@ -909,25 +812,38 @@
         "allow_other": false,
         "condition": {
           "field": "q3i6_91",
-          "equals": "a\n.{"
+          "equals": "﻿\n{ãZ😀{_"
         },
-        "question_revision": 3,
-        "hash": "59baba3ee2f2"
+        "justification_prompt": "b\u001f\"",
+        "question_revision": 2
+      },
+      {
+        "id": "baa0fbde-ff5f-8c9f-9e53-d9c90000001f",
+        "name": "analysis",
+        "type": "date",
+        "options": null,
+        "description": "Z😀a_\"",
+        "help_text": "_\r0",
+        "target": "all",
+        "required": true,
+        "condition": {
+          "field": "j_0_pc",
+          "not_equals": 8.484807549936481e-107
+        },
+        "justification_prompt": "''\r\\ç\\\u001cZ}",
+        "hash": "1ce9d4435a15"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _j_0_pc_fields(BaseModel):\n    json: Optional[str] = Field(default=None, description=\"a}0.ç﻿\")\n\nclass _q3i6_91_fields(BaseModel):\n    d3_4_: Optional[str] = Field(default=None, description=\"_\\\"}\")\n    w___m: str = Field(description=\"ç\")\n    i: Optional[str] = Field(default=None, description=\"'😀ã\\\"'\\r\")\n\nclass Analysis(BaseModel):\n    j_0_pc: _j_0_pc_fields = Field(description=\"0\\\\._ \\n ç\\n. Instrucoes: ãZ_\", json_schema_extra={\"id\": \"96f7104e-0011-1000-a580-357c00000019\", \"options\": [\"b\", \"ã\\rbç\\n0\\t\u001c😀\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"ãZ_\", \"justification_prompt\": \"0{.ã\\\\\\\\\", \"question_revision\": 7})\n    q3i6_91: _q3i6_91_fields = Field(description=\"\\t\\t.:'\\r\\\\\\\"😀\\\"\", json_schema_extra={\"id\": \"0000000f-6a1f-1386-9181-b68700000001\", \"required\": False, \"options\": [\"Z\u001c\\r.\\\"\", \"}\\tç0\\r\", \"a\\n.{\"], \"justification_prompt\": \"_}\", \"question_revision\": 1})\n    z93: Optional[list[Literal[\"ã0_}\\r😀0\", \"😀.bZ}\u001f0\\\\\", \"\\\\\"]]] = Field(default=None, description=\"\u001c\\t:\\\"_\\\"'. Instrucoes: :0\", json_schema_extra={\"id\": \"e4959874-cf7b-1ef1-b12b-dd8600000004\", \"required\": False, \"help_text\": \":0\", \"visible_if\": {\"field\": \"q3i6_91\", \"equals\": \"a\\n.{\"}, \"question_revision\": 3})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _j_0_pc_fields(BaseModel):\n    json: Optional[str] = Field(default=None, description=\"a}0.ç﻿\")\n\nclass _q3i6_91_fields(BaseModel):\n    d3_4_: Optional[str] = Field(default=None, description=\"_\\\"}\")\n    w___m: str = Field(description=\"ç\")\n    i: Optional[str] = Field(default=None, description=\"'😀ã\\\"'\\r\")\n\nclass Analysis(BaseModel):\n    j_0_pc: _j_0_pc_fields = Field(description=\"0\\\\._ \\n ç\\n. Instrucoes: ãZ_\", json_schema_extra={\"id\": \"96f7104e-0011-1000-a580-357c00000019\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"ãZ_\", \"justification_prompt\": \"0{.ã\\\\\\\\\", \"question_revision\": 7})\n    q3i6_91: _q3i6_91_fields = Field(description=\"\\t\\t.:'\\r\\\\\\\"😀\\\"\", json_schema_extra={\"id\": \"0000000f-6a1f-1386-9181-b68700000001\", \"required\": False, \"justification_prompt\": \"_}\", \"question_revision\": 1})\n    z93: Optional[list[Literal[\"ã0_}\\r😀0\", \"😀.bZ}\u001f0\\\\\", \"\\\\\"]]] = Field(default=None, description=\"\u001c\\t:\\\"_\\\"'. Instrucoes: :0\", json_schema_extra={\"id\": \"e4959874-cf7b-1ef1-b12b-dd8600000004\", \"required\": False, \"help_text\": \":0\", \"visible_if\": {\"field\": \"q3i6_91\", \"equals\": \"﻿\\n{ãZ😀{_\"}, \"justification_prompt\": \"b\u001f\\\"\", \"question_revision\": 2})\n    analysis: Optional[str] = Field(default=None, description=\"Z😀a_\\\". Formato: DD/MM/AAAA (use XX para partes desconhecidas). Instrucoes: _\\r0\", json_schema_extra={\"id\": \"baa0fbde-ff5f-8c9f-9e53-d9c90000001f\", \"field_type\": \"date\", \"help_text\": \"_\\r0\", \"visible_if\": {\"field\": \"j_0_pc\", \"not_equals\": 8.484807549936481e-107}, \"justification_prompt\": \"''\\r\\\\ç\\\\\u001cZ}\"})\n",
     "compiled": [
       {
         "id": "96f7104e-0011-1000-a580-357c00000019",
         "name": "j_0_pc",
         "type": "text",
-        "options": [
-          "b",
-          "ã\rbç\n0\t\u001c😀"
-        ],
+        "options": null,
         "description": "0\\._ \n ç\n",
         "target": "all",
-        "hash": "413a65c0f5c5",
+        "hash": "db9a62cccd8e",
         "help_text": "ãZ_",
         "subfields": [
           {
@@ -944,14 +860,10 @@
         "id": "0000000f-6a1f-1386-9181-b68700000001",
         "name": "q3i6_91",
         "type": "text",
-        "options": [
-          "Z\u001c\r.\"",
-          "}\tç0\r",
-          "a\n.{"
-        ],
+        "options": null,
         "description": "\t\t.:'\r\\\"😀\"",
         "target": "all",
-        "hash": "c87477773dde",
+        "hash": "762d71ebdf2e",
         "required": false,
         "subfields": [
           {
@@ -985,14 +897,30 @@
         ],
         "description": "\u001c\t:\"_\"'",
         "target": "all",
-        "hash": "59baba3ee2f2",
+        "hash": "d0770fa6aba2",
         "help_text": ":0",
         "required": false,
         "condition": {
           "field": "q3i6_91",
-          "equals": "a\n.{"
+          "equals": "﻿\n{ãZ😀{_"
         },
-        "question_revision": 3
+        "justification_prompt": "b\u001f\"",
+        "question_revision": 2
+      },
+      {
+        "id": "baa0fbde-ff5f-8c9f-9e53-d9c90000001f",
+        "name": "analysis",
+        "type": "date",
+        "options": null,
+        "description": "Z😀a_\"",
+        "target": "all",
+        "hash": "1ce9d4435a15",
+        "help_text": "_\r0",
+        "condition": {
+          "field": "j_0_pc",
+          "not_equals": 8.484807549936481e-107
+        },
+        "justification_prompt": "''\r\\ç\\\u001cZ}"
       }
     ]
   },
@@ -1055,10 +983,7 @@
         "id": "bdd14cee-5d7b-45bf-a027-47afdf4e6757",
         "name": "j_9_",
         "type": "text",
-        "options": [
-          "ç0﻿0\"\r\\}}ã",
-          "\rç"
-        ],
+        "options": null,
         "description": "\tbã'{}\"﻿\u001f",
         "target": "all",
         "required": false,
@@ -1075,7 +1000,7 @@
         },
         "justification_prompt": "ã.Z",
         "question_revision": 2,
-        "hash": "67391f881c93"
+        "hash": "e46f4daa48c4"
       },
       {
         "id": "08e6fb00-701c-7b4a-9487-f62e2868321b",
@@ -1123,7 +1048,7 @@
         "hash": "a4c8b31ac313"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _j_9__fields(BaseModel):\n    tcall5wd: Optional[str] = Field(default=None, description=\"Zb\\\"\")\n\nclass Analysis(BaseModel):\n    c_o_: str = Field(description=\"\\n\\r}. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\".\\\", \\\"}b\u001c\u001c0\\\", \\\"😀\\\", \\\"\\n b\\n\\\". Instrucoes: ç{\", json_schema_extra={\"id\": \"18901307-ac23-6e84-92fc-ad0603a2f2a3\", \"required\": False, \"field_type\": \"date\", \"options\": [\".\", \"}b\u001c\u001c0\", \"😀\", \"\\n b\\n\"], \"help_text\": \"ç{\", \"question_revision\": 9})\n    j_9_: Optional[_j_9__fields] = Field(default=None, description=\"\\tbã'{}\\\"﻿\u001f\", json_schema_extra={\"id\": \"bdd14cee-5d7b-45bf-a027-47afdf4e6757\", \"required\": False, \"options\": [\"ç0﻿0\\\"\\r\\\\}}ã\", \"\\rç\"], \"visible_if\": {\"field\": \"c_o_\", \"not_equals\": \"}b\u001c\u001c0\"}, \"justification_prompt\": \"ã.Z\", \"question_revision\": 2})\n    ok16_l_: Optional[Literal[\"\\n'\\\\\", \"b{0﻿\\\"\\n😀b\"]] = Field(default=None, description=\"\u001c 0Z }{\\\\. Instrucoes: ﻿\u001f﻿b\", json_schema_extra={\"id\": \"08e6fb00-701c-7b4a-9487-f62e2868321b\", \"target\": \"none\", \"required\": False, \"help_text\": \"﻿\u001f﻿b\", \"visible_if\": {\"field\": \"c_o_\", \"not_in\": [-1.2746260449472833e-279, \".\", \"}b\u001c\u001c0\"]}, \"justification_prompt\": \"ã}'﻿\", \"question_revision\": 2})\n    q_i: Optional[list[Literal[\"çZ}\"]]] = Field(default=None, description=\"😀😀. Instrucoes: aZãb\", json_schema_extra={\"id\": \"0000001f-0001-1000-8000-000a31d236e0\", \"target\": \"none\", \"help_text\": \"aZãb\", \"visible_if\": {\"field\": \"ok16_l_\", \"in\": [True]}, \"justification_prompt\": \"😀b😀}_Z\", \"question_revision\": 9})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _j_9__fields(BaseModel):\n    tcall5wd: Optional[str] = Field(default=None, description=\"Zb\\\"\")\n\nclass Analysis(BaseModel):\n    c_o_: str = Field(description=\"\\n\\r}. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\".\\\", \\\"}b\u001c\u001c0\\\", \\\"😀\\\", \\\"\\n b\\n\\\". Instrucoes: ç{\", json_schema_extra={\"id\": \"18901307-ac23-6e84-92fc-ad0603a2f2a3\", \"required\": False, \"field_type\": \"date\", \"options\": [\".\", \"}b\u001c\u001c0\", \"😀\", \"\\n b\\n\"], \"help_text\": \"ç{\", \"question_revision\": 9})\n    j_9_: Optional[_j_9__fields] = Field(default=None, description=\"\\tbã'{}\\\"﻿\u001f\", json_schema_extra={\"id\": \"bdd14cee-5d7b-45bf-a027-47afdf4e6757\", \"required\": False, \"visible_if\": {\"field\": \"c_o_\", \"not_equals\": \"}b\u001c\u001c0\"}, \"justification_prompt\": \"ã.Z\", \"question_revision\": 2})\n    ok16_l_: Optional[Literal[\"\\n'\\\\\", \"b{0﻿\\\"\\n😀b\"]] = Field(default=None, description=\"\u001c 0Z }{\\\\. Instrucoes: ﻿\u001f﻿b\", json_schema_extra={\"id\": \"08e6fb00-701c-7b4a-9487-f62e2868321b\", \"target\": \"none\", \"required\": False, \"help_text\": \"﻿\u001f﻿b\", \"visible_if\": {\"field\": \"c_o_\", \"not_in\": [-1.2746260449472833e-279, \".\", \"}b\u001c\u001c0\"]}, \"justification_prompt\": \"ã}'﻿\", \"question_revision\": 2})\n    q_i: Optional[list[Literal[\"çZ}\"]]] = Field(default=None, description=\"😀😀. Instrucoes: aZãb\", json_schema_extra={\"id\": \"0000001f-0001-1000-8000-000a31d236e0\", \"target\": \"none\", \"help_text\": \"aZãb\", \"visible_if\": {\"field\": \"ok16_l_\", \"in\": [True]}, \"justification_prompt\": \"😀b😀}_Z\", \"question_revision\": 9})\n",
     "compiled": [
       {
         "id": "18901307-ac23-6e84-92fc-ad0603a2f2a3",
@@ -1146,13 +1071,10 @@
         "id": "bdd14cee-5d7b-45bf-a027-47afdf4e6757",
         "name": "j_9_",
         "type": "text",
-        "options": [
-          "ç0﻿0\"\r\\}}ã",
-          "\rç"
-        ],
+        "options": null,
         "description": "\tbã'{}\"﻿\u001f",
         "target": "all",
-        "hash": "67391f881c93",
+        "hash": "e46f4daa48c4",
         "required": false,
         "subfields": [
           {
@@ -1222,9 +1144,7 @@
         "id": "0000001d-9ae6-5393-8000-0019d83212cc",
         "name": "d9_5",
         "type": "text",
-        "options": [
-          "  \\﻿"
-        ],
+        "options": null,
         "description": "\\",
         "help_text": "ã\ra_ã\u001c:﻿:",
         "subfields": [
@@ -1246,21 +1166,19 @@
         ],
         "subfield_rule": "at_least_one",
         "question_revision": 5,
-        "hash": "f67b3e254843"
+        "hash": "1491d552916a"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _d9_5_fields(BaseModel):\n    vcl0z: Optional[str] = Field(default=None, description=\". \\n\\r\u001c\u001fã\", json_schema_extra={\"subfield_required\": True})\n    x9: Optional[str] = Field(default=None, description=\"\\r\\r\\r\\tbãZ﻿Z\", json_schema_extra={\"subfield_required\": True})\n    literal: Optional[str] = Field(default=None, description=\"\\\\Z{﻿0\u001c\")\n\nclass Analysis(BaseModel):\n    d9_5: _d9_5_fields = Field(description=\"\\\\. Instrucoes: ã\\ra_ã\u001c:﻿:\", json_schema_extra={\"id\": \"0000001d-9ae6-5393-8000-0019d83212cc\", \"options\": [\"  \\\\﻿\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"ã\\ra_ã\u001c:﻿:\", \"question_revision\": 5})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _d9_5_fields(BaseModel):\n    vcl0z: Optional[str] = Field(default=None, description=\". \\n\\r\u001c\u001fã\", json_schema_extra={\"subfield_required\": True})\n    x9: Optional[str] = Field(default=None, description=\"\\r\\r\\r\\tbãZ﻿Z\", json_schema_extra={\"subfield_required\": True})\n    literal: Optional[str] = Field(default=None, description=\"\\\\Z{﻿0\u001c\")\n\nclass Analysis(BaseModel):\n    d9_5: _d9_5_fields = Field(description=\"\\\\. Instrucoes: ã\\ra_ã\u001c:﻿:\", json_schema_extra={\"id\": \"0000001d-9ae6-5393-8000-0019d83212cc\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"ã\\ra_ã\u001c:﻿:\", \"question_revision\": 5})\n",
     "compiled": [
       {
         "id": "0000001d-9ae6-5393-8000-0019d83212cc",
         "name": "d9_5",
         "type": "text",
-        "options": [
-          "  \\﻿"
-        ],
+        "options": null,
         "description": "\\",
         "target": "all",
-        "hash": "f67b3e254843",
+        "hash": "1491d552916a",
         "help_text": "ã\ra_ã\u001c:﻿:",
         "subfields": [
           {
@@ -1409,11 +1327,7 @@
         "id": "09d54aa5-8616-2967-b144-58d6f7e91775",
         "name": "a_t",
         "type": "text",
-        "options": [
-          "'\\\\\n﻿\\\r\r:",
-          "\"\r}a\r\u001f😀:0:",
-          "\r}😀\\.b\t{\t"
-        ],
+        "options": null,
         "description": "😀\\.\t",
         "help_text": "b",
         "target": "llm_only",
@@ -1432,23 +1346,19 @@
         "subfield_rule": "at_least_one",
         "justification_prompt": ":\n:0\tb",
         "question_revision": 8,
-        "hash": "f8c4f1bf3a6f"
+        "hash": "393d1585def2"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _a_t_fields(BaseModel):\n    m: Optional[str] = Field(default=None, description=\"0'﻿a'\\\"Z\\\"\")\n    rp1_g8_j: Optional[str] = Field(default=None, description=\":{ã}}ã\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    a_t: _a_t_fields = Field(description=\"😀\\\\.\\t. Instrucoes: b\", json_schema_extra={\"id\": \"09d54aa5-8616-2967-b144-58d6f7e91775\", \"target\": \"llm_only\", \"required\": False, \"options\": [\"'\\\\\\\\\\n﻿\\\\\\r\\r:\", \"\\\"\\r}a\\r\u001f😀:0:\", \"\\r}😀\\\\.b\\t{\\t\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"b\", \"justification_prompt\": \":\\n:0\\tb\", \"question_revision\": 8})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _a_t_fields(BaseModel):\n    m: Optional[str] = Field(default=None, description=\"0'﻿a'\\\"Z\\\"\")\n    rp1_g8_j: Optional[str] = Field(default=None, description=\":{ã}}ã\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    a_t: _a_t_fields = Field(description=\"😀\\\\.\\t. Instrucoes: b\", json_schema_extra={\"id\": \"09d54aa5-8616-2967-b144-58d6f7e91775\", \"target\": \"llm_only\", \"required\": False, \"subfield_rule\": \"at_least_one\", \"help_text\": \"b\", \"justification_prompt\": \":\\n:0\\tb\", \"question_revision\": 8})\n",
     "compiled": [
       {
         "id": "09d54aa5-8616-2967-b144-58d6f7e91775",
         "name": "a_t",
         "type": "text",
-        "options": [
-          "'\\\\\n﻿\\\r\r:",
-          "\"\r}a\r\u001f😀:0:",
-          "\r}😀\\.b\t{\t"
-        ],
+        "options": null,
         "description": "😀\\.\t",
         "target": "llm_only",
-        "hash": "f8c4f1bf3a6f",
+        "hash": "393d1585def2",
         "help_text": "b",
         "required": false,
         "subfields": [
@@ -1476,12 +1386,7 @@
         "id": "8336ba60-63c2-6ad4-9931-39d3deb268f5",
         "name": "mw",
         "type": "text",
-        "options": [
-          "ç.\n\u001c﻿",
-          "\t\u001f:\"ã\u001f﻿:",
-          "0Z\\aZ\n\u001f'",
-          "{b'\\.'\t:\r\u001f"
-        ],
+        "options": null,
         "description": ".\".",
         "help_text": "{}\u001f{ãb😀",
         "target": "all",
@@ -1513,26 +1418,22 @@
         "allow_other": false,
         "condition": {
           "field": "mw",
-          "equals": "0Z\\aZ\n\u001f'"
+          "equals": 957
         },
-        "justification_prompt": "}\"0ã\\'ã{"
+        "justification_prompt": "a\t}\"0",
+        "question_revision": 9
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _mw_fields(BaseModel):\n    fx9___5: Optional[str] = Field(default=None, description=\"\\t:﻿}} \")\n    c1__y4_: Optional[str] = Field(default=None, description=\"__0 ﻿b}.\\nb\")\n\nclass Analysis(BaseModel):\n    mw: _mw_fields = Field(description=\".\\\".. Instrucoes: {}\u001f{ãb😀\", json_schema_extra={\"id\": \"8336ba60-63c2-6ad4-9931-39d3deb268f5\", \"required\": False, \"options\": [\"ç.\\n\u001c﻿\", \"\\t\u001f:\\\"ã\u001f﻿:\", \"0Z\\\\aZ\\n\u001f'\", \"{b'\\\\.'\\t:\\r\u001f\"], \"help_text\": \"{}\u001f{ãb😀\", \"justification_prompt\": \"\\\"\", \"question_revision\": 8})\n    s_o39x: Optional[list[Literal[\"}{b\\t}\\\\\"]]] = Field(default=None, description=\" ç0\\rã: a\\\"\", json_schema_extra={\"id\": \"aa5095c2-37d8-1d34-a97f-aa778e1e544c\", \"visible_if\": {\"field\": \"mw\", \"equals\": \"0Z\\\\aZ\\n\u001f'\"}, \"justification_prompt\": \"}\\\"0ã\\\\'ã{\"})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _mw_fields(BaseModel):\n    fx9___5: Optional[str] = Field(default=None, description=\"\\t:﻿}} \")\n    c1__y4_: Optional[str] = Field(default=None, description=\"__0 ﻿b}.\\nb\")\n\nclass Analysis(BaseModel):\n    mw: _mw_fields = Field(description=\".\\\".. Instrucoes: {}\u001f{ãb😀\", json_schema_extra={\"id\": \"8336ba60-63c2-6ad4-9931-39d3deb268f5\", \"required\": False, \"help_text\": \"{}\u001f{ãb😀\", \"justification_prompt\": \"\\\"\", \"question_revision\": 8})\n    s_o39x: Optional[list[Literal[\"}{b\\t}\\\\\"]]] = Field(default=None, description=\" ç0\\rã: a\\\"\", json_schema_extra={\"id\": \"aa5095c2-37d8-1d34-a97f-aa778e1e544c\", \"visible_if\": {\"field\": \"mw\", \"equals\": 957}, \"justification_prompt\": \"a\\t}\\\"0\", \"question_revision\": 9})\n",
     "compiled": [
       {
         "id": "8336ba60-63c2-6ad4-9931-39d3deb268f5",
         "name": "mw",
         "type": "text",
-        "options": [
-          "ç.\n\u001c﻿",
-          "\t\u001f:\"ã\u001f﻿:",
-          "0Z\\aZ\n\u001f'",
-          "{b'\\.'\t:\r\u001f"
-        ],
+        "options": null,
         "description": ".\".",
         "target": "all",
-        "hash": "aeca9bb8417c",
+        "hash": "7ada0dedd139",
         "help_text": "{}\u001f{ãb😀",
         "required": false,
         "subfields": [
@@ -1560,12 +1461,13 @@
         ],
         "description": " ç0\rã: a\"",
         "target": "all",
-        "hash": "37d64b921b44",
+        "hash": "a054c6317f17",
         "condition": {
           "field": "mw",
-          "equals": "0Z\\aZ\n\u001f'"
+          "equals": 957
         },
-        "justification_prompt": "}\"0ã\\'ã{"
+        "justification_prompt": "a\t}\"0",
+        "question_revision": 9
       }
     ]
   },
@@ -1648,10 +1550,7 @@
         "id": "06e2dab4-e87e-7fa7-8000-000a0aff9d89",
         "name": "k_r_",
         "type": "text",
-        "options": [
-          "😀\\.",
-          "\rb\r}"
-        ],
+        "options": null,
         "description": "﻿\"",
         "help_text": "ãb",
         "target": "llm_only",
@@ -1677,19 +1576,16 @@
         "question_revision": 6
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _k_r__fields(BaseModel):\n    gnsf_l: Optional[str] = Field(default=None, description=\"﻿\", json_schema_extra={\"subfield_required\": True})\n    z5_3ss: Optional[str] = Field(default=None, description=\"\\\\bZã\u001f\\\"0﻿\", json_schema_extra={\"subfield_required\": True})\n    jqwy5_: Optional[str] = Field(default=None, description=\"{\u001c\\n\u001c😀\\t\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    k_r_: _k_r__fields = Field(description=\"﻿\\\". Instrucoes: ãb\", json_schema_extra={\"id\": \"06e2dab4-e87e-7fa7-8000-000a0aff9d89\", \"target\": \"llm_only\", \"options\": [\"😀\\\\.\", \"\\rb\\r}\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"ãb\", \"justification_prompt\": \"_\\t_😀ba.\", \"question_revision\": 6})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _k_r__fields(BaseModel):\n    gnsf_l: Optional[str] = Field(default=None, description=\"﻿\", json_schema_extra={\"subfield_required\": True})\n    z5_3ss: Optional[str] = Field(default=None, description=\"\\\\bZã\u001f\\\"0﻿\", json_schema_extra={\"subfield_required\": True})\n    jqwy5_: Optional[str] = Field(default=None, description=\"{\u001c\\n\u001c😀\\t\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    k_r_: _k_r__fields = Field(description=\"﻿\\\". Instrucoes: ãb\", json_schema_extra={\"id\": \"06e2dab4-e87e-7fa7-8000-000a0aff9d89\", \"target\": \"llm_only\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"ãb\", \"justification_prompt\": \"_\\t_😀ba.\", \"question_revision\": 6})\n",
     "compiled": [
       {
         "id": "06e2dab4-e87e-7fa7-8000-000a0aff9d89",
         "name": "k_r_",
         "type": "text",
-        "options": [
-          "😀\\.",
-          "\rb\r}"
-        ],
+        "options": null,
         "description": "﻿\"",
         "target": "llm_only",
-        "hash": "b4f2e9ccdd68",
+        "hash": "0707f4ba91b0",
         "help_text": "ãb",
         "subfields": [
           {
@@ -1839,11 +1735,7 @@
         "id": "5c768187-75c8-58b1-bfff-fffa0000000f",
         "name": "z___",
         "type": "text",
-        "options": [
-          "'{\n\\\\ ",
-          "\"",
-          "'😀a"
-        ],
+        "options": null,
         "description": "😀} .b{",
         "help_text": "{ \u001f {\"",
         "target": "none",
@@ -1870,12 +1762,7 @@
         "id": "00000011-a4c6-27e7-bf8d-93a50000000d",
         "name": "wq3ki",
         "type": "text",
-        "options": [
-          "0}",
-          "\n\nçç",
-          "'﻿\t\u001f\n}0}\n",
-          "﻿:"
-        ],
+        "options": null,
         "description": ":\u001cã\r0\u001f",
         "help_text": "😀\u001f'ã\u001c00ç😀:",
         "target": "none",
@@ -1896,7 +1783,7 @@
         "question_revision": 4
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _z____fields(BaseModel):\n    ps2d_: Optional[str] = Field(default=None, description=\"﻿}\\n\")\n    os_: Optional[str] = Field(default=None, description=\"ç\\r\\\"ã\\t\\\".\")\n\nclass _wq3ki_fields(BaseModel):\n    s_q9_j_6: str = Field(description=\".}_Zç\")\n    l07_m_: Optional[str] = Field(default=None, description=\"\\\\'\")\n\nclass Analysis(BaseModel):\n    list: Literal[\"_\\t\", \"\\t}:\\na\\r\"] = Field(description=\"\\\". Instrucoes: ã \u001c{\\r0\", json_schema_extra={\"id\": \"0000001e-0016-1000-8000-000199442469\", \"target\": \"llm_only\", \"required\": False, \"allowOther\": True, \"help_text\": \"ã \u001c{\\r0\", \"justification_prompt\": \"}\", \"question_revision\": 5})\n    d9______: Optional[str] = Field(default=None, description=\"}ç\\t}:. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"_'ã0\\n\\\".0\u001cb\\\", \\\"\\tZ﻿\\\"\", json_schema_extra={\"id\": \"c6d39a01-0010-1000-9be6-e04c968ceda3\", \"field_type\": \"date\", \"options\": [\"_'ã0\\n\\\".0\u001cb\", \"\\tZ﻿\"], \"visible_if\": {\"field\": \"list\", \"exists\": False}, \"justification_prompt\": \"{Z\", \"question_revision\": 8})\n    z___: Optional[_z____fields] = Field(default=None, description=\"😀} .b{. Instrucoes: { \u001f {\\\"\", json_schema_extra={\"id\": \"5c768187-75c8-58b1-bfff-fffa0000000f\", \"target\": \"none\", \"required\": False, \"options\": [\"'{\\n\\\\\\\\ \", \"\\\"\", \"'😀a\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"{ \u001f {\\\"\", \"visible_if\": {\"field\": \"list\", \"equals\": \"\\t}:\\na\\r\"}})\n    wq3ki: _wq3ki_fields = Field(description=\":\u001cã\\r0\u001f. Instrucoes: 😀\u001f'ã\u001c00ç😀:\", json_schema_extra={\"id\": \"00000011-a4c6-27e7-bf8d-93a50000000d\", \"target\": \"none\", \"options\": [\"0}\", \"\\n\\nçç\", \"'﻿\\t\u001f\\n}0}\\n\", \"﻿:\"], \"help_text\": \"😀\u001f'ã\u001c00ç😀:\", \"justification_prompt\": \"b_😀😀\", \"question_revision\": 4})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _z____fields(BaseModel):\n    ps2d_: Optional[str] = Field(default=None, description=\"﻿}\\n\")\n    os_: Optional[str] = Field(default=None, description=\"ç\\r\\\"ã\\t\\\".\")\n\nclass _wq3ki_fields(BaseModel):\n    s_q9_j_6: str = Field(description=\".}_Zç\")\n    l07_m_: Optional[str] = Field(default=None, description=\"\\\\'\")\n\nclass Analysis(BaseModel):\n    list: Literal[\"_\\t\", \"\\t}:\\na\\r\"] = Field(description=\"\\\". Instrucoes: ã \u001c{\\r0\", json_schema_extra={\"id\": \"0000001e-0016-1000-8000-000199442469\", \"target\": \"llm_only\", \"required\": False, \"allowOther\": True, \"help_text\": \"ã \u001c{\\r0\", \"justification_prompt\": \"}\", \"question_revision\": 5})\n    d9______: Optional[str] = Field(default=None, description=\"}ç\\t}:. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"_'ã0\\n\\\".0\u001cb\\\", \\\"\\tZ﻿\\\"\", json_schema_extra={\"id\": \"c6d39a01-0010-1000-9be6-e04c968ceda3\", \"field_type\": \"date\", \"options\": [\"_'ã0\\n\\\".0\u001cb\", \"\\tZ﻿\"], \"visible_if\": {\"field\": \"list\", \"exists\": False}, \"justification_prompt\": \"{Z\", \"question_revision\": 8})\n    z___: Optional[_z____fields] = Field(default=None, description=\"😀} .b{. Instrucoes: { \u001f {\\\"\", json_schema_extra={\"id\": \"5c768187-75c8-58b1-bfff-fffa0000000f\", \"target\": \"none\", \"required\": False, \"subfield_rule\": \"at_least_one\", \"help_text\": \"{ \u001f {\\\"\", \"visible_if\": {\"field\": \"list\", \"equals\": \"\\t}:\\na\\r\"}})\n    wq3ki: _wq3ki_fields = Field(description=\":\u001cã\\r0\u001f. Instrucoes: 😀\u001f'ã\u001c00ç😀:\", json_schema_extra={\"id\": \"00000011-a4c6-27e7-bf8d-93a50000000d\", \"target\": \"none\", \"help_text\": \"😀\u001f'ã\u001c00ç😀:\", \"justification_prompt\": \"b_😀😀\", \"question_revision\": 4})\n",
     "compiled": [
       {
         "id": "0000001e-0016-1000-8000-000199442469",
@@ -1937,14 +1824,10 @@
         "id": "5c768187-75c8-58b1-bfff-fffa0000000f",
         "name": "z___",
         "type": "text",
-        "options": [
-          "'{\n\\\\ ",
-          "\"",
-          "'😀a"
-        ],
+        "options": null,
         "description": "😀} .b{",
         "target": "none",
-        "hash": "481968466683",
+        "hash": "1488310bd81f",
         "help_text": "{ \u001f {\"",
         "required": false,
         "subfields": [
@@ -1969,15 +1852,10 @@
         "id": "00000011-a4c6-27e7-bf8d-93a50000000d",
         "name": "wq3ki",
         "type": "text",
-        "options": [
-          "0}",
-          "\n\nçç",
-          "'﻿\t\u001f\n}0}\n",
-          "﻿:"
-        ],
+        "options": null,
         "description": ":\u001cã\r0\u001f",
         "target": "none",
-        "hash": "7db8ff64bc54",
+        "hash": "562795f38841",
         "help_text": "😀\u001f'ã\u001c00ç😀:",
         "subfields": [
           {
@@ -2004,9 +1882,7 @@
         "id": "183ebd88-5a4a-416a-9ce8-bdac1065b29f",
         "name": "d2d",
         "type": "text",
-        "options": [
-          "a\u001f_.\nçç\u001cbã"
-        ],
+        "options": null,
         "description": "'b{\t\rçZ﻿",
         "target": "llm_only",
         "required": true,
@@ -2019,18 +1895,13 @@
         ],
         "subfield_rule": "at_least_one",
         "justification_prompt": "ã😀{\\\t'",
-        "hash": "fd441e89a1c9"
+        "hash": "8300124d228d"
       },
       {
         "id": "fffffff0-78c0-137b-8000-00010000001d",
         "name": "x8e",
         "type": "text",
-        "options": [
-          "}:😀'{😀",
-          ":",
-          ".﻿ç: \\",
-          "ãZç\r"
-        ],
+        "options": null,
         "description": "_😀Z\u001f:{\t'_",
         "help_text": "ZZ",
         "target": "none",
@@ -2044,55 +1915,23 @@
         "subfield_rule": "at_least_one",
         "condition": {
           "field": "d2d",
-          "equals": "a\u001f_.\nçç\u001cbã"
+          "equals": 997
         },
-        "question_revision": 5
-      },
-      {
-        "id": "3119f4aa-194f-42b8-8000-0002ffffffe9",
-        "name": "a___",
-        "type": "date",
-        "options": null,
-        "description": "\"\u001f\\\"\\",
-        "help_text": "😀{:ãã_a",
-        "target": "llm_only",
-        "required": false,
-        "condition": {
-          "field": "d2d",
-          "equals": "a\u001f_.\nçç\u001cbã"
-        },
-        "justification_prompt": ":Zç﻿﻿ _{",
-        "question_revision": 6
-      },
-      {
-        "id": "2def81ae-ffe6-8fff-8f42-b49e29c5a7bd",
-        "name": "v3__82z_",
-        "type": "date",
-        "options": null,
-        "description": "ã\u001c _ç\\Z\u001fa",
-        "help_text": "ã",
-        "target": "human_only",
-        "required": false,
-        "condition": {
-          "field": "a___",
-          "exists": false
-        },
-        "justification_prompt": "﻿",
-        "hash": "5f5a7b41ad29"
+        "justification_prompt": "'\tã'",
+        "question_revision": 7,
+        "hash": "eb026c377072"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _d2d_fields(BaseModel):\n    q_07_39: Optional[str] = Field(default=None, description=\"{0ã😀{\\n}\\\":\", json_schema_extra={\"subfield_required\": True})\n\nclass _x8e_fields(BaseModel):\n    bwe7h: Optional[str] = Field(default=None, description=\"\u001f\\\\😀Z\\r\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    d2d: _d2d_fields = Field(description=\"'b{\\t\\rçZ﻿\", json_schema_extra={\"id\": \"183ebd88-5a4a-416a-9ce8-bdac1065b29f\", \"target\": \"llm_only\", \"options\": [\"a\u001f_.\\nçç\u001cbã\"], \"subfield_rule\": \"at_least_one\", \"justification_prompt\": \"ã😀{\\\\\\t'\"})\n    x8e: Optional[_x8e_fields] = Field(default=None, description=\"_😀Z\u001f:{\\t'_. Instrucoes: ZZ\", json_schema_extra={\"id\": \"fffffff0-78c0-137b-8000-00010000001d\", \"target\": \"none\", \"options\": [\"}:😀'{😀\", \":\", \".﻿ç: \\\\\", \"ãZç\\r\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"ZZ\", \"visible_if\": {\"field\": \"d2d\", \"equals\": \"a\u001f_.\\nçç\u001cbã\"}, \"question_revision\": 5})\n    a___: Optional[str] = Field(default=None, description=\"\\\"\u001f\\\\\\\"\\\\. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Instrucoes: 😀{:ãã_a\", json_schema_extra={\"id\": \"3119f4aa-194f-42b8-8000-0002ffffffe9\", \"target\": \"llm_only\", \"required\": False, \"field_type\": \"date\", \"help_text\": \"😀{:ãã_a\", \"visible_if\": {\"field\": \"d2d\", \"equals\": \"a\u001f_.\\nçç\u001cbã\"}, \"justification_prompt\": \":Zç﻿﻿ _{\", \"question_revision\": 6})\n    v3__82z_: Optional[str] = Field(default=None, description=\"ã\u001c _ç\\\\Z\u001fa. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Instrucoes: ã\", json_schema_extra={\"id\": \"2def81ae-ffe6-8fff-8f42-b49e29c5a7bd\", \"target\": \"human_only\", \"required\": False, \"field_type\": \"date\", \"help_text\": \"ã\", \"visible_if\": {\"field\": \"a___\", \"exists\": False}, \"justification_prompt\": \"﻿\"})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _d2d_fields(BaseModel):\n    q_07_39: Optional[str] = Field(default=None, description=\"{0ã😀{\\n}\\\":\", json_schema_extra={\"subfield_required\": True})\n\nclass _x8e_fields(BaseModel):\n    bwe7h: Optional[str] = Field(default=None, description=\"\u001f\\\\😀Z\\r\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    d2d: _d2d_fields = Field(description=\"'b{\\t\\rçZ﻿\", json_schema_extra={\"id\": \"183ebd88-5a4a-416a-9ce8-bdac1065b29f\", \"target\": \"llm_only\", \"subfield_rule\": \"at_least_one\", \"justification_prompt\": \"ã😀{\\\\\\t'\"})\n    x8e: Optional[_x8e_fields] = Field(default=None, description=\"_😀Z\u001f:{\\t'_. Instrucoes: ZZ\", json_schema_extra={\"id\": \"fffffff0-78c0-137b-8000-00010000001d\", \"target\": \"none\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"ZZ\", \"visible_if\": {\"field\": \"d2d\", \"equals\": 997}, \"justification_prompt\": \"'\\tã'\", \"question_revision\": 7})\n",
     "compiled": [
       {
         "id": "183ebd88-5a4a-416a-9ce8-bdac1065b29f",
         "name": "d2d",
         "type": "text",
-        "options": [
-          "a\u001f_.\nçç\u001cbã"
-        ],
+        "options": null,
         "description": "'b{\t\rçZ﻿",
         "target": "llm_only",
-        "hash": "fd441e89a1c9",
+        "hash": "8300124d228d",
         "subfields": [
           {
             "key": "q_07_39",
@@ -2107,15 +1946,10 @@
         "id": "fffffff0-78c0-137b-8000-00010000001d",
         "name": "x8e",
         "type": "text",
-        "options": [
-          "}:😀'{😀",
-          ":",
-          ".﻿ç: \\",
-          "ãZç\r"
-        ],
+        "options": null,
         "description": "_😀Z\u001f:{\t'_",
         "target": "none",
-        "hash": "ccde2df1f1bf",
+        "hash": "eb026c377072",
         "help_text": "ZZ",
         "subfields": [
           {
@@ -2127,42 +1961,10 @@
         "subfield_rule": "at_least_one",
         "condition": {
           "field": "d2d",
-          "equals": "a\u001f_.\nçç\u001cbã"
+          "equals": 997
         },
-        "question_revision": 5
-      },
-      {
-        "id": "3119f4aa-194f-42b8-8000-0002ffffffe9",
-        "name": "a___",
-        "type": "date",
-        "options": null,
-        "description": "\"\u001f\\\"\\",
-        "target": "llm_only",
-        "hash": "5bb822f29a6c",
-        "help_text": "😀{:ãã_a",
-        "required": false,
-        "condition": {
-          "field": "d2d",
-          "equals": "a\u001f_.\nçç\u001cbã"
-        },
-        "justification_prompt": ":Zç﻿﻿ _{",
-        "question_revision": 6
-      },
-      {
-        "id": "2def81ae-ffe6-8fff-8f42-b49e29c5a7bd",
-        "name": "v3__82z_",
-        "type": "date",
-        "options": null,
-        "description": "ã\u001c _ç\\Z\u001fa",
-        "target": "human_only",
-        "hash": "5f5a7b41ad29",
-        "help_text": "ã",
-        "required": false,
-        "condition": {
-          "field": "a___",
-          "exists": false
-        },
-        "justification_prompt": "﻿"
+        "justification_prompt": "'\tã'",
+        "question_revision": 7
       }
     ]
   },
@@ -2173,9 +1975,7 @@
         "id": "71255d14-d5ed-29cd-aa78-c3790000001e",
         "name": "gd_x7_",
         "type": "text",
-        "options": [
-          "Z.._😀_"
-        ],
+        "options": null,
         "description": "\\'ç}",
         "help_text": "a",
         "target": "human_only",
@@ -2190,18 +1990,16 @@
         "justification_prompt": "ç"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _gd_x7__fields(BaseModel):\n    t3__q__0: Optional[str] = Field(default=None, description=\"}}:\\nbã\")\n\nclass Analysis(BaseModel):\n    gd_x7_: _gd_x7__fields = Field(description=\"\\\\'ç}. Instrucoes: a\", json_schema_extra={\"id\": \"71255d14-d5ed-29cd-aa78-c3790000001e\", \"target\": \"human_only\", \"options\": [\"Z.._😀_\"], \"help_text\": \"a\", \"justification_prompt\": \"ç\"})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _gd_x7__fields(BaseModel):\n    t3__q__0: Optional[str] = Field(default=None, description=\"}}:\\nbã\")\n\nclass Analysis(BaseModel):\n    gd_x7_: _gd_x7__fields = Field(description=\"\\\\'ç}. Instrucoes: a\", json_schema_extra={\"id\": \"71255d14-d5ed-29cd-aa78-c3790000001e\", \"target\": \"human_only\", \"help_text\": \"a\", \"justification_prompt\": \"ç\"})\n",
     "compiled": [
       {
         "id": "71255d14-d5ed-29cd-aa78-c3790000001e",
         "name": "gd_x7_",
         "type": "text",
-        "options": [
-          "Z.._😀_"
-        ],
+        "options": null,
         "description": "\\'ç}",
         "target": "human_only",
-        "hash": "19fc6549f0bb",
+        "hash": "5bbb7c7c26f8",
         "help_text": "a",
         "subfields": [
           {
@@ -2357,12 +2155,7 @@
         "id": "72edbb69-05fa-3078-a7ff-1f77b22362ca",
         "name": "str",
         "type": "text",
-        "options": [
-          "ã\\}b:_}:",
-          "ãã\t_}\n_0",
-          "b",
-          "'.\\__"
-        ],
+        "options": null,
         "description": "\u001c\u001fZ",
         "help_text": "{",
         "target": "human_only",
@@ -2391,10 +2184,10 @@
         },
         "justification_prompt": ":\r}ã",
         "question_revision": 6,
-        "hash": "8239b5a19a4b"
+        "hash": "bce246488efb"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _str_fields(BaseModel):\n    k: Optional[str] = Field(default=None, description=\"0.}0aç0\")\n    x__: Optional[str] = Field(default=None, description=\"b:\u001c\\n\")\n    j_g7__: str = Field(description=\"_ ﻿\\r\")\n\nclass Analysis(BaseModel):\n    p2b: Literal[\"a😀Z\\\\ \", \"😀_}\\\"\u001f\\r}\"] = Field(description=\"{}':ãZ\u001c. Instrucoes: bç😀\u001c0\u001cã\\\\\", json_schema_extra={\"id\": \"e3fdaad4-1174-743a-a59b-735c00000017\", \"help_text\": \"bç😀\u001c0\u001cã\\\\\", \"question_revision\": 4})\n    u_10y7: Optional[str] = Field(default=None, description=\"}. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"}\\\", \\\"Z ç\\r:a😀\\r\\\", \\\" {{\u001c\u001c{\\\". Instrucoes: .}﻿😀\", json_schema_extra={\"id\": \"00000001-0009-1000-8000-00041af4a941\", \"target\": \"llm_only\", \"field_type\": \"date\", \"options\": [\"}\", \"Z ç\\r:a😀\\r\", \" {{\u001c\u001c{\"], \"help_text\": \".}﻿😀\", \"visible_if\": {\"field\": \"p2b\", \"equals\": \"a😀Z\\\\ \"}, \"justification_prompt\": \"b😀\", \"question_revision\": 4})\n    str: Optional[_str_fields] = Field(default=None, description=\"\u001c\u001fZ. Instrucoes: {\", json_schema_extra={\"id\": \"72edbb69-05fa-3078-a7ff-1f77b22362ca\", \"target\": \"human_only\", \"options\": [\"ã\\\\}b:_}:\", \"ãã\\t_}\\n_0\", \"b\", \"'.\\\\__\"], \"help_text\": \"{\", \"visible_if\": {\"field\": \"p2b\", \"not_equals\": 201}, \"justification_prompt\": \":\\r}ã\", \"question_revision\": 6})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _str_fields(BaseModel):\n    k: Optional[str] = Field(default=None, description=\"0.}0aç0\")\n    x__: Optional[str] = Field(default=None, description=\"b:\u001c\\n\")\n    j_g7__: str = Field(description=\"_ ﻿\\r\")\n\nclass Analysis(BaseModel):\n    p2b: Literal[\"a😀Z\\\\ \", \"😀_}\\\"\u001f\\r}\"] = Field(description=\"{}':ãZ\u001c. Instrucoes: bç😀\u001c0\u001cã\\\\\", json_schema_extra={\"id\": \"e3fdaad4-1174-743a-a59b-735c00000017\", \"help_text\": \"bç😀\u001c0\u001cã\\\\\", \"question_revision\": 4})\n    u_10y7: Optional[str] = Field(default=None, description=\"}. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"}\\\", \\\"Z ç\\r:a😀\\r\\\", \\\" {{\u001c\u001c{\\\". Instrucoes: .}﻿😀\", json_schema_extra={\"id\": \"00000001-0009-1000-8000-00041af4a941\", \"target\": \"llm_only\", \"field_type\": \"date\", \"options\": [\"}\", \"Z ç\\r:a😀\\r\", \" {{\u001c\u001c{\"], \"help_text\": \".}﻿😀\", \"visible_if\": {\"field\": \"p2b\", \"equals\": \"a😀Z\\\\ \"}, \"justification_prompt\": \"b😀\", \"question_revision\": 4})\n    str: Optional[_str_fields] = Field(default=None, description=\"\u001c\u001fZ. Instrucoes: {\", json_schema_extra={\"id\": \"72edbb69-05fa-3078-a7ff-1f77b22362ca\", \"target\": \"human_only\", \"help_text\": \"{\", \"visible_if\": {\"field\": \"p2b\", \"not_equals\": 201}, \"justification_prompt\": \":\\r}ã\", \"question_revision\": 6})\n",
     "compiled": [
       {
         "id": "e3fdaad4-1174-743a-a59b-735c00000017",
@@ -2434,15 +2227,10 @@
         "id": "72edbb69-05fa-3078-a7ff-1f77b22362ca",
         "name": "str",
         "type": "text",
-        "options": [
-          "ã\\}b:_}:",
-          "ãã\t_}\n_0",
-          "b",
-          "'.\\__"
-        ],
+        "options": null,
         "description": "\u001c\u001fZ",
         "target": "human_only",
-        "hash": "8239b5a19a4b",
+        "hash": "bce246488efb",
         "help_text": "{",
         "subfields": [
           {
@@ -2492,10 +2280,7 @@
         "id": "4a1e7be1-fe78-7a54-a7f2-14c4cfbec8eb",
         "name": "bme",
         "type": "text",
-        "options": [
-          "'\nã\u001f﻿﻿\ta",
-          "}\t\\:\r"
-        ],
+        "options": null,
         "description": "{",
         "target": "llm_only",
         "required": true,
@@ -2521,7 +2306,7 @@
         },
         "justification_prompt": "_\u001cb:",
         "question_revision": 3,
-        "hash": "a7a8e75d20eb"
+        "hash": "47412c18ee1c"
       },
       {
         "id": "82dc80ff-c764-105a-8000-00050712b0af",
@@ -2536,14 +2321,40 @@
         "allow_other": true,
         "condition": {
           "field": "bme",
-          "not_equals": "}\t\\:\r"
+          "not_equals": "\u001f\\Z\r\rZ\u001f0"
         },
-        "justification_prompt": "0{",
+        "justification_prompt": ":.b",
+        "question_revision": 1,
+        "hash": "f88bcac0298a"
+      },
+      {
+        "id": "00000014-c7cf-8f29-ae1a-90b0086a829e",
+        "name": "cnd",
+        "type": "multi",
+        "options": [
+          "\t\u001f0}﻿\"_",
+          "'\t \u001cZ{'\u001c\r",
+          "{\u001f",
+          "\nb\r_ a"
+        ],
+        "description": "{",
+        "help_text": "0",
+        "target": "human_only",
+        "required": false,
+        "allow_other": false,
+        "condition": {
+          "field": "b",
+          "not_in": [
+            "\u001f  \na😀_{",
+            "\u001f  \na😀_{"
+          ]
+        },
+        "justification_prompt": "a\"Z0ãç:",
         "question_revision": 6,
-        "hash": "eb411989ffc4"
+        "hash": "96101ec1884f"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _bme_fields(BaseModel):\n    fv_7: Optional[str] = Field(default=None, description=\":_\\t0﻿\\t😀\")\n    a_5__g: str = Field(description=\"\u001ca0\")\n    i__: Optional[str] = Field(default=None, description=\"{\\n\u001c\\r :\u001c{\\\\\")\n\nclass Analysis(BaseModel):\n    b: str = Field(description=\"\u001fã_0{a. Instrucoes: \\\\ã\\r':ã.Z\\\":\", json_schema_extra={\"id\": \"ffffffff-0d67-6b98-b582-b710b30ef09b\", \"target\": \"none\", \"options\": [\"\u001f  \\na😀_{\"], \"help_text\": \"\\\\ã\\r':ã.Z\\\":\", \"question_revision\": 3})\n    bme: Optional[_bme_fields] = Field(default=None, description=\"{\", json_schema_extra={\"id\": \"4a1e7be1-fe78-7a54-a7f2-14c4cfbec8eb\", \"target\": \"llm_only\", \"options\": [\"'\\nã\u001f﻿﻿\\ta\", \"}\\t\\\\:\\r\"], \"visible_if\": {\"field\": \"b\", \"not_equals\": \"\u001f  \\na😀_{\"}, \"justification_prompt\": \"_\u001cb:\", \"question_revision\": 3})\n    x72_y65: Optional[list[Literal[\" ã😀 Z\\\"﻿\\\"\"]]] = Field(default=None, description=\":\\n  ç. Instrucoes: ﻿\", json_schema_extra={\"id\": \"82dc80ff-c764-105a-8000-00050712b0af\", \"allowOther\": True, \"help_text\": \"﻿\", \"visible_if\": {\"field\": \"bme\", \"not_equals\": \"}\\t\\\\:\\r\"}, \"justification_prompt\": \"0{\", \"question_revision\": 6})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _bme_fields(BaseModel):\n    fv_7: Optional[str] = Field(default=None, description=\":_\\t0﻿\\t😀\")\n    a_5__g: str = Field(description=\"\u001ca0\")\n    i__: Optional[str] = Field(default=None, description=\"{\\n\u001c\\r :\u001c{\\\\\")\n\nclass Analysis(BaseModel):\n    b: str = Field(description=\"\u001fã_0{a. Instrucoes: \\\\ã\\r':ã.Z\\\":\", json_schema_extra={\"id\": \"ffffffff-0d67-6b98-b582-b710b30ef09b\", \"target\": \"none\", \"options\": [\"\u001f  \\na😀_{\"], \"help_text\": \"\\\\ã\\r':ã.Z\\\":\", \"question_revision\": 3})\n    bme: Optional[_bme_fields] = Field(default=None, description=\"{\", json_schema_extra={\"id\": \"4a1e7be1-fe78-7a54-a7f2-14c4cfbec8eb\", \"target\": \"llm_only\", \"visible_if\": {\"field\": \"b\", \"not_equals\": \"\u001f  \\na😀_{\"}, \"justification_prompt\": \"_\u001cb:\", \"question_revision\": 3})\n    x72_y65: Optional[list[Literal[\" ã😀 Z\\\"﻿\\\"\"]]] = Field(default=None, description=\":\\n  ç. Instrucoes: ﻿\", json_schema_extra={\"id\": \"82dc80ff-c764-105a-8000-00050712b0af\", \"allowOther\": True, \"help_text\": \"﻿\", \"visible_if\": {\"field\": \"bme\", \"not_equals\": \"\u001f\\\\Z\\r\\rZ\u001f0\"}, \"justification_prompt\": \":.b\", \"question_revision\": 1})\n    cnd: Optional[list[Literal[\"\\t\u001f0}﻿\\\"_\", \"'\\t \u001cZ{'\u001c\\r\", \"{\u001f\", \"\\nb\\r_ a\"]]] = Field(default=None, description=\"{. Instrucoes: 0\", json_schema_extra={\"id\": \"00000014-c7cf-8f29-ae1a-90b0086a829e\", \"target\": \"human_only\", \"required\": False, \"help_text\": \"0\", \"visible_if\": {\"field\": \"b\", \"not_in\": [\"\u001f  \\na😀_{\", \"\u001f  \\na😀_{\"]}, \"justification_prompt\": \"a\\\"Z0ãç:\", \"question_revision\": 6})\n",
     "compiled": [
       {
         "id": "ffffffff-0d67-6b98-b582-b710b30ef09b",
@@ -2562,13 +2373,10 @@
         "id": "4a1e7be1-fe78-7a54-a7f2-14c4cfbec8eb",
         "name": "bme",
         "type": "text",
-        "options": [
-          "'\nã\u001f﻿﻿\ta",
-          "}\t\\:\r"
-        ],
+        "options": null,
         "description": "{",
         "target": "llm_only",
-        "hash": "a7a8e75d20eb",
+        "hash": "47412c18ee1c",
         "subfields": [
           {
             "key": "fv_7",
@@ -2603,14 +2411,39 @@
         ],
         "description": ":\n  ç",
         "target": "all",
-        "hash": "eb411989ffc4",
+        "hash": "f88bcac0298a",
         "help_text": "﻿",
         "allow_other": true,
         "condition": {
           "field": "bme",
-          "not_equals": "}\t\\:\r"
+          "not_equals": "\u001f\\Z\r\rZ\u001f0"
         },
-        "justification_prompt": "0{",
+        "justification_prompt": ":.b",
+        "question_revision": 1
+      },
+      {
+        "id": "00000014-c7cf-8f29-ae1a-90b0086a829e",
+        "name": "cnd",
+        "type": "multi",
+        "options": [
+          "\t\u001f0}﻿\"_",
+          "'\t \u001cZ{'\u001c\r",
+          "{\u001f",
+          "\nb\r_ a"
+        ],
+        "description": "{",
+        "target": "human_only",
+        "hash": "96101ec1884f",
+        "help_text": "0",
+        "required": false,
+        "condition": {
+          "field": "b",
+          "not_in": [
+            "\u001f  \na😀_{",
+            "\u001f  \na😀_{"
+          ]
+        },
+        "justification_prompt": "a\"Z0ãç:",
         "question_revision": 6
       }
     ]
@@ -2812,11 +2645,7 @@
         "id": "0000000a-0009-1000-8000-000afffffff6",
         "name": "k7y2",
         "type": "text",
-        "options": [
-          "\"\"\\\\ .\\",
-          "b0\t_\"{ {",
-          "\nã\u001f:"
-        ],
+        "options": null,
         "description": "\"ã",
         "help_text": "{aZa\"\"",
         "required": true,
@@ -2828,23 +2657,19 @@
         ],
         "subfield_rule": "all",
         "question_revision": 9,
-        "hash": "febd876d6180"
+        "hash": "6e12183dad92"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _k7y2_fields(BaseModel):\n    analysis: Optional[str] = Field(default=None, description=\"{\u001c\")\n\nclass Analysis(BaseModel):\n    k7y2: _k7y2_fields = Field(description=\"\\\"ã. Instrucoes: {aZa\\\"\\\"\", json_schema_extra={\"id\": \"0000000a-0009-1000-8000-000afffffff6\", \"options\": [\"\\\"\\\"\\\\\\\\ .\\\\\", \"b0\\t_\\\"{ {\", \"\\nã\u001f:\"], \"help_text\": \"{aZa\\\"\\\"\", \"question_revision\": 9})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _k7y2_fields(BaseModel):\n    analysis: Optional[str] = Field(default=None, description=\"{\u001c\")\n\nclass Analysis(BaseModel):\n    k7y2: _k7y2_fields = Field(description=\"\\\"ã. Instrucoes: {aZa\\\"\\\"\", json_schema_extra={\"id\": \"0000000a-0009-1000-8000-000afffffff6\", \"help_text\": \"{aZa\\\"\\\"\", \"question_revision\": 9})\n",
     "compiled": [
       {
         "id": "0000000a-0009-1000-8000-000afffffff6",
         "name": "k7y2",
         "type": "text",
-        "options": [
-          "\"\"\\\\ .\\",
-          "b0\t_\"{ {",
-          "\nã\u001f:"
-        ],
+        "options": null,
         "description": "\"ã",
         "target": "all",
-        "hash": "febd876d6180",
+        "hash": "6e12183dad92",
         "help_text": "{aZa\"\"",
         "subfields": [
           {
@@ -3000,12 +2825,7 @@
         "id": "fa308cb4-fffd-8fff-abf5-1e86509f068d",
         "name": "a",
         "type": "text",
-        "options": [
-          ".",
-          ".\t😀\\a b}.{",
-          "a Z:0_",
-          "😀"
-        ],
+        "options": null,
         "description": ":Z\t\\ç",
         "help_text": "ãaã{ã\u001c \u001c\"",
         "target": "human_only",
@@ -3024,7 +2844,7 @@
         "subfield_rule": "at_least_one",
         "justification_prompt": "b}",
         "question_revision": 9,
-        "hash": "fc02862889bc"
+        "hash": "5a05c64e6e2a"
       },
       {
         "id": "83034c81-000e-1000-8f73-b1d886a6d5cd",
@@ -3043,21 +2863,16 @@
         "hash": "485e69cb5068"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _a_fields(BaseModel):\n    k9_2___r: Optional[str] = Field(default=None, description=\" ﻿bZ:ããZ\")\n    w_: Optional[str] = Field(default=None, description=\".\u001f\u001f\\tã﻿a:\")\n\nclass Analysis(BaseModel):\n    a: _a_fields = Field(description=\":Z\\t\\\\ç. Instrucoes: ãaã{ã\u001c \u001c\\\"\", json_schema_extra={\"id\": \"fa308cb4-fffd-8fff-abf5-1e86509f068d\", \"target\": \"human_only\", \"options\": [\".\", \".\\t😀\\\\a b}.{\", \"a Z:0_\", \"😀\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"ãaã{ã\u001c \u001c\\\"\", \"justification_prompt\": \"b}\", \"question_revision\": 9})\n    bqh8nam: Literal[\"aãZ\\n _\", \"{:\\\"{':\", \"\\r\u001cãb\", \".{\"] = Field(description=\" a\u001c😀{\\\"\\\\ Z\", json_schema_extra={\"id\": \"83034c81-000e-1000-8f73-b1d886a6d5cd\", \"target\": \"human_only\", \"required\": False, \"question_revision\": 6})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _a_fields(BaseModel):\n    k9_2___r: Optional[str] = Field(default=None, description=\" ﻿bZ:ããZ\")\n    w_: Optional[str] = Field(default=None, description=\".\u001f\u001f\\tã﻿a:\")\n\nclass Analysis(BaseModel):\n    a: _a_fields = Field(description=\":Z\\t\\\\ç. Instrucoes: ãaã{ã\u001c \u001c\\\"\", json_schema_extra={\"id\": \"fa308cb4-fffd-8fff-abf5-1e86509f068d\", \"target\": \"human_only\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"ãaã{ã\u001c \u001c\\\"\", \"justification_prompt\": \"b}\", \"question_revision\": 9})\n    bqh8nam: Literal[\"aãZ\\n _\", \"{:\\\"{':\", \"\\r\u001cãb\", \".{\"] = Field(description=\" a\u001c😀{\\\"\\\\ Z\", json_schema_extra={\"id\": \"83034c81-000e-1000-8f73-b1d886a6d5cd\", \"target\": \"human_only\", \"required\": False, \"question_revision\": 6})\n",
     "compiled": [
       {
         "id": "fa308cb4-fffd-8fff-abf5-1e86509f068d",
         "name": "a",
         "type": "text",
-        "options": [
-          ".",
-          ".\t😀\\a b}.{",
-          "a Z:0_",
-          "😀"
-        ],
+        "options": null,
         "description": ":Z\t\\ç",
         "target": "human_only",
-        "hash": "fc02862889bc",
+        "hash": "5a05c64e6e2a",
         "help_text": "ãaã{ã\u001c \u001c\"",
         "subfields": [
           {
@@ -3174,10 +2989,7 @@
         "id": "21f789ba-f880-87fa-a5a2-2d6d617e69bf",
         "name": "i_",
         "type": "text",
-        "options": [
-          "\\ã",
-          ":\"\u001cb\u001f{Z\\"
-        ],
+        "options": null,
         "description": ":ç:\\a",
         "help_text": "ã",
         "target": "none",
@@ -3196,7 +3008,7 @@
         ],
         "subfield_rule": "at_least_one",
         "justification_prompt": "﻿\"\nZ",
-        "hash": "b155c3078bad"
+        "hash": "057834df3a80"
       },
       {
         "id": "58275130-5b43-4036-af84-b01a2a412564",
@@ -3211,29 +3023,25 @@
         "condition": {
           "field": "i_",
           "in": [
-            ":\"\u001cb\u001f{Z\\",
-            "\\ã",
-            ":\"\u001cb\u001f{Z\\"
+            -86,
+            -1000000,
+            1.0457816372254317e-66
           ]
         },
-        "justification_prompt": "bZa\tZ",
-        "question_revision": 7,
-        "hash": "be6196b102a4"
+        "justification_prompt": "Za\tZ",
+        "hash": "90f1d4182b89"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _i__fields(BaseModel):\n    p_q_: Optional[str] = Field(default=None, description=\":ZçZ0\\\\ç\", json_schema_extra={\"subfield_required\": True})\n    r6_: Optional[str] = Field(default=None, description=\":\\\\﻿b\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    i_: _i__fields = Field(description=\":ç:\\\\a. Instrucoes: ã\", json_schema_extra={\"id\": \"21f789ba-f880-87fa-a5a2-2d6d617e69bf\", \"target\": \"none\", \"options\": [\"\\\\ã\", \":\\\"\u001cb\u001f{Z\\\\\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"ã\", \"justification_prompt\": \"﻿\\\"\\nZ\"})\n    v4__4: Optional[list[Literal[\"aç\u001c\"]]] = Field(default=None, description=\":ç\u001cZ\\t\\\"\\\"\", json_schema_extra={\"id\": \"58275130-5b43-4036-af84-b01a2a412564\", \"required\": False, \"visible_if\": {\"field\": \"i_\", \"in\": [\":\\\"\u001cb\u001f{Z\\\\\", \"\\\\ã\", \":\\\"\u001cb\u001f{Z\\\\\"]}, \"justification_prompt\": \"bZa\\tZ\", \"question_revision\": 7})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _i__fields(BaseModel):\n    p_q_: Optional[str] = Field(default=None, description=\":ZçZ0\\\\ç\", json_schema_extra={\"subfield_required\": True})\n    r6_: Optional[str] = Field(default=None, description=\":\\\\﻿b\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    i_: _i__fields = Field(description=\":ç:\\\\a. Instrucoes: ã\", json_schema_extra={\"id\": \"21f789ba-f880-87fa-a5a2-2d6d617e69bf\", \"target\": \"none\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"ã\", \"justification_prompt\": \"﻿\\\"\\nZ\"})\n    v4__4: Optional[list[Literal[\"aç\u001c\"]]] = Field(default=None, description=\":ç\u001cZ\\t\\\"\\\"\", json_schema_extra={\"id\": \"58275130-5b43-4036-af84-b01a2a412564\", \"required\": False, \"visible_if\": {\"field\": \"i_\", \"in\": [-86, -1000000, 1.0457816372254317e-66]}, \"justification_prompt\": \"Za\\tZ\"})\n",
     "compiled": [
       {
         "id": "21f789ba-f880-87fa-a5a2-2d6d617e69bf",
         "name": "i_",
         "type": "text",
-        "options": [
-          "\\ã",
-          ":\"\u001cb\u001f{Z\\"
-        ],
+        "options": null,
         "description": ":ç:\\a",
         "target": "none",
-        "hash": "b155c3078bad",
+        "hash": "057834df3a80",
         "help_text": "ã",
         "subfields": [
           {
@@ -3259,18 +3067,17 @@
         ],
         "description": ":ç\u001cZ\t\"\"",
         "target": "all",
-        "hash": "be6196b102a4",
+        "hash": "90f1d4182b89",
         "required": false,
         "condition": {
           "field": "i_",
           "in": [
-            ":\"\u001cb\u001f{Z\\",
-            "\\ã",
-            ":\"\u001cb\u001f{Z\\"
+            -86,
+            -1000000,
+            1.0457816372254317e-66
           ]
         },
-        "justification_prompt": "bZa\tZ",
-        "question_revision": 7
+        "justification_prompt": "Za\tZ"
       }
     ]
   },
@@ -3623,10 +3430,7 @@
         "id": "0073c53f-d843-60af-8000-00135bbc9218",
         "name": "bb_w_2m",
         "type": "text",
-        "options": [
-          "﻿Zç\n﻿ã0",
-          "\ra0:\r'a"
-        ],
+        "options": null,
         "description": "b 0 {'0",
         "target": "human_only",
         "subfields": [
@@ -3648,7 +3452,7 @@
           ]
         },
         "justification_prompt": "﻿_",
-        "hash": "e67869113ec5"
+        "hash": "c3cfb9bd0cf9"
       },
       {
         "id": "64811496-2fb6-3c89-8348-d58200000006",
@@ -3671,7 +3475,7 @@
         "question_revision": 1
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _bb_w_2m_fields(BaseModel):\n    list: Optional[str] = Field(default=None, description=\"\\\" ç.b}ã\")\n    ny_: Optional[str] = Field(default=None, description=\"b\")\n\nclass Analysis(BaseModel):\n    str: Literal[\"ab_﻿\\\\'\\r\\t\", \"\\\"\\ta ã😀Z0\", \"\\\\﻿\u001f\\\\😀\u001f﻿\\rZ_\"] = Field(description=\"\\\\'\u001c0}\\r\\t\\\"﻿\\t\", json_schema_extra={\"id\": \"8ffda56e-ff6d-5be7-bfff-fff578b54207\", \"target\": \"llm_only\", \"justification_prompt\": \"0.\\\\ç'}\", \"question_revision\": 3})\n    etiw_: Optional[Literal[\"\\\\Z\", \"\\\\_😀\\\\__\u001f﻿\\n\", \" \u001f﻿\u001c😀ç\"]] = Field(default=None, description=\"._  ﻿:. Instrucoes: }\\nb😀{\", json_schema_extra={\"id\": \"0000001e-24f9-4732-8beb-2152b8270d5a\", \"required\": False, \"allowOther\": True, \"help_text\": \"}\\nb😀{\", \"visible_if\": {\"field\": \"str\", \"in\": [\"\\\"\\ta ã😀Z0\"]}, \"justification_prompt\": \"0_.\", \"question_revision\": 9})\n    bb_w_2m: Optional[_bb_w_2m_fields] = Field(default=None, description=\"b 0 {'0\", json_schema_extra={\"id\": \"0073c53f-d843-60af-8000-00135bbc9218\", \"target\": \"human_only\", \"options\": [\"﻿Zç\\n﻿ã0\", \"\\ra0:\\r'a\"], \"visible_if\": {\"field\": \"str\", \"in\": [\"\\\\﻿\u001f\\\\😀\u001f﻿\\rZ_\", \"\\\\﻿\u001f\\\\😀\u001f﻿\\rZ_\"]}, \"justification_prompt\": \"﻿_\"})\n    t34: Optional[list[Literal[\"}b 0\\tç\u001fa'\"]]] = Field(default=None, description=\"\\\\\u001c😀0\u001c'. Instrucoes: .{\\r{\", json_schema_extra={\"id\": \"64811496-2fb6-3c89-8348-d58200000006\", \"target\": \"human_only\", \"required\": False, \"help_text\": \".{\\r{\", \"visible_if\": {\"field\": \"etiw_\", \"not_in\": [-2.6704768913732402e-244, \" \u001f﻿\u001c😀ç\"]}, \"question_revision\": 1})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _bb_w_2m_fields(BaseModel):\n    list: Optional[str] = Field(default=None, description=\"\\\" ç.b}ã\")\n    ny_: Optional[str] = Field(default=None, description=\"b\")\n\nclass Analysis(BaseModel):\n    str: Literal[\"ab_﻿\\\\'\\r\\t\", \"\\\"\\ta ã😀Z0\", \"\\\\﻿\u001f\\\\😀\u001f﻿\\rZ_\"] = Field(description=\"\\\\'\u001c0}\\r\\t\\\"﻿\\t\", json_schema_extra={\"id\": \"8ffda56e-ff6d-5be7-bfff-fff578b54207\", \"target\": \"llm_only\", \"justification_prompt\": \"0.\\\\ç'}\", \"question_revision\": 3})\n    etiw_: Optional[Literal[\"\\\\Z\", \"\\\\_😀\\\\__\u001f﻿\\n\", \" \u001f﻿\u001c😀ç\"]] = Field(default=None, description=\"._  ﻿:. Instrucoes: }\\nb😀{\", json_schema_extra={\"id\": \"0000001e-24f9-4732-8beb-2152b8270d5a\", \"required\": False, \"allowOther\": True, \"help_text\": \"}\\nb😀{\", \"visible_if\": {\"field\": \"str\", \"in\": [\"\\\"\\ta ã😀Z0\"]}, \"justification_prompt\": \"0_.\", \"question_revision\": 9})\n    bb_w_2m: Optional[_bb_w_2m_fields] = Field(default=None, description=\"b 0 {'0\", json_schema_extra={\"id\": \"0073c53f-d843-60af-8000-00135bbc9218\", \"target\": \"human_only\", \"visible_if\": {\"field\": \"str\", \"in\": [\"\\\\﻿\u001f\\\\😀\u001f﻿\\rZ_\", \"\\\\﻿\u001f\\\\😀\u001f﻿\\rZ_\"]}, \"justification_prompt\": \"﻿_\"})\n    t34: Optional[list[Literal[\"}b 0\\tç\u001fa'\"]]] = Field(default=None, description=\"\\\\\u001c😀0\u001c'. Instrucoes: .{\\r{\", json_schema_extra={\"id\": \"64811496-2fb6-3c89-8348-d58200000006\", \"target\": \"human_only\", \"required\": False, \"help_text\": \".{\\r{\", \"visible_if\": {\"field\": \"etiw_\", \"not_in\": [-2.6704768913732402e-244, \" \u001f﻿\u001c😀ç\"]}, \"question_revision\": 1})\n",
     "compiled": [
       {
         "id": "8ffda56e-ff6d-5be7-bfff-fff578b54207",
@@ -3716,13 +3520,10 @@
         "id": "0073c53f-d843-60af-8000-00135bbc9218",
         "name": "bb_w_2m",
         "type": "text",
-        "options": [
-          "﻿Zç\n﻿ã0",
-          "\ra0:\r'a"
-        ],
+        "options": null,
         "description": "b 0 {'0",
         "target": "human_only",
-        "hash": "e67869113ec5",
+        "hash": "c3cfb9bd0cf9",
         "subfields": [
           {
             "key": "list",
@@ -4064,9 +3865,7 @@
         "id": "d91ce36f-000d-1000-8acc-4d6e7482e4dc",
         "name": "bt",
         "type": "text",
-        "options": [
-          "ã\r0_}\tç\r"
-        ],
+        "options": null,
         "description": "😀}a﻿:}",
         "help_text": "{  .",
         "target": "none",
@@ -4107,10 +3906,7 @@
         "id": "f717b36c-7b40-37b5-aa90-e9d3649a44ec",
         "name": "d",
         "type": "text",
-        "options": [
-          "\u001c\u001f\":b'",
-          "  \n😀\rã:"
-        ],
+        "options": null,
         "description": "aç\u001c: ç.",
         "help_text": ":{ã{﻿{",
         "target": "human_only",
@@ -4132,7 +3928,7 @@
         }
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _bt_fields(BaseModel):\n    c0_m6_: Optional[str] = Field(default=None, description=\"'b﻿0 ç\", json_schema_extra={\"subfield_required\": True})\n\nclass _d_fields(BaseModel):\n    h19: str = Field(description=\"\\\\'{\\\" a\")\n\nclass Analysis(BaseModel):\n    k: str = Field(description=\"😀.. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Instrucoes: :\u001f.\", json_schema_extra={\"id\": \"ffffffe5-ffe4-8fff-8dbc-24ff4d620e09\", \"target\": \"human_only\", \"field_type\": \"date\", \"help_text\": \":\u001f.\", \"justification_prompt\": \"bZ\", \"question_revision\": 4})\n    bt: Optional[_bt_fields] = Field(default=None, description=\"😀}a﻿:}. Instrucoes: {  .\", json_schema_extra={\"id\": \"d91ce36f-000d-1000-8acc-4d6e7482e4dc\", \"target\": \"none\", \"options\": [\"ã\\r0_}\\tç\\r\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"{  .\", \"visible_if\": {\"field\": \"k\", \"equals\": 2.030645224878388e-220}, \"justification_prompt\": \"😀a\\\"\"})\n    g0__bbi_: Optional[list[Literal[\"\u001f_\u001cb😀\", \"ba\\\\_\u001f{\"]]] = Field(default=None, description=\"}_0. Instrucoes: :'}﻿\\nç\", json_schema_extra={\"id\": \"bed86edc-71d1-567e-8000-0012512fea17\", \"required\": False, \"help_text\": \":'}﻿\\nç\", \"visible_if\": {\"field\": \"k\", \"equals\": \"0}a}}\"}, \"justification_prompt\": \".\", \"question_revision\": 1})\n    d: Optional[_d_fields] = Field(default=None, description=\"aç\u001c: ç.. Instrucoes: :{ã{﻿{\", json_schema_extra={\"id\": \"f717b36c-7b40-37b5-aa90-e9d3649a44ec\", \"target\": \"human_only\", \"required\": False, \"options\": [\"\u001c\u001f\\\":b'\", \"  \\n😀\\rã:\"], \"help_text\": \":{ã{﻿{\", \"visible_if\": {\"field\": \"k\", \"in\": [\" \\\"ã\\t \", 0.000005323832203646137]}})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _bt_fields(BaseModel):\n    c0_m6_: Optional[str] = Field(default=None, description=\"'b﻿0 ç\", json_schema_extra={\"subfield_required\": True})\n\nclass _d_fields(BaseModel):\n    h19: str = Field(description=\"\\\\'{\\\" a\")\n\nclass Analysis(BaseModel):\n    k: str = Field(description=\"😀.. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Instrucoes: :\u001f.\", json_schema_extra={\"id\": \"ffffffe5-ffe4-8fff-8dbc-24ff4d620e09\", \"target\": \"human_only\", \"field_type\": \"date\", \"help_text\": \":\u001f.\", \"justification_prompt\": \"bZ\", \"question_revision\": 4})\n    bt: Optional[_bt_fields] = Field(default=None, description=\"😀}a﻿:}. Instrucoes: {  .\", json_schema_extra={\"id\": \"d91ce36f-000d-1000-8acc-4d6e7482e4dc\", \"target\": \"none\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"{  .\", \"visible_if\": {\"field\": \"k\", \"equals\": 2.030645224878388e-220}, \"justification_prompt\": \"😀a\\\"\"})\n    g0__bbi_: Optional[list[Literal[\"\u001f_\u001cb😀\", \"ba\\\\_\u001f{\"]]] = Field(default=None, description=\"}_0. Instrucoes: :'}﻿\\nç\", json_schema_extra={\"id\": \"bed86edc-71d1-567e-8000-0012512fea17\", \"required\": False, \"help_text\": \":'}﻿\\nç\", \"visible_if\": {\"field\": \"k\", \"equals\": \"0}a}}\"}, \"justification_prompt\": \".\", \"question_revision\": 1})\n    d: Optional[_d_fields] = Field(default=None, description=\"aç\u001c: ç.. Instrucoes: :{ã{﻿{\", json_schema_extra={\"id\": \"f717b36c-7b40-37b5-aa90-e9d3649a44ec\", \"target\": \"human_only\", \"required\": False, \"help_text\": \":{ã{﻿{\", \"visible_if\": {\"field\": \"k\", \"in\": [\" \\\"ã\\t \", 0.000005323832203646137]}})\n",
     "compiled": [
       {
         "id": "ffffffe5-ffe4-8fff-8dbc-24ff4d620e09",
@@ -4150,12 +3946,10 @@
         "id": "d91ce36f-000d-1000-8acc-4d6e7482e4dc",
         "name": "bt",
         "type": "text",
-        "options": [
-          "ã\r0_}\tç\r"
-        ],
+        "options": null,
         "description": "😀}a﻿:}",
         "target": "none",
-        "hash": "4a1b814ead4a",
+        "hash": "27e509b8d201",
         "help_text": "{  .",
         "subfields": [
           {
@@ -4195,13 +3989,10 @@
         "id": "f717b36c-7b40-37b5-aa90-e9d3649a44ec",
         "name": "d",
         "type": "text",
-        "options": [
-          "\u001c\u001f\":b'",
-          "  \n😀\rã:"
-        ],
+        "options": null,
         "description": "aç\u001c: ç.",
         "target": "human_only",
-        "hash": "5fafe658d6d5",
+        "hash": "2875de97c580",
         "help_text": ":{ã{﻿{",
         "required": false,
         "subfields": [
@@ -4304,11 +4095,7 @@
         "id": "7fe83e7d-c289-8fb5-bfff-fff22276340d",
         "name": "xlength",
         "type": "text",
-        "options": [
-          "ç\".\r:Z\u001cç😀",
-          "ã}0\t0_",
-          "\n{ç\\{"
-        ],
+        "options": null,
         "description": "\t0b0ã﻿{",
         "target": "none",
         "required": true,
@@ -4329,20 +4116,16 @@
         "question_revision": 4
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _xlength_fields(BaseModel):\n    a_s: Optional[str] = Field(default=None, description=\"\u001f{{ \")\n    analysis: str = Field(description=\".0:\\t0\\raã\")\n\nclass Analysis(BaseModel):\n    xlength: _xlength_fields = Field(description=\"\\t0b0ã﻿{\", json_schema_extra={\"id\": \"7fe83e7d-c289-8fb5-bfff-fff22276340d\", \"target\": \"none\", \"options\": [\"ç\\\".\\r:Z\u001cç😀\", \"ã}0\\t0_\", \"\\n{ç\\\\{\"], \"justification_prompt\": \"\\\"'0\", \"question_revision\": 4})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _xlength_fields(BaseModel):\n    a_s: Optional[str] = Field(default=None, description=\"\u001f{{ \")\n    analysis: str = Field(description=\".0:\\t0\\raã\")\n\nclass Analysis(BaseModel):\n    xlength: _xlength_fields = Field(description=\"\\t0b0ã﻿{\", json_schema_extra={\"id\": \"7fe83e7d-c289-8fb5-bfff-fff22276340d\", \"target\": \"none\", \"justification_prompt\": \"\\\"'0\", \"question_revision\": 4})\n",
     "compiled": [
       {
         "id": "7fe83e7d-c289-8fb5-bfff-fff22276340d",
         "name": "xlength",
         "type": "text",
-        "options": [
-          "ç\".\r:Z\u001cç😀",
-          "ã}0\t0_",
-          "\n{ç\\{"
-        ],
+        "options": null,
         "description": "\t0b0ã﻿{",
         "target": "none",
-        "hash": "13022ec6aa05",
+        "hash": "75c4ae523c3b",
         "subfields": [
           {
             "key": "a_s",
@@ -4437,10 +4220,7 @@
         "id": "49d02f59-1f7b-6935-8000-000b2c4353af",
         "name": "optional",
         "type": "text",
-        "options": [
-          "0\".b\\\"\"😀ç",
-          "\"\"}:\""
-        ],
+        "options": null,
         "description": "b\n",
         "help_text": "﻿\nççç':ç",
         "target": "none",
@@ -4460,10 +4240,10 @@
         "subfield_rule": "at_least_one",
         "justification_prompt": "_",
         "question_revision": 8,
-        "hash": "37c708e71120"
+        "hash": "3b4d7068e827"
       },
       {
-        "id": "a485ab58-001c-1000-8f9f-dd45fffffffb",
+        "id": "fffffff8-001c-1000-8f9f-dd45fffffffb",
         "name": "a__z0",
         "type": "text",
         "options": null,
@@ -4484,25 +4264,23 @@
         ],
         "condition": {
           "field": "optional",
-          "equals": "\"\"}:\""
+          "equals": -6.669486879932678e-210
         },
-        "justification_prompt": ": 'ç",
-        "question_revision": 9
+        "justification_prompt": "'",
+        "question_revision": 8,
+        "hash": "16737154e8a2"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _optional_fields(BaseModel):\n    list: Optional[str] = Field(default=None, description=\"\u001f00_a😀\")\n    vu: Optional[str] = Field(default=None, description=\"\\\"_\u001c0\")\n\nclass _a__z0_fields(BaseModel):\n    o_201p_: Optional[str] = Field(default=None, description=\"\\\\\\nçãZa\\\"'\")\n    o: str = Field(description=\"b0ã\")\n\nclass Analysis(BaseModel):\n    optional: _optional_fields = Field(description=\"b\\n. Instrucoes: ﻿\\nççç':ç\", json_schema_extra={\"id\": \"49d02f59-1f7b-6935-8000-000b2c4353af\", \"target\": \"none\", \"options\": [\"0\\\".b\\\\\\\"\\\"😀ç\", \"\\\"\\\"}:\\\"\"], \"subfield_rule\": \"at_least_one\", \"help_text\": \"﻿\\nççç':ç\", \"justification_prompt\": \"_\", \"question_revision\": 8})\n    a__z0: Optional[_a__z0_fields] = Field(default=None, description=\"\\\\\u001f{ \", json_schema_extra={\"id\": \"a485ab58-001c-1000-8f9f-dd45fffffffb\", \"target\": \"human_only\", \"required\": False, \"visible_if\": {\"field\": \"optional\", \"equals\": \"\\\"\\\"}:\\\"\"}, \"justification_prompt\": \": 'ç\", \"question_revision\": 9})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _optional_fields(BaseModel):\n    list: Optional[str] = Field(default=None, description=\"\u001f00_a😀\")\n    vu: Optional[str] = Field(default=None, description=\"\\\"_\u001c0\")\n\nclass _a__z0_fields(BaseModel):\n    o_201p_: Optional[str] = Field(default=None, description=\"\\\\\\nçãZa\\\"'\")\n    o: str = Field(description=\"b0ã\")\n\nclass Analysis(BaseModel):\n    optional: _optional_fields = Field(description=\"b\\n. Instrucoes: ﻿\\nççç':ç\", json_schema_extra={\"id\": \"49d02f59-1f7b-6935-8000-000b2c4353af\", \"target\": \"none\", \"subfield_rule\": \"at_least_one\", \"help_text\": \"﻿\\nççç':ç\", \"justification_prompt\": \"_\", \"question_revision\": 8})\n    a__z0: Optional[_a__z0_fields] = Field(default=None, description=\"\\\\\u001f{ \", json_schema_extra={\"id\": \"fffffff8-001c-1000-8f9f-dd45fffffffb\", \"target\": \"human_only\", \"required\": False, \"visible_if\": {\"field\": \"optional\", \"equals\": -6.669486879932678e-210}, \"justification_prompt\": \"'\", \"question_revision\": 8})\n",
     "compiled": [
       {
         "id": "49d02f59-1f7b-6935-8000-000b2c4353af",
         "name": "optional",
         "type": "text",
-        "options": [
-          "0\".b\\\"\"😀ç",
-          "\"\"}:\""
-        ],
+        "options": null,
         "description": "b\n",
         "target": "none",
-        "hash": "37c708e71120",
+        "hash": "3b4d7068e827",
         "help_text": "﻿\nççç':ç",
         "subfields": [
           {
@@ -4521,13 +4299,13 @@
         "question_revision": 8
       },
       {
-        "id": "a485ab58-001c-1000-8f9f-dd45fffffffb",
+        "id": "fffffff8-001c-1000-8f9f-dd45fffffffb",
         "name": "a__z0",
         "type": "text",
         "options": null,
         "description": "\\\u001f{ ",
         "target": "human_only",
-        "hash": "ff5b49fb496b",
+        "hash": "16737154e8a2",
         "required": false,
         "subfields": [
           {
@@ -4544,10 +4322,10 @@
         "subfield_rule": "all",
         "condition": {
           "field": "optional",
-          "equals": "\"\"}:\""
+          "equals": -6.669486879932678e-210
         },
-        "justification_prompt": ": 'ç",
-        "question_revision": 9
+        "justification_prompt": "'",
+        "question_revision": 8
       }
     ]
   },
@@ -4558,11 +4336,7 @@
         "id": "00000006-001e-1000-8272-d97826a1e576",
         "name": "ce___",
         "type": "text",
-        "options": [
-          "ça}_.\r.}b",
-          "\u001f':",
-          "\t\rb\u001fç}'"
-        ],
+        "options": null,
         "description": "}a :😀ã﻿}",
         "target": "llm_only",
         "subfields": [
@@ -4573,23 +4347,19 @@
           }
         ],
         "question_revision": 3,
-        "hash": "5b29e0f92dd3"
+        "hash": "5199bc57a6a2"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _ce____fields(BaseModel):\n    copy: Optional[str] = Field(default=None, description=\"0\\nZ': Z\\\"}\")\n\nclass Analysis(BaseModel):\n    ce___: _ce____fields = Field(description=\"}a :😀ã﻿}\", json_schema_extra={\"id\": \"00000006-001e-1000-8272-d97826a1e576\", \"target\": \"llm_only\", \"options\": [\"ça}_.\\r.}b\", \"\u001f':\", \"\\t\\rb\u001fç}'\"], \"question_revision\": 3})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _ce____fields(BaseModel):\n    copy: Optional[str] = Field(default=None, description=\"0\\nZ': Z\\\"}\")\n\nclass Analysis(BaseModel):\n    ce___: _ce____fields = Field(description=\"}a :😀ã﻿}\", json_schema_extra={\"id\": \"00000006-001e-1000-8272-d97826a1e576\", \"target\": \"llm_only\", \"question_revision\": 3})\n",
     "compiled": [
       {
         "id": "00000006-001e-1000-8272-d97826a1e576",
         "name": "ce___",
         "type": "text",
-        "options": [
-          "ça}_.\r.}b",
-          "\u001f':",
-          "\t\rb\u001fç}'"
-        ],
+        "options": null,
         "description": "}a :😀ã﻿}",
         "target": "llm_only",
-        "hash": "5b29e0f92dd3",
+        "hash": "5199bc57a6a2",
         "subfields": [
           {
             "key": "copy",
@@ -4702,11 +4472,7 @@
         "id": "9c4eee24-ffeb-8fff-8000-000e48a58838",
         "name": "d_44",
         "type": "text",
-        "options": [
-          "\u001c\tZ",
-          "\u001c. Zã\\ \u001c\r",
-          "':\"0"
-        ],
+        "options": null,
         "description": "b\t\n\\",
         "target": "all",
         "required": false,
@@ -4727,10 +4493,10 @@
         },
         "justification_prompt": "{_😀",
         "question_revision": 9,
-        "hash": "71d0f4ea8093"
+        "hash": "7d61d25a34a5"
       }
     ],
-    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _d_44_fields(BaseModel):\n    y5wu2b: Optional[str] = Field(default=None, description=\"0ã{ã.a}_}0\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    aqn: str = Field(description=\"\\\\\u001c:ZZ😀. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"\\\\\\t\\\\\\r{\u001c.\\\". Instrucoes: 0b:\u001f{﻿\", json_schema_extra={\"id\": \"4e8d5a32-0bd2-13a8-a058-31539bc8a51f\", \"target\": \"llm_only\", \"field_type\": \"date\", \"options\": [\"\\\\\\t\\\\\\r{\u001c.\"], \"help_text\": \"0b:\u001f{﻿\", \"justification_prompt\": \"﻿\", \"question_revision\": 9})\n    d_44: Optional[_d_44_fields] = Field(default=None, description=\"b\\t\\n\\\\\", json_schema_extra={\"id\": \"9c4eee24-ffeb-8fff-8000-000e48a58838\", \"required\": False, \"options\": [\"\u001c\\tZ\", \"\u001c. Zã\\\\ \u001c\\r\", \"':\\\"0\"], \"subfield_rule\": \"at_least_one\", \"visible_if\": {\"field\": \"aqn\", \"in\": [\"\\\\\\t\\\\\\r{\u001c.\", False]}, \"justification_prompt\": \"{_😀\", \"question_revision\": 9})\n",
+    "code": "from pydantic import BaseModel, Field\nfrom typing import Literal, Optional\n\n\nclass _d_44_fields(BaseModel):\n    y5wu2b: Optional[str] = Field(default=None, description=\"0ã{ã.a}_}0\", json_schema_extra={\"subfield_required\": True})\n\nclass Analysis(BaseModel):\n    aqn: str = Field(description=\"\\\\\u001c:ZZ😀. Formato: DD/MM/AAAA (use XX para partes desconhecidas). Caso não seja possível informar a data, usar um dos seguintes valores: \\\"\\\\\\t\\\\\\r{\u001c.\\\". Instrucoes: 0b:\u001f{﻿\", json_schema_extra={\"id\": \"4e8d5a32-0bd2-13a8-a058-31539bc8a51f\", \"target\": \"llm_only\", \"field_type\": \"date\", \"options\": [\"\\\\\\t\\\\\\r{\u001c.\"], \"help_text\": \"0b:\u001f{﻿\", \"justification_prompt\": \"﻿\", \"question_revision\": 9})\n    d_44: Optional[_d_44_fields] = Field(default=None, description=\"b\\t\\n\\\\\", json_schema_extra={\"id\": \"9c4eee24-ffeb-8fff-8000-000e48a58838\", \"required\": False, \"subfield_rule\": \"at_least_one\", \"visible_if\": {\"field\": \"aqn\", \"in\": [\"\\\\\\t\\\\\\r{\u001c.\", False]}, \"justification_prompt\": \"{_😀\", \"question_revision\": 9})\n",
     "compiled": [
       {
         "id": "4e8d5a32-0bd2-13a8-a058-31539bc8a51f",
@@ -4750,14 +4516,10 @@
         "id": "9c4eee24-ffeb-8fff-8000-000e48a58838",
         "name": "d_44",
         "type": "text",
-        "options": [
-          "\u001c\tZ",
-          "\u001c. Zã\\ \u001c\r",
-          "':\"0"
-        ],
+        "options": null,
         "description": "b\t\n\\",
         "target": "all",
-        "hash": "71d0f4ea8093",
+        "hash": "7d61d25a34a5",
         "required": false,
         "subfields": [
           {
