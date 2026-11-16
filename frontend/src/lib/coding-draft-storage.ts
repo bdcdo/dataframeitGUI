@@ -4,6 +4,7 @@ import {
   codingDraftStorageKey,
   codingDraftUserPrefix,
   envelopeMatchesScope,
+  orphanedDraftFields,
   readCodingDraft,
   sameCodingSnapshot,
   type CodingDraftEnvelope,
@@ -12,6 +13,7 @@ import {
   type CodingSnapshot,
 } from "@/lib/coding-draft";
 import { makeId } from "@/lib/utils";
+import { sanitizeStoredAnswers } from "@/lib/response-snapshot";
 import type { PydanticField } from "@/lib/types";
 
 // Acesso ao localStorage para o rascunho local de respostas (#608): leitura,
@@ -118,6 +120,8 @@ export interface CodingDraftsApi {
   // slot pertence a outra aba. Um sinal só: a conclusão para a pesquisadora é a
   // mesma nos dois casos, e é ela que a faixa comunica.
   storageAvailable: boolean;
+  removedDraftCount: number;
+  unreadableDraftCount: number;
 }
 
 export interface UseCodingDraftsParams {
@@ -149,21 +153,27 @@ function scopeFor(
 function readSlot(scope: CodingDraftScope): {
   available: boolean;
   envelope: CodingDraftEnvelope | null;
+  unreadable: boolean;
 } {
   if (typeof window === "undefined") {
-    return { available: false, envelope: null };
+    return { available: false, envelope: null, unreadable: false };
   }
   try {
-    const read = readCodingDraft(window.localStorage.getItem(codingDraftStorageKey(scope)));
+    const raw = window.localStorage.getItem(codingDraftStorageKey(scope));
+    const read = readCodingDraft(raw);
     // Segunda barreira: a chave disse que é deste documento, o conteúdo precisa
     // concordar. Discordância vira "sem rascunho", nunca aplicação cruzada — ver
     // `envelopeMatchesScope`.
     if (read.kind === "draft" && envelopeMatchesScope(read.draft, scope)) {
-      return { available: true, envelope: read.draft };
+      return { available: true, envelope: read.draft, unreadable: false };
     }
-    return { available: true, envelope: null };
+    return {
+      available: true,
+      envelope: null,
+      unreadable: raw !== null && read.kind !== "newer-format",
+    };
   } catch {
-    return { available: false, envelope: null };
+    return { available: false, envelope: null, unreadable: false };
   }
 }
 
@@ -358,6 +368,8 @@ function collectCodingDraftGarbage(
 export interface CodingDraftSessionCallbacks {
   onRecovery(recovery: CodingDraftRecovery): void;
   onStorageAvailable(available: boolean): void;
+  onDraftsRemoved(count: number): void;
+  onUnreadableDraft(): void;
 }
 
 export interface CodingDraftSession {
@@ -387,6 +399,17 @@ interface SessionState {
   // Distingue "nunca abriu" de "abriu o documento null": sem isto, a primeira
   // chamada com `null` cairia no guard de idempotência e o GC nunca rodaria.
   openedOnce: boolean;
+  unreadableKeys: Set<string>;
+}
+
+function pickExistingAnswers(
+  answers: Record<string, unknown>,
+  names: string[],
+): Record<string, unknown> {
+  return Object.fromEntries(
+    names.filter((name) => Object.hasOwn(answers, name))
+      .map((name) => [name, answers[name]]),
+  );
 }
 
 function persist(
@@ -419,6 +442,7 @@ function persist(
     // Evicção de emergência: quota estourada é recuperável se houver rascunho
     // velho nosso ocupando espaço. Só depois de tentar é que se desiste.
     const freed = collectCodingDraftGarbage(userId, Date.now(), codingDraftStorageKey(scope));
+    if (freed.removed > 0) cb.onDraftsRemoved(freed.removed);
     if (freed.removed > 0) {
       outcome = writeSlotIfTokenMatches(scope, envelope, state.persistedToken);
     }
@@ -492,15 +516,33 @@ function recordDraftIn(
   // inteiro como se fosse rascunho.
   if (!previous) return;
 
+  const { projectId, userId } = st.keyParts;
+  const slot = readSlot(scopeFor({ projectId, userId }, docId));
+  const envelope = slot.envelope;
+  const removedFields = envelope ? orphanedDraftFields(envelope, st.fields) : [];
+  const removedBase = envelope ? pickExistingAnswers(envelope.base.answers, removedFields) : {};
+  const removedDraft = envelope ? pickExistingAnswers(envelope.draft.answers, removedFields) : {};
+  const nextDraft = removedFields.length > 0
+    ? {
+        ...draft,
+        answers: { ...draft.answers, ...removedDraft },
+      }
+    : draft;
+
   // Voltar ao baseline não é "rascunho vazio", é ausência de rascunho: manter o
   // envelope faria a faixa oferecer, na próxima abertura, um rascunho idêntico
   // ao que o servidor já tem.
-  if (sameCodingSnapshot(draft, previous.base, st.fields)) {
+  if (sameCodingSnapshot(nextDraft, previous.base, st.fields) && removedFields.length === 0) {
     dropSlot(st, docId, previous.base);
     return;
   }
   const token = makeId("cdraft");
-  st.states.set(docId, { ...previous, draft, writeToken: token });
+  st.states.set(docId, {
+    ...previous,
+    base: { ...previous.base, answers: { ...previous.base.answers, ...removedBase } },
+    draft: nextDraft,
+    writeToken: token,
+  });
   scheduleWrite(st, cb, docId, token);
 }
 
@@ -508,11 +550,12 @@ function recordDraftIn(
 // ponto que se sabe qual slot preservar: antes disso `keepKey` seria nulo e o
 // rascunho do documento na tela entraria na varredura — expirado ou acima do
 // teto, seria apagado debaixo da pesquisadora.
-function runFirstOpenGc(st: SessionState, docId: string | null): void {
+function runFirstOpenGc(st: SessionState, cb: CodingDraftSessionCallbacks, docId: string | null): void {
   const { projectId, userId, enabled } = st.keyParts;
   if (!enabled) return;
   const keep = docId ? codingDraftStorageKey(scopeFor({ projectId, userId }, docId)) : null;
-  collectCodingDraftGarbage(userId, Date.now(), keep);
+  const result = collectCodingDraftGarbage(userId, Date.now(), keep);
+  if (result.removed > 0) cb.onDraftsRemoved(result.removed);
 }
 
 // Abrir estabelece o baseline do documento — a sessão é dona única dele a partir
@@ -567,7 +610,7 @@ function openDocumentIn(
   st.openedOnce = true;
   st.openDocId = docId;
 
-  if (firstOpen) runFirstOpenGc(st, docId);
+  if (firstOpen) runFirstOpenGc(st, cb, docId);
 
   if (!enabled || !docId) {
     cb.onRecovery({ kind: "none" });
@@ -577,6 +620,11 @@ function openDocumentIn(
   const scope = scopeFor({ projectId, userId }, docId);
   const slot = readSlot(scope);
   cb.onStorageAvailable(slot.available);
+  const key = codingDraftStorageKey(scope);
+  if (slot.unreadable && !st.unreadableKeys.has(key)) {
+    st.unreadableKeys.add(key);
+    cb.onUnreadableDraft();
+  }
 
   const baseline = remote ?? EMPTY_SNAPSHOT;
   seedBaseline(st, docId, baseline, slot.envelope?.writeToken ?? null);
@@ -600,8 +648,7 @@ function offerOrClean(
     cb.onRecovery({ kind: "none" });
     return;
   }
-  const offered = classified.kind === "resumable" || classified.kind === "diverged";
-  cb.onRecovery(offered ? classified : { kind: "none" });
+  cb.onRecovery(classified);
 }
 
 export function createCodingDraftSession(
@@ -614,6 +661,7 @@ export function createCodingDraftSession(
     fields: [],
     openDocId: null,
     openedOnce: false,
+    unreadableKeys: new Set(),
   };
 
   return {
@@ -636,6 +684,36 @@ export function createCodingDraftSession(
       // tecla criaria um rascunho cujo `base` é o seed stale do RSC, e reabrir o
       // documento depois acusaria "o documento foi salvo depois" contra uma
       // escrita nossa.
+      const { projectId, userId } = st.keyParts;
+      const scope = scopeFor({ projectId, userId }, docId);
+      const slot = readSlot(scope);
+      const envelope = slot.envelope;
+      const removedFields = envelope ? orphanedDraftFields(envelope, st.fields) : [];
+      if (envelope && removedFields.length > 0) {
+        const timer = st.timers.get(docId);
+        if (timer) window.clearTimeout(timer);
+        st.timers.delete(docId);
+        const token = makeId("cdraft");
+        const keptBase = pickExistingAnswers(envelope.base.answers, removedFields);
+        const keptDraft = pickExistingAnswers(envelope.draft.answers, removedFields);
+        const nextBase = { ...saved, answers: { ...saved.answers, ...keptBase } };
+        const next: CodingDraftEnvelope = {
+          ...envelope,
+          writeToken: token,
+          updatedAt: Date.now(),
+          base: nextBase,
+          draft: { ...saved, answers: { ...saved.answers, ...keptDraft } },
+        };
+        const expectedToken = st.states.get(docId)?.persistedToken ?? null;
+        const outcome = writeSlotIfTokenMatches(scope, next, expectedToken);
+        st.states.set(docId, {
+          ...emptyDocState(nextBase),
+          persistedToken: outcome === "written" ? token : expectedToken,
+        });
+        if (outcome !== "written") cb.onStorageAvailable(false);
+        cb.onRecovery({ kind: "orphaned", removedFields });
+        return;
+      }
       dropSlot(st, docId, saved);
       cb.onRecovery({ kind: "none" });
     },
@@ -648,15 +726,21 @@ export function createCodingDraftSession(
       }
       // O envelope permanece no slot: retomar não é enviar. Assumimos a posse
       // dele para que o compare-and-swap das próximas escritas case.
+      const cleanDraft = {
+        ...slot.envelope.draft,
+        answers: st.fields.length > 0
+          ? sanitizeStoredAnswers(st.fields, slot.envelope.draft.answers)
+          : {},
+      };
       st.states.set(docId, {
         base: slot.envelope.base,
-        draft: slot.envelope.draft,
+        draft: cleanDraft,
         writeToken: slot.envelope.writeToken,
         persistedToken: slot.envelope.writeToken,
         blocked: false,
       });
       cb.onRecovery({ kind: "none" });
-      return slot.envelope.draft;
+      return cleanDraft;
     },
     flushAll() {
       for (const [docId, timer] of st.timers) {

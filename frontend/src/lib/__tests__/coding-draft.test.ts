@@ -279,12 +279,12 @@ describe("classifyCodingDraft — o que a faixa oferece", () => {
 
   // Um rascunho que só difere num campo removido do schema não tem o que
   // acrescentar: aplicá-lo não mudaria nada de visível.
-  it("diferença apenas em campo removido do schema é `redundant`", () => {
+  it("diferença apenas em campo removido do schema é preservada para aviso", () => {
     const r = classifyCodingDraft(
       envelope({ base: snapshot({ q1: "a" }), draft: snapshot({ q1: "a", removido: "z" }) }),
       remote,
       FIELDS,
     );
-    expect(r.kind).toBe("redundant");
+    expect(r).toMatchObject({ kind: "orphaned", removedFields: ["removido"] });
   });
 });

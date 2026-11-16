@@ -184,7 +184,33 @@ export function CodingDraftBanner({
           <OverwriteWarning offer={offer} fields={fields} hidden />
         </div>
       )}
+      {recovery.kind === "orphaned" && (
+        <div role="alert" className="border-b bg-amber-50 px-4 py-2.5 text-sm dark:bg-amber-950/30">
+          Há alterações não enviadas em perguntas removidas do schema ({recovery.removedFields.join(", ")}).
+          O rascunho foi mantido neste navegador, mas não pode ser retomado neste formulário.
+        </div>
+      )}
     </>
+  );
+}
+
+export function CodingDraftCleanupBanner({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <div role="alert" className="border-b bg-amber-50 px-4 py-2.5 text-sm dark:bg-amber-950/30">
+      {count} rascunho{count === 1 ? " local foi removido" : "s locais foram removidos"} deste navegador
+      por expiração, limite de rascunhos ou formato ilegível.
+    </div>
+  );
+}
+
+export function CodingDraftUnreadableBanner({ count }: { count: number }) {
+  if (count === 0) return null;
+  return (
+    <div role="alert" className="border-b bg-amber-50 px-4 py-2.5 text-sm dark:bg-amber-950/30">
+      {count} rascunho{count === 1 ? " local não pôde ser lido" : "s locais não puderam ser lidos"}.
+      O conteúdo não pode ser retomado nesta versão e pode ser substituído por novas edições.
+    </div>
   );
 }
 

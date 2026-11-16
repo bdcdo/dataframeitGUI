@@ -231,6 +231,14 @@ describe("critério 4 — a tela diz se há alterações não enviadas", () => {
     );
   });
 
+  it("mantém o indicador ao entrar em fullscreen", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await typeAnswer(user, "Zolgensma");
+    await user.keyboard("{Control>}{Shift>}F{/Shift}{/Control}");
+    expect(screen.getByText(/alterações não enviadas/i)).toBeTruthy();
+  });
+
   // A razão de o indicador NÃO sair do storage: aqui o localStorage está
   // quebrado e a tela ainda precisa dizer a verdade sobre o trabalho pendente.
   // Mutação vermelha: derivar `unsent` de `drafts`/`storageAvailable`.
@@ -326,6 +334,44 @@ describe("recuperação — oferecer, nunca aplicar em silêncio", () => {
     ).toBeNull();
   });
 
+  it("avisa e preserva um rascunho só de pergunta removida", async () => {
+    plantDraft({ q1: "igual", removida: "trabalho" }, { q1: "igual" });
+    renderPage({ [DOC]: { q1: "igual" } });
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("perguntas removidas"),
+    );
+    expect(storedDraft()?.draft.answers.removida).toBe("trabalho");
+  });
+
+  it("avisa na tela quando remove um rascunho expirado", async () => {
+    const oldKey = codingDraftStorageKey({ userId: USER, projectId: PROJECT, documentId: "d-antigo" });
+    window.localStorage.setItem(oldKey, JSON.stringify({
+      formatVersion: 1,
+      writeToken: "tok-antigo",
+      userId: USER,
+      projectId: PROJECT,
+      documentId: "d-antigo",
+      updatedAt: Date.now() - 31 * 24 * 60 * 60_000,
+      base: { answers: {}, notes: "" },
+      draft: { answers: { q1: "trabalho" }, notes: "" },
+    }));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("rascunho local foi removido"),
+    );
+  });
+
+  it("avisa na tela sobre um envelope ilegível no documento aberto", async () => {
+    window.localStorage.setItem(KEY, "{json inválido");
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      expect.stringContaining("rascunho local não pôde ser lido"),
+    );
+  });
+
   it("anuncia o que seria sobrescrito quando o servidor andou depois do rascunho", async () => {
     plantDraft({ q1: "do rascunho" }, { q1: "antigo" });
     renderPage({ [DOC]: { q1: "servidor-novo" } });
@@ -341,10 +387,7 @@ describe("recuperação — oferecer, nunca aplicar em silêncio", () => {
   });
 });
 
-// A região live da oferta precisa existir antes de a oferta chegar (#635). Em
-// fullscreen a faixa não se aplica; se ela desmontasse ali (como era), a região
-// voltaria a nascer populada na saída. Mutação vermelha: devolver o
-// `!isFullscreen &&` em volta de `CodingDraftBanner` no `CodingPage`.
+// A região live e a oferta permanecem disponíveis em fullscreen.
 describe("região live da oferta atravessa o fullscreen", () => {
   it("entrar e sair do fullscreen não remonta a região", async () => {
     const user = userEvent.setup();
@@ -357,9 +400,9 @@ describe("região live da oferta atravessa o fullscreen", () => {
     const live = offerRegion();
 
     await user.keyboard("{Control>}{Shift>}F{/Shift}{/Control}");
-    expect(screen.queryByRole("button", { name: /retomar rascunho/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /retomar rascunho/i })).toBeTruthy();
     expect(offerRegion()).toBe(live);
-    expect(live?.textContent).toBe("");
+    expect(live?.textContent).toMatch(/alterações não enviadas/i);
 
     await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: /retomar rascunho/i })).toBeTruthy();
@@ -368,11 +411,7 @@ describe("região live da oferta atravessa o fullscreen", () => {
   });
 });
 
-// Em fullscreen a faixa fica sem oferta; a saída é a chegada dela à tela, e a
-// idade é medida dali. Medida do instante em que a oferta chegou ao hook (a
-// abertura do documento), ela ficava parada no valor daquele momento, e horas
-// em fullscreen sumiam da frase. Só o `Date` é falso: os timers da região live
-// e do `waitFor` seguem reais.
+// A idade segue atualizada ao sair do fullscreen.
 describe("idade do rascunho depois do fullscreen", () => {
   afterEach(() => {
     vi.useRealTimers();

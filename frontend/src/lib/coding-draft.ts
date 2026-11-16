@@ -53,8 +53,7 @@ const codingSnapshotSchema = z.strictObject({
   // mudado entre a escrita e a leitura deste envelope; um Zod que conhecesse os
   // tipos rejeitaria o rascunho INTEIRO por causa de um campo que virou grupo
   // (o caso real medido no #606). A validação contra o schema acontece na hora
-  // de APLICAR, via `sanitizeStoredAnswers`, que já é a fronteira de leitura dos
-  // dois modos de codificação. Aqui só se exige que a forma seja estrutural.
+  // de APLICAR, via `sanitizeStoredAnswers`. Aqui só se exige a forma estrutural.
   answers: z.record(z.string(), z.unknown()),
   notes: z.string(),
 });
@@ -173,6 +172,22 @@ export function sameCodingSnapshot(
   return diffCodingSnapshots(a, b, fields).length === 0;
 }
 
+export function orphanedDraftFields(
+  envelope: CodingDraftEnvelope,
+  fields: PydanticField[],
+): string[] {
+  const currentNames = new Set(fields.map((field) => field.name));
+  return [...new Set([
+    ...Object.keys(envelope.base.answers),
+    ...Object.keys(envelope.draft.answers),
+  ])].filter(
+    (name) =>
+      !currentNames.has(name) &&
+      stableStringify(envelope.draft.answers[name]) !==
+        stableStringify(envelope.base.answers[name]),
+  );
+}
+
 export type CodingDraftRecovery =
   // Sem envelope legível: nada a oferecer.
   | { kind: "none" }
@@ -180,6 +195,9 @@ export type CodingDraftRecovery =
   // oferecer seria ruído que ensina a pesquisadora a ignorar a faixa — a
   // primeira coisa que a tornaria inútil no dia em que ela importa.
   | { kind: "redundant" }
+  // Há trabalho apenas em perguntas que saíram do schema. Não há aplicação
+  // segura neste formulário, mas apagar o slot perderia esse trabalho.
+  | { kind: "orphaned"; removedFields: string[] }
   // O servidor não andou desde que o rascunho nasceu: retomar só acrescenta.
   | {
       kind: "resumable";
@@ -208,7 +226,10 @@ export function classifyCodingDraft(
 
   // O que retomar mudaria em relação ao que está na tela.
   const changedFields = diffCodingSnapshots(envelope.draft, remote, fields);
-  if (changedFields.length === 0) return { kind: "redundant" };
+  if (changedFields.length === 0) {
+    const removedFields = orphanedDraftFields(envelope, fields);
+    return removedFields.length > 0 ? { kind: "orphaned", removedFields } : { kind: "redundant" };
+  }
 
   // O que o servidor mudou desde que este rascunho nasceu.
   const remoteMoved = diffCodingSnapshots(envelope.base, remote, fields);

@@ -15,6 +15,8 @@ import { useCodingDrafts } from "@/hooks/useCodingDrafts";
 import { useCodingDraftWiring } from "./useCodingDraftWiring";
 import {
   CodingDraftBanner,
+  CodingDraftCleanupBanner,
+  CodingDraftUnreadableBanner,
   CodingDraftUnavailableBanner,
   UnsentChangesBadge,
 } from "./CodingDraftBanner";
@@ -25,7 +27,6 @@ import { BrowseCodingView } from "./BrowseCodingView";
 import { useAssignedCoding } from "./useAssignedCoding";
 import { useBrowseCoding } from "./useBrowseCoding";
 import type { OutOfScopeConfig } from "./QuestionsPanel";
-import type { CodingDraftRecovery } from "@/lib/coding-draft";
 
 /** Quantos textos de doc atribuído ficam em cache por sessão. Espelha o
  *  `MAX_CACHED_DOCS` do modo Explorar: a fila é percorrida em sequência, então
@@ -33,8 +34,6 @@ import type { CodingDraftRecovery } from "@/lib/coding-draft";
  *  da fila inteira no heap — 145 docs a ~16 KB na maior fila medida. */
 const MAX_CACHED_ASSIGNED_TEXTS = 5;
 
-/** O que a faixa de rascunho recebe em fullscreen, onde ela não se aplica. */
-const NO_RECOVERY: CodingDraftRecovery = { kind: "none" };
 import type {
   PydanticField,
   AssignedDoc,
@@ -523,31 +522,27 @@ function CodingPageInner({
         onStay={cancelLeave}
       />
 
-      {/* Faixas do rascunho local (#608), abaixo do header e acima das duas
-          views: a oferta de recuperação e o aviso de que a cópia local não está
-          funcionando. Nenhuma das duas se aplica em fullscreen, onde o header
-          também não aparece. */}
+      {/* Faixas do rascunho local (#608), acima das duas views em ambos os modos
+          de exibição, inclusive fullscreen. */}
       {/* Um único indicador para os dois modos, junto das faixas do rascunho:
           permanente enquanto houver pendência, some quando o envio é
           confirmado. Fica aqui — e não dentro do painel de perguntas — porque o
           sinal é da PÁGINA (o documento aberto), e porque duplicá-lo por modo
           obrigava cada view a repassá-lo. */}
-      <UnsentChangesBadge visible={!isFullscreen && activeDocUnsent} />
-      {/* Em fullscreen a faixa fica sem oferta, mas montada: sair do
-          fullscreen é uma chegada, e a região live dela tem de existir antes
-          (#635). */}
+      <UnsentChangesBadge visible={activeDocUnsent} />
+      {/* A região live permanece montada ao alternar fullscreen (#635). */}
       <CodingDraftBanner
-        recovery={isFullscreen ? NO_RECOVERY : drafts.recovery}
+        recovery={drafts.recovery}
         offeredAt={Math.max(drafts.recoveryAt, exitedFullscreenAt)}
         fields={fields}
         onRestore={handleRestoreDraft}
         onDiscard={handleDiscardDraft}
       />
-      {!isFullscreen && (
-        <CodingDraftUnavailableBanner
-          visible={!drafts.storageAvailable && activeDocUnsent}
-        />
-      )}
+      <CodingDraftUnavailableBanner
+        visible={!drafts.storageAvailable && activeDocUnsent}
+      />
+      <CodingDraftCleanupBanner count={drafts.removedDraftCount} />
+      <CodingDraftUnreadableBanner count={drafts.unreadableDraftCount} />
 
       {mode === "assigned" && (
         <AssignedCodingView

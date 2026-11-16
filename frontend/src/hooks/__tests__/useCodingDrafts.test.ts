@@ -275,6 +275,62 @@ describe("recuperação — oferecer, nunca aplicar em silêncio", () => {
     expect(result.current.recovery.kind).toBe("none");
   });
 
+  it("filtra opções antigas e chaves removidas ao retomar", () => {
+    const fields: PydanticField[] = [{ ...FIELDS[0], type: "single", options: ["atual"] }];
+    plant({ draft: snap({ q1: "antiga", removida: "dado" }) });
+    const { result } = render({ fields });
+    let applied: CodingSnapshot | null = null;
+    act(() => { applied = result.current.restoreDraft(DOC); });
+    expect(applied).toEqual(snap({}));
+  });
+
+  it("preserva e avisa quando só uma pergunta removida tem edição", () => {
+    plant({ base: snap({ q1: "igual" }), draft: snap({ q1: "igual", removida: "trabalho" }) });
+    const { result } = render({ remote: snap({ q1: "igual" }) });
+    expect(result.current.recovery).toMatchObject({ kind: "orphaned", removedFields: ["removida"] });
+    expect(stored()).not.toBeNull();
+    act(() => result.current.recordDraft(DOC, snap({ q1: "nova" })));
+    flushDebounce();
+    expect(stored()?.draft.answers).toMatchObject({ q1: "nova", removida: "trabalho" });
+    act(() => result.current.submitConfirmed(DOC, snap({ q1: "nova" })));
+    expect(stored()?.draft.answers.removida).toBe("trabalho");
+    expect(result.current.recovery.kind).toBe("orphaned");
+  });
+
+  it("avisa quando o slot do documento aberto é ilegível", () => {
+    window.localStorage.setItem(KEY, "{json inválido");
+    const { result } = render();
+    expect(result.current.unreadableDraftCount).toBe(1);
+    act(() => result.current.openDocument("outro-doc", EMPTY));
+    act(() => result.current.openDocument(DOC, EMPTY));
+    expect(result.current.unreadableDraftCount).toBe(1);
+  });
+
+  it("não toma o órfão nem a edição de outra aba ao confirmar envio", () => {
+    plant({ writeToken: "tok-aba-a", draft: snap({ removida: "órfão" }) });
+    const view = render();
+    plant({ writeToken: "tok-aba-b", draft: snap({ q1: "UNSENT OTHER TAB", removida: "órfão" }) });
+    act(() => view.result.current.submitConfirmed(DOC, snap({ q1: "enviado por A" })));
+    expect(stored()?.writeToken).toBe("tok-aba-b");
+    expect(stored()?.draft.answers).toEqual({ q1: "UNSENT OTHER TAB", removida: "órfão" });
+    view.unmount();
+    const reopened = render({ remote: snap({ q1: "enviado por A" }) });
+    expect(reopened.result.current.recovery.kind).toBe("diverged");
+  });
+
+  it("preserva também a remoção pendente de uma pergunta retirada do schema", () => {
+    plant({ base: snap({ removida: "valor anterior" }), draft: snap({}) });
+    const { result } = render();
+    expect(result.current.recovery).toMatchObject({ kind: "orphaned", removedFields: ["removida"] });
+    act(() => result.current.recordDraft(DOC, snap({ q1: "nova" })));
+    flushDebounce();
+    expect(stored()?.base.answers.removida).toBe("valor anterior");
+    expect(stored()?.draft.answers).not.toHaveProperty("removida");
+    act(() => result.current.submitConfirmed(DOC, snap({ q1: "nova" })));
+    expect(stored()?.base.answers.removida).toBe("valor anterior");
+    expect(stored()?.draft.answers).not.toHaveProperty("removida");
+  });
+
   it("`discardDraft` apaga o slot e a oferta não volta", () => {
     plant();
     const { result } = render();
@@ -415,8 +471,9 @@ describe("GC — a peça que impede a quota de degradar em silêncio", () => {
   it("apaga rascunho além do TTL", () => {
     const velho = otherDocKey("doc-velho");
     plant({ documentId: "doc-velho", updatedAt: Date.now() - 31 * 24 * 60 * 60 * 1000 });
-    render();
+    const { result } = render();
     expect(window.localStorage.getItem(velho)).toBeNull();
+    expect(result.current.removedDraftCount).toBe(1);
   });
 
   it("preserva rascunho dentro do TTL", () => {
@@ -500,9 +557,10 @@ describe("GC — a peça que impede a quota de degradar em silêncio", () => {
   it("no teto, documento aberto COM rascunho gravado evicta o mais antigo dos outros", () => {
     const keys = plantOthers(MAX_DRAFTS_PER_USER);
     plant({ documentId: DOC });
-    render();
+    const { result } = render();
     expect(window.localStorage.getItem(KEY)).not.toBeNull();
     expect(keys.filter((k) => window.localStorage.getItem(k) === null)).toEqual([keys[0]]);
+    expect(result.current.removedDraftCount).toBe(1);
   });
 
   // Mutação vermelha: fazer `keep-foreign` entrar em `survivors`. Um envelope de
