@@ -68,6 +68,18 @@ updates:
       - "dependencies"
       - "backend"
 
+  # O pre-commit que o ci.yml roda: projeto uv próprio, fora do backend/uv.lock
+  # (o porquê está em .github/ci-tools/pyproject.toml).
+  - package-ecosystem: "uv"
+    directory: "/.github/ci-tools"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "ci"
+
   # GitHub Actions usadas nos workflows
   - package-ecosystem: "github-actions"
     directory: "/"

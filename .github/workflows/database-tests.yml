@@ -1,47 +1,17 @@
 name: Database contract tests
 
+# Sem gatilho de `pull_request`: quem o chama é o job `database` do ci.yml, em
+# todo PR e em todo push na `main`, para que o resultado conte no `ci-required`
+# (o filtro de `paths` que havia aqui deixava o banco fora do check
+# obrigatório, e era mais uma lista mantida à mão).
 on:
-  pull_request:
-    paths:
-      - ".github/workflows/database-tests.yml"
-      - ".nvmrc"
-      - "frontend/package.json"
-      - "frontend/package-lock.json"
-      - "frontend/scripts/run-db-tests.sh"
-      - "frontend/scripts/run-sql-test.sh"
-      - "frontend/scripts/run-backend-integration.sh"
-      - "frontend/supabase/migrations/**"
-      # Glob, não a lista nominal: enquanto o filtro citava um arquivo só, as
-      # suítes novas entravam no repo sem gate nenhum e ninguém percebia.
-      - "frontend/supabase/tests/**"
-      # Contratos do backend com o banco (#674): ver backend/tests/integration/.
-      - "backend/services/llm_runner.py"
-      - "backend/services/llm_rate_limiter.py"
-      - "backend/services/auth.py"
-      - "backend/services/auto_review_reconciliation.py"
-      - "backend/tests/integration/**"
-      # O pytest do contrato carrega este conftest.py antes dos testes.
-      - "backend/tests/conftest.py"
-      # O cliente (supabase-py/postgrest) e a config do pytest também mudam o
-      # que o contrato exercita.
-      - "backend/pyproject.toml"
-      - "backend/uv.lock"
-      # O conftest lê a URL e as chaves por config.py, e o Python do contrato
-      # vem do .python-version.
-      - "backend/config.py"
-      - "backend/.python-version"
-      # Portas, extensões e auth do Supabase local que as suítes usam.
-      - "frontend/supabase/config.toml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
   # O runner confere que toda entrada de KNOWN_RED aponta para issue aberta.
   issues: read
-
-concurrency:
-  group: database-tests-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
   database-contracts:

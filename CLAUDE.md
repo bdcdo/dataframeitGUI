@@ -85,7 +85,7 @@ Deploy e automatico a partir de merge no branch `main`. Frontend: Fly.io (app `g
 - `frontend/` — Next.js: `src/app` (rotas), `src/actions` (Server Actions), `src/components`, `src/lib` (lógica pura, com testes em `__tests__`), `src/hooks`; `e2e/` (Playwright), `supabase/migrations` e `supabase/tests` (suítes SQL), `scripts/` (gates e utilitários)
 - `backend/` — FastAPI: `routes/`, `services/` (LLM runner, compilador Pydantic, auth), `tests/` (pytest)
 - `docs/` — decisões (UI, banco, ferramentas de qualidade, verificação)
-- `.github/workflows/` — deploys no Fly, contratos do Fly, testes de banco, secret scan e o `ci.yml`, que roda no servidor os hooks de pre-push: a matriz dele sai do `.pre-commit-config.yaml`, então hook novo de pre-push entra no CI sozinho, e o que não pode rodar lá ganha motivo em `.github/ci-exempt-gates.json`
+- `.github/workflows/` — deploys no Fly, vigia do Fly, testes de banco, secret scan e o `ci.yml`, que roda no servidor os hooks de pre-push e de pre-commit e chama os testes de banco: a matriz dele sai do `.pre-commit-config.yaml`, então hook novo entra no CI sozinho, e o que não pode rodar lá ganha motivo em `.github/ci-exempt-gates.json`
 
 ## Como rodar
 
@@ -110,7 +110,7 @@ uv run pytest -q
 uv run uvicorn main:app --reload
 ```
 
-O `test:e2e` (Clerk) e o `test:db` (Supabase local via Docker) precisam de ambiente próprio; o `test:db` também roda no `database-tests.yml`.
+O `test:e2e` (Clerk) e o `test:db` (Supabase local via Docker) precisam de ambiente próprio; o `test:db` também roda no servidor em todo PR (`database-tests.yml`, chamado pelo `ci.yml`).
 
 **Commits e PRs**: mensagem no formato `tipo(escopo): descrição em português` (`feat`, `fix`, `perf`, `ci`, `test`, `refactor`, `chore`, `build`, `docs`), branch com o mesmo prefixo (`feat/...`, `fix/...`), os PRs recentes entram por squash, com o número do PR no título.
 

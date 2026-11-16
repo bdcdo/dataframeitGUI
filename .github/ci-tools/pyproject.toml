@@ -1,0 +1,16 @@
+# O pre-commit que o ci.yml roda (`uv run --locked --project .github/ci-tools
+# pre-commit`). Projeto próprio para que o Dependabot de `uv` atualize o pino
+# pelo uv.lock ao lado, sem entrar no backend/uv.lock: lá, o virtualenv que o
+# pre-commit puxa subiria o `packaging` da imagem de produção.
+[project]
+name = "dataframeit-gui-ci-tools"
+version = "0"
+requires-python = ">=3.11"
+dependencies = [
+    "pre-commit>=4.7.0",
+]
+
+[tool.uv]
+package = false
+# Mesmo cooldown do backend/pyproject.toml.
+exclude-newer = "7 days"

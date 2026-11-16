@@ -4,6 +4,8 @@
   (porquê: comentário do hook em ``.pre-commit-config.yaml``; #554).
 - todo hook de repositório remoto pina o ``rev`` pelo SHA do commit, com a tag
   em ``# frozen: <tag>``, e não pela tag, que é ponteiro móvel (#555).
+- o pre-commit dos workflows é o de ``.github/ci-tools/uv.lock``, que o
+  Dependabot atualiza, e não uma versão escrita no workflow.
 - ``.python-version`` == Python do ``Dockerfile`` == ``python_version`` do
   mypy. Sem o pino, o ``uv`` local pegava o Python mais novo instalado (3.15),
   para o qual o lock não tem wheel do tiktoken.
@@ -228,3 +230,67 @@ def test_uv_version_matches_dockerfile() -> None:
             f"uv diverge: Dockerfile {docker.group(1)}, {workflow.name} {versions}"
         )
     assert uses, "nenhum workflow usa astral-sh/setup-uv"
+
+
+CI_TOOLS = REPO / ".github/ci-tools"
+_LOCKED_PRE_COMMIT = "uv run --locked --project .github/ci-tools pre-commit "
+
+
+def _workflow_pre_commit_problems(name: str, workflow: str) -> list[str]:
+    """Chamadas do pre-commit em ``workflow`` que não usam o de ci-tools."""
+    problems = []
+    for line in workflow.splitlines():
+        stripped = line.strip()
+        # Comentário e nome de passo citam o comando sem rodá-lo.
+        if stripped.startswith(("#", "- name:", "name:")) or not re.search(
+            r"\bpre-commit\S* run\b", line
+        ):
+            continue
+        if _LOCKED_PRE_COMMIT not in line:
+            problems.append(
+                f"{name}: `{stripped}` não roda o pre-commit de "
+                f".github/ci-tools/uv.lock (`{_LOCKED_PRE_COMMIT.strip()}`): pino "
+                "escrito no workflow fica fora do alcance do Dependabot."
+            )
+    return problems
+
+
+def test_workflows_run_locked_pre_commit() -> None:
+    calls = 0
+    for workflow in sorted((REPO / ".github/workflows").glob("*.yml")):
+        text = workflow.read_text()
+        calls += text.count(_LOCKED_PRE_COMMIT)
+        problems = _workflow_pre_commit_problems(workflow.name, text)
+        assert not problems, "\n".join(problems)
+    assert calls, "nenhum workflow roda o pre-commit: o teste não confere nada"
+
+    # O Dependabot só alcança o pino se o projeto e o lock existirem e a
+    # entrada de `uv` apontar para o diretório.
+    project = tomllib.loads((CI_TOOLS / "pyproject.toml").read_text())
+    assert any(
+        re.match(r"pre-commit\b", dep) for dep in project["project"]["dependencies"]
+    ), "pre-commit ausente de .github/ci-tools/pyproject.toml"
+    locked = tomllib.loads((CI_TOOLS / "uv.lock").read_text())["package"]
+    assert [p for p in locked if p["name"] == "pre-commit"], (
+        "pre-commit ausente de .github/ci-tools/uv.lock"
+    )
+    assert re.search(
+        r'package-ecosystem: "uv"\n\s*directory: "/\.github/ci-tools"',
+        (REPO / ".github/dependabot.yml").read_text(),
+    ), "dependabot.yml sem entrada de `uv` para /.github/ci-tools"
+
+
+def test_workflow_pre_commit_problems_flags_hand_pin() -> None:
+    # Prova do vermelho: o pino à mão de antes reprova, com ou sem versão; a
+    # chamada pelo lock e a menção em comentário passam.
+    workflow = (
+        "      # uvx pre-commit@4.7.0 run era o pino de antes\n"
+        "        run: uvx pre-commit@4.7.0 run --all-files ruff-check\n"
+        "      - name: pre-commit run de tudo\n"
+        "        run: pre-commit run --all-files\n"
+        f"        run: {_LOCKED_PRE_COMMIT}run --all-files\n"
+    )
+    problems = _workflow_pre_commit_problems("ci.yml", workflow)
+    assert len(problems) == 2, problems
+    assert "uvx pre-commit@4.7.0 run" in problems[0]
+    assert "`run: pre-commit run --all-files`" in problems[1]

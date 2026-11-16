@@ -5,6 +5,10 @@ name: CI
 # install` os pulam, e PR do Dependabot nunca passou por eles. Sem deploy e
 # sem segredos.
 #
+# Os hooks do estágio pre-commit rodam todos no job `lint`, numa chamada só,
+# menos as exceções do mesmo .github/ci-exempt-gates.json. O banco entra pelo
+# job `database`, que chama o database-tests.yml.
+#
 # A matriz do job `gate` não é escrita aqui: sai do .pre-commit-config.yaml
 # (.github/scripts/ci-gate-matrix.sh), uma célula por hook de pre-push, menos
 # as exceções com motivo de .github/ci-exempt-gates.json. Hook novo vira
@@ -87,18 +91,24 @@ jobs:
       # `--all-files`: o hook local mede o delta do push, o CI mede o estado do
       # repositório (lint-types e mypy rodam em todo arquivo que o `files:` do
       # hook casa).
+      # O pre-commit é o do .github/ci-tools/uv.lock, que o Dependabot de
+      # `uv` atualiza: um `pre-commit@x.y.z` escrito aqui ficava fora do alcance
+      # dele (test_toolchain_pins.py barra a volta).
       - name: pre-commit run ${{ matrix.id }}
-        run: uvx pre-commit@4.7.0 run --hook-stage pre-push --all-files "$HOOK_ID"
+        run: uv run --locked --project .github/ci-tools pre-commit run --hook-stage pre-push --all-files "$HOOK_ID"
         env:
           HOOK_ID: ${{ matrix.id }}
           GATE_SHARD: ${{ matrix.shard }}
           # Gate que no push local libera em erro de infra (semgrep) reprova aqui.
           GATE_FAIL_OPEN: "0"
 
-  # Fora da matriz porque não são hooks de pre-push: o ruff é hook de
-  # pre-commit, e o eslint não tem hook.
+  # Os hooks do estágio pre-commit (ruff, actionlint, contratos do Fly,
+  # notificador de deploy...) numa chamada só: são leves, e uma célula por hook
+  # pagaria o ambiente inteiro para cada um. Hook novo de pre-commit entra
+  # sozinho; o que não mede nada no servidor ganha motivo em
+  # ci-exempt-gates.json. O eslint não tem hook.
   lint:
-    name: Lint (ruff e eslint)
+    name: Lint (hooks de pre-commit e eslint)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -110,12 +120,14 @@ jobs:
           version: "0.9.18"
           enable-cache: true
           cache-dependency-glob: backend/uv.lock
-      # Os hooks do ruff, e não o comando reescrito aqui. O `--fix` e o format
-      # reprovam do mesmo jeito: o pre-commit falha quando o hook altera arquivo.
-      - name: Backend — ruff
+      # ruby, jq, python3 e go (o actionlint) vêm na imagem ubuntu-latest. O
+      # `--fix` e o format do ruff reprovam do mesmo jeito: o pre-commit falha
+      # quando o hook altera arquivo.
+      - name: Hooks de pre-commit
         run: |
-          uvx pre-commit@4.7.0 run --all-files ruff-check
-          uvx pre-commit@4.7.0 run --all-files ruff-format
+          SKIP="$(jq -r 'keys | join(",")' .github/ci-exempt-gates.json)"
+          export SKIP
+          uv run --locked --project .github/ci-tools pre-commit run --hook-stage pre-commit --all-files
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
@@ -128,12 +140,23 @@ jobs:
         working-directory: frontend
         run: npm run lint
 
+  # Supabase local em Docker, com o mesmo runner do hook `db-tests`. Roda em
+  # todo PR, sem escolher por caminho: o job que fosse pulado deixaria o
+  # `ci-required` sem ter o que exigir dele.
+  database:
+    name: Banco
+    permissions:
+      contents: read
+      # O runner confere que toda entrada de KNOWN_RED aponta para issue aberta.
+      issues: read
+    uses: ./.github/workflows/database-tests.yml
+
   ci-required:
     name: ci-required
     # always(): sem ele, um job vermelho acima deixaria este como "skipped",
     # que o GitHub aceita como check obrigatório cumprido.
     if: always()
-    needs: [discover, gate, lint]
+    needs: [discover, gate, lint, database]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

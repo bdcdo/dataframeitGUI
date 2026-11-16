@@ -112,8 +112,15 @@ echo '{"fora-do-servidor": "precisa de segredo", "hook-que-sumiu": "motivo"}' >"
 expect_rejected "exceção de hook inexistente" 'exceção órfã'
 
 reset_fixture
+echo '{"fora-do-servidor": "precisa de segredo", "informativo": "motivo"}' >"$exempt"
+expect_rejected "exceção de hook de post-checkout" 'exceção órfã'
+
+# Exceção de hook de pre-commit vale (o job `lint` a lê em SKIP) e não mexe
+# nas células.
+reset_fixture
 echo '{"fora-do-servidor": "precisa de segredo", "leve": "motivo"}' >"$exempt"
-expect_rejected "exceção de hook que não é de pre-push" 'exceção órfã'
+[[ "$(cells "$config" "$exempt" "$shards")" == "pesado" ]] ||
+  fail "exceção de hook de pre-commit deveria ser aceita sem mudar as células"
 
 for empty_reason in '""' '"   "' 'null' 'true'; do
   reset_fixture
@@ -161,6 +168,14 @@ ruby -ryaml -e '
   abort("ci-required não espera por: #{missing.join(", ")}") unless missing.empty?
   check = required.fetch("steps").map { |step| step["run"].to_s }.join("\n")
   abort("ci-required precisa exigir success de todos os jobs") unless check.include?(%q{all(.[]; .result == "success")})
+
+  # O estágio pre-commit inteiro, menos as exceções do mesmo arquivo: hook
+  # leve novo entra sozinho, sem lista aqui.
+  light = jobs.fetch("lint").fetch("steps").map { |step| step["run"].to_s }.find { |text| text.include?("--hook-stage pre-commit --all-files") } or abort("o lint não roda os hooks de pre-commit com --all-files")
+  abort("o lint precisa tirar o SKIP de ci-exempt-gates.json") unless light =~ /SKIP="\$\(jq -r .keys \| join\(","\). \.github\/ci-exempt-gates\.json\)"/
+
+  # As exceções db-tests e llm-runs-contract apontam para este job.
+  abort("o job database precisa chamar o database-tests.yml") unless jobs.dig("database", "uses") == "./.github/workflows/database-tests.yml"
 
   gate = jobs.fetch("gate")
   abort("a matriz do gate precisa vir do job discover") unless gate.dig("strategy", "matrix") == "${{ fromJSON(needs.discover.outputs.matrix) }}"

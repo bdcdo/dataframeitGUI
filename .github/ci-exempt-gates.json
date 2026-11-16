@@ -1,5 +1,7 @@
 {
   "e2e-smoke": "Depende de segredos do Clerk e de projetos fixture provisionados fora do repositório: PR de fork e do Dependabot não recebe segredo, e o mesmo commit ficaria verde ou vermelho conforme o tenant (#649). Segue fail-closed no pre-push.",
-  "db-tests": "Precisa do Supabase local (Docker). Roda no servidor pelo database-tests.yml, com o mesmo runner do hook.",
-  "llm-runs-contract": "Precisa do Supabase local (Docker). O runner do database-tests.yml (run-db-tests.sh) roda este contrato por último."
+  "db-tests": "Precisa do Supabase local (Docker), que a célula da matriz não sobe. Roda no job `database` do ci.yml, que chama o database-tests.yml com o mesmo runner do hook.",
+  "llm-runs-contract": "Precisa do Supabase local (Docker). O runner do job `database` (run-db-tests.sh) roda este contrato por último.",
+  "gitleaks": "O hook lê só o diff staged, vazio no servidor. O secret-scan.yml roda o gitleaks sobre o diff do PR e os commits do push.",
+  "react-doctor": "Mede só as linhas alteradas contra HEAD, e no servidor não há diff. É rede local por decisão registrada em docs/LINT_CONFIG.md."
 }
