@@ -33,6 +33,7 @@ import { useEditFieldForm, type PendingSuggestion } from "./useEditFieldForm";
 import {
   applyFormEdits,
   saveMergedEdit,
+  strippedConditionsNotice,
   type SubmitOutcome,
 } from "./edit-field-save";
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
@@ -163,9 +164,10 @@ export function EditFieldDialog({
   // em outra sessão depois que o diálogo abriu. Ancorá-la no base capturado
   // esconderia exatamente a dependência que o usuário não tem como ver.
   //
-  // O strip de `applyFormEdits` roda sobre o base, mas `saveMergedEdit` o
-  // repete sobre o resultado do merge, então a condição remota que a guarda
-  // mostrou também é limpa no save (#599).
+  // O strip de `applyFormEdits` roda sobre o base, e `saveMergedEdit` o repete
+  // sobre o resultado do merge: a condição criada em outra sessão também é
+  // limpa no save, inclusive a que chegou depois da guarda — por isso o save
+  // avisa quais foram (#599).
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
     fieldName,
@@ -235,6 +237,9 @@ export function EditFieldDialog({
             ? "Sugestão aprovada e campo atualizado"
             : "Campo atualizado",
         );
+        if (saved.strippedFieldNames.length > 0) {
+          toast.warning(strippedConditionsNotice(saved.strippedFieldNames));
+        }
         onOpenChange(false);
         refresh();
       } catch (e) {

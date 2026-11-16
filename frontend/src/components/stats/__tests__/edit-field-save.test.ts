@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   applyFormEdits,
   saveMergedEdit,
+  strippedConditionsNotice,
   type EditFieldFormValues,
   type SubmitOutcome,
 } from "../edit-field-save";
@@ -117,7 +118,7 @@ describe("saveMergedEdit", () => {
       submit,
     );
 
-    expect(result).toEqual({ status: "saved" });
+    expect(result).toEqual({ status: "saved", strippedFieldNames: [] });
     expect(submit).toHaveBeenCalledTimes(1);
     expect(submit.mock.calls[0][0][0]).toMatchObject({
       description: "Local",
@@ -155,7 +156,7 @@ describe("saveMergedEdit", () => {
 
     const result = await saveMergedEdit([q1], localEdit, [q1], BASELINE, submit);
 
-    expect(result).toEqual({ status: "saved" });
+    expect(result).toEqual({ status: "saved", strippedFieldNames: [] });
     expect(submit).toHaveBeenCalledTimes(2);
     expect(submit.mock.calls[1][0][0]).toMatchObject({
       description: "Local",
@@ -227,19 +228,45 @@ describe("saveMergedEdit — opção removida e condição criada em outra sess�
       .mockResolvedValue({ status: "saved" });
     const local = applyFormEdits([q1], "q1", formOf(form));
     const result = await saveMergedEdit([q1], local, remote, BASELINE, submit);
-    expect(result).toEqual({ status: "saved" });
-    return submit.mock.calls[0][0];
+    if (result.status !== "saved") throw new Error(`esperava saved, veio ${result.status}`);
+    return { fields: submit.mock.calls[0][0], stripped: result.strippedFieldNames };
   };
 
-  it("limpa a condição remota que dependia da opção removida", async () => {
-    const fields = await savedFields([q1, q3]);
+  it("limpa a condição remota que dependia da opção removida e a nomeia", async () => {
+    const { fields, stripped } = await savedFields([q1, q3]);
 
     expect(fields.find((f) => f.name === "q1")?.options).toEqual(["Sim"]);
     expect(fields.find((f) => f.name === "q3")).not.toHaveProperty("condition");
+    // Condição de outra sessão que o usuário pode não ter visto na guarda:
+    // o save diz qual foi limpa, em vez de apagá-la calado.
+    expect(stripped).toEqual(["q3"]);
+  });
+
+  it("condição do base, já limpa no diff local, não entra no aviso", async () => {
+    const submit = vi.fn<(f: PydanticField[], b: SchemaBaselineIdentity) => Promise<SubmitOutcome>>()
+      .mockResolvedValue({ status: "saved" });
+    const local = applyFormEdits([q1, q2], "q1", formOf({ options: ["Sim"] }));
+
+    const result = await saveMergedEdit([q1, q2], local, [q1, q2], BASELINE, submit);
+
+    expect(result).toEqual({ status: "saved", strippedFieldNames: [] });
+    expect(submit.mock.calls[0][0][1]).not.toHaveProperty("condition");
+  });
+
+  it("opção removida só no remoto não limpa condição", async () => {
+    // O remoto tirou "Não" de q1 mas deixou q3 apontando para ela: a edição
+    // local não removeu nada, então o strip não age e o save valida.
+    const { fields, stripped } = await savedFields(
+      [{ ...q1, options: ["Sim"] }, q3],
+      { description: "Local" },
+    );
+
+    expect(fields.find((f) => f.name === "q3")).toEqual(q3);
+    expect(stripped).toEqual([]);
   });
 
   it("tira só a opção removida de uma condição remota com lista", async () => {
-    const fields = await savedFields([
+    const { fields } = await savedFields([
       q1,
       { ...q3, condition: { field: "q1", in: ["Sim", "Não"] } },
     ]);
@@ -251,9 +278,10 @@ describe("saveMergedEdit — opção removida e condição criada em outra sess�
   });
 
   it("sem opção removida, a condição remota passa intacta", async () => {
-    const fields = await savedFields([q1, q3], { description: "Local" });
+    const { fields, stripped } = await savedFields([q1, q3], { description: "Local" });
 
     expect(fields.find((f) => f.name === "q3")).toEqual(q3);
+    expect(stripped).toEqual([]);
   });
 
   it("o reenvio após conflito de CAS também limpa a condição nova", async () => {
@@ -267,9 +295,19 @@ describe("saveMergedEdit — opção removida e condição criada em outra sess�
 
     const result = await saveMergedEdit([q1], local, [q1], BASELINE, submit);
 
-    expect(result).toEqual({ status: "saved" });
+    expect(result).toMatchObject({ status: "saved" });
     expect(submit.mock.calls[1][0].find((f) => f.name === "q3")).not.toHaveProperty(
       "condition",
+    );
+    expect(result).toEqual({ status: "saved", strippedFieldNames: ["q3"] });
+  });
+
+  it("o aviso nomeia os campos no singular e no plural", () => {
+    expect(strippedConditionsNotice(["q3"])).toBe(
+      'A condição de "q3", criada em outra sessão, dependia da opção removida e foi limpa.',
+    );
+    expect(strippedConditionsNotice(["q3", "q4"])).toBe(
+      'As condições de "q3", "q4", criadas em outra sessão, dependiam da opção removida e foram limpas.',
     );
   });
 });
