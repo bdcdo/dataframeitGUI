@@ -58,8 +58,8 @@ export function MemberRow({
   return (
     // Os controles descem para a linha de baixo quando não cabem ao lado do
     // nome, em vez de sair do card.
-    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border p-3">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border p-3">
+      <div className="min-w-0 [overflow-wrap:anywhere]">
         <p className="flex items-center gap-2 text-sm font-medium">
           {memberDisplayName(member)}
           {isProjectPending && (
@@ -79,7 +79,7 @@ export function MemberRow({
             </Badge>
           )}
         </p>
-        <p className="break-all text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           {member.profiles?.email}
         </p>
         <MemberEmailLinks links={links} onUnlink={onUnlinkEmailLink} />
