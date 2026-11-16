@@ -46,7 +46,6 @@ from services.llm_runner import (
     get_job_status,
     init_job,
     run_llm,
-    run_llm_fields,
 )
 
 JOB_ID = "job-1"
@@ -1445,11 +1444,10 @@ def test_run_llm_fatal_do_publicador_prevalece_sobre_excecao_da_biblioteca(
     assert "biblioteca quebrou" not in erro
 
 
-def test_run_llm_e_run_llm_fields_sao_sincronas():
+def test_run_llm_e_sincrona():
     # `async def` com corpo bloqueante prendia o event loop durante a rodada e
-    # tirava o backend do ar. Síncronas, o Starlette as manda ao threadpool.
+    # tirava o backend do ar. Síncrona, o Starlette a manda ao threadpool.
     assert not inspect.iscoroutinefunction(run_llm)
-    assert not inspect.iscoroutinefunction(run_llm_fields)
 
 
 def test_get_job_status_devolve_copia_do_estado_vivo():

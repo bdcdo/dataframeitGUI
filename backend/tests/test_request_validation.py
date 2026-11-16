@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from main import app
-from routes.llm_routes import RunFieldRequest, RunRequest
+from routes.llm_routes import RunRequest
 from services.auth import AuthUser, require_authenticated_user
 
 PROJECT_ID = "22222222-2222-2222-2222-222222222222"
@@ -45,7 +45,6 @@ def test_every_api_request_body_uses_strict_model() -> None:
 
     assert checked == {
         "/api/llm/run",
-        "/api/llm/run-field",
         "/api/llm/preview-prompt",
         "/api/llm/cleanup-stale",
         "/api/pydantic/recover-fields",
@@ -56,10 +55,6 @@ def test_every_api_request_body_uses_strict_model() -> None:
     ("path", "payload"),
     [
         ("/api/llm/run", {"project_id": PROJECT_ID, "unknown": True}),
-        (
-            "/api/llm/run-field",
-            {"project_id": PROJECT_ID, "field_names": ["q1"], "unknown": True},
-        ),
         ("/api/llm/preview-prompt", {"unknown": True}),
         ("/api/llm/cleanup-stale", {"project_id": PROJECT_ID, "unknown": True}),
         (
@@ -138,22 +133,6 @@ def test_every_request_body_rejects_unknown_fields(
             },
         ),
         (
-            "/api/llm/run-field",
-            {"project_id": PROJECT_ID, "field_names": []},
-        ),
-        (
-            "/api/llm/run-field",
-            {"project_id": PROJECT_ID, "field_names": ["not valid"]},
-        ),
-        (
-            "/api/llm/run-field",
-            {"project_id": PROJECT_ID, "field_names": ["__class__"]},
-        ),
-        (
-            "/api/llm/run-field",
-            {"project_id": PROJECT_ID, "field_names": ["q1", "q1"]},
-        ),
-        (
             "/api/llm/preview-prompt",
             {"prompt_template": "x" * 50_001},
         ),
@@ -174,7 +153,13 @@ def test_document_list_has_explicit_upper_bound() -> None:
         RunRequest(project_id=PROJECT_ID, document_ids=document_ids)
 
 
-def test_field_list_has_explicit_upper_bound() -> None:
-    field_names = [f"field_{index}" for index in range(501)]
-    with pytest.raises(ValidationError, match="at most 500 items"):
-        RunFieldRequest(project_id=PROJECT_ID, field_names=field_names)
+def test_run_field_route_does_not_exist(client: TestClient) -> None:
+    # A rota prometia rodar só os campos de `field_names`, rodava o schema
+    # inteiro e pulava a guarda de somente-leitura da impersonação (#746).
+    # Sem chamador, foi removida: mesmo autenticado e com payload que a rota
+    # aceitava, quem a chamar recebe 404, sem autorização, rate limit nem job.
+    response = client.post(
+        "/api/llm/run-field",
+        json={"project_id": PROJECT_ID, "field_names": ["q1"]},
+    )
+    assert response.status_code == 404

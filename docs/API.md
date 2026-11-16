@@ -54,26 +54,6 @@ Inicia execucao async do dataframeit para todos os documentos (ou subset).
 }
 ```
 
-## POST /api/llm/run-field
-
-Re-roda LLM so para campos especificos (quando Pydantic mudou parcialmente).
-
-**Request:**
-```json
-{
-  "project_id": "uuid",
-  "field_names": ["q1_1", "q1_2"],
-  "document_ids": ["uuid1"]  // opcional
-}
-```
-
-**Response:**
-```json
-{
-  "job_id": "uuid"
-}
-```
-
 ## GET /api/llm/status/{job_id}
 
 Polling de progresso de um job LLM.
