@@ -2619,3 +2619,51 @@ def test_run_llm_reads_target_from_code_not_from_pydantic_fields(monkeypatch):
     assert _jobs[JOB_ID]["status"] == "completed"
     (row,) = _published_responses(sb)
     assert row["answers"] == {"campo_a": "a", "so_llm": "l"}
+
+
+def test_progresso_persistido_carrega_a_fase_da_run(monkeypatch):
+    # Depois de um restart do backend a rota de status lê `llm_runs`. Com a
+    # fase fora do UPDATE de progresso, a linha ficava em `loading` (o valor
+    # do INSERT) até o fim, e o cartão mostrava "Carregando documentos..."
+    # com o progresso já andando.
+    docs = _docs(3)
+    sb = _build_supabase(_project_row(), docs)
+    # Relógio que anda 5 s a cada leitura: desliga o throttle de 2 s.
+    relogio = iter(range(0, 10_000, 5))
+    monkeypatch.setattr(
+        "services.llm_runner.time", SimpleNamespace(time=lambda: float(next(relogio)))
+    )
+
+    _run_llm_sync(
+        monkeypatch,
+        sb,
+        {doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs},
+    )
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    progressos = [
+        payload
+        for payload in sb.table("llm_runs").update_calls
+        if "heartbeat_at" in payload and "status" not in payload
+    ]
+    # A primeira gravação sai antes do canário, que pode levar minutos.
+    assert progressos[0]["progress"] == 0
+    assert {payload["phase"] for payload in progressos} == {"processing"}
+    # A fase `processing` aparece como "progresso/total": sem o total na
+    # linha, o fallback mostraria "2/0 documentos processados".
+    assert {payload["total"] for payload in progressos} == {3}
+    filtros = [
+        filters
+        for _name, op, payload, filters in sb.operation_log
+        if op == "update" and payload in progressos
+    ]
+    assert all(("eq", "status", "running") in f for f in filtros)
+
+
+@pytest.mark.parametrize(
+    ("status", "phase"),
+    [("running", "loading"), ("completed", "completed"), ("error", "error")],
+)
+def test_status_from_row_com_fase_nula_usa_padrao_explicito(status, phase):
+    # `llm_runs.phase` é anulável e `StatusResponse.phase` é `str`.
+    assert _status_from_row({"status": status, "phase": None})["phase"] == phase

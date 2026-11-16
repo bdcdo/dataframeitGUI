@@ -92,9 +92,13 @@ _MAX_CONSECUTIVE_PUBLISH_FAILURES = 5
 
 def _status_from_row(row: dict) -> dict:
     """Shape a llm_runs row as a StatusResponse-compatible dict."""
+    status = row.get("status", "error")
     return {
-        "status": row.get("status", "error"),
-        "phase": row.get("phase", "error"),
+        "status": status,
+        # `llm_runs.phase` é anulável e `StatusResponse.phase` é `str`: fase
+        # nula derrubava a rota de status com 500. Os status terminais são
+        # também fases válidas; run viva sem fase está na fase do INSERT.
+        "phase": row.get("phase") or ("loading" if status == "running" else status),
         "progress": row.get("progress") or 0,
         "total": row.get("total") or 0,
         "errors": [row["error_message"]] if row.get("error_message") else [],
@@ -209,9 +213,17 @@ def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
                 "processed_partial": jobs_state.get("processed_partial", 0),
                 "processed_empty": jobs_state.get("processed_empty", 0),
                 "progress": jobs_state.get("progress", 0),
+                # Fase e total: o fallback de status (backend reiniciado) lê
+                # daqui o que o cartão mostra, e `processing` é exibida como
+                # "progresso/total".
+                "phase": jobs_state["phase"],
+                "total": jobs_state.get("total", 0),
                 "heartbeat_at": datetime.now(timezone.utc).isoformat(),
             }
-        ).eq("job_id", job_id).execute()
+            # Só em run viva: a fase de uma linha já encerrada (inclusive por
+            # mark_stale_runs_as_error, com a run ainda rodando) não volta
+            # para `processing`.
+        ).eq("job_id", job_id).eq("status", "running").execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs progress for job %s", job_id)
 
@@ -2250,6 +2262,9 @@ def _run_dataframeit_and_publish(
     from dataframeit import dataframeit
 
     jobs_state["phase"] = "processing"
+    # Já aqui, e não só na primeira linha processada: o canário pode levar
+    # minutos, e até ele voltar a linha diria `loading`.
+    _persist_run_progress(sb, job_id, jobs_state)
 
     def _call(frame: pd.DataFrame, model, on_row_done=None):
         return dataframeit(
@@ -2363,8 +2378,8 @@ def _run_dataframeit_and_publish(
         # isto só fecha a conta se a biblioteca tiver deixado de chamá-lo em
         # alguma linha.
         jobs_state["progress"] = len(canary_result) + len(result)
-        _persist_run_progress(sb, job_id, jobs_state)
         jobs_state.update(phase="saving", eta_seconds=None)
+        _persist_run_progress(sb, job_id, jobs_state)
         _process_and_save_rows(publisher, result)
 
 

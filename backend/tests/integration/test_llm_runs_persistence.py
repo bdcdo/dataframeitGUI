@@ -145,6 +145,7 @@ def test_progress_writes_counters_and_heartbeat(sb, project, caplog):
         "processed_partial": 2,
         "processed_empty": 1,
         "progress": 6,
+        "phase": "processing",
     }
 
     _persist_run_progress(sb, job_id, counters)
@@ -252,3 +253,15 @@ def test_status_fallback_reads_persisted_run(sb, project, caplog, monkeypatch):
         "processed_empty": 0,
     }
     assert {key: status[key] for key in expected} == expected
+
+
+def test_status_fallback_tolerates_null_phase(sb, project, caplog, monkeypatch):
+    # A coluna é anulável; a rota de status exige `phase: str`.
+    job_id = _new_run(sb, project["id"])
+    _patch_run(sb, job_id, phase=None)
+    monkeypatch.setattr(llm_runner, "get_supabase", lambda: sb)
+
+    status = get_job_status(job_id)
+
+    _assert_nothing_swallowed(caplog)
+    assert (status["status"], status["phase"]) == ("running", "loading")

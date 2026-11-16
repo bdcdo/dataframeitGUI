@@ -838,3 +838,33 @@ def test_status_allows_member(client, monkeypatch):
     )
     assert resp.status_code == 200
     assert resp.json()["status"] == "running"
+
+
+def test_status_fallback_com_fase_nula_devolve_200(client, monkeypatch):
+    # Backend reiniciado: o job saiu da memória e a rota lê `llm_runs`, onde
+    # `phase` é anulável. `StatusResponse.phase` é `str`, e a linha com fase
+    # nula fazia a validação da resposta falhar, ou seja, 500.
+    fake = FakeSupabase(
+        llm_runs=[
+            {
+                "job_id": JOB,
+                "project_id": PROJECT,
+                "status": "running",
+                "phase": None,
+                "progress": 2,
+                "total": 4,
+            }
+        ],
+        master_users=[],
+        projects=[{"id": PROJECT, "created_by": USER}],
+        project_members=[],
+    )
+    use_supabase(monkeypatch, fake)
+    monkeypatch.setattr("services.llm_runner.get_supabase", lambda: fake)
+    resp = client.get(
+        f"/api/llm/status/{JOB}",
+        headers={"Authorization": f"Bearer {make_token()}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["phase"] == "loading"
+    assert resp.json()["progress"] == 2
