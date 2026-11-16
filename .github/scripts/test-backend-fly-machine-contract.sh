@@ -133,13 +133,17 @@ check_workflow() {
   # O grupo do workflow vale para todos os jobs, o prepare inclusive; com o
   # nome do grupo do vigia, a espera voltaria para a fila dele.
   pipeline_group = workflow.fetch("concurrency").fetch("group")
-  abort("o grupo do workflow não pode ser o do vigia da API") if pipeline_group == machines_queue.fetch("group")
+  # O Actions compara nome de grupo sem distinguir maiúsculas de minúsculas.
+  abort("o grupo do workflow não pode ser o do vigia da API") if pipeline_group.casecmp?(machines_queue.fetch("group"))
   # Com expressão no nome (o id da run, o SHA), cada deploy teria o seu grupo
   # e a fila entre eles acabaria.
   abort("o grupo do workflow tem de ser um nome fixo") if pipeline_group.include?("${{")
   # Job pulado não é falha: o deploy deixaria de acontecer sem abrir incidente.
   [prepare_job, deploy_job].each do |job|
     abort("os jobs prepare e deploy não podem ter if nem continue-on-error") if job.key?("if") || job.key?("continue-on-error")
+    # O piso de 245 min é do passo da espera; um teto no job o mataria no meio
+    # dela, ou entre a releitura e a troca.
+    abort("os jobs prepare e deploy não podem ter timeout-minutes próprio") if job.key?("timeout-minutes")
   end
   # Que esse grupo não cancela nem descarta deploy pendente está em
   # test-deploy-failure-notification.sh.
@@ -235,6 +239,8 @@ expect_queue_failure "o job notify-failure não pode ter grupo" 'jobs["notify-fa
 expect_queue_failure "o grupo do workflow tem de ser um nome fixo" 'workflow["concurrency"]["group"] += "-${{ github.run_id }}"'
 expect_queue_failure "os jobs prepare e deploy não podem ter if" 'jobs["deploy"]["if"] = "false"'
 expect_queue_failure "os jobs prepare e deploy não podem ter if" 'jobs["prepare"]["continue-on-error"] = true'
+expect_queue_failure "os jobs prepare e deploy não podem ter timeout-minutes" 'jobs["prepare"]["timeout-minutes"] = 60'
+expect_queue_failure "o grupo do workflow não pode ser o do vigia" 'workflow["concurrency"]["group"] = machines_queue["group"].upcase'
 # O deploy fora da fila do vigia: sem grupo ou cancelável.
 expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"].delete("concurrency")'
 expect_queue_failure "o job deploy precisa da fila do vigia" 'jobs["deploy"]["concurrency"] = machines_queue.merge("cancel-in-progress" => true)'
