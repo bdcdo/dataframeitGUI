@@ -198,11 +198,26 @@ fi
 # e na mesma região, porque os gates de deploy recusam Machine fora de gru. O
 # clone herda a config da origem; quem escolhe o host é o scheduler do Fly, que
 # não põe a Machine nova num host sem capacidade para ela.
+#
+# O clone leva um nome derivado do id da original, e é por esse nome que a
+# passada seguinte o reconhece. Sem isso, clone feito e destroy recusado
+# deixavam a original presa na lista, e cada passada clonava outra vez: uma
+# Machine a mais a cada 15 minutos, com o deploy da API recusado desde a
+# primeira (#839). Com o clone já na app, o vigia só repete o destroy. O nome
+# é único por app no Fly, então um clone repetido seria recusado lá também.
 # O `</dev/null` tem o mesmo motivo do laço de start acima.
 while read -r stuck_id; do
-  summary "$app: Machine $stuck_id presa; clonando em $region e destruindo a original."
-  flyctl machine clone "$stuck_id" -a "$app" --region "$region" </dev/null
-  flyctl machine destroy "$stuck_id" -a "$app" --force </dev/null
+  clone_name="vigia-$stuck_id"
+  if jq -e --arg name "$clone_name" 'any(.[]; .name == $name)' >/dev/null <<<"$machines_json"; then
+    summary "$app: Machine $stuck_id presa já tem o clone $clone_name, de passada anterior; destruindo só a original."
+  else
+    summary "$app: Machine $stuck_id presa; clonando em $region como $clone_name e destruindo a original."
+    flyctl machine clone "$stuck_id" -a "$app" --region "$region" --name "$clone_name" </dev/null
+  fi
+  if ! flyctl machine destroy "$stuck_id" -a "$app" --force </dev/null; then
+    summary "$app: o destroy da Machine $stuck_id falhou e a app ficou com uma Machine a mais, o clone $clone_name. A próxima passada repete só o destroy; até lá o deploy pode ser recusado pela contagem de Machines."
+    exit 1
+  fi
 done <<<"$stuck_ids"
 
 if probe; then
