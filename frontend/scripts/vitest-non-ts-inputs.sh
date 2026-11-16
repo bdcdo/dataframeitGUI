@@ -26,17 +26,20 @@ cd "$(dirname "$0")/.."
 INPUTS='^(frontend/supabase/(migrations|tests)/|backend/|\.pre-commit-config\.yaml$)'
 REFERENCE='"supabase", "(migrations|tests)"|supabase/(migrations|tests)\b|backend/|"backend"|pre-commit-config|@vitest-non-ts-inputs'
 
-# Duas etapas, e não um pipe numa substituição de processo, para que uma falha
-# do grep derrube o script em vez de virar lista vazia.
-readers="$(grep -rlE --include='*.test.ts' --include='*.test.tsx' 'readFileSync|readdirSync' src)"
-mapfile -t suites < <(grep -lE "${REFERENCE}" ${readers} | sort)
-if [[ ${#suites[@]} -eq 0 ]]; then
-  # Sem arquivo, o vitest rodaria a suíte inteira, o custo que o hook evita.
-  echo "a varredura não achou nenhuma suíte que leia esses caminhos" >&2
-  exit 1
-fi
+derive_suites() {
+  # Duas etapas, e não um pipe numa substituição de processo, para que uma falha
+  # do grep derrube o script em vez de virar lista vazia.
+  readers="$(grep -rlE --include='*.test.ts' --include='*.test.tsx' 'readFileSync|readdirSync' src)"
+  mapfile -t suites < <(grep -lE "${REFERENCE}" ${readers} | sort)
+  if [[ ${#suites[@]} -eq 0 ]]; then
+    # Sem arquivo, o vitest rodaria a suíte inteira, o custo que o hook evita.
+    echo "a varredura não achou nenhuma suíte que leia esses caminhos" >&2
+    exit 1
+  fi
+}
 
 if [[ "${1:-}" == --list ]]; then
+  derive_suites
   printf '%s\n' "${suites[@]}"
   exit 0
 fi
@@ -56,6 +59,7 @@ if [[ -n "${PRE_COMMIT_FROM_REF:-}" && -n "${PRE_COMMIT_TO_REF:-}" ]]; then
   fi
 fi
 
+derive_suites
 VITEST="${VITEST_BIN:-./node_modules/.bin/vitest}"
 if [[ ! -x "${VITEST}" ]]; then
   echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2

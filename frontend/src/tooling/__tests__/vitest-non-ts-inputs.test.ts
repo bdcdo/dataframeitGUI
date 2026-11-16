@@ -62,7 +62,10 @@ describe("disparo pelo diff do push", () => {
 
   function commit(message: string): string {
     runGit(["add", "-A"], repo);
-    runGit(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", message], repo);
+    runGit(
+      ["-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-qm", message],
+      repo,
+    );
     return runGit(["rev-parse", "HEAD"], repo).trim();
   }
 
@@ -113,12 +116,14 @@ describe("disparo pelo diff do push", () => {
     write("backend/services/a.py", "x = 1\n");
     const many = path.join(repo, "zz");
     fs.mkdirSync(many);
-    for (let i = 0; i < 6000; i++) fs.writeFileSync(path.join(many, `arquivo-${i}.txt`), "");
+    // O que passa do buffer é o tamanho da lista de nomes, e não o número de
+    // arquivos: 300 nomes de ~250 caracteres dão ~75 KB.
+    for (let i = 0; i < 300; i++) fs.writeFileSync(path.join(many, `${"a".repeat(240)}${i}`), "");
     const big = commit("grande");
     const { status, stdout } = push(base, big);
     expect(status).toBe(0);
     expect(stdout).toContain("vitest run src/lib/__tests__/le-migration.test.ts");
-  }, 60_000);
+  });
 
   it("falha do git no diff derruba o hook, em vez de pular", () => {
     const base = commit("base");

@@ -10,7 +10,10 @@ const config = fs.readFileSync(
   fileURLToPath(new URL("../../../../.pre-commit-config.yaml", import.meta.url)),
   "utf8",
 );
-const hook = config.slice(config.indexOf("- id: react-doctor"));
+const fromHook = config.slice(config.indexOf("- id: react-doctor"));
+// Só o bloco do hook, até o próximo `- id:`: sem o corte, um `files:` ausente
+// aqui casaria o de outro hook.
+const hook = fromHook.slice(0, fromHook.indexOf("\n      - id:", 1));
 const files = new RegExp(/^\s+files: (.+)$/m.exec(hook)![1]);
 
 describe("hook do react-doctor: o que o dispara", () => {
