@@ -125,6 +125,36 @@ def evaluate_condition(condition: Any, field_data: dict, field_name: str = "") -
     return False
 
 
+def hidden_conditionals(answers: dict, field_conditions: dict) -> set[str]:
+    """As condicionais finalmente ocultas, como ``dropHiddenConditionals``.
+
+    Esconder uma condicional pode esconder outra que dependia dela, então a
+    visibilidade é resolvida até um ponto fixo numa cópia em que cada
+    condicional oculta com valor vira ``None`` (``clearHiddenConditionalAnswers``
+    no frontend, #904), e só depois cada condição é lida nessa cópia. Decidir
+    campo a campo na ordem do schema discordava do frontend quando o dependente
+    vem antes do gatilho.
+    """
+    view = dict(answers)
+    changed = True
+    while changed:
+        changed = False
+        # Sequencial de propósito, como no frontend: o campo seguinte da mesma
+        # passada já vê o anterior zerado. Termina porque cada passada troca
+        # ao menos um valor não nulo por ``None``.
+        for field_name, condition in field_conditions.items():
+            if view.get(field_name) is None:
+                continue
+            if not evaluate_condition(condition, view, field_name):
+                view[field_name] = None
+                changed = True
+    return {
+        field_name
+        for field_name, condition in field_conditions.items()
+        if not evaluate_condition(condition, view, field_name)
+    }
+
+
 def extract_field_conditions(model_class) -> dict:
     """Lê condições do modelo Pydantic compilado.
 

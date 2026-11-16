@@ -1,20 +1,27 @@
 """Unit tests for conditional post-processing of LLM answers.
 
-Usa o evaluator local (``services.condition_evaluator``), que espelha a
-semântica do frontend. Ver comentário no módulo sobre divergências com
+A poda é a do ``llm_runner`` (``_prune_inactive_conditionals``), sobre o
+evaluator local (``services.condition_evaluator``), que espelha a semântica do
+frontend. Ver comentário no módulo sobre divergências com
 ``dataframeit.conditional``.
 """
 
 from services.condition_evaluator import evaluate_condition
+from services.llm_runner import _prune_inactive_conditionals
+
+
+def _prune(
+    answers: dict, field_conditions: dict, justifications: dict | None = None
+) -> tuple[dict, dict]:
+    """A poda de verdade do llm_runner, sobre cópias."""
+    answers = dict(answers)
+    justifications = dict(justifications or {})
+    _prune_inactive_conditionals(answers, justifications, field_conditions)
+    return answers, justifications
 
 
 def _postprocess(answers: dict, field_conditions: dict) -> dict:
-    """Mirror of the in-place pruning in services.llm_runner.run_llm."""
-    result = dict(answers)
-    for field_name, condition in field_conditions.items():
-        if not evaluate_condition(condition, result, field_name):
-            result.pop(field_name, None)
-    return result
+    return _prune(answers, field_conditions)[0]
 
 
 def test_equals_condition_satisfied_keeps_value():
@@ -179,3 +186,68 @@ def test_extract_field_conditions_from_compiled_model():
         "follow": {"field": "trigger", "equals": "sim"},
         "legado": {"field": "trigger", "equals": "nao"},
     }
+
+
+# O frontend resolve a visibilidade até um ponto fixo (`dropHiddenConditionals`
+# em `frontend/src/lib/conditional.ts`, #904). Os casos abaixo põem o
+# dependente antes do gatilho na ordem do schema, que é onde a passada única
+# divergia.
+def test_dependente_antes_do_gatilho_oculto_tambem_sai():
+    # b só aparece com a == "sim"; c só com b == "x". Com a == "não", b some, e
+    # c, que dependia de b, some junto.
+    conditions = {
+        "c": {"field": "b", "equals": "x"},
+        "b": {"field": "a", "equals": "sim"},
+    }
+    answers, justifications = _prune(
+        {"a": "não", "b": "x", "c": "valor"},
+        conditions,
+        {"b": "porque", "c": "porque"},
+    )
+
+    assert answers == {"a": "não"}
+    assert justifications == {}
+
+
+def test_exists_false_fica_quando_o_gatilho_oculto_sai():
+    # c aparece quando b não existe. b está oculto (a != "sim"), então para a
+    # tela b não existe e c está visível: c fica, b sai.
+    conditions = {
+        "c": {"field": "b", "exists": False},
+        "b": {"field": "a", "equals": "sim"},
+    }
+    answers, _ = _prune({"a": "não", "b": "x", "c": "valor"}, conditions)
+
+    assert answers == {"a": "não", "c": "valor"}
+
+
+def test_cadeia_visivel_fica_inteira():
+    conditions = {
+        "c": {"field": "b", "equals": "x"},
+        "b": {"field": "a", "equals": "sim"},
+    }
+    answers, _ = _prune({"a": "sim", "b": "x", "c": "valor"}, conditions)
+
+    assert answers == {"a": "sim", "b": "x", "c": "valor"}
+
+
+def test_justificativa_de_condicional_oculta_sem_resposta_sai():
+    answers, justifications = _prune(
+        {"a": "não"},
+        {"b": {"field": "a", "equals": "sim"}},
+        {"a": "ok", "b": "sobrou"},
+    )
+
+    assert answers == {"a": "não"}
+    assert justifications == {"a": "ok"}
+
+
+def test_string_vazia_de_gatilho_oculto_tambem_e_zerada():
+    # "" é valor para not_equals: mantido, deixaria c visível com b oculto.
+    conditions = {
+        "c": {"field": "b", "not_equals": "x"},
+        "b": {"field": "a", "equals": "sim"},
+    }
+    answers, _ = _prune({"a": "não", "b": "", "c": "valor"}, conditions)
+
+    assert answers == {"a": "não"}

@@ -8,7 +8,9 @@ toda resposta é cortada em `max_rows` sem erro nem aviso.
 
 import math
 import random
+import threading
 
+import pytest
 from test_llm_runner_run_llm import _FakeQuery, _FakeSupabase, _FakeTable
 
 from services import llm_runner
@@ -180,14 +182,19 @@ def _texts_read(sb) -> list[str]:
     ]
 
 
-def _in_sizes(sb) -> list[int]:
-    """Quantos ids cada requisição a documents levou no filtro `in`."""
+def _in_batches(sb) -> list[list[str]]:
+    """Os ids de cada requisição a documents com filtro `in`."""
     return [
-        len(values)
+        list(values)
         for _columns, filters, _rows in sb.table("documents").reads
         for op, _column, values in filters
         if op == "in"
     ]
+
+
+def _in_sizes(sb) -> list[int]:
+    """Quantos ids cada requisição a documents levou no filtro `in`."""
+    return [len(batch) for batch in _in_batches(sb)]
 
 
 def test_amostra_baixa_o_texto_so_dos_sorteados():
@@ -312,8 +319,60 @@ def test_select_all_com_ids_junta_os_lotes_em_ordem_e_sem_repetir():
     )
 
     assert [r["id"] for r in rows] == sorted(set(wanted))
-    # Um pedido por lote: um lote completo dispensa a página vazia.
-    assert _in_sizes(sb) == [10, 10, 5]
+    # Um pedido por lote, com fatias contíguas dos ids ordenados: um lote
+    # completo dispensa a página vazia. Os lotes saem em paralelo, então a
+    # ordem dos pedidos não é a dos lotes.
+    unique = sorted(set(wanted))
+    assert sorted(_in_batches(sb)) == [unique[0:10], unique[10:20], unique[20:]]
+
+
+def test_lotes_de_ids_saem_em_paralelo(monkeypatch):
+    # Cada lote espera os outros dois na barreira antes de responder: em
+    # sequência, o primeiro esperaria sozinho até o timeout e a barreira
+    # quebraria.
+    docs = _documents(30)
+    wanted = sorted(d["id"] for d in docs)
+    sb = _supabase(docs)
+    barrier = threading.Barrier(3, timeout=5)
+    original_execute = _FakeQuery.execute
+
+    def execute_together(self):
+        barrier.wait()
+        return original_execute(self)
+
+    monkeypatch.setattr(_FakeQuery, "execute", execute_together)
+
+    rows = llm_runner._select_all(
+        lambda: sb.table("documents").select("id"), wanted, id_batch_size=10
+    )
+
+    assert [r["id"] for r in rows] == wanted
+
+
+def test_falha_de_um_lote_sobe(monkeypatch):
+    docs = _documents(30)
+    sb = _supabase(docs)
+    original_execute = _FakeQuery.execute
+    calls = 0
+    lock = threading.Lock()
+
+    def execute_failing_once(self):
+        nonlocal calls
+        with lock:
+            calls += 1
+            fail = calls == 2
+        if fail:
+            raise RuntimeError("lote caiu")
+        return original_execute(self)
+
+    monkeypatch.setattr(_FakeQuery, "execute", execute_failing_once)
+
+    with pytest.raises(RuntimeError, match="lote caiu"):
+        llm_runner._select_all(
+            lambda: sb.table("documents").select("id"),
+            [d["id"] for d in docs],
+            id_batch_size=10,
+        )
 
 
 def test_lote_incompleto_ainda_pede_a_pagina_seguinte():

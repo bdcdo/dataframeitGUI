@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from copy import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -31,7 +32,11 @@ from dataframeit.errors import RECOVERABLE_ERRORS
 from supabase import PostgrestAPIError
 
 from services.auto_review_reconciliation import wake_auto_review_reconciliation_sync
-from services.condition_evaluator import evaluate_condition, extract_field_conditions
+from services.condition_evaluator import (
+    evaluate_condition,
+    extract_field_conditions,
+    hidden_conditionals,
+)
 from services.pydantic_compiler import (
     build_model_from_code,
     extract_json_schema_extra,
@@ -818,6 +823,17 @@ _SELECT_PAGE_SIZE = 1000
 _ID_BATCH_SIZE = 100
 
 
+# Lotes de ids lidos ao mesmo tempo em `_select_all`. Os lotes são
+# independentes, e em sequência a latência somava uma ida e volta por lote (200
+# lotes numa run de 20 mil documentos escolhidos a dedo). O teto vale para o
+# processo, e não por run: as runs não multiplicam as leituras simultâneas no
+# PostgREST. É um semáforo, e não um pool compartilhado, para que uma run de
+# 200 lotes não ponha a de 2 no fim da fila: os lotes de cada chamada disputam
+# as vagas.
+_ID_BATCH_WORKERS = 4
+_ID_BATCH_SLOTS = threading.BoundedSemaphore(_ID_BATCH_WORKERS)
+
+
 # Fração do escopo escolhida a partir da qual a segunda fase de
 # `_load_documents_for_run` pode ler o escopo paginado e descartar em Python os
 # não escolhidos, em vez de pedir os escolhidos em lotes de `_ID_BATCH_SIZE`.
@@ -832,7 +848,9 @@ def _scope_read_is_cheaper(n_scope: int, n_chosen: int, min_fraction: float) -> 
 
     Conta como `_read_pages` pede: o escopo custa as páginas com linhas mais a
     vazia que encerra a leitura; os lotes, um pedido cada (o lote completo
-    dispensa a página vazia). Num escopo pequeno, um lote só sai mais barato
+    dispensa a página vazia). Conta pedidos, a carga no PostgREST, e não
+    latência: os lotes saem em paralelo, as páginas não, e isso não muda o
+    número de pedidos. Num escopo pequeno, um lote só sai mais barato
     mesmo com quase tudo escolhido.
     """
     scope_requests = math.ceil(n_scope / _SELECT_PAGE_SIZE) + 1
@@ -862,21 +880,30 @@ def _select_all(
 
     Com `ids`, a leitura se restringe a eles, num filtro `in` fatiado em lotes
     de `id_batch_size`. Os lotes saem dos ids ordenados, então o resultado
-    continua em ordem de `id`. `ids=[]` não lê nada.
+    continua em ordem de `id`. `ids=[]` não lê nada. Os lotes são lidos em
+    paralelo, até `_ID_BATCH_WORKERS` ao mesmo tempo no processo.
     """
     if ids is None:
         return _read_pages(build_query)
     unique_ids = sorted(set(ids))
-    rows: list = []
-    for start in range(0, len(unique_ids), id_batch_size):
-        batch = unique_ids[start : start + id_batch_size]
-        rows.extend(
-            _read_pages(
-                lambda batch=batch: build_query().in_("id", batch),
-                at_most=len(batch),
+    batches = [
+        unique_ids[start : start + id_batch_size]
+        for start in range(0, len(unique_ids), id_batch_size)
+    ]
+
+    def read_batch(batch: list[str]) -> list:
+        with _ID_BATCH_SLOTS:
+            return _read_pages(
+                lambda: build_query().in_("id", batch), at_most=len(batch)
             )
-        )
-    return rows
+
+    if len(batches) <= 1:
+        return read_batch(batches[0]) if batches else []
+    # `map` devolve na ordem dos lotes, e não na de conclusão: o resultado
+    # segue em ordem de `id`. A falha de um lote sobe ao ler o resultado dele.
+    workers = min(_ID_BATCH_WORKERS, len(batches))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return [row for rows in pool.map(read_batch, batches) for row in rows]
 
 
 def _read_pages(build_query: Callable[[], Any], at_most: int | None = None) -> list:
@@ -1647,10 +1674,10 @@ def _prune_inactive_conditionals(
     justifications: dict,
     field_conditions: dict,
 ) -> None:
-    for field_name, condition in field_conditions.items():
-        if not evaluate_condition(condition, answers, field_name):
-            answers.pop(field_name, None)
-            justifications.pop(field_name, None)
+    """Tira resposta e justificativa das condicionais que a tela esconde."""
+    for field_name in hidden_conditionals(answers, field_conditions):
+        answers.pop(field_name, None)
+        justifications.pop(field_name, None)
 
 
 def _active_expected_fields(
