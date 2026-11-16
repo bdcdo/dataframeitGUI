@@ -160,7 +160,7 @@ repos:
         name: CI gate matrix contract
         entry: .github/scripts/test-ci-gate-matrix.sh
         language: system
-        files: ^(\.pre-commit-config\.yaml|\.github/(ci-(exempt-gates|gate-shards)\.json|workflows/(ci|database-tests|secret-scan)\.yml|scripts/(test-)?ci-gate-matrix\.sh))$
+        files: ^(\.pre-commit-config\.yaml|\.github/(ci-(exempt-gates|gate-shards)\.json|workflows/[^/]+\.yml|scripts/(test-)?ci-gate-matrix\.sh))$
         pass_filenames: false
         require_serial: true
 

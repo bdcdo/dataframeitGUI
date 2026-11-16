@@ -140,12 +140,14 @@ jobs:
         run: npm ci
       # Os ambientes dos hooks de repositório remoto (o actionlint, compilado
       # em Go, e o pre-commit-hooks): sem o cache, cada execução os remonta. A
-      # chave muda com o `rev` de qualquer hook, com o pre-commit do CI e com
-      # as exceções, que decidem quais ambientes o job monta.
+      # chave muda com o `rev` de qualquer hook e com o pre-commit do CI; o
+      # `restore-keys` aproveita o cache anterior quando o arquivo muda em hook
+      # local, que não tem ambiente (o pre-commit só monta o que faltar).
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', '.github/ci-tools/uv.lock', '.github/ci-exempt-gates.json') }}
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', '.github/ci-tools/uv.lock') }}
+          restore-keys: pre-commit-${{ runner.os }}-
       # ruby, jq, python3 e go (o actionlint) vêm na imagem ubuntu-latest. O
       # `--fix` e o format do ruff reprovam do mesmo jeito: o pre-commit falha
       # quando o hook altera arquivo.

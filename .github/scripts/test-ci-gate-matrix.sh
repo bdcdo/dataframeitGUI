@@ -190,8 +190,6 @@ ruby -ryaml -e '
     own = called_trigger.keys & %w[pull_request push]
     abort("#{file} não pode disparar sozinho em #{own.join(", ")}: rodaria duas vezes") unless own.empty?
     abort("#{file} pede permissão diferente da que o job #{id} concede") unless called["permissions"] == job["permissions"]
-    # Grupo próprio cancelaria, na main, o job do merge anterior, e o
-    # ci-required daquele commit ficaria vermelho.
     abort("#{file} não pode ter concurrency próprio: vale o do ci.yml") if called.key?("concurrency") || called.fetch("jobs").values.any? { |called_job| called_job.key?("concurrency") }
     [file, called.fetch("jobs").values.flat_map { |called_job| called_job.fetch("steps") }]
   end
