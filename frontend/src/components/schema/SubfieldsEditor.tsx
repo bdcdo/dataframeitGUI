@@ -10,9 +10,22 @@ import { OptionsEditor } from "./OptionsEditor";
 import { useStableListIds } from "@/hooks/useStableListIds";
 import type { SubfieldDef } from "@/lib/types";
 import {
+  pydanticFieldNameIssue,
+  RESERVED_NAME_REASON,
   resolveSubfieldRequired,
   resolveSubfieldRule,
 } from "@/lib/pydantic-field";
+
+// O mesmo aviso do nome do campo no FieldCard, para a chave do subcampo, que
+// também vira nome no código Pydantic gerado. A validação do save já recusa
+// esses casos (#900); o aviso mostra o motivo enquanto se digita.
+function subfieldKeyWarning(key: string, duplicate: boolean): string | null {
+  if (!key) return "Informe a chave do subcampo.";
+  const issue = pydanticFieldNameIssue(key);
+  if (issue === "invalid") return "Use letras minúsculas, números e _, sem começar por número.";
+  if (issue) return `Chave "${key}" ${RESERVED_NAME_REASON[issue]}.`;
+  return duplicate ? `Já existe outro subcampo com a chave "${key}".` : null;
+}
 
 // Estado completo (não um patch parcial): toda emissão inclui os 3 campos,
 // com os que não mudaram preenchidos com o valor atual. O FieldCard repassa
@@ -110,59 +123,78 @@ export function SubfieldsEditor({
               ))}
             </div>
           </div>
-          {subfields.map((sf, si) => (
-            <div key={subfieldKeys.ids[si]} className="flex items-center gap-1.5">
-              <Input
-                value={sf.key}
-                onChange={(e) => {
-                  const sfs = [...subfields];
-                  sfs[si] = { ...sfs[si], key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") };
-                  emit({ subfields: sfs });
-                }}
-                className="w-28 font-mono text-xs h-7"
-                placeholder="chave"
-              />
-              <Input
-                value={sf.label}
-                onChange={(e) => {
-                  const sfs = [...subfields];
-                  sfs[si] = { ...sfs[si], label: e.target.value };
-                  emit({ subfields: sfs });
-                }}
-                className="flex-1 text-xs h-7"
-                placeholder="Label visível"
-              />
-              {resolveSubfieldRule(subfieldRule) === "all" && (
-                <div className="flex items-center gap-1">
-                  <Switch
-                    checked={resolveSubfieldRequired(sf.required)}
-                    onCheckedChange={(checked) => {
+          {subfields.map((sf, si) => {
+            const warning = subfieldKeyWarning(
+              sf.key,
+              subfields.some((other, oi) => oi !== si && other.key === sf.key),
+            );
+            const warningId = `${subfieldKeys.ids[si]}-key-warning`;
+            return (
+              <div key={subfieldKeys.ids[si]} className="space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    value={sf.key}
+                    onChange={(e) => {
                       const sfs = [...subfields];
-                      sfs[si] = { ...sfs[si], required: checked };
+                      sfs[si] = { ...sfs[si], key: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "") };
                       emit({ subfields: sfs });
                     }}
+                    className={cn("w-28 font-mono text-xs h-7", warning && "border-destructive")}
+                    placeholder="chave"
+                    aria-label={`Chave do subcampo ${si + 1}`}
+                    aria-invalid={warning ? true : undefined}
+                    aria-describedby={warning ? warningId : undefined}
                   />
-                  <span className="text-[10px] text-muted-foreground">Obrig.</span>
+                  <Input
+                    value={sf.label}
+                    onChange={(e) => {
+                      const sfs = [...subfields];
+                      sfs[si] = { ...sfs[si], label: e.target.value };
+                      emit({ subfields: sfs });
+                    }}
+                    className="flex-1 text-xs h-7"
+                    placeholder="Label visível"
+                    aria-label={`Label do subcampo ${si + 1}`}
+                  />
+                  {resolveSubfieldRule(subfieldRule) === "all" && (
+                    <div className="flex items-center gap-1">
+                      <Switch
+                        checked={resolveSubfieldRequired(sf.required)}
+                        aria-label={`Subcampo ${si + 1} obrigatório`}
+                        onCheckedChange={(checked) => {
+                          const sfs = [...subfields];
+                          sfs[si] = { ...sfs[si], required: checked };
+                          emit({ subfields: sfs });
+                        }}
+                      />
+                      <span className="text-[10px] text-muted-foreground">Obrig.</span>
+                    </div>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="size-6 p-0"
+                    onClick={() => {
+                      const sfs = subfields.filter((_, j) => j !== si);
+                      subfieldKeys.removeIdAt(si);
+                      emit(
+                        sfs.length > 0
+                          ? { subfields: sfs }
+                          : { subfields: undefined, subfield_rule: undefined },
+                      );
+                    }}
+                  >
+                    <Trash2 className="size-3" />
+                  </Button>
                 </div>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="size-6 p-0"
-                onClick={() => {
-                  const sfs = subfields.filter((_, j) => j !== si);
-                  subfieldKeys.removeIdAt(si);
-                  emit(
-                    sfs.length > 0
-                      ? { subfields: sfs }
-                      : { subfields: undefined, subfield_rule: undefined },
-                  );
-                }}
-              >
-                <Trash2 className="size-3" />
-              </Button>
-            </div>
-          ))}
+                {warning && (
+                  <p id={warningId} className="text-xs text-destructive">
+                    {warning}
+                  </p>
+                )}
+              </div>
+            );
+          })}
           <Button
             variant="outline"
             size="sm"

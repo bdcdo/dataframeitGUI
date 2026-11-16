@@ -190,7 +190,8 @@ export function pydanticFieldNameIssue(name: string): PydanticFieldNameIssue {
 }
 
 // Complemento de "nome ..." / "subcampo "x" ..." nas mensagens de validação e
-// no aviso do FieldCard.
+// nos avisos do FieldCard e do SubfieldsEditor ("Chave "x" ...."): sem ponto
+// final, que quem monta a frase põe.
 export const RESERVED_NAME_REASON = {
   private: 'não pode começar com "_" (o Pydantic não aceita)',
   keyword: "é palavra reservada do Python",

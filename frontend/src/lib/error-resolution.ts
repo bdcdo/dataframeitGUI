@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { computeFieldHash, stableStringify } from "@/lib/schema-utils";
 import { OTHER_PREFIX, isOtherValue } from "@/lib/other-option";
-import { resolveAllowOther } from "@/lib/pydantic-field";
+import { resolveAllowOther, stripLikePython } from "@/lib/pydantic-field";
 import { NOT_INFORMED } from "@/lib/sentinels";
 import { isSubfieldRecord } from "@/lib/subfield-value";
 import { arePartsValid, parseDatePartsForUI } from "@/lib/date-parts";
@@ -358,7 +358,10 @@ export function prefillFromValue(field: PydanticField, value: unknown): unknown 
 // o veredito trazia, e confirmar gravava a resposta pela metade.
 function currentOption(field: PydanticField, value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const option = field.options?.find((candidate) => candidate.trim() === value.trim());
+  // Aparado como o `str.strip()` do Python, o mesmo critério do schema (#900,
+  // `stripLikePython`): o `trim()` do JS discorda dele nas bordas.
+  const target = stripLikePython(value);
+  const option = field.options?.find((candidate) => stripLikePython(candidate) === target);
   return option ?? (isAllowedOption(field, value) ? value : undefined);
 }
 
@@ -399,7 +402,7 @@ export function prefillLosesItems(field: PydanticField, verdict: string, rawValu
   if (field.type !== "multi") return false;
   const items = verdictMultiItems(verdict) ?? (Array.isArray(rawValue) ? rawValue : []);
   const kept = prefillMulti(field, items) ?? [];
-  return kept.length < new Set(items.map((item) => (typeof item === "string" ? item.trim() : item))).size;
+  return kept.length < new Set(items.map((item) => (typeof item === "string" ? stripLikePython(item) : item))).size;
 }
 
 function prefillGroup(value: unknown): unknown {

@@ -252,3 +252,46 @@ describe("SubfieldsEditor — respostas padronizadas", () => {
     );
   });
 });
+
+// A chave do subcampo vira nome no código Pydantic gerado: chave reservada é
+// recusada no save (#900), e o aviso aparece ao digitar, como no FieldCard.
+describe("SubfieldsEditor — aviso de chave reservada", () => {
+  it("avisa a chave reservada e a ligada ao campo; some ao corrigir", async () => {
+    const user = userEvent.setup();
+    render(<ControlledEditor initialSubfields={[sf("a", "A"), sf("b", "B")]} initialRule="all" />);
+    const [first] = keyInputs();
+
+    await user.clear(first);
+    await user.type(first, "class");
+
+    const warning = screen.getByText('Chave "class" é palavra reservada do Python.');
+    expect(first.getAttribute("aria-invalid")).toBe("true");
+    expect(first.getAttribute("aria-describedby")).toBe(warning.id);
+
+    await user.type(first, "e");
+    expect(screen.queryByText(/palavra reservada/)).toBeNull();
+    expect(first.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("avisa a chave privada e a que começa por número", async () => {
+    render(
+      <ControlledEditor initialSubfields={[sf("_x", "X"), sf("1y", "Y")]} initialRule="all" />,
+    );
+    expect(screen.getByText(/Chave "_x" não pode começar com "_"/)).toBeTruthy();
+    expect(screen.getByText("Use letras minúsculas, números e _, sem começar por número.")).toBeTruthy();
+  });
+
+  it("chave válida não avisa", () => {
+    render(<ControlledEditor initialSubfields={[sf("valor", "Valor")]} initialRule="all" />);
+    expect(keyInputs()[0].getAttribute("aria-invalid")).toBeNull();
+    expect(screen.queryByText(/Chave "/)).toBeNull();
+  });
+
+  it("avisa a chave vazia e a repetida", () => {
+    render(
+      <ControlledEditor initialSubfields={[sf("", "Vazio"), sf("ano", "A"), sf("ano", "B")]} initialRule="all" />,
+    );
+    expect(screen.getByText("Informe a chave do subcampo.")).toBeTruthy();
+    expect(screen.getAllByText('Já existe outro subcampo com a chave "ano".')).toHaveLength(2);
+  });
+});

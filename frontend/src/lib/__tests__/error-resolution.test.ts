@@ -374,6 +374,14 @@ describe("prefillFromVerdict — o veredito anterior nas opções atuais", () =>
     expect(prefillFromVerdict(single, " A ")).toBe("A");
     expect(prefillFromVerdict(single, "C")).toBeUndefined();
   });
+  // Aparado como o `str.strip()` do Python (`stripLikePython`, #900), e não
+  // como o `trim()` do JS: \x85 é branco para o Python e não para o JS; \ufeff,
+  // o contrário.
+  it("single: o aparo é o do Python", () => {
+    expect(prefillFromVerdict(single, "A\x85")).toBe("A");
+    expect(prefillFromVerdict(single, "\x1fB")).toBe("B ");
+    expect(prefillFromVerdict(single, "\ufeffA")).toBeUndefined();
+  });
   it("multi: chaves true do JSON do veredito que ainda são opções, como array", () => {
     expect(prefillFromVerdict(multi, '{"C":true,"A":true,"B":false}')).toEqual(["A", "C"]);
     expect(prefillFromVerdict(multi, '{"Z":true}')).toBeUndefined();
