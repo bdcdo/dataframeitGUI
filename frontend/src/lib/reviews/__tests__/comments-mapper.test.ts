@@ -142,7 +142,7 @@ describe("mapSuggestionComments", () => {
       status: "pending",
       resolved_at: null,
       created_at: "2026-01-01T00:00:00Z",
-      profiles: { email: "coordenador@example.com" },
+      profiles: { email: "coordenador@example.com", first_name: null, last_name: null },
     };
 
     const [result] = mapSuggestionComments([suggestion], fieldMap);
@@ -159,6 +159,34 @@ describe("mapSuggestionComments", () => {
       help_text: field.help_text,
       options: field.options,
     });
+  });
+
+  // As notas já mostravam o nome do perfil; a sugestão mostrava a parte local
+  // do e-mail, na mesma tela.
+  it("autor aparece pelo nome do perfil, e pelo e-mail só enquanto não tem nome", () => {
+    const suggestion: SuggestionRow = {
+      id: "s1",
+      field_name: "campo1",
+      suggested_changes: {},
+      reason: null,
+      status: "pending",
+      resolved_at: null,
+      created_at: "2026-01-01T00:00:00Z",
+      profiles: { email: "ana.lima@example.com", first_name: "Ana", last_name: "Lima" },
+    };
+
+    const [named, unnamed, orphan] = mapSuggestionComments(
+      [
+        suggestion,
+        { ...suggestion, profiles: { email: "ana.lima@example.com", first_name: null, last_name: null } },
+        { ...suggestion, profiles: null },
+      ],
+      fieldMap,
+    );
+
+    expect(named.reviewerName).toBe("Ana Lima");
+    expect(unnamed.reviewerName).toBe("ana.lima");
+    expect(orphan.reviewerName).toBe("Anônimo");
   });
 });
 
@@ -290,7 +318,7 @@ describe("mapProjectComments", () => {
     kind: "note",
     rejected_at: null,
     rejected_reason: null,
-    profiles: { email: "pesquisador@example.com" },
+    profiles: { email: "pesquisador@example.com", first_name: null, last_name: null },
   };
 
   it("separa anotacoes de sugestoes de exclusao", () => {
@@ -313,6 +341,29 @@ describe("mapProjectComments", () => {
     expect(exclusionComments).toHaveLength(1);
     expect(exclusionComments[0].source).toBe("exclusao");
     expect(exclusionComments[0].exclusionStatus).toBe("pending");
+  });
+
+  it("anotação e sugestão de exclusão mostram o nome do perfil do autor", () => {
+    const named: ProjectCommentRow = {
+      ...baseRow,
+      profiles: { email: "pesquisador@example.com", first_name: "Bia", last_name: "Souza" },
+    };
+
+    const { annotationComments, exclusionComments } = mapProjectComments(
+      {
+        exclusionRows: [{ ...named, id: "c2", kind: "exclusion_request" }],
+        noteRows: [named, { ...baseRow, id: "c3" }],
+      },
+      docMap,
+      new Map(),
+      fieldMap,
+    );
+
+    expect(annotationComments.map((c) => c.reviewerName)).toEqual([
+      "Bia Souza",
+      "pesquisador",
+    ]);
+    expect(exclusionComments[0].reviewerName).toBe("Bia Souza");
   });
 
   it("usa excludedDocTitles quando o documento não está mais no docMap", () => {

@@ -13,6 +13,7 @@ import {
 } from "@/lib/review-queue";
 import type { PydanticField } from "@/lib/types";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
+import { profileFullName } from "@/lib/respondent-names";
 import { pendingAutoReviewsQuery } from "@/lib/auto-review-pending";
 import { fetchAllAfterId } from "@/lib/supabase/fetch-all-paged";
 import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm";
@@ -46,13 +47,10 @@ function buildQueueOwners(
 
   return (memberRows ?? []).map((row) => {
     const member = row as MemberRow;
-    const fullName = [member.profiles.first_name, member.profiles.last_name]
-      .filter(Boolean)
-      .join(" ");
     return {
       userId: member.user_id,
       email: member.profiles.email,
-      name: fullName || null,
+      name: profileFullName(member.profiles),
     };
   });
 }

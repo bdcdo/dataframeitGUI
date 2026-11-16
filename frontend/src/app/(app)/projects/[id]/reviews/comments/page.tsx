@@ -106,7 +106,7 @@ export default async function CommentsPage({
       .not("justifications", "is", null),
     supabase
       .from("schema_suggestions")
-      .select("id, field_name, suggested_changes, reason, status, resolved_at, created_at, profiles!suggested_by(email)")
+      .select("id, field_name, suggested_changes, reason, status, resolved_at, created_at, profiles!suggested_by(email, first_name, last_name)")
       .eq("project_id", id)
       .order("created_at", { ascending: false }),
     supabase
@@ -121,7 +121,7 @@ export default async function CommentsPage({
       .eq("project_id", id),
     supabase
       .from("project_comments")
-      .select("id, document_id, field_name, author_id, body, parent_id, resolved_at, resolved_by, created_at, kind, rejected_at, rejected_reason, profiles!author_id(email)")
+      .select("id, document_id, field_name, author_id, body, parent_id, resolved_at, resolved_by, created_at, kind, rejected_at, rejected_reason, profiles!author_id(email, first_name, last_name)")
       .eq("project_id", id)
       .is("parent_id", null)
       .order("created_at", { ascending: false }),

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchProfileNames,
+  profileDisplayName,
   profileFullName,
   readProfileNames,
   respondentDisplayName,
@@ -40,6 +41,19 @@ describe("profileFullName", () => {
     [null, null],
   ])("%o -> %o", (profile, expected) => {
     expect(profileFullName(profile)).toBe(expected);
+  });
+});
+
+describe("profileDisplayName", () => {
+  it.each([
+    [{ first_name: "Ana", last_name: "Lima", email: "al@x.com" }, "Ana Lima"],
+    [{ first_name: null, last_name: null, email: "ana.lima@x.com" }, "ana.lima"],
+    [{ first_name: " ", last_name: null, email: "ana.lima@x.com" }, "ana.lima"],
+    [{ first_name: null, last_name: null, email: null }, "Anônimo"],
+    [{ first_name: null, last_name: null }, "Anônimo"],
+    [null, "Anônimo"],
+  ])("%o -> %o", (profile, expected) => {
+    expect(profileDisplayName(profile)).toBe(expected);
   });
 });
 

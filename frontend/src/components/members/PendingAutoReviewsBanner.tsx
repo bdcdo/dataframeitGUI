@@ -3,6 +3,7 @@ import {
   breakDownPendingAutoReviews,
   type PendingAutoReviewsResult,
 } from "@/lib/auto-review-pending";
+import { profileFullName } from "@/lib/respondent-names";
 import { memberDisplayName, type MemberRow } from "./member-list-utils";
 
 interface PendingAutoReviewsBannerProps {
@@ -16,10 +17,7 @@ interface PendingAutoReviewsBannerProps {
 // Nome completo, como o seletor da fila de auto-revisão: só o primeiro nome
 // deixaria dois membros homônimos com o mesmo link.
 function reviewerLabel(member: MemberRow): string {
-  const fullName = [member.profiles?.first_name, member.profiles?.last_name]
-    .filter(Boolean)
-    .join(" ");
-  return fullName || memberDisplayName(member);
+  return profileFullName(member.profiles) ?? memberDisplayName(member);
 }
 
 // Contador da fila de auto-revisão do projeto, com a distribuição por revisor

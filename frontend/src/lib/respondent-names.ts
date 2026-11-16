@@ -31,6 +31,16 @@ export function profileFullName(
   return name || null;
 }
 
+// Autor que não é resposta (veredito, dúvida, sugestão, anotação, alteração de
+// schema): o nome do perfil, e a parte local do e-mail enquanto ele não tem
+// nome.
+export function profileDisplayName(
+  profile: (ProfileNameParts & { email?: string | null }) | null | undefined,
+  fallback = "Anônimo",
+): string {
+  return profileFullName(profile) ?? (profile?.email?.split("@")[0] || fallback);
+}
+
 // Parte dos membros do projeto, e não dos ids das respostas, para correr em
 // paralelo com a leitura das respostas. `respondent_id` é sempre o membro
 // canônico, e a RLS de `profiles` só mostra colegas de projeto: quem saiu do

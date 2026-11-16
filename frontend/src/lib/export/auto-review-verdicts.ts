@@ -18,6 +18,7 @@
 // Puro e client-safe.
 import type { PydanticField, SelfVerdict } from "@/lib/types";
 import { fieldReviewIsCurrent } from "@/lib/review-validity";
+import { profileDisplayName } from "@/lib/respondent-names";
 import { formatExportValue } from "./format";
 import type { ExportSheet } from "./assemble";
 
@@ -280,6 +281,5 @@ export function reviewerDisplayName(profile: {
   last_name: string | null;
   email: string | null;
 }): string {
-  const fullName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
-  return fullName || profile.email?.split("@")[0] || profile.id;
+  return profileDisplayName(profile, profile.id);
 }

@@ -2,6 +2,7 @@ import { ambiguityCommentBody } from "@/lib/reviews/ambiguity-comment";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
 import { invalidReasonOf } from "@/lib/review-validity";
+import { profileDisplayName } from "@/lib/respondent-names";
 import { acknowledgmentIsCurrent } from "@/lib/reviews/verdict-acknowledgment";
 
 /* ── Raw row shapes (subset de colunas realmente usadas por cada mapper) ── */
@@ -21,6 +22,12 @@ export interface ReviewCommentRow {
   field_hash: string | null;
 }
 
+interface AuthorProfile {
+  email: string | null;
+  first_name: string | null;
+  last_name: string | null;
+}
+
 export interface NoteResponseRow {
   id: string;
   document_id: string;
@@ -37,7 +44,7 @@ export interface SuggestionRow {
   status: string;
   resolved_at: string | null;
   created_at: string;
-  profiles: { email: string | null } | null;
+  profiles: AuthorProfile | null;
 }
 
 export interface LlmResponseRow {
@@ -74,7 +81,7 @@ export interface ProjectCommentRow {
   kind: "note" | "exclusion_request" | "ambiguity";
   rejected_at: string | null;
   rejected_reason: string | null;
-  profiles: { email: string | null } | null;
+  profiles: AuthorProfile | null;
 }
 
 /* ── Mapping functions ── */
@@ -87,10 +94,6 @@ function resolveFieldMeta(fieldMap: Map<string, PydanticField>, fieldName: strin
     fieldOptions: field?.options,
     fieldType: field?.type,
   };
-}
-
-export function nameFromEmail(email: string | null | undefined): string {
-  return email?.split("@")[0] || "Anônimo";
 }
 
 export function mapReviewComments(
@@ -165,7 +168,7 @@ export function mapSuggestionComments(
       ...resolveFieldMeta(fieldMap, s.field_name),
       verdict: "sugestao",
       comment: s.reason || "Sem motivo",
-      reviewerName: nameFromEmail(s.profiles?.email),
+      reviewerName: profileDisplayName(s.profiles),
       resolvedAt: s.resolved_at,
       createdAt: s.created_at,
       chosenResponseId: null,
@@ -302,7 +305,7 @@ export function mapProjectComments(
       : "Anotação livre",
     verdict: c.kind === "ambiguity" ? "ambiguidade" : "anotacao",
     comment: c.body,
-    reviewerName: nameFromEmail(c.profiles?.email),
+    reviewerName: profileDisplayName(c.profiles),
     resolvedAt: c.resolved_at,
     createdAt: c.created_at,
     chosenResponseId: null,
@@ -324,7 +327,7 @@ export function mapProjectComments(
       fieldDescription: "Sugestão de exclusão",
       verdict: "exclusao",
       comment: c.body,
-      reviewerName: nameFromEmail(c.profiles?.email),
+      reviewerName: profileDisplayName(c.profiles),
       resolvedAt: c.resolved_at,
       createdAt: c.created_at,
       chosenResponseId: null,

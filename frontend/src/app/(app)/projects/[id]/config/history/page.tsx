@@ -6,6 +6,7 @@ import type {
   SchemaChangeType,
 } from "@/lib/types";
 import { storedVersion } from "@/lib/compare-version";
+import { profileDisplayName } from "@/lib/respondent-names";
 
 export default async function SchemaHistoryPage({
   params,
@@ -44,9 +45,7 @@ export default async function SchemaHistoryPage({
       last_name: string | null;
       email: string | null;
     } | null;
-    const fullName = [p?.first_name, p?.last_name].filter(Boolean).join(" ");
-    const changedBy =
-      fullName || p?.email?.split("@")[0] || "Anônimo";
+    const changedBy = profileDisplayName(p);
     const version = storedVersion(
       c.version_major as number | null,
       c.version_minor as number | null,

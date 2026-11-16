@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { createSupabaseServer } from "@/lib/supabase/server";
 import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
+import { profileFullName } from "@/lib/respondent-names";
 import { getRunningLlmCount } from "@/actions/llm";
 import { Header } from "@/components/shell/Header";
 import { ProjectTabs } from "@/components/shell/ProjectTabs";
@@ -61,7 +62,7 @@ export default async function ProjectLayout({
       };
       return {
         userId: m.user_id,
-        name: [p?.first_name, p?.last_name].filter(Boolean).join(" ") || p?.email || "Sem nome",
+        name: profileFullName(p) ?? (p?.email || "Sem nome"),
         email: p?.email || "",
         role: m.role,
       };
