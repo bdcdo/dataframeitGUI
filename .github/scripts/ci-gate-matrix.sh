@@ -32,13 +32,13 @@ ruby -ryaml -rjson -e '
 
   default_stages = config["default_stages"]
   hooks = []
-  light = []
+  known = []
   config.fetch("repos").each do |repo|
     repo.fetch("hooks").each do |hook|
       stages = hook["stages"] || default_stages
       # Sem `stages` e sem `default_stages`, o pre-commit roda o hook em todo
       # estágio, o pre-push inclusive.
-      light << hook.fetch("id") if stages.nil? || stages.include?("pre-commit")
+      known << hook.fetch("id") if stages.nil? || (stages & %w[pre-commit pre-push]).any?
       next unless stages.nil? || stages.include?("pre-push")
       hooks << hook.fetch("id")
     end
@@ -46,7 +46,7 @@ ruby -ryaml -rjson -e '
 
   problems = []
   exempt.each do |id, reason|
-    problems << "exceção órfã em #{File.basename(exempt_path)}: `#{id}` não é hook de pre-commit nem de pre-push" unless hooks.include?(id) || light.include?(id)
+    problems << "exceção órfã em #{File.basename(exempt_path)}: `#{id}` não é hook de pre-commit nem de pre-push" unless known.include?(id)
     problems << "exceção `#{id}` sem motivo em #{File.basename(exempt_path)}" unless reason.is_a?(String) && !reason.strip.empty?
   end
   gates = hooks - exempt.keys

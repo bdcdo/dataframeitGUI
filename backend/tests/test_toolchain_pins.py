@@ -232,7 +232,6 @@ def test_uv_version_matches_dockerfile() -> None:
     assert uses, "nenhum workflow usa astral-sh/setup-uv"
 
 
-CI_TOOLS = REPO / ".github/ci-tools"
 _LOCKED_PRE_COMMIT = "uv run --locked --project .github/ci-tools pre-commit "
 
 
@@ -264,16 +263,8 @@ def test_workflows_run_locked_pre_commit() -> None:
         assert not problems, "\n".join(problems)
     assert calls, "nenhum workflow roda o pre-commit: o teste não confere nada"
 
-    # O Dependabot só alcança o pino se o projeto e o lock existirem e a
-    # entrada de `uv` apontar para o diretório.
-    project = tomllib.loads((CI_TOOLS / "pyproject.toml").read_text())
-    assert any(
-        re.match(r"pre-commit\b", dep) for dep in project["project"]["dependencies"]
-    ), "pre-commit ausente de .github/ci-tools/pyproject.toml"
-    locked = tomllib.loads((CI_TOOLS / "uv.lock").read_text())["package"]
-    assert [p for p in locked if p["name"] == "pre-commit"], (
-        "pre-commit ausente de .github/ci-tools/uv.lock"
-    )
+    # O Dependabot só alcança o pino com a entrada de `uv` no diretório. O
+    # projeto e o lock quem confere é o próprio `uv run --locked`.
     assert re.search(
         r'package-ecosystem: "uv"\n\s*directory: "/\.github/ci-tools"',
         (REPO / ".github/dependabot.yml").read_text(),

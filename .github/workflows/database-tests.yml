@@ -43,6 +43,8 @@ jobs:
         with:
           # Mesmo uv do backend/Dockerfile.
           version: "0.9.18"
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
       - name: Suítes de contrato do banco (run-db-tests.sh)
         run: npm run test:db
         env:
