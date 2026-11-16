@@ -70,6 +70,24 @@ const notOneRow = (count: number) => ({
   message: `JSON object requested, multiple (or no) rows returned (${count})`,
 });
 
+// As chaves que o select devolve: a coluna, o alias (`alias:coluna`) e o nome
+// do embed (`documents!inner(...)`). `*` ou select vazio é a linha inteira.
+const selectedKeys = (columns: string): string[] | null => {
+  const tokens = [""];
+  let depth = 0;
+  for (const ch of columns) {
+    if (ch === "(") depth += 1;
+    if (ch === ")") depth -= 1;
+    if (ch === "," && depth === 0) tokens.push("");
+    else tokens[tokens.length - 1] += ch;
+  }
+  const keys = tokens.map((t) => t.split(/[(:!]/)[0].trim()).filter(Boolean);
+  return keys.length === 0 || keys.includes("*") ? null : keys;
+};
+
+// O `max_rows` do PostgREST do Supabase.
+const MAX_ROWS = 1000;
+
 // A regra do `.single()` (exatamente uma linha) e do `.maybeSingle()` (no
 // máximo uma), comum às tabelas e às RPCs. `error` é o erro da própria query,
 // que vence a contagem.
@@ -79,7 +97,8 @@ const pickOne = (found: unknown[], allowNone: boolean, error: QueryError | null 
   return Promise.resolve({ data: final ? null : (found[0] ?? null), error: final });
 };
 
-// Mock filter-aware: aplica eq/neq/is/not.is/in/match/limit/range às linhas de state.tableData[table]
+// Mock filter-aware: aplica eq/neq/is/not.is/in/match/limit/range (e o corte de
+// 1000 linhas do `max_rows`) às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Linha sem a coluna filtrada não passa
 // em .eq/.neq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada
 // linha do teste declara as colunas que a query filtra (`.not(c, "is", null)`
@@ -106,6 +125,10 @@ export function makeFilterAwareSupabaseMock(state: {
   readCalls?: ReadCall[];
   rpcResults?: Record<string, RpcResult>;
   queryErrors?: Record<string, QueryError | null>;
+  // Devolve só as colunas do select, como o PostgREST: uma coluna esquecida
+  // nele não chega a quem lê. Os filtros continuam valendo sobre a linha
+  // inteira.
+  projectColumns?: boolean;
 }) {
   return {
     rpc: (fn: string, args: unknown) => {
@@ -225,12 +248,15 @@ export function makeFilterAwareSupabaseMock(state: {
         >;
         const filtered = data.filter((r) => filterList.every((f) => passes(r, f)));
         const ranged = rangeN ? filtered.slice(rangeN[0], rangeN[1] + 1) : filtered;
-        const limited = limitN != null ? ranged.slice(0, limitN) : ranged;
-        if (aliases.length === 0) return limited;
+        // O PostgREST corta em `max_rows` sem erro, inclusive com `.limit()`
+        // maior: quem não pagina vê só as primeiras 1000.
+        const limited = ranged.slice(0, Math.min(limitN ?? MAX_ROWS, MAX_ROWS));
+        const keys = state.projectColumns ? selectedKeys(selected) : null;
+        if (aliases.length === 0 && !keys) return limited;
         return limited.map((r) => {
-          const projected = { ...r };
+          const projected: Record<string, unknown> = { ...r };
           for (const [alias, c] of aliases) if (c in r) projected[alias] = r[c];
-          return projected;
+          return keys ? Object.fromEntries(keys.filter((k) => k in projected).map((k) => [k, projected[k]])) : projected;
         });
       };
       const unfilteredWrite = () =>

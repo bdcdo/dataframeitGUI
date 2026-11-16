@@ -79,6 +79,45 @@ describe("makeFilterAwareSupabaseMock: .not(col, \"is\", v)", () => {
   });
 });
 
+describe("makeFilterAwareSupabaseMock: projectColumns", () => {
+  const read = async (columns: string, projectColumns?: boolean) => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { t: [{ id: "a", nome: "x", extra: 1, "answers->q1": "v", documents: { title: "D" }, project_id: "p1" }] },
+      writeCalls: [],
+      projectColumns,
+    });
+    const table = client.from("t") as unknown as { select(c: string): Query };
+    return (await table.select(columns).eq("project_id", "p1")).data;
+  };
+
+  it("devolve só coluna, alias e embed do select; o filtro vale sobre a linha inteira", async () => {
+    expect(await read("id, valor:answers->q1, documents!inner(title, id)", true)).toEqual([
+      { id: "a", valor: "v", documents: { title: "D" } },
+    ]);
+  });
+
+  it("`*` devolve a linha inteira, e sem a opção nada muda", async () => {
+    expect(await read("*", true)).toHaveLength(1);
+    expect((await read("*", true))[0]).toHaveProperty("extra", 1);
+    expect((await read("id", false))[0]).toHaveProperty("extra", 1);
+  });
+});
+
+describe("makeFilterAwareSupabaseMock: max_rows", () => {
+  it("leitura sem .range devolve só as primeiras 1000 linhas, mesmo com .limit maior; .range alcança o resto", async () => {
+    const rows = Array.from({ length: 1001 }, (_, i) => ({ id: `r${i}` }));
+    const client = makeFilterAwareSupabaseMock({ tableData: { t: rows }, writeCalls: [] });
+    type Paged = PromiseLike<{ data: unknown[] }> & {
+      limit(n: number): PromiseLike<{ data: unknown[] }>;
+      range(a: number, b: number): PromiseLike<{ data: unknown[] }>;
+    };
+    const select = () => (client.from("t") as unknown as { select(c: string): Paged }).select("id");
+    expect((await select()).data).toHaveLength(1000);
+    expect((await select().limit(5000)).data).toHaveLength(1000);
+    expect((await select().range(1000, 1999)).data).toEqual([{ id: "r1000" }]);
+  });
+});
+
 describe("makeFilterAwareSupabaseMock: readCalls", () => {
   it("registra colunas e filtros de cada leitura resolvida, inclusive com erro, e não as escritas", async () => {
     const readCalls: ReadCall[] = [];
