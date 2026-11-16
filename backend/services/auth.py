@@ -50,7 +50,7 @@ def _get_jwks_client() -> jwt.PyJWKClient:
 
 
 def _require_issuer() -> None:
-    """Exige `clerk_jwt_issuer` quando a verificação é por JWKS (fail-closed).
+    """Exige `clerk_jwt_issuer` para verificar qualquer token (fail-closed).
 
     Mesmo idioma do JWKS ausente em `verify_jwt`: config incompleta é problema
     do servidor, não do caller, então vira 503 — não 401 nem liberação.
@@ -70,7 +70,7 @@ def _require_issuer() -> None:
     do `main.py` saem juntas; enquanto não for o caso, nenhuma das duas sozinha
     cobre os dois casos acima.
     """
-    if settings.clerk_jwks_url and not settings.clerk_jwt_issuer:
+    if not settings.clerk_jwt_issuer:
         raise HTTPException(
             status_code=503,
             detail="Autenticação mal configurada no servidor",

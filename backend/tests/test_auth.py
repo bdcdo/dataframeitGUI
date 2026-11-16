@@ -39,7 +39,7 @@ JOB = "33333333-3333-3333-3333-333333333333"
 
 # Duas instâncias Clerk: a "de produção" (que o backend aceita) e a "de
 # desenvolvimento" (que ele deve recusar). É esse par que exercita o cutover —
-# ver test_verify_jwt_rs256_issuer_de_outra_instancia_rejeitado.
+# ver test_verify_jwt_issuer_de_outra_instancia_rejeitado.
 ISSUER = TEST_ISSUER
 ISSUER_DEV = "https://test-dev.clerk.accounts.dev"
 
@@ -143,16 +143,6 @@ class _BoomSupabase:
 
     def table(self, name):
         return _BoomTable()
-
-
-@pytest.fixture(autouse=True)
-def _reset_jwks_client():
-    # `_jwks_client` é global de módulo (auth.py): sem zerar entre testes, um
-    # cliente construído com a URL de um teste vaza para o seguinte e a falha
-    # aparece longe da causa.
-    auth_mod._jwks_client = None
-    yield
-    auth_mod._jwks_client = None
 
 
 def use_supabase(monkeypatch, fake):
@@ -267,6 +257,16 @@ def test_verify_jwt_not_configured_is_503(monkeypatch):
     assert exc.value.status_code == 503
 
 
+def test_env_com_variavel_removida_falha_nomeando_a_variavel(tmp_path):
+    # A linha vinha descomentada no .env.example antigo, então sobra no .env de
+    # quem já tinha o backend rodando. O boot continua falhando (a variável não
+    # tem mais efeito, e fingir que tem seria pior), mas dizendo o que apagar.
+    env = tmp_path / ".env"
+    env.write_text("SUPABASE_JWT_SECRET=qualquer\n")
+    with pytest.raises(ValueError, match="SUPABASE_JWT_SECRET foi removida"):
+        Settings(_env_file=env)
+
+
 def test_hs256_recusado_mesmo_com_o_secret_legado_no_ambiente(monkeypatch):
     # Regressão do #488: o estado que o caminho de rollback aceitava. Um
     # SUPABASE_JWT_SECRET esquecido no ambiente, sem JWKS, fazia o backend
@@ -296,17 +296,44 @@ def test_verify_jwt_jwks_outage_is_503(monkeypatch):
     assert exc.value.status_code == 503
 
 
-def test_verify_jwt_payload_malformado_e_401(monkeypatch):
-    # Header válido, payload ilegível: o PyJWKClient de verdade levanta
-    # DecodeError (e não PyJWKClientError) ao procurar o `kid`. É credencial
-    # inválida, 401 — não pode escapar como 500 nem virar o 503 do JWKS.
-    def decode_error(token):
-        raise jwt.DecodeError("Invalid payload padding")
+def _real_jwks_client(monkeypatch, kid: str) -> None:
+    """PyJWKClient de verdade, com o download do JWKS trocado por um de uma chave."""
+    jwk = jwt.algorithms.RSAAlgorithm.to_jwk(
+        TEST_RSA_PRIVATE_KEY.public_key(), as_dict=True
+    )
+    client = jwt.PyJWKClient(settings.clerk_jwks_url)
+    monkeypatch.setattr(
+        client, "fetch_data", lambda: {"keys": [{**jwk, "kid": kid, "use": "sig"}]}
+    )
+    monkeypatch.setattr(auth_mod, "_get_jwks_client", lambda: client)
 
-    fake_client = SimpleNamespace(get_signing_key_from_jwt=decode_error)
-    monkeypatch.setattr(auth_mod, "_get_jwks_client", lambda: fake_client)
+
+def test_verify_jwt_resolve_a_chave_pelo_kid(monkeypatch):
+    # O fake do conftest devolve a chave para qualquer token; aqui a busca pelo
+    # `kid` é a do PyJWKClient: o `kid` do JWKS passa, e um desconhecido é 503
+    # (indistinguível, do lado de cá, de um JWKS desatualizado ou fora do ar).
+    _real_jwks_client(monkeypatch, kid="k1")
+    known = jwt.encode(
+        jwt.decode(make_token(), options={"verify_signature": False}),
+        TEST_RSA_PRIVATE_KEY,
+        algorithm="RS256",
+        headers={"kid": "k1"},
+    )
+    assert verify_jwt(known).id == USER
     with pytest.raises(HTTPException) as exc:
-        verify_jwt(make_token())
+        verify_jwt(make_token())  # sem `kid`
+    assert exc.value.status_code == 503
+
+
+def test_verify_jwt_payload_malformado_e_401(monkeypatch):
+    # Header válido, payload que não é JSON: o PyJWKClient levanta DecodeError
+    # (e não PyJWKClientError) ao abrir o token para procurar o `kid`. É
+    # credencial inválida, 401 — não pode escapar como 500 nem virar o 503 do
+    # JWKS.
+    _real_jwks_client(monkeypatch, kid="k1")
+    header, _, signature = make_token().split(".")
+    with pytest.raises(HTTPException) as exc:
+        verify_jwt(f"{header}.bm90IGpzb24.{signature}")
     assert exc.value.status_code == 401
 
 
@@ -332,7 +359,6 @@ def test_verify_jwt_sem_issuer_configurado_e_503(monkeypatch):
 def test_lifespan_jwks_sem_issuer_derruba_o_boot(monkeypatch):
     # Config incompleta mata o processo em vez de virar 503 difuso em produção:
     # /health nunca fica verde e o Fly não transfere tráfego para a máquina nova.
-    monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
     monkeypatch.setattr(settings, "clerk_jwt_issuer", "")
     with pytest.raises(RuntimeError, match="CLERK_JWT_ISSUER"):
         with TestClient(main.app):
@@ -348,9 +374,7 @@ def test_lifespan_sem_jwks_sobe_avisando(monkeypatch, caplog):
     assert "CLERK_JWKS_URL não configurado" in caplog.text
 
 
-def test_lifespan_jwks_com_issuer_sobe(monkeypatch):
-    monkeypatch.setattr(settings, "clerk_jwks_url", "https://clerk.test/jwks.json")
-    monkeypatch.setattr(settings, "clerk_jwt_issuer", ISSUER)
+def test_lifespan_jwks_com_issuer_sobe():
     with TestClient(main.app) as client:
         assert client.get("/health").status_code == 200
 

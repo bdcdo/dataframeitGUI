@@ -57,7 +57,7 @@ Nunca adicione `.env.local`, `.env.e2e` ou seus symlinks ao Git. Somente os arqu
 ```bash
 cd backend
 uv sync
-cp .env.example .env  # configurar SUPABASE_URL e SUPABASE_SERVICE_KEY
+cp .env.example .env  # configurar SUPABASE_URL, SUPABASE_SERVICE_KEY, CLERK_JWKS_URL e CLERK_JWT_ISSUER
 uv run uvicorn main:app --reload
 ```
 

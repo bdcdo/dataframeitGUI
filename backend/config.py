@@ -1,5 +1,15 @@
-from pydantic import Field
+from typing import Any
+
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings
+
+# Variáveis que já foram campo de `Settings` e saíram. O pydantic-settings
+# recusa linha de `.env` sem campo correspondente ("Extra inputs are not
+# permitted"), e esse erro não diz que a variável foi removida nem o que fazer.
+_REMOVED_ENV_VARS = {
+    "supabase_jwt_secret": "o backend só aceita RS256 pelo CLERK_JWKS_URL (#488)",
+    "clerk_jwt_audience": "o session token do Clerk não emite `aud` (#487)",
+}
 
 
 class Settings(BaseSettings):
@@ -40,6 +50,18 @@ class Settings(BaseSettings):
     llm_rate_limit_window_seconds: int = Field(default=60, ge=1, le=86_400)
 
     model_config = {"env_file": ".env"}
+
+    @model_validator(mode="before")
+    @classmethod
+    def _name_removed_env_vars(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            for name, reason in _REMOVED_ENV_VARS.items():
+                if name in data:
+                    raise ValueError(
+                        f"{name.upper()} foi removida: {reason}. "
+                        "Apague a linha do backend/.env."
+                    )
+        return data
 
 
 settings = Settings()
