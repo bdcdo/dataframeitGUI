@@ -7,6 +7,7 @@
  * Estes testes fixam a única barreira que transforma isso em erro visível.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LINKED_CLAIMS, sessionTokenWith } from "@/test-utils/session-token";
 
 let token: string | null = null;
 const getTokenArgs: unknown[][] = [];
@@ -36,21 +37,6 @@ vi.mock("@supabase/supabase-js", () => ({
 
 const { createSupabaseServer } = await import("../server");
 
-/** JWT sintético: só o payload importa — a assinatura nunca é verificada aqui
- * (quem verifica é o Supabase, contra o JWKS do Clerk). */
-function jwtWith(claims: Record<string, unknown>): string {
-  const b64 = (o: unknown) =>
-    Buffer.from(JSON.stringify(o)).toString("base64url");
-  return `${b64({ alg: "RS256", typ: "JWT" })}.${b64(claims)}.assinatura-nao-verificada`;
-}
-
-const VALID = {
-  sub: "user_2abc",
-  iss: "https://clerk.test",
-  role: "authenticated",
-  supabase_uid: "11111111-1111-1111-1111-111111111111",
-};
-
 beforeEach(() => {
   created.length = 0;
   getTokenArgs.length = 0;
@@ -60,7 +46,7 @@ beforeEach(() => {
 
 describe("createSupabaseServer — contrato do session token", () => {
   it("aceita um session token completo e o repassa no Authorization", async () => {
-    token = jwtWith(VALID);
+    token = sessionTokenWith(LINKED_CLAIMS);
     await createSupabaseServer();
     expect(created[0].headers.Authorization).toBe(`Bearer ${token}`);
   });
@@ -69,7 +55,7 @@ describe("createSupabaseServer — contrato do session token", () => {
     // `getToken({ template: "supabase" })` voltaria a emitir um token com `aud`
     // e sem os claims default — o backend valida `iss` agora (#487), e o
     // template está deprecado pelo Supabase desde 01/04/2025.
-    token = jwtWith(VALID);
+    token = sessionTokenWith(LINKED_CLAIMS);
     await createSupabaseServer();
     expect(getTokenArgs).toEqual([[]]);
   });
@@ -79,7 +65,7 @@ describe("createSupabaseServer — contrato do session token", () => {
     // replicado no Dashboard novo. Metadata com uid + token sem claim = config
     // quebrada, não vínculo pendente. Sem esta barreira, a RLS negaria tudo em
     // silêncio e o dashboard apareceria vazio, sem erro nenhum.
-    token = jwtWith({ ...VALID, supabase_uid: undefined });
+    token = sessionTokenWith({ ...LINKED_CLAIMS, supabase_uid: undefined });
     await expect(createSupabaseServer()).rejects.toThrow(/supabase_uid/);
   });
 
@@ -92,7 +78,7 @@ describe("createSupabaseServer — contrato do session token", () => {
     // `Promise.all([requirePageAuthUser(), createSupabaseServer()])`, o crash
     // venceria o redirect. Aqui a barreira se cala e devolve o cliente.
     metadataUid = undefined;
-    token = jwtWith({ ...VALID, supabase_uid: undefined });
+    token = sessionTokenWith({ ...LINKED_CLAIMS, supabase_uid: undefined });
     await expect(createSupabaseServer()).resolves.toBeDefined();
   });
 
@@ -100,17 +86,17 @@ describe("createSupabaseServer — contrato do session token", () => {
     // Simetria do anterior no ramo do `role`: sem uid na metadata, a conta ainda
     // está em reparo e a página redireciona; a barreira não atropela.
     metadataUid = undefined;
-    token = jwtWith({ ...VALID, role: undefined });
+    token = sessionTokenWith({ ...LINKED_CLAIMS, role: undefined });
     await expect(createSupabaseServer()).resolves.toBeDefined();
   });
 
   it('lança quando role !== "authenticated" (PostgREST trataria como anon)', async () => {
-    token = jwtWith({ ...VALID, role: undefined });
+    token = sessionTokenWith({ ...LINKED_CLAIMS, role: undefined });
     await expect(createSupabaseServer()).rejects.toThrow(/role/);
   });
 
   it("nomeia as duas claims quando as duas faltam", async () => {
-    token = jwtWith({ sub: "user_2abc", iss: "https://clerk.test" });
+    token = sessionTokenWith({ sub: "user_2abc", iss: "https://clerk.test" });
     await expect(createSupabaseServer()).rejects.toThrow(
       /supabase_uid e role/,
     );
@@ -138,7 +124,7 @@ describe("createSupabaseServer — contrato do session token", () => {
     // lança, devolve `null`, e a destructuring das claims estouraria com um
     // TypeError cru — o oposto do erro acionável que esta barreira existe para
     // produzir.
-    token = jwtWith(null as unknown as Record<string, unknown>);
+    token = sessionTokenWith(null as unknown as Record<string, unknown>);
     await expect(createSupabaseServer()).rejects.toThrow(/supabase_uid e role/);
   });
 });

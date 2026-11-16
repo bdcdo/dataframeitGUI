@@ -1,38 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 import { auth, currentUser } from "@clerk/nextjs/server";
-import { readSupabaseUidFromMetadata } from "@/lib/clerk-supabase-uid";
-
-/** O contrato que a RLS exige do session token do Clerk:
- *  - `supabase_uid`: lido por `clerk_uid()` (migration 20260401200000), que toda
- *    policy usa como identidade;
- *  - `role: "authenticated"`: sem ele o PostgREST trata a request como `anon`.
- *
- * Os dois são custom claims configurados no Dashboard (Sessions → Customize
- * session token), não claims default — e o Postgres não reclama quando faltam:
- * `clerk_uid()` vira NULL e as policies simplesmente não casam. */
-type TokenClaims = { supabase_uid?: string; role?: string };
-
-/** Lê o payload do JWT SEM verificar a assinatura. Não é validação: quem valida
- * é o Supabase, contra o JWKS do Clerk. É uma asserção de contrato — o token
- * acabou de vir do `auth()` do Clerk neste mesmo processo. */
-function decodeClaims(token: string): TokenClaims {
-  const payload = token.split(".")[1];
-  if (!payload) return {};
-  try {
-    // O `catch` cobre base64/JSON inválido; o teste de tipo cobre o que ele não
-    // pega — JSON válido que não é objeto (`null`, número, string). Sem ele, um
-    // payload `null` passaria daqui e a destructuring em `assertTokenContract`
-    // lançaria um TypeError cru no lugar do erro nomeado.
-    const claims: unknown = JSON.parse(
-      Buffer.from(payload, "base64url").toString(),
-    );
-    return typeof claims === "object" && claims !== null
-      ? (claims as TokenClaims)
-      : {};
-  } catch {
-    return {};
-  }
-}
+import {
+  readSessionTokenClaims,
+  readSupabaseUidFromMetadata,
+} from "@/lib/clerk-supabase-uid";
 
 /** Falha alto quando o token não carrega o que a RLS precisa — MAS só quando a
  * ausência denuncia config quebrada, não um vínculo ainda pendente.
@@ -72,7 +43,9 @@ function decodeClaims(token: string): TokenClaims {
  * sobrevive só no `console.error` deles. Para os demais consumidores o erro
  * sobe de verdade. */
 async function assertTokenContract(token: string): Promise<void> {
-  const { supabase_uid, role } = decodeClaims(token);
+  // Token ilegível conta como token sem os claims: daqui ele iria direto ao
+  // PostgREST, que o trataria como `anon` no mesmo silêncio.
+  const { supabase_uid, role } = readSessionTokenClaims(token) ?? {};
   // Não ecoar o valor recebido: ele vem de um token cuja assinatura não foi
   // verificada aqui, e nomear a claim ausente já basta para agir.
   const missing = [

@@ -9,7 +9,7 @@ import {
   type WriteCall,
 } from "@/test-utils/supabase-mock";
 import { EMPTY_BASELINE, FIELD, projectRow } from "./schema-test-fixtures";
-import { ApiError } from "@/lib/api";
+import { AccessLinkPendingError, ApiError } from "@/lib/api";
 import type { PydanticField } from "@/lib/types";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
 import { revalidatePath } from "next/cache";
@@ -812,6 +812,21 @@ describe("erro de servidor não chega cru ao toast", () => {
     const result = await recoverFieldsFromStoredCode("p1");
 
     expect(result).toEqual({ error: "Projeto não possui código Pydantic armazenado" });
+  });
+
+  // #532: o vínculo pendente é estado esperado com copy própria. Não pode ser
+  // trocado pela genérica do fluxo ("Tente novamente"), que não resolve.
+  it("recoverFieldsFromStoredCode mantém a copy do vínculo pendente, sem log", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    fetchMock.mockRejectedValueOnce(new AccessLinkPendingError());
+
+    const result = await recoverFieldsFromStoredCode("p1");
+
+    expect(result).toEqual({
+      error: "Seu acesso ainda não foi concluído. Recarregue a página para concluir o acesso.",
+    });
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("recoverFieldsFromStoredCode com falha de rede loga e devolve copy pt-BR", async () => {

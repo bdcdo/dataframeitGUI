@@ -9,9 +9,18 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
+import {
+  LINKED_CLAIMS,
+  UNLINKED_CLAIMS,
+  sessionTokenWith,
+} from "@/test-utils/session-token";
 import { fetchFastAPI, requireSupabaseToken } from "../api";
 
 const fetchMock = vi.fn();
+
+/** `accountHasLink`: a metadata da conta, como o hook `useSupabaseToken` a lê. */
+const pending = () => false;
+const linkedAccount = () => true;
 
 /** Init do último `fetch`, já tipado como o objeto plano que o helper monta. */
 function lastInit(): RequestInit & { headers: Record<string, string> } {
@@ -38,13 +47,13 @@ describe("requireSupabaseToken", () => {
     // aceitaria a volta de `{ template: "supabase" }` — por isso a asserção é
     // sobre a lista de argumentos, que precisa estar vazia.
     const getToken = vi.fn().mockResolvedValue("tok");
-    await requireSupabaseToken(getToken);
+    await requireSupabaseToken(getToken, pending);
     expect(getToken.mock.calls[0]).toEqual([]);
   });
 
   it("devolve o token quando a sessão existe", async () => {
     await expect(
-      requireSupabaseToken(vi.fn().mockResolvedValue("tok")),
+      requireSupabaseToken(vi.fn().mockResolvedValue("tok"), pending),
     ).resolves.toBe("tok");
   });
 
@@ -52,7 +61,7 @@ describe("requireSupabaseToken", () => {
     // Falhar aqui (antes do request sair) é o que dá ao caller uma causa
     // acionável em vez de um "API error: 401" genérico vindo do backend.
     await expect(
-      requireSupabaseToken(vi.fn().mockResolvedValue(null)),
+      requireSupabaseToken(vi.fn().mockResolvedValue(null), pending),
     ).rejects.toMatchObject({ name: "MissingAuthTokenError" });
   });
 
@@ -60,8 +69,105 @@ describe("requireSupabaseToken", () => {
     // O template saiu no #348: instruir o usuário a conferi-lo mandaria o
     // suporte investigar uma configuração que já não existe.
     await expect(
-      requireSupabaseToken(vi.fn().mockResolvedValue(null)),
+      requireSupabaseToken(vi.fn().mockResolvedValue(null), pending),
     ).rejects.toThrow(/^(?!.*template).*$/i);
+  });
+});
+
+// #532: sessão válida cujo token não carrega `supabase_uid`. O backend
+// responderia 503 "Autenticação mal configurada no servidor", que não dá ação a
+// quem só não concluiu o acesso — o request não pode sair.
+describe("requireSupabaseToken — token sem o vínculo (supabase_uid)", () => {
+  const linked = sessionTokenWith(LINKED_CLAIMS);
+  // Um token por teste: o helper lembra, em estado do módulo, o último token
+  // reemitido sem o claim, e um token repetido pularia a reemissão.
+  let serial = 0;
+  const unlinkedToken = () =>
+    sessionTokenWith({ ...UNLINKED_CLAIMS, jti: `t${++serial}` });
+
+  it("token com o claim passa sem reemissão nem consulta à conta", async () => {
+    const getToken = vi.fn().mockResolvedValue(linked);
+    const accountHasLink = vi.fn();
+    await expect(requireSupabaseToken(getToken, accountHasLink)).resolves.toBe(linked);
+    expect(getToken).toHaveBeenCalledTimes(1);
+    expect(accountHasLink).not.toHaveBeenCalled();
+  });
+
+  it("token em cache emitido antes do vínculo: reemite e usa o novo", async () => {
+    // O webhook (ou a conclusão de acesso) gravou a metadata depois que o token
+    // em cache foi emitido; a pessoa já tem o vínculo e não deve ver erro.
+    const getToken = vi
+      .fn()
+      .mockResolvedValueOnce(unlinkedToken())
+      .mockResolvedValueOnce(linked);
+    await expect(requireSupabaseToken(getToken, pending)).resolves.toBe(linked);
+    expect(getToken.mock.calls).toEqual([[], [{ skipCache: true }]]);
+  });
+
+  it("sessão válida, conta sem o vínculo: falha antes do request, com copy acionável", async () => {
+    const getToken = vi.fn().mockResolvedValue(unlinkedToken());
+    const error = await requireSupabaseToken(getToken, pending).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toMatchObject({
+      name: "AccessLinkPendingError",
+      message:
+        "Seu acesso ainda não foi concluído. Recarregue a página para concluir o acesso.",
+    });
+    // A copy não é a string de erro do servidor (critério de aceite do #532).
+    expect((error as Error).message).not.toMatch(/servidor|configurad/i);
+  });
+
+  it("conta COM o vínculo e token sem o claim: devolve o token para o backend falhar alto (#487)", async () => {
+    // Instância Clerk sem os custom claims. Barrar aqui com "conclua o acesso"
+    // esconderia a config quebrada e calaria o log de erro do backend.
+    const unlinked = unlinkedToken();
+    const getToken = vi.fn().mockResolvedValue(unlinked);
+    await expect(requireSupabaseToken(getToken, linkedAccount)).resolves.toBe(
+      unlinked,
+    );
+  });
+
+  it("não reemite de novo enquanto o Clerk devolve o token já reemitido", async () => {
+    // O helper roda a cada poll e a cada pausa de digitação no preview: sem
+    // essa memória, cada chamada seria uma ida ao Clerk. O dublê faz o que o
+    // Clerk faz: `skipCache` emite um token NOVO e o põe no cache, de onde o
+    // `getToken()` seguinte o devolve.
+    let cached = unlinkedToken();
+    const getToken = vi.fn(async (options?: { skipCache?: boolean }) => {
+      if (options?.skipCache) cached = unlinkedToken();
+      return cached;
+    });
+    const reissues = () =>
+      getToken.mock.calls.filter(([options]) => options?.skipCache).length;
+
+    await requireSupabaseToken(getToken, pending).catch(() => {});
+    await requireSupabaseToken(getToken, pending).catch(() => {});
+    await expect(requireSupabaseToken(getToken, pending)).rejects.toMatchObject({
+      name: "AccessLinkPendingError",
+    });
+    expect(reissues()).toBe(1);
+
+    // O cache do Clerk renova sozinho (a cada ~60s): vale uma nova tentativa.
+    cached = unlinkedToken();
+    await requireSupabaseToken(getToken, pending).catch(() => {});
+    expect(reissues()).toBe(2);
+  });
+
+  it("sessão que cai durante a reemissão vira MissingAuthTokenError", async () => {
+    const getToken = vi
+      .fn()
+      .mockResolvedValueOnce(unlinkedToken())
+      .mockResolvedValueOnce(null);
+    await expect(requireSupabaseToken(getToken, pending)).rejects.toMatchObject({
+      name: "MissingAuthTokenError",
+    });
+  });
+
+  it("token ilegível segue adiante: quem o julga é o backend (401)", async () => {
+    const getToken = vi.fn().mockResolvedValue("nao-e-jwt");
+    await expect(requireSupabaseToken(getToken, pending)).resolves.toBe("nao-e-jwt");
+    expect(getToken).toHaveBeenCalledTimes(1);
   });
 });
 

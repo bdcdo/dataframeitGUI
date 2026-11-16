@@ -1,4 +1,5 @@
-import { serverErrorCopy } from "@/lib/server-error";
+import { lacksSupabaseUid } from "@/lib/clerk-supabase-uid";
+import { serverErrorCopy, UserFacingError } from "@/lib/server-error";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -9,6 +10,24 @@ class MissingAuthTokenError extends Error {
   constructor() {
     super("Sessão indisponível. Faça login novamente.");
     this.name = "MissingAuthTokenError";
+  }
+}
+
+/** Sessão válida cujo token ainda não carrega o vínculo com os dados
+ * (`supabase_uid`). O backend responderia 503 "Autenticação mal configurada no
+ * servidor" — certo para a instância Clerk sem os custom claims (#487), mas sem
+ * ação possível para quem só não concluiu o acesso (#532). O request não sai, e
+ * a copy diz o que fazer: recarregar leva a página protegida a conduzir a pessoa
+ * à conclusão de acesso (`/auth/post-login`).
+ *
+ * `UserFacingError`: é estado esperado com copy pronta, então os `catch` das
+ * actions a devolvem como veio em vez de trocá-la pela genérica do fluxo. */
+export class AccessLinkPendingError extends UserFacingError {
+  constructor() {
+    super(
+      "Seu acesso ainda não foi concluído. Recarregue a página para concluir o acesso.",
+    );
+    this.name = "AccessLinkPendingError";
   }
 }
 
@@ -60,15 +79,47 @@ function apiErrorCopy(path: string, status: number, statusText: string, body: un
   );
 }
 
-type GetToken = () => Promise<string | null>;
+type GetToken = (options?: { skipCache?: boolean }) => Promise<string | null>;
 
-/** Busca o session token do Clerk e falha fechado (lança) quando vem nulo, em
- * vez de mandar um request sem `Authorization` que o backend rejeitaria com um
- * 401 ambíguo. Use em client components antes de cada request/poll. */
-export async function requireSupabaseToken(getToken: GetToken): Promise<string> {
-  const token = await getToken();
+// Último token reemitido que veio sem o claim. Enquanto o Clerk
+// devolver esse mesmo token (até ~60s), não adianta reemitir de novo: o helper
+// roda a cada poll e a cada pausa de digitação no preview do prompt, e cada
+// reemissão é uma ida ao Clerk.
+let reissueFailedFor: string | null = null;
+
+/** Busca o session token do Clerk e falha fechado (lança) quando ele não serve
+ * ao backend, em vez de mandar um request que voltaria com um erro sem ação.
+ * Em client components, use pelo hook `useSupabaseToken`, antes de cada
+ * request/poll.
+ *
+ *  - Token nulo (deslogado, sessão expirada): `MissingAuthTokenError`.
+ *  - Token sem `supabase_uid`: o token em cache pode ter sido emitido antes de
+ *    o vínculo ser gravado na metadata (o webhook ou a conclusão de acesso
+ *    rodaram depois), então uma reemissão com `skipCache` é tentada. Se o claim
+ *    continua ausente, `accountHasLink` — a metadata da conta — decide, pela
+ *    mesma regra de `fetchFastAPIServer` e da barreira de
+ *    `lib/supabase/server.ts`: conta sem vínculo é o acesso ainda não concluído
+ *    (#532) e o request não sai, `AccessLinkPendingError`; conta COM vínculo é
+ *    a instância Clerk sem os custom claims (#487), e o token segue para o
+ *    backend responder o 503 dele e registrar a causa no log do servidor. */
+export async function requireSupabaseToken(
+  getToken: GetToken,
+  accountHasLink: () => boolean,
+): Promise<string> {
+  let token = await getToken();
   if (!token) throw new MissingAuthTokenError();
-  return token;
+  if (!lacksSupabaseUid(token)) return token;
+
+  if (token !== reissueFailedFor) {
+    token = await getToken({ skipCache: true });
+    if (!token) throw new MissingAuthTokenError();
+    if (!lacksSupabaseUid(token)) return token;
+    // O token reemitido, não o anterior: a reemissão o põe no cache do Clerk, e
+    // é ele que o próximo `getToken()` devolve.
+    reissueFailedFor = token;
+  }
+  if (accountHasLink()) return token;
+  throw new AccessLinkPendingError();
 }
 
 /**
@@ -78,7 +129,7 @@ export async function requireSupabaseToken(getToken: GetToken): Promise<string> 
  * O token NÃO é obtido aqui porque este helper roda tanto em server actions
  * quanto em client components — cada contexto pega o token de um jeito:
  *  - server actions: `fetchFastAPIServer` (lib/api-server.ts) via `auth()`;
- *  - client components: `useAuth().getToken()`, passando o resultado em `token`.
+ *  - client components: `useSupabaseToken()`, passando o resultado em `token`.
  * O session token expira rápido (~60s), então o caller deve buscar um token
  * fresco imediatamente antes de cada request (inclusive a cada poll).
  */

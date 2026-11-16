@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { useAuth } from "@clerk/nextjs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { saveLlmConfig, savePrompt } from "@/actions/schema";
-import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
+import { fetchFastAPI } from "@/lib/api";
+import { useSupabaseToken } from "@/hooks/useSupabaseToken";
 import { useLlmRunProgress } from "@/hooks/useLlmRunProgress";
 import { useEligibleDocCount } from "@/hooks/useEligibleDocCount";
 import { LlmErrorCard } from "./LlmErrorCard";
@@ -50,7 +50,7 @@ export function RunCard({
     selectedDocumentIds: [],
   });
   const [isStartingRun, setIsStartingRun] = useState(false);
-  const { getToken } = useAuth();
+  const getSupabaseToken = useSupabaseToken();
 
   const { mode: filterMode, sampleSize, maxResponseCount, selectedDocumentIds } =
     filter;
@@ -140,7 +140,7 @@ export function RunCard({
         body.max_response_count = validMaxResponseCount;
       }
 
-      const token = await requireSupabaseToken(getToken);
+      const token = await getSupabaseToken();
       const res = await fetchFastAPI<{ job_id: string }>(
         "/api/llm/run",
         {

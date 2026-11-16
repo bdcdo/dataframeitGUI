@@ -10,6 +10,7 @@ const { fetchFastAPI, getToken } = vi.hoisted(() => ({
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken }),
+  useUser: () => ({ user: null }),
 }));
 
 vi.mock("@/actions/schema", () => ({

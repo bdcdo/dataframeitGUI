@@ -31,6 +31,7 @@ vi.mock("sonner", () => ({
 vi.mock("@/lib/scroll", () => ({ getScrollBehavior: () => "auto" }));
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken }),
+  useUser: () => ({ user: null }),
 }));
 
 import { useLlmRunProgress } from "../useLlmRunProgress";

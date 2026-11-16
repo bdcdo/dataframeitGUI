@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@clerk/nextjs";
 import { toast } from "sonner";
-import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
+import { fetchFastAPI } from "@/lib/api";
+import { useSupabaseToken } from "@/hooks/useSupabaseToken";
 import { getScrollBehavior } from "@/lib/scroll";
 import { cleanupStaleLlmRuns, getRunningLlmJob } from "@/actions/llm";
 import type { LlmErrorInfo } from "@/components/llm/LlmErrorCard";
@@ -122,7 +122,7 @@ export function useLlmRunProgress(
 ) {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
   const { refresh } = useRouter();
-  const { getToken } = useAuth();
+  const getSupabaseToken = useSupabaseToken();
   const { activeJobId } = state;
 
   // Lidos sempre atualizados dentro do loop de polling sem re-disparar o effect
@@ -130,15 +130,13 @@ export function useLlmRunProgress(
   // effect (após cada render), não durante o render — escrever em ref
   // no corpo do componente quebra o modelo concorrente do React e é erro de
   // `react-hooks/refs`.
-  // `getToken` também via ref: cada tick busca um token fresco (o do template
-  // expira em ~60s e o polling dura minutos) sem religar o effect.
+  // `getSupabaseToken` é estável (ver `useSupabaseToken`): cada tick busca um
+  // token fresco (expira em ~60s e o polling dura minutos) sem religar o effect.
   const refreshRef = useRef(refresh);
   const pydanticCodeRef = useRef(pydanticCode);
-  const getTokenRef = useRef(getToken);
   useEffect(() => {
     refreshRef.current = refresh;
     pydanticCodeRef.current = pydanticCode;
-    getTokenRef.current = getToken;
   });
 
   const start = useCallback((jobId: string) => {
@@ -158,8 +156,8 @@ export function useLlmRunProgress(
 
     const tick = async () => {
       try {
-        // Token fresco a cada tick: o do template expira em ~60s.
-        const token = await requireSupabaseToken(getTokenRef.current);
+        // Token fresco a cada tick: expira em ~60s.
+        const token = await getSupabaseToken();
         const res = await fetchFastAPI<StatusResponse>(
           `/api/llm/status/${activeJobId}`,
           undefined,
@@ -234,7 +232,7 @@ export function useLlmRunProgress(
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [activeJobId]);
+  }, [activeJobId, getSupabaseToken]);
 
   // Retoma o polling se houver uma run em execução ao montar (ex.: o usuário
   // recarregou a página ou voltou para a aba). cleanupStaleLlmRuns roda
