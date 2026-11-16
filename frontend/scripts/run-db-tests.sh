@@ -22,9 +22,9 @@
 #   3. Diagnóstico em falha: a saída de cada suíte vai para um log; em FAIL de
 #      gate a cauda é impressa, sem exigir re-run da suíte.
 #   4. KNOWN_RED fóssil: toda entrada aponta para uma issue (#N) ABERTA. Uma
-#      suíte silenciada por issue já fechada derruba o gate antes de rodar.
-#      Sem `gh`, sem rede ou sem login, a consulta é pulada com aviso (fail-open);
-#      a entrada sem `#N` falha sempre, porque não depende de rede.
+#      suíte silenciada por issue fechada ou inexistente derruba o gate antes de
+#      rodar. Fora do CI, sem `gh`, sem rede ou sem login, a consulta é pulada
+#      com aviso (fail-open); no CI ela reprova.
 #
 # Uso: `npm run test:db` roda tudo; `npm run test:db -- <suíte> [<suíte>...]`
 # roda só as nomeadas (o nome do arquivo sem `.test.sql`, ou
@@ -125,34 +125,6 @@ if [[ ${#drift[@]} -gt 0 ]]; then
   exit 1
 fi
 
-# ── Guarda 4: toda KNOWN_RED aponta para issue aberta (#650). ───────────────
-# A exceção vale enquanto a issue que a rastreia está aberta; fechada a issue,
-# ou a suíte foi consertada e deve ir para GATE_SUITES, ou a issue foi fechada
-# sem consertar e a exceção perdeu o dono. A consulta ao GitHub é fail-open:
-# sem `gh`, sem rede ou sem login, avisa e segue, para o gate local não depender
-# de rede. No CI o `gh` tem o token do workflow.
-KNOWN_RED_REPO=bdcdo/dataframeitGUI
-fossil=()
-for s in "${!KNOWN_RED[@]}"; do
-  ref="${KNOWN_RED[$s]}"
-  if [[ ! "$ref" =~ ^#([0-9]+)$ ]]; then
-    fossil+=("${s}: '${ref}' não é referência de issue (#N)")
-    continue
-  fi
-  state="$(gh issue view "${BASH_REMATCH[1]}" --repo "${KNOWN_RED_REPO}" --json state -q .state 2>/dev/null)"
-  case "$state" in
-    OPEN) ;;
-    "") echo "aviso: não deu para conferir ${ref} de ${s} no GitHub (gh ausente, sem rede ou sem login); seguindo." >&2 ;;
-    *) fossil+=("${s}: ${ref} está ${state}") ;;
-  esac
-done
-if [[ ${#fossil[@]} -gt 0 ]]; then
-  echo "▸ KNOWN_RED sem issue aberta — corrija antes de rodar:" >&2
-  printf '   - %s\n' "${fossil[@]}" >&2
-  echo "conserte a suíte e mova-a para GATE_SUITES, ou aponte a entrada para a issue aberta que a rastreia." >&2
-  exit 1
-fi
-
 # Suítes pedidas na linha de comando; nenhuma = todas. Nome fora das listas é
 # erro, e não um subconjunto vazio que passaria em silêncio.
 declare -A SELECTED=()
@@ -245,6 +217,41 @@ report() {
     fail_known+=("${suite}")
   fi
 }
+
+# ── Guarda 4: toda KNOWN_RED aponta para issue aberta (#650). ───────────────
+# A exceção vale enquanto a issue que a rastreia está aberta; fechada a issue,
+# ou a suíte foi consertada e deve ir para GATE_SUITES, ou a issue foi fechada
+# sem consertar e a exceção perdeu o dono. Fora do CI a consulta é fail-open:
+# sem `gh`, sem rede ou sem login, avisa e segue, para o hook local não depender
+# de rede. No CI o workflow dá o token ao `gh`, e a consulta que falha reprova.
+KNOWN_RED_REPO=bdcdo/dataframeitGUI
+fossil=()
+for s in "${!KNOWN_RED[@]}"; do
+  ref="${KNOWN_RED[$s]}"
+  if [[ ! "$ref" =~ ^#([0-9]+)$ ]]; then
+    fossil+=("${s}: '${ref}' não é referência de issue (#N)")
+    continue
+  fi
+  state="$(gh issue view "${BASH_REMATCH[1]}" --repo "${KNOWN_RED_REPO}" \
+    --json state -q .state 2>"${LOG_DIR}/gh.err")"
+  if [[ "$state" == OPEN ]]; then
+    continue
+  elif [[ -n "$state" ]]; then
+    fossil+=("${s}: ${ref} está ${state}")
+  elif grep -q "Could not resolve to an issue" "${LOG_DIR}/gh.err"; then
+    fossil+=("${s}: ${ref} não existe em ${KNOWN_RED_REPO}")
+  elif in_ci; then
+    fossil+=("${s}: não deu para conferir ${ref} no GitHub: $(head -1 "${LOG_DIR}/gh.err")")
+  else
+    echo "aviso: não deu para conferir ${ref} de ${s} no GitHub (gh ausente, sem rede ou sem login); seguindo." >&2
+  fi
+done
+if [[ ${#fossil[@]} -gt 0 ]]; then
+  echo "▸ KNOWN_RED sem issue aberta — corrija antes de rodar:" >&2
+  printf '   - %s\n' "${fossil[@]}" >&2
+  echo "conserte a suíte e mova-a para GATE_SUITES, ou aponte a entrada para a issue aberta que a rastreia." >&2
+  exit 1
+fi
 
 if [[ ${#SELECTED[@]} -eq 0 ]]; then
   echo "▸ suítes de contrato do banco (varredura completa)"

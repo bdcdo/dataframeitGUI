@@ -76,5 +76,5 @@ jobs:
       - name: Suítes de contrato do banco (run-db-tests.sh)
         run: npm run test:db
         env:
-          # Sem token o `gh` da guarda de KNOWN_RED só avisaria e seguiria.
+          # Para o `gh` da guarda de KNOWN_RED; no CI a consulta que falha reprova.
           GH_TOKEN: ${{ github.token }}

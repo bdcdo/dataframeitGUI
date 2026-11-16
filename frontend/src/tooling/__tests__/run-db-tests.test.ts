@@ -58,12 +58,15 @@ case "$*" in
 esac
 `,
   uv: "#!/usr/bin/env bash\nexit 0\n",
-  // Registra a chamada e imprime FAKE_GH_STATE; sem ele, sai com 1, como o gh
-  // sem rede ou sem login.
+  // Registra a chamada e imprime FAKE_GH_STATE. Sem ele, falha como o gh sem
+  // rede; com NOTFOUND, como o gh diante de um número que não existe.
   gh: `#!/usr/bin/env bash
 echo "$*" >>"$FAKE_BIN/gh.log"
-[[ -n "\${FAKE_GH_STATE:-}" ]] || exit 1
-echo "$FAKE_GH_STATE"
+case "\${FAKE_GH_STATE:-}" in
+  "") echo "error connecting to api.github.com" >&2; exit 1 ;;
+  NOTFOUND) echo "GraphQL: Could not resolve to an issue or pull request with the number of 123. (repository.issue)" >&2; exit 1 ;;
+  *) echo "$FAKE_GH_STATE" ;;
+esac
 `,
 };
 
@@ -221,7 +224,7 @@ describe("run-db-tests.sh", () => {
   describe("KNOWN_RED só com issue aberta", () => {
     let root: string;
 
-    function runWithKnownRed(ref: string, ghState: string) {
+    function runWithKnownRed(ref: string, ghState: string, env: Record<string, string> = {}) {
       const source = fs.readFileSync(runner, "utf8");
       const patched = source
         .replace("declare -A KNOWN_RED=()", `declare -A KNOWN_RED=([rls_audit]="${ref}")`)
@@ -233,7 +236,7 @@ describe("run-db-tests.sh", () => {
       fs.writeFileSync(path.join(root, "scripts/run-db-tests.sh"), patched);
       return run(
         ["rls_audit"],
-        { FAKE_GH_STATE: ghState },
+        { FAKE_GH_STATE: ghState, ...env },
         ["rls_audit"],
         bin,
         path.join(root, "scripts/run-db-tests.sh"),
@@ -282,12 +285,37 @@ describe("run-db-tests.sh", () => {
       expect(status).toBe(1);
     });
 
-    it("sem gh, rede ou login, avisa e segue (fail-open)", () => {
+    it("com a issue inexistente, reprova", () => {
+      const { status, stderr } = runWithKnownRed("#123", "NOTFOUND");
+      expect(stderr).toContain("rls_audit: #123 não existe em bdcdo/dataframeitGUI");
+      expect(suitesRan()).toBe(false);
+      expect(status).toBe(1);
+    });
+
+    it("fora do CI, sem rede ou login, avisa e segue (fail-open)", () => {
       const { status, stdout, stderr } = runWithKnownRed("#123", "");
       expect(ghCalls()).toHaveLength(1);
       expect(stderr).toContain("aviso: não deu para conferir #123 de rls_audit no GitHub");
       expect(stdout).toContain("  RED*  rls_audit (conhecida, #123)");
       expect(status).toBe(0);
+    });
+
+    it("no CI, a consulta que falha reprova", () => {
+      const { status, stderr } = runWithKnownRed("#123", "", { GITHUB_ACTIONS: "true" });
+      expect(stderr).toContain(
+        "rls_audit: não deu para conferir #123 no GitHub: error connecting to api.github.com",
+      );
+      expect(suitesRan()).toBe(false);
+      expect(status).toBe(1);
+    });
+
+    it("nome de suíte desconhecido é erro antes de consultar o GitHub", () => {
+      const { status } = runWithKnownRed("#123", "OPEN");
+      expect(status).toBe(0);
+      fs.rmSync(path.join(bin, "gh.log"));
+      const typo = run([], {}, ["rls_audt"], bin, path.join(root, "scripts/run-db-tests.sh"));
+      expect(typo.status).toBe(2);
+      expect(ghCalls()).toEqual([]);
     });
   });
 });
