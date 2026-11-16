@@ -372,7 +372,7 @@ function mergeAmbiguityRepeats(
     const key = cellKey(r);
     const ambiguity = ambiguityComments.get(key);
     if (ambiguity?.comment !== ambiguityCommentBody(r.comment)) return r;
-    if (!ambiguity.resolvedAt !== !r.resolvedAt) return r;
+    if (Boolean(ambiguity.resolvedAt) !== Boolean(r.resolvedAt)) return r;
     coveredCells.add(key);
     return { ...r, coversAmbiguityComment: true as const };
   });

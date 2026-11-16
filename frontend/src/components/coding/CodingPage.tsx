@@ -535,9 +535,7 @@ function CodingPageInner({
       <UnsentChangesBadge visible={!isFullscreen && activeDocUnsent} />
       {/* Em fullscreen a faixa fica sem oferta, mas montada: sair do
           fullscreen é uma chegada, e a região live dela tem de existir antes
-          (#635). Por ser chegada, a idade do rascunho é medida da saída quando
-          a oferta é anterior a ela; medida da oferta, horas em fullscreen
-          sumiam da frase. */}
+          (#635). */}
       <CodingDraftBanner
         recovery={isFullscreen ? NO_RECOVERY : drafts.recovery}
         offeredAt={Math.max(drafts.recoveryAt, exitedFullscreenAt)}

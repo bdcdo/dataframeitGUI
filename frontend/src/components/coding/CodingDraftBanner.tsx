@@ -137,9 +137,9 @@ export function CodingDraftBanner({
           region, botão é ruído reanunciado.
           O conteúdo é keyed pela chegada da oferta (`offeredAt`, um instante
           por chegada à tela: documento aberto ou saída do fullscreen): de um
-          documento para outro, a mesma frase
-          ("há 2 horas") não mudaria o DOM, e o leitor não anunciaria a oferta
-          nova. Com a key, os nós são trocados e a chegada é anunciada. */}
+          documento para outro, a mesma frase ("há 2 horas") não mudaria o
+          DOM, e o leitor não anunciaria a oferta nova. Com a key, os nós são
+          trocados e a chegada é anunciada. */}
       <div role="status" className="sr-only">
         {announced && (
           <div key={offeredAt}>
