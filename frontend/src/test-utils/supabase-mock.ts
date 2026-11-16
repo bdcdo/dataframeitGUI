@@ -53,10 +53,13 @@ export function callsOf(
   return writeCalls.filter((c) => c.op === op && (!table || c.table === table));
 }
 
-// Mock filter-aware: aplica eq/neq/is/in/limit/range às linhas de state.tableData[table]
+// Mock filter-aware: aplica eq/neq/is/not.is/in/limit/range às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Linha sem a coluna filtrada não passa
 // em .eq/.neq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada
-// linha do teste declara as colunas que a query filtra. O .neq também descarta
+// linha do teste declara as colunas que a query filtra (`.not(c, "is", null)`
+// também: a linha sem `c` não passa, e a que não tem o valor declara `c: null`).
+// Caminho JSON e coluna de embed são chaves literais da linha
+// (`"answers->q1"`, `"documents.excluded_at"`). O .neq também descarta
 // `c: null`, como o Postgres (`null <> x` é NULL, não verdadeiro), e o mesmo
 // vale para `.eq(c, null)` e para o null dentro de `.in`: `c = NULL` nunca é
 // verdadeiro; NULL se pede com `.is(c, null)`.
@@ -107,8 +110,17 @@ export function makeFilterAwareSupabaseMock(state: {
       let op = "select";
       let limitN: number | null = null;
       let rangeN: [number, number] | null = null;
+      // Os `alias:coluna` do select (o caminho JSON incluso), copiados para a
+      // linha devolvida quando ela tem a chave `coluna`. Embed e coluna sem
+      // alias não mudam a linha: o mock não projeta colunas.
+      let aliases: Array<[string, string]> = [];
       const builder: Record<string, unknown> = {};
-      builder.select = () => builder;
+      builder.select = (columns?: string) => {
+        aliases = [...(columns ?? "").matchAll(/(?:^|,)\s*(\w+):([\w.]+(?:->>?\w+)*)\s*(?=,|$)/g)].map(
+          (m) => [m[1], m[2]],
+        );
+        return builder;
+      };
       // Ordem: as linhas já saem na ordem de `tableData`, que o teste controla.
       builder.order = () => builder;
       builder.range = (from: number, to: number) => {
@@ -121,6 +133,15 @@ export function makeFilterAwareSupabaseMock(state: {
           return builder;
         };
       }
+      // `.not(c, "is", v)`: `NOT (c IS v)`. É o único operador do `.not` que a
+      // produção usa; outro falha alto, em vez de virar filtro que não filtra.
+      builder.not = (c: string, operator: string, v: unknown) => {
+        if (operator !== "is") throw new Error(`mock: .not(_, "${operator}") não suportado`);
+        filterList.push(["not.is", c, v]);
+        return builder;
+      };
+      // Só tipagem no supabase-js.
+      builder.returns = () => builder;
       builder.limit = (n: number) => {
         limitN = n;
         return builder;
@@ -144,6 +165,7 @@ export function makeFilterAwareSupabaseMock(state: {
       // `col` NULL também não. `.is(c, null)` exige `c: null` explícito.
       const passes = (r: Record<string, unknown>, [kind, c, v]: [string, string, unknown]) => {
         if (kind === "is") return c in r && r[c] === v;
+        if (kind === "not.is") return c in r && r[c] !== v;
         if (r[c] == null) return false;
         if (kind === "eq") return r[c] === v;
         if (kind === "neq") return r[c] !== v;
@@ -155,7 +177,13 @@ export function makeFilterAwareSupabaseMock(state: {
         >;
         const filtered = data.filter((r) => filterList.every((f) => passes(r, f)));
         const ranged = rangeN ? filtered.slice(rangeN[0], rangeN[1] + 1) : filtered;
-        return limitN != null ? ranged.slice(0, limitN) : ranged;
+        const limited = limitN != null ? ranged.slice(0, limitN) : ranged;
+        if (aliases.length === 0) return limited;
+        return limited.map((r) => {
+          const projected = { ...r };
+          for (const [alias, c] of aliases) if (c in r) projected[alias] = r[c];
+          return projected;
+        });
       };
       const unfilteredWrite = () =>
         (op === "update" || op === "delete") && filterList.length === 0

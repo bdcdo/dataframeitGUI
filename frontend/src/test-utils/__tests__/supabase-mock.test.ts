@@ -12,6 +12,7 @@ type Query = Rows & {
   neq(c: string, v: unknown): Query;
   is(c: string, v: unknown): Query;
   in(c: string, v: unknown[]): Query;
+  not(c: string, op: string, v: unknown): Query;
 };
 
 async function ids(rows: unknown[], build: (q: Query) => Query) {
@@ -54,6 +55,36 @@ describe("makeFilterAwareSupabaseMock: NULL como no Postgres", () => {
       "valor-igual",
       "valor-diferente",
     ]);
+  });
+});
+
+describe("makeFilterAwareSupabaseMock: .not(col, \"is\", v)", () => {
+  const rows = [
+    { id: "valor", status: "a" },
+    { id: "nulo", status: null },
+    { id: "coluna-ausente" },
+  ];
+
+  it("casa só a linha com valor não nulo (coluna ausente não passa, como nos outros filtros)", async () => {
+    expect(await ids(rows, (q) => q.not("status", "is", null))).toEqual(["valor"]);
+  });
+
+  it("outro operador falha alto em vez de não filtrar", () => {
+    const table = makeFilterAwareSupabaseMock({ tableData: { t: rows }, writeCalls: [] }).from("t") as unknown as {
+      select(c: string): Query;
+    };
+    expect(() => table.select("id").not("status", "in", "(a)")).toThrow(/não suportado/);
+  });
+});
+
+describe("makeFilterAwareSupabaseMock: alias do select", () => {
+  it("copia `alias:coluna` (caminho JSON incluso) da chave literal da linha; embed não muda a linha", async () => {
+    const table = makeFilterAwareSupabaseMock({
+      tableData: { t: [{ id: "a", "answers->q1": "x" }, { id: "b" }] },
+      writeCalls: [],
+    }).from("t") as unknown as { select(c: string): PromiseLike<{ data: unknown[] }> };
+    const { data } = await table.select("id, value:answers->q1, outro:answers->>q1, docs:documents!inner(title, id)");
+    expect(data).toEqual([{ id: "a", "answers->q1": "x", value: "x" }, { id: "b" }]);
   });
 });
 

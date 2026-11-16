@@ -1,10 +1,10 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeSupabaseMock, type RpcCall, type TableResults, type FilterCall } from "@/actions/__tests__/supabase-mock";
+import { makeFilterAwareSupabaseMock, type RpcCall, type RpcResult, type WriteCall } from "@/test-utils/supabase-mock";
 
-let tableResults: TableResults;
+let tableData: Record<string, unknown[]>;
+let writeCalls: WriteCall[];
 let rpcCalls: RpcCall[];
-let rpcResults: Record<string, { data?: unknown; error?: { message: string } | null }>;
-let filterCalls: FilterCall[];
+let rpcResults: Record<string, RpcResult>;
 
 const { mockDrain, mockResync } = vi.hoisted(() => ({
   mockDrain: vi.fn(async () => ({ processed: 0, stale: 0, failed: 0, remaining: 0 })),
@@ -13,7 +13,7 @@ const { mockDrain, mockResync } = vi.hoisted(() => ({
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/admin", () => ({
-  createSupabaseAdmin: () => makeSupabaseMock({ tableResults, rpcCalls, rpcResults, filterCalls }),
+  createSupabaseAdmin: () => makeFilterAwareSupabaseMock({ tableData, writeCalls, rpcCalls, rpcResults }),
 }));
 vi.mock("@/lib/auto-review-reconciler", () => ({
   drainAutoReviewReconciliationRequests: mockDrain,
@@ -28,27 +28,44 @@ beforeAll(async () => {
 }, 30_000);
 
 beforeEach(() => {
-  tableResults = {};
+  tableData = {};
+  writeCalls = [];
   rpcCalls = [];
   rpcResults = {};
-  filterCalls = [];
   mockDrain.mockClear();
   mockResync.mockClear();
 });
 
 const key = (value: unknown) => JSON.stringify(value);
 
+// Resposta com as colunas que `fetchFieldAnswers` filtra. O caminho JSON
+// `answers->campo` e a coluna do embed são chaves literais da linha, e o mock
+// copia o caminho para o alias `value` do select. `value: null` aqui é o
+// caminho SQL NULL (a resposta sem a chave), e não o JSON null; o campo que a
+// resposta não tem fica sem a chave, e as duas formas não passam no
+// `.not(answers->campo, is, null)`.
+const answer = (id: string, document_id: string, field: string, value: unknown, extra: Record<string, unknown> = {}) => ({
+  id, document_id, project_id: "p1", is_latest: true, "documents.excluded_at": null,
+  [`answers->${field}`]: value, ...extra,
+});
+// Linhas que os filtros precisam descartar, com um valor que todo teste
+// procura: versão antiga, outro projeto e documento arquivado.
+const filteredOut = (field: string, value: unknown) => [
+  answer("x1", "d-antiga", field, value, { is_latest: false }),
+  answer("x2", "d-alheio", field, value, { project_id: "p2" }),
+  answer("x3", "d-arquivado", field, value, { "documents.excluded_at": "2026-01-01" }),
+];
+
 describe("documentsWithValues", () => {
   it("documentos com resposta vigente num dos valores, pela chave normalizada", async () => {
     const { documentsWithValues } = await import("@/lib/value-equivalence-effects");
-    tableResults.responses = {
-      data: [
-        { id: "r1", document_id: "d1", value: "Não Informado " },
-        { id: "r2", document_id: "d2", value: "outra" },
-        { id: "r3", document_id: "d3", value: "N/A" },
-        { id: "r4", document_id: "d1", value: "N/A" },
-      ],
-    };
+    tableData.responses = [
+      answer("r1", "d1", "q1", "Não Informado "),
+      answer("r2", "d2", "q1", "outra"),
+      answer("r3", "d3", "q1", "N/A"),
+      answer("r4", "d1", "q1", "N/A"),
+      ...filteredOut("q1", "N/A"),
+    ];
     const { createSupabaseAdmin } = await import("@/lib/supabase/admin");
     const docs = await documentsWithValues(
       createSupabaseAdmin(),
@@ -57,7 +74,6 @@ describe("documentsWithValues", () => {
       new Set([key("nao informado"), key("n/a")]),
     );
     expect(docs.sort()).toEqual(["d1", "d3"]);
-    expect(filterCalls).toContainEqual({ table: "responses", method: "eq", column: "is_latest", value: true });
   });
 
   // O nome entra no select como caminho JSON do PostgREST.
@@ -71,17 +87,20 @@ describe("documentsWithValues", () => {
 });
 
 describe("propagateValueEquivalenceChange", () => {
-  const Q1 = { projects: { data: { pydantic_fields: [{ name: "q1", type: "text", hash: "h1" }] } } };
+  const projects = [
+    { id: "p1", pydantic_fields: [{ name: "q1", type: "text", hash: "h1" }] },
+    { id: "p2", pydantic_fields: [] },
+  ];
+  const equivalence = (id: string, value_a: string, value_b: string, project_id = "p1") => ({
+    id, project_id, field_name: "q1", field_hash: "h1", value_a, value_b, reviewer_id: null,
+  });
 
   it("enfileira só os documentos afetados, drena e ressincroniza só eles", async () => {
     const { propagateValueEquivalenceChange } = await import("@/lib/value-equivalence-effects");
-    tableResults = {
-      ...Q1,
-      value_equivalences: { data: [] },
-      responses: { data: [
-        { id: "r1", document_id: "d1", value: "NI" },
-        { id: "r2", document_id: "d2", value: "outra" },
-      ] },
+    tableData = {
+      projects,
+      value_equivalences: [],
+      responses: [answer("r1", "d1", "q1", "NI"), answer("r2", "d2", "q1", "outra"), ...filteredOut("q1", "NI")],
     };
     await propagateValueEquivalenceChange({ projectId: "p1", changes: [{ fieldName: "q1", values: ["ni"] }] });
     expect(rpcCalls).toEqual([{
@@ -89,18 +108,19 @@ describe("propagateValueEquivalenceChange", () => {
       args: { p_project_id: "p1", p_document_ids: ["d1"] },
     }]);
     expect(mockDrain).toHaveBeenCalledExactlyOnceWith({ projectId: "p1" });
+    // A fila é a RPC: nenhuma escrita direta em tabela.
+    expect(writeCalls).toEqual([]);
     // Só os documentos afetados, e não o projeto inteiro.
     expect(mockResync).toHaveBeenCalledExactlyOnceWith(expect.anything(), "p1", { documentIds: ["d1"] });
   });
 
   it("expande a classe pelas equivalências do campo, já com a nova", async () => {
     const { propagateValueEquivalenceChange } = await import("@/lib/value-equivalence-effects");
-    tableResults = {
-      ...Q1,
-      value_equivalences: {
-        data: [{ id: "e1", field_name: "q1", field_hash: "h1", value_a: "N/A", value_b: "não se aplica", reviewer_id: null }],
-      },
-      responses: { data: [{ id: "r9", document_id: "d9", value: "não se aplica" }] },
+    tableData = {
+      projects,
+      // A equivalência de outro projeto não entra na classe.
+      value_equivalences: [equivalence("e1", "N/A", "não se aplica"), equivalence("e9", "N/A", "nada", "p2")],
+      responses: [answer("r9", "d9", "q1", "não se aplica"), answer("r8", "d8", "q1", "nada")],
     };
     await propagateValueEquivalenceChange({ projectId: "p1", changes: [{ fieldName: "q1", values: ["NI", "N/A"] }] });
     expect(rpcCalls[0]?.args).toEqual({ p_project_id: "p1", p_document_ids: ["d9"] });
@@ -110,12 +130,10 @@ describe("propagateValueEquivalenceChange", () => {
   // é onde a divergência pode reaparecer.
   it("equivalência desfeita entra no cálculo da classe antiga", async () => {
     const { propagateValueEquivalenceChange } = await import("@/lib/value-equivalence-effects");
-    tableResults = {
-      ...Q1,
-      value_equivalences: {
-        data: [{ id: "e2", field_name: "q1", field_hash: "h1", value_a: "N/A", value_b: "não se aplica", reviewer_id: null }],
-      },
-      responses: { data: [{ id: "r9", document_id: "d9", value: "não se aplica" }] },
+    tableData = {
+      projects,
+      value_equivalences: [equivalence("e2", "N/A", "não se aplica")],
+      responses: [answer("r9", "d9", "q1", "não se aplica")],
     };
     await propagateValueEquivalenceChange({
       projectId: "p1",
@@ -130,7 +148,7 @@ describe("propagateValueEquivalenceChange", () => {
 
   it("sem documento afetado não enfileira, não drena e não ressincroniza", async () => {
     const { propagateValueEquivalenceChange } = await import("@/lib/value-equivalence-effects");
-    tableResults = { ...Q1, value_equivalences: { data: [] }, responses: { data: [] } };
+    tableData = { projects, value_equivalences: [], responses: filteredOut("q1", "x") };
     await propagateValueEquivalenceChange({ projectId: "p1", changes: [{ fieldName: "q1", values: ["x"] }] });
     expect(rpcCalls).toEqual([]);
     expect(mockDrain).not.toHaveBeenCalled();
@@ -142,12 +160,16 @@ describe("propagateValueEquivalenceChange", () => {
   // equivalências para todos os campos.
   it("várias mudanças: uma leitura, uma fila, uma drenagem, uma ressincronização", async () => {
     const { propagateValueEquivalenceChange } = await import("@/lib/value-equivalence-effects");
-    tableResults = {
-      value_equivalences: { data: [] },
-      projects: [{ data: null }, { data: null }],
+    tableData = {
+      value_equivalences: [],
+      projects: [{ id: "p1", pydantic_fields: [] }],
+      // r1 não respondeu q2 nem r2 e r3 responderam q1: cada leitura por campo
+      // só vê quem tem a chave.
       responses: [
-        { data: [{ id: "r1", document_id: "d1", value: "NI" }] },
-        { data: [{ id: "r2", document_id: "d2", value: "sim" }, { id: "r3", document_id: "d1", value: "sim" }] },
+        answer("r1", "d1", "q1", "NI"),
+        answer("r2", "d2", "q2", "sim"),
+        answer("r3", "d1", "q2", "sim"),
+        answer("r4", "d4", "q2", "ni"),
       ],
     };
     await propagateValueEquivalenceChange({
@@ -163,16 +185,17 @@ describe("propagateValueEquivalenceChange", () => {
   it("lê só as respostas que têm a chave do campo", async () => {
     const { documentsWithValues } = await import("@/lib/value-equivalence-effects");
     const { createSupabaseAdmin } = await import("@/lib/supabase/admin");
-    tableResults.responses = { data: [] };
-    await documentsWithValues(createSupabaseAdmin(), "p1", "q1", new Set([key("null")]));
-    expect(filterCalls).toContainEqual({ table: "responses", method: "not", column: "answers->q1", value: null });
+    // Sem a chave, `answers->q1` é SQL NULL e o alias `value` viria null: o
+    // filtro é o que impede a resposta de casar com o valor null.
+    tableData.responses = [answer("r1", "d1", "q1", null)];
+    expect(await documentsWithValues(createSupabaseAdmin(), "p1", "q1", new Set([key(null)]))).toEqual([]);
   });
 
   // Pós-commit: a equivalência já está gravada; falhar aqui só registra.
   it("falha não lança, só registra", async () => {
     const { propagateValueEquivalenceChange } = await import("@/lib/value-equivalence-effects");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    tableResults = { ...Q1, value_equivalences: { data: [] }, responses: { data: [{ id: "r1", document_id: "d1", value: "NI" }] } };
+    tableData = { projects, value_equivalences: [], responses: [answer("r1", "d1", "q1", "NI")] };
     rpcResults.enqueue_auto_review_reconciliation_for_documents = { error: { message: "enqueue boom" } };
     await expect(
       propagateValueEquivalenceChange({ projectId: "p1", changes: [{ fieldName: "q1", values: ["ni"] }] }),
@@ -188,7 +211,7 @@ describe("propagateValueEquivalenceChange", () => {
     const { propagateValueEquivalenceChange } = await import("@/lib/value-equivalence-effects");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     mockDrain.mockRejectedValueOnce(new Error("drain boom"));
-    tableResults = { ...Q1, value_equivalences: { data: [] }, responses: { data: [{ id: "r1", document_id: "d1", value: "NI" }] } };
+    tableData = { projects, value_equivalences: [], responses: [answer("r1", "d1", "q1", "NI")] };
     await propagateValueEquivalenceChange({ projectId: "p1", changes: [{ fieldName: "q1", values: ["ni"] }] });
     expect(mockResync).toHaveBeenCalledOnce();
     expect(errorSpy.mock.calls[0]?.[0]).toContain("drain boom");
