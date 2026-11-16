@@ -166,7 +166,7 @@ export default async function MembersPage({
   );
 
   return (
-    <div className="mx-auto max-w-2xl space-y-4 p-6">
+    <div className="mx-auto max-w-4xl space-y-4 p-6">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Membros</h2>
         <AddMemberDialog projectId={id} />
