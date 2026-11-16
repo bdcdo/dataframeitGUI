@@ -11,7 +11,8 @@
 #   post-checkout (informativo, nunca bloqueia):   worktree-env
 #
 # O CI roda o mesmo gitleaks em todo PR e push para `main` via
-# .github/workflows/secret-scan.yml — este hook e a primeira barreira local.
+# .github/workflows/secret-scan.yml, chamado pelo ci.yml — este hook e a
+# primeira barreira local.
 # Os hooks de pre-push tambem rodam no servidor: o .github/workflows/ci.yml
 # deriva deste arquivo uma celula por hook com `stages: [pre-push]` (#649).
 # Os de pre-commit rodam la numa chamada so, no job `lint`. Hook novo entra no
@@ -159,7 +160,7 @@ repos:
         name: CI gate matrix contract
         entry: .github/scripts/test-ci-gate-matrix.sh
         language: system
-        files: ^(\.pre-commit-config\.yaml|\.github/(ci-(exempt-gates|gate-shards)\.json|workflows/(ci|database-tests)\.yml|scripts/(test-)?ci-gate-matrix\.sh))$
+        files: ^(\.pre-commit-config\.yaml|\.github/(ci-(exempt-gates|gate-shards)\.json|workflows/(ci|database-tests|secret-scan)\.yml|scripts/(test-)?ci-gate-matrix\.sh))$
         pass_filenames: false
         require_serial: true
 

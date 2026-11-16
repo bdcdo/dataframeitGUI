@@ -71,7 +71,7 @@ npx supabase db push
 
 ## Secret scanning
 
-O repositório roda [gitleaks](https://github.com/gitleaks/gitleaks) em dois pontos: no CI (`.github/workflows/secret-scan.yml`, em todo PR e em push para `main`) e como hook de pre-commit local. Para habilitar o hook (uma vez por checkout):
+O repositório roda [gitleaks](https://github.com/gitleaks/gitleaks) em dois pontos: no CI (`.github/workflows/secret-scan.yml`, chamado pelo `ci.yml` em todo PR e em push para `main`) e como hook de pre-commit local. Para habilitar o hook (uma vez por checkout):
 
 ```bash
 pipx install pre-commit   # ou: uv tool install pre-commit
