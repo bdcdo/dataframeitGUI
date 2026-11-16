@@ -7,6 +7,9 @@
 // registrada (#686) é migrar os testes que usam mocks cegos a filtro para
 // este motor, um arquivo por vez.
 
+// Um filtro: [tipo, coluna, valor], na ordem das chamadas.
+type Filter = [string, string, unknown];
+
 // `filters`: os filtros da escrita (eq/neq/is/not.is/in; `.match` vira um eq
 // por chave), no mock filter-aware, para o teste conferir quais linhas ela
 // alcançaria.
@@ -14,7 +17,15 @@ export type WriteCall = {
   table: string;
   op: string;
   payload: unknown;
-  filters?: Array<[string, string, unknown]>;
+  filters?: Filter[];
+};
+// Uma leitura resolvida (await, `.single()` ou `.maybeSingle()`): as colunas
+// do select e os filtros, para o teste conferir o que a query pediu ao banco
+// quando o efeito do filtro não aparece no resultado.
+export type ReadCall = {
+  table: string;
+  columns: string;
+  filters: Filter[];
 };
 export type RpcCall = { fn: string; args: unknown };
 export type RpcResult = {
@@ -68,15 +79,17 @@ export function callsOf(
 // Como o PostgREST, `.single()` com zero ou mais de uma linha devolve o erro
 // PGRST116, e `.maybeSingle()` com mais de uma também; e UPDATE ou DELETE sem
 // filtro é recusado (o `safeupdate` do Supabase, código 21000). Cada escrita
-// registra os filtros em `filters`.
+// registra os filtros em `filters`, e cada leitura resolvida, com
+// `state.readCalls`, as colunas e os filtros.
 // `state` deve ser passado como objeto fresco a cada chamada de makeClient()
 // local (não memoizar), para sempre refletir os valores atuais de
-// `let tableData`/`let writeCalls` do arquivo de teste — que são reatribuídos
-// por inteiro no beforeEach.
+// `let tableData`/`let writeCalls`/`let readCalls` do arquivo de teste — que
+// são reatribuídos por inteiro no beforeEach.
 export function makeFilterAwareSupabaseMock(state: {
   tableData: Record<string, unknown[]>;
   writeCalls: WriteCall[];
   rpcCalls?: RpcCall[];
+  readCalls?: ReadCall[];
   rpcResults?: Record<string, RpcResult>;
   queryErrors?: Record<string, QueryError | null>;
 }) {
@@ -105,7 +118,7 @@ export function makeFilterAwareSupabaseMock(state: {
     },
     from: (table: string) => {
       // Os filtros na ordem das chamadas: é a ordem que `write.filters` registra.
-      const filterList: Array<[string, string, unknown]> = [];
+      const filterList: Filter[] = [];
       let write: WriteCall | null = null;
       // Última operação do builder: compõe a chave de erro de `queryErrors`.
       let op = "select";
@@ -115,8 +128,10 @@ export function makeFilterAwareSupabaseMock(state: {
       // linha devolvida quando ela tem a chave `coluna`. Embed e coluna sem
       // alias não mudam a linha: o mock não projeta colunas.
       let aliases: Array<[string, string]> = [];
+      let selected = "";
       const builder: Record<string, unknown> = {};
       builder.select = (columns?: string) => {
+        selected = columns ?? "";
         aliases = [...(columns ?? "").matchAll(/(?:^|,)\s*(\w+):([\w.]+(?:->>?\w+)*)\s*(?=,|$)/g)].map(
           (m) => [m[1], m[2]],
         );
@@ -197,8 +212,11 @@ export function makeFilterAwareSupabaseMock(state: {
         (op === "update" || op === "delete") && filterList.length === 0
           ? { code: "21000", message: `${op.toUpperCase()} requires a WHERE clause` }
           : null;
-      const err = () => {
+      // Fecha a chamada: registra os filtros da escrita (ou a leitura, em
+      // `readCalls`) e devolve o erro. Uma vez por resolução.
+      const settle = () => {
         if (write) write.filters = [...filterList];
+        else state.readCalls?.push({ table, columns: selected, filters: [...filterList] });
         return state.queryErrors?.[`${table}:${op}`] ?? unfilteredWrite();
       };
       const notOneRow = (count: number) => ({
@@ -213,16 +231,16 @@ export function makeFilterAwareSupabaseMock(state: {
           : rows();
       builder.single = () => {
         const found = singleRows();
-        const error = err() ?? (found.length === 1 ? null : notOneRow(found.length));
+        const error = settle() ?? (found.length === 1 ? null : notOneRow(found.length));
         return Promise.resolve({ data: error ? null : found[0], error });
       };
       builder.maybeSingle = () => {
         const found = singleRows();
-        const error = err() ?? (found.length > 1 ? notOneRow(found.length) : null);
+        const error = settle() ?? (found.length > 1 ? notOneRow(found.length) : null);
         return Promise.resolve({ data: error ? null : (found[0] ?? null), error });
       };
       builder.then = (resolve: (v: unknown) => unknown) => {
-        const error = err();
+        const error = settle();
         return resolve({ data: error ? null : rows(), error });
       };
       return builder;

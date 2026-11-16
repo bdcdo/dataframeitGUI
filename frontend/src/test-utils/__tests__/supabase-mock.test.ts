@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeFilterAwareSupabaseMock, type WriteCall } from "../supabase-mock";
+import { makeFilterAwareSupabaseMock, type ReadCall, type WriteCall } from "../supabase-mock";
 
 // O mock filter-aware só serve de prova se não deixar passar linha que o
 // Postgres descarta. Com NULL, a lógica do SQL é de três valores: `col <> x`
@@ -13,6 +13,8 @@ type Query = Rows & {
   is(c: string, v: unknown): Query;
   in(c: string, v: unknown[]): Query;
   not(c: string, op: string, v: unknown): Query;
+  single(): Promise<unknown>;
+  maybeSingle(): Promise<unknown>;
 };
 
 async function ids(rows: unknown[], build: (q: Query) => Query) {
@@ -74,6 +76,31 @@ describe("makeFilterAwareSupabaseMock: .not(col, \"is\", v)", () => {
       select(c: string): Query;
     };
     expect(() => table.select("id").not("status", "in", "(a)")).toThrow(/não suportado/);
+  });
+});
+
+describe("makeFilterAwareSupabaseMock: readCalls", () => {
+  it("registra colunas e filtros de cada leitura resolvida, inclusive com erro, e não as escritas", async () => {
+    const readCalls: ReadCall[] = [];
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { t: [{ id: "a" }] },
+      writeCalls: [],
+      readCalls,
+      queryErrors: { "u:select": { message: "boom" } },
+    });
+    const from = (table = "t") =>
+      client.from(table) as unknown as { select(c: string): Query; update(p: unknown): Query };
+    await from().select("id, nome").eq("id", "a").single();
+    await from().select("id").in("id", ["a", "b"]);
+    await from().select("id").is("id", null).maybeSingle();
+    await from("u").select("id");
+    await from().update({ x: 1 }).eq("id", "a");
+    expect(readCalls).toEqual([
+      { table: "t", columns: "id, nome", filters: [["eq", "id", "a"]] },
+      { table: "t", columns: "id", filters: [["in", "id", ["a", "b"]]] },
+      { table: "t", columns: "id", filters: [["is", "id", null]] },
+      { table: "u", columns: "id", filters: [] },
+    ]);
   });
 });
 
