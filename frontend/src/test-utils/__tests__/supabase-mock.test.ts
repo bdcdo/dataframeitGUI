@@ -157,6 +157,42 @@ describe("makeFilterAwareSupabaseMock: .single() e .maybeSingle()", () => {
   });
 });
 
+describe("makeFilterAwareSupabaseMock: .single() e .maybeSingle() na RPC", () => {
+  type Single = Promise<{ data: unknown; error: { code?: string; message: string } | null }>;
+  const rpc = (data: unknown, error: { message: string } | null = null) =>
+    makeFilterAwareSupabaseMock({ tableData: {}, writeCalls: [], rpcResults: { f: { data, error } } }).rpc(
+      "f",
+      {},
+    ) as unknown as { single(): Single; maybeSingle(): Single };
+
+  it("linha (objeto) ou escalar é uma linha; array de uma linha devolve a linha", async () => {
+    expect(await rpc({ status: "saved" }).single()).toEqual({ data: { status: "saved" }, error: null });
+    expect(await rpc("p1").single()).toEqual({ data: "p1", error: null });
+    expect(await rpc([{ id: "a" }]).maybeSingle()).toEqual({ data: { id: "a" }, error: null });
+  });
+
+  it("null é uma linha nula; array vazio é zero linhas (.single() dá PGRST116); duas, PGRST116 nos dois", async () => {
+    expect(await rpc(null).single()).toEqual({ data: null, error: null });
+    expect((await rpc([]).single()).error?.code).toBe("PGRST116");
+    expect(await rpc([]).maybeSingle()).toEqual({ data: null, error: null });
+    expect((await rpc([{ id: "a" }, { id: "b" }]).maybeSingle()).error?.code).toBe("PGRST116");
+  });
+
+  it("RPC sem entrada em rpcResults falha alto", () => {
+    const call = makeFilterAwareSupabaseMock({ tableData: {}, writeCalls: [] }).rpc("g", {}) as unknown as {
+      single(): unknown;
+    };
+    expect(() => call.single()).toThrow(/rpcResults sem "g"/);
+  });
+
+  it("erro da RPC passa com data null", async () => {
+    expect(await rpc({ status: "saved" }, { message: "boom" }).single()).toEqual({
+      data: null,
+      error: { message: "boom" },
+    });
+  });
+});
+
 describe("makeFilterAwareSupabaseMock: escritas", () => {
   type W = PromiseLike<{ error: { code: string } | null }> & { eq(c: string, v: unknown): W };
   const client = (writeCalls: WriteCall[]) =>

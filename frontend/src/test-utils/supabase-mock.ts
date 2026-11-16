@@ -65,6 +65,20 @@ export function callsOf(
   return writeCalls.filter((c) => c.op === op && (!table || c.table === table));
 }
 
+const notOneRow = (count: number) => ({
+  code: "PGRST116",
+  message: `JSON object requested, multiple (or no) rows returned (${count})`,
+});
+
+// A regra do `.single()` (exatamente uma linha) e do `.maybeSingle()` (no
+// máximo uma), comum às tabelas e às RPCs. `error` é o erro da própria query,
+// que vence a contagem.
+const pickOne = (found: unknown[], allowNone: boolean, error: QueryError | null = null) => {
+  const wrongCount = found.length > 1 || (!allowNone && found.length === 0);
+  const final = error ?? (wrongCount ? notOneRow(found.length) : null);
+  return Promise.resolve({ data: final ? null : (found[0] ?? null), error: final });
+};
+
 // Mock filter-aware: aplica eq/neq/is/not.is/in/match/limit/range às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Linha sem a coluna filtrada não passa
 // em .eq/.neq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada
@@ -100,7 +114,18 @@ export function makeFilterAwareSupabaseMock(state: {
       // `.order()` e `.range()`, para a RPC que devolve tabela e é paginada por
       // `fetchAllPaged`: a ordem é a do array do teste.
       let rangeN: [number, number] | null = null;
+      // `.single()`/`.maybeSingle()`: o resultado em array é a lista de linhas
+      // (função SETOF), e o que não é array (linha, escalar ou null) é uma
+      // linha só. Sem `rpcResults[fn]` falha alto: um nome de RPC errado no
+      // teste não pode virar PGRST116 plausível.
+      const one = (allowNone: boolean) => {
+        if (!result) throw new Error(`mock: rpcResults sem "${fn}"`);
+        const data = result.data ?? null;
+        return pickOne(Array.isArray(data) ? data : [data], allowNone, result.error ?? null);
+      };
       const call: Record<string, unknown> = {
+        single: () => one(false),
+        maybeSingle: () => one(true),
         order: () => call,
         range: (from: number, to: number) => {
           rangeN = [from, to];
@@ -219,26 +244,14 @@ export function makeFilterAwareSupabaseMock(state: {
         else state.readCalls?.push({ table, columns: selected, filters: [...filterList] });
         return state.queryErrors?.[`${table}:${op}`] ?? unfilteredWrite();
       };
-      const notOneRow = (count: number) => ({
-        code: "PGRST116",
-        message: `JSON object requested, multiple (or no) rows returned (${count})`,
-      });
       // `insert/upsert(...).select().single()` devolve a linha escrita, e não
       // uma linha da tabela.
       const singleRows = () =>
         op === "insert" || op === "upsert"
           ? [write?.payload].flat().filter((row) => row != null)
           : rows();
-      builder.single = () => {
-        const found = singleRows();
-        const error = settle() ?? (found.length === 1 ? null : notOneRow(found.length));
-        return Promise.resolve({ data: error ? null : found[0], error });
-      };
-      builder.maybeSingle = () => {
-        const found = singleRows();
-        const error = settle() ?? (found.length > 1 ? notOneRow(found.length) : null);
-        return Promise.resolve({ data: error ? null : (found[0] ?? null), error });
-      };
+      builder.single = () => pickOne(singleRows(), false, settle());
+      builder.maybeSingle = () => pickOne(singleRows(), true, settle());
       builder.then = (resolve: (v: unknown) => unknown) => {
         const error = settle();
         return resolve({ data: error ? null : rows(), error });

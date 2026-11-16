@@ -21,6 +21,16 @@ export const PROJECT_SELECT: TableResult = {
   },
 };
 
+// O projeto como linha da tabela, para o mock filter-aware: as colunas de
+// PROJECT_SELECT mais o `id` que a leitura filtra. Fábrica, para nenhum teste
+// compartilhar o array de campos.
+export const projectRow = (extra: Record<string, unknown> = {}) => ({
+  ...(PROJECT_SELECT.data as object),
+  id: "p1",
+  pydantic_fields: [] as PydanticField[],
+  ...extra,
+});
+
 export const EMPTY_BASELINE: SchemaBaselineIdentity = {
   revision: 0,
 };
