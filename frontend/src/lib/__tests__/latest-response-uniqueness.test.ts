@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  latestHumanWithoutActorViolations,
   latestResponseUniquenessViolations,
   type LatestResponseRow,
 } from "@/lib/latest-response-uniqueness";
@@ -106,5 +107,34 @@ describe("latestResponseUniquenessViolations", () => {
 
   it("não confunde humana e LLM no mesmo doc", () => {
     expect(violationDetails([row({ id: "h" }), llm("l")])).toEqual([]);
+  });
+});
+
+// CHECK responses_human_latest_has_actor_check (20260727120000):
+// respondent_type <> 'humano' OR NOT is_latest OR respondent_id IS NOT NULL.
+describe("latestHumanWithoutActorViolations", () => {
+  const live = (overrides: Partial<Row> & Pick<Row, "id">) => ({ ...row(overrides), is_latest: true });
+
+  it("acusa humana viva sem respondent_id", () => {
+    expect(latestHumanWithoutActorViolations([live({ id: "h-anonima", respondent_id: null })])).toEqual([
+      { key: "h-anonima", detail: "response humana is_latest sem respondent_id" },
+    ]);
+  });
+
+  it("passa humana viva com autor", () => {
+    expect(latestHumanWithoutActorViolations([live({ id: "h-ana" })])).toEqual([]);
+  });
+
+  // O braço `NOT is_latest` isenta histórico antigo sem autor.
+  it("não acusa humana arquivada sem respondent_id", () => {
+    expect(
+      latestHumanWithoutActorViolations([{ ...live({ id: "h-velha", respondent_id: null }), is_latest: false }]),
+    ).toEqual([]);
+  });
+
+  // O braço `respondent_type <> 'humano'`: LLM nunca tem autor
+  // (responses_llm_has_no_human_actor_check).
+  it("não acusa LLM viva sem respondent_id", () => {
+    expect(latestHumanWithoutActorViolations([{ ...llm("l-1"), is_latest: true }])).toEqual([]);
   });
 });
