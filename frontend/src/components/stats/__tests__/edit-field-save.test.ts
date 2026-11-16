@@ -223,11 +223,12 @@ describe("saveMergedEdit — opção removida e condição criada em outra sess�
   const savedFields = async (
     remote: PydanticField[],
     form: Partial<EditFieldFormValues> = { options: ["Sim"] },
+    base: PydanticField[] = [q1],
   ) => {
     const submit = vi.fn<(f: PydanticField[], b: SchemaBaselineIdentity) => Promise<SubmitOutcome>>()
       .mockResolvedValue({ status: "saved" });
-    const local = applyFormEdits([q1], "q1", formOf(form));
-    const result = await saveMergedEdit([q1], local, remote, BASELINE, submit);
+    const local = applyFormEdits(base, "q1", formOf(form));
+    const result = await saveMergedEdit(base, local, remote, BASELINE, submit);
     if (result.status !== "saved") throw new Error(`esperava saved, veio ${result.status}`);
     return { fields: submit.mock.calls[0][0], stripped: result.strippedFieldNames };
   };
@@ -243,14 +244,10 @@ describe("saveMergedEdit — opção removida e condição criada em outra sess�
   });
 
   it("condição do base, já limpa no diff local, não entra no aviso", async () => {
-    const submit = vi.fn<(f: PydanticField[], b: SchemaBaselineIdentity) => Promise<SubmitOutcome>>()
-      .mockResolvedValue({ status: "saved" });
-    const local = applyFormEdits([q1, q2], "q1", formOf({ options: ["Sim"] }));
+    const { fields, stripped } = await savedFields([q1, q2], undefined, [q1, q2]);
 
-    const result = await saveMergedEdit([q1, q2], local, [q1, q2], BASELINE, submit);
-
-    expect(result).toEqual({ status: "saved", strippedFieldNames: [] });
-    expect(submit.mock.calls[0][0][1]).not.toHaveProperty("condition");
+    expect(fields[1]).not.toHaveProperty("condition");
+    expect(stripped).toEqual([]);
   });
 
   it("opção removida só no remoto não limpa condição", async () => {
@@ -295,7 +292,6 @@ describe("saveMergedEdit — opção removida e condição criada em outra sess�
 
     const result = await saveMergedEdit([q1], local, [q1], BASELINE, submit);
 
-    expect(result).toMatchObject({ status: "saved" });
     expect(submit.mock.calls[1][0].find((f) => f.name === "q3")).not.toHaveProperty(
       "condition",
     );

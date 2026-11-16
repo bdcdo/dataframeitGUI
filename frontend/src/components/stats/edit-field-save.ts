@@ -76,24 +76,34 @@ export function applyFormEdits(
   const baseField = baseFields.find((f) => f.name === fieldName);
   if (!baseField) return baseFields;
   const edited = editedFieldFromForm(baseField, form);
-  let fields = baseFields.map((f) => (f.name === fieldName ? edited : f));
-  const kept = new Set(form.options);
-  const removedOpts = (baseField.options ?? []).filter((o) => !kept.has(o));
-  for (const removed of removedOpts) {
-    fields = stripOptionFromConditions(fields, fieldName, removed);
-  }
-  return fields;
+  return stripRemovedOptions(
+    baseFields.map((f) => (f.name === fieldName ? edited : f)),
+    fieldName,
+    baseField.options,
+    new Set(form.options),
+  );
 }
 
-// O strip de `applyFormEdits` só alcança as condições do base. Este passo roda
-// sobre o resultado do merge e alcança as que outra sessão criou com o diálogo
-// aberto, que só o remoto traz (#599). Entra só a opção que a edição local tirou
-// (base × local, casados por id) e que o campo do merge também não tem: uma
-// removida no remoto já teve as suas condições tratadas lá. Campo do merge sem
-// lista de opções fica de fora, porque a validação do save não cobra valor dele.
-// Devolve também os nomes dos campos cuja condição mudou: como as condições
-// locais já saíram limpas, toda mudança aqui é sobre condição de outra sessão,
-// que o usuário pode não ter visto na guarda de remoção — e precisa saber.
+function stripRemovedOptions(
+  fields: PydanticField[],
+  triggerName: string,
+  before: string[] | null | undefined,
+  kept: Set<string>,
+): PydanticField[] {
+  let stripped = fields;
+  for (const option of before ?? []) {
+    if (!kept.has(option)) {
+      stripped = stripOptionFromConditions(stripped, triggerName, option);
+    }
+  }
+  return stripped;
+}
+
+// O strip de `applyFormEdits` só alcança as condições do base; este repete o
+// strip sobre o merge, onde chegam as que outra sessão criou com o diálogo
+// aberto (#599). Só para opção que a edição local tirou e o campo mesclado, com
+// lista de opções, também não tem. Como as condições do base já saíram limpas,
+// todo campo alterado aqui veio de outra sessão: os nomes voltam para o aviso.
 function stripLocallyRemovedOptions(
   baseFields: PydanticField[],
   localFields: PydanticField[],
@@ -103,15 +113,11 @@ function stripLocallyRemovedOptions(
   const mergedById = new Map(mergedFields.map((f) => [f.id, f]));
   let fields = mergedFields;
   for (const local of localFields) {
-    const baseOptions = baseById.get(local.id)?.options;
+    const before = baseById.get(local.id)?.options;
     const trigger = mergedById.get(local.id);
-    if (!baseOptions || !trigger?.options) continue;
+    if (local.options === before || !trigger?.options) continue;
     const kept = new Set([...(local.options ?? []), ...trigger.options]);
-    for (const removed of baseOptions) {
-      if (!kept.has(removed)) {
-        fields = stripOptionFromConditions(fields, trigger.name, removed);
-      }
-    }
+    fields = stripRemovedOptions(fields, trigger.name, before, kept);
   }
   const strippedFieldNames = fields
     .filter((f) => f !== mergedById.get(f.id))
@@ -152,8 +158,6 @@ export type SubmitOutcome =
 // resolúvel recarregando), mas nenhum dos dois é exceção: fazer a falha de save
 // sair por `throw` obrigava o `try/catch` do chamador a servir a erro de domínio
 // e a queda de rede ao mesmo tempo.
-// `strippedFieldNames`: campos de outra sessão cuja condição dependia de uma
-// opção removida no diálogo e foi limpa no save (#599).
 export type SaveMergedEditResult =
   | { status: "saved"; strippedFieldNames: string[] }
   | { status: "blocked"; message: string }
@@ -177,27 +181,23 @@ export async function saveMergedEdit(
     baseline: SchemaBaselineIdentity,
   ) => Promise<SubmitOutcome>,
 ): Promise<SaveMergedEditResult> {
-  const merged = mergeSchemas(baseFields, localFields, allFields);
-  const blocked = unresolvedSchemaConflicts(merged);
-  if (blocked.length > 0) {
-    return { status: "blocked", message: conflictBlockMessage(blocked) };
-  }
+  const prepare = (remote: PydanticField[]) => {
+    const merged = mergeSchemas(baseFields, localFields, remote);
+    const blocked = unresolvedSchemaConflicts(merged);
+    if (blocked.length > 0) {
+      return { blocked: conflictBlockMessage(blocked) } as const;
+    }
+    return stripLocallyRemovedOptions(baseFields, localFields, merged.fields);
+  };
 
-  // Remover a opção torna inválida toda condição sobre ela, venha de onde vier;
-  // deixar a remota passar só trocava a limpeza por uma recusa do save que
-  // culpa o campo, e não a concorrência (#599).
-  let payload = stripLocallyRemovedOptions(baseFields, localFields, merged.fields);
+  let payload = prepare(allFields);
+  if ("blocked" in payload) return { status: "blocked", message: payload.blocked };
   let result = await submit(payload.fields, baseline);
   if (result.status === "conflict") {
-    const remerged = mergeSchemas(baseFields, localFields, result.current.fields);
-    const reblocked = unresolvedSchemaConflicts(remerged);
-    if (reblocked.length > 0) {
-      return { status: "blocked", message: conflictBlockMessage(reblocked) };
-    }
-    payload = stripLocallyRemovedOptions(baseFields, localFields, remerged.fields);
-    result = await submit(payload.fields, {
-      revision: result.current.revision,
-    });
+    const revision = result.current.revision;
+    payload = prepare(result.current.fields);
+    if ("blocked" in payload) return { status: "blocked", message: payload.blocked };
+    result = await submit(payload.fields, { revision });
   }
   if (result.status === "conflict") {
     return { status: "error", message: STALE_RETRY_FAILED_MESSAGE };

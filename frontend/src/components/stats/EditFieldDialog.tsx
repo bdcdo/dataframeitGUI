@@ -164,10 +164,8 @@ export function EditFieldDialog({
   // em outra sessão depois que o diálogo abriu. Ancorá-la no base capturado
   // esconderia exatamente a dependência que o usuário não tem como ver.
   //
-  // O strip de `applyFormEdits` roda sobre o base, e `saveMergedEdit` o repete
-  // sobre o resultado do merge: a condição criada em outra sessão também é
-  // limpa no save, inclusive a que chegou depois da guarda — por isso o save
-  // avisa quais foram (#599).
+  // O strip de `applyFormEdits` roda sobre o base; a condição criada em outra
+  // sessão é limpa no merge de `saveMergedEdit`, que avisa quais foram (#599).
   const { confirmRemoval, dialogProps } = useOptionRemovalGuard(
     allFields,
     fieldName,
