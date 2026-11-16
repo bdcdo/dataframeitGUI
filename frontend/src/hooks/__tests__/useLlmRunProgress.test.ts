@@ -60,6 +60,7 @@ function statusRes(overrides: Record<string, unknown> = {}) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe("useLlmRunProgress", () => {
@@ -137,11 +138,19 @@ describe("useLlmRunProgress", () => {
     const { result } = renderHook(() => useLlmRunProgress("p1", null));
     await waitFor(() => expect(getRunningLlmJob).toHaveBeenCalled());
 
+    // Relógio falso: a 3ª falha só vem depois de dois intervalos de polling
+    // (4 s de relógio real), e com a máquina carregada o teste estourava os
+    // 5 s de timeout. O `waitFor` que havia aqui pedia 7 s, mais que o teste
+    // tinha.
+    vi.useFakeTimers();
     act(() => result.current.start("job-3"));
+    // Cada avanço roda uma tick e deixa a falha dela assentar.
+    for (let tick = 0; tick < 3; tick++) {
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+    }
 
-    await waitFor(() => expect(result.current.status).toBe("error"), {
-      timeout: 7000,
-    });
+    expect(fetchFastAPI).toHaveBeenCalledTimes(3);
+    expect(result.current.status).toBe("error");
     expect(result.current.errorInfo).toMatchObject({
       message: "offline",
       type: "NetworkError",
