@@ -6,7 +6,7 @@ import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 // com a opção) e o shape devolvido ao card.
 import { makeFilterAwareSupabaseMock, type ReadCall, type WriteCall } from "@/test-utils/supabase-mock";
 
-type Fixture = Pick<Parameters<typeof makeFilterAwareSupabaseMock>[0], "tableData" | "queryErrors">;
+type Fixture = Pick<Parameters<typeof makeFilterAwareSupabaseMock>[0], "tableData" | "queryErrors" | "afterRead" | "queryErrorForCall">;
 let readCalls: ReadCall[];
 let writeCalls: WriteCall[];
 let server: Fixture;
@@ -117,6 +117,40 @@ describe("getAutoReviewVerdicts — gate", () => {
 });
 
 describe("getAutoReviewVerdicts — leitura", () => {
+  it("ciclos acima de 1000 sobrevivem a inserção antes do cursor", async () => {
+    const cycles = Array.from({ length: 1_001 }, (_, i) => ({
+      ...reviewRow, id: `fr${String(i).padStart(4, "0")}`, document_id: `d${i}`,
+    }));
+    let reads = 0;
+    server = {
+      ...fixture(),
+      tableData: { ...fixture().tableData, field_reviews: cycles },
+      afterRead: (table) => {
+        if (table === "field_reviews" && ++reads === 1) {
+          cycles.unshift({ ...reviewRow, id: "fr0000a", document_id: "novo" });
+        }
+      },
+    };
+    const result = await (await loadAction())("p1");
+    if ("error" in result) throw new Error(result.error);
+    expect(result.reviews).toHaveLength(1_001);
+    expect(new Set(result.reviews.map((row) => row.id)).size).toBe(1_001);
+    expect(result.reviews.at(-1)?.id).toBe("fr1000");
+    expect(reads).toBe(2);
+  });
+
+  it("erro na segunda página de ciclos falha o export inteiro", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const cycles = Array.from({ length: 1_001 }, (_, i) => ({ ...reviewRow, id: `fr${String(i).padStart(4, "0")}` }));
+    server = {
+      ...fixture(),
+      tableData: { ...fixture().tableData, field_reviews: cycles },
+      queryErrorForCall: ({ table, filters }) => table === "field_reviews" && filters.some(([op]) => op === "gt")
+        ? { message: "segunda página" } : undefined,
+    };
+    expect(await (await loadAction())("p1")).toEqual({ error: copyWithRef("Não foi possível carregar os vereditos da auto-revisão. Tente novamente.") });
+  });
+
   it("recorta pelo projeto, veredito preenchido e só ciclos vigentes por padrão", async () => {
     server = fixture();
     const getAutoReviewVerdicts = await loadAction();

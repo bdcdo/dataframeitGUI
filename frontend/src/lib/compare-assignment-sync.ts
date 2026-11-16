@@ -27,7 +27,7 @@ import {
 import { versionGate, type ProjectVersionRow } from "@/lib/compare-version";
 import { reviewIsValid, type ValidatableReview } from "@/lib/review-validity";
 import {
-  fetchAllPaged,
+  fetchAllAfterId,
   fetchByDocumentChunks,
   type PagedRead,
 } from "@/lib/supabase/fetch-all-paged";
@@ -204,6 +204,7 @@ interface AssignmentRow extends ReopenCandidate {
 }
 
 interface ReviewRow extends ValidatableReview {
+  id: string;
   document_id: string;
   reviewer_id: string | null;
 }
@@ -262,9 +263,9 @@ async function loadProjectCompareState(
   if (!project?.current_round_id) return null;
 
   const onlyDocuments = onlyDocumentIds === null ? null : new Set(onlyDocumentIds);
-  const assignments = rowsOrThrow("assignments", await fetchAllPaged<AssignmentRow>(() => supabase
+  const assignments = rowsOrThrow("assignments", await fetchAllAfterId<AssignmentRow>(() => supabase
     .from("assignments").select("id, document_id, user_id, status, completed_at")
-    .eq("project_id", projectId).eq("type", "comparacao").eq("round_id", project.current_round_id), ["id"]))
+    .eq("project_id", projectId).eq("type", "comparacao").eq("round_id", project.current_round_id)))
     .filter((row) => onlyDocuments === null || onlyDocuments.has(row.document_id));
   if (assignments.length === 0) return null;
 
@@ -274,17 +275,17 @@ async function loadProjectCompareState(
   const [responses, reviews, equivalences] = await Promise.all([
     readProjectRows<ResponseRow>(
       documentIds,
-      () => fetchAllPaged<ResponseRow>(() => supabase
-        .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId), ["id"]),
-      (ids) => fetchAllPaged<ResponseRow>(() => supabase
-        .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId).in("document_id", ids), ["id"]),
+      () => fetchAllAfterId<ResponseRow>(() => supabase
+        .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId)),
+      (ids) => fetchAllAfterId<ResponseRow>(() => supabase
+        .from("responses").select(COMPARE_RESPONSE_SELECT).eq("project_id", projectId).in("document_id", ids)),
     ),
     readProjectRows<ReviewRow>(
       documentIds,
-      () => fetchAllPaged<ReviewRow>(() => supabase
-        .from("reviews").select(reviewColumns).eq("project_id", projectId), ["id"]),
-      (ids) => fetchAllPaged<ReviewRow>(() => supabase
-        .from("reviews").select(reviewColumns).eq("project_id", projectId).in("document_id", ids), ["id"]),
+      () => fetchAllAfterId<ReviewRow>(() => supabase
+        .from("reviews").select(reviewColumns).eq("project_id", projectId)),
+      (ids) => fetchAllAfterId<ReviewRow>(() => supabase
+        .from("reviews").select(reviewColumns).eq("project_id", projectId).in("document_id", ids)),
     ),
     fetchProjectValueEquivalences(supabase, projectId),
   ]);

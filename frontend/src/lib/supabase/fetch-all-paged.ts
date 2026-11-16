@@ -3,8 +3,8 @@ import { mapWithConcurrency } from "@/lib/upload-chunking";
 // Paginação de leitura do PostgREST. O builder é de uso único (o await o
 // executa), por isso o caller passa uma FÁBRICA de query, não a query pronta.
 //
-// Usado nas leituras que ainda exigem OFFSET; o cursor abaixo atende export e
-// LLM Insights quando a chave de ordenação faz parte do contrato da linha.
+// Usado nas leituras que ainda exigem OFFSET; o cursor abaixo atende leituras
+// cuja chave de ordenação faz parte do contrato da linha.
 // Ambos evitam o teto default de 1000 linhas do PostgREST.
 //
 // `orderBy` é obrigatório e a assinatura exige pelo menos uma coluna porque
@@ -49,7 +49,7 @@ export async function fetchAllPaged<T>(
   return { data: all, error: null };
 }
 
-// Chaves que já pertencem ao contrato das leituras de export e insights.
+// Chaves que pertencem ao contrato das linhas lidas por cursor.
 // O cursor evita que INSERT/DELETE antes da página seguinte desloque o OFFSET;
 // cada página ainda é um statement separado, sem snapshot transacional.
 interface CursorQueryBuilder<T> extends PromiseLike<{ data: T[] | null; error: { message: string } | null }> {

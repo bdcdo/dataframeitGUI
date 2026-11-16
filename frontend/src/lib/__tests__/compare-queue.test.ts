@@ -101,7 +101,7 @@ interface Seed {
 function tables(seed: Seed): Record<string, unknown[]> {
   const responses = seed.responses ?? [];
   const docIds = [...new Set(responses.map((r) => r.document_id as string))];
-  const withProject = (rows: Row[] = []) => rows.map((r) => ({ project_id: PROJECT, ...r }));
+  const withProject = (rows: Row[] = []) => rows.map((r, i) => ({ id: `row${String(i).padStart(5, "0")}`, project_id: PROJECT, ...r }));
   return {
     projects: [makeProjectRow({ pydantic_fields: seed.fields ?? [field({ name: "a" })], ...seed.project })],
     responses,
@@ -130,7 +130,8 @@ function client(
 type Builder = Record<string, unknown> & {
   limit: (n: number) => unknown;
   in: (c: string, v: unknown[]) => unknown;
-  range: (from: number, to: number) => unknown;
+  gt: (c: string, v: string) => unknown;
+  then: (resolve: (value: unknown) => unknown) => unknown;
 };
 
 // Embrulha o mock, deixando `patch` trocar métodos do builder de cada leitura.
@@ -156,20 +157,27 @@ const withMaxRows = (base: MockClient) =>
     limit(MAX_ROWS);
   });
 
-// Falha uma leitura no meio do caminho: a página (`.range`) de `table` cujo
-// início e cujo lote (`.in`) satisfazem `when`. As anteriores dão certo.
+// Falha uma leitura no meio do caminho: a página após o cursor de `table`
+// ou o lote (`.in`) que satisfaz `when`. As anteriores dão certo.
 type ReadPosition = { from: number; ids: readonly unknown[] | null };
 const failingRead = (table: string, when: (read: ReadPosition) => boolean) => (base: MockClient) =>
   patchReads(base, (t, builder) => {
     if (t !== table) return;
     let ids: readonly unknown[] | null = null;
-    const { in: inFilter, range } = builder;
+    let afterId = false;
+    const { in: inFilter, gt, then } = builder;
     builder.in = (c, v) => {
       ids = v;
       return inFilter(c, v);
     };
-    builder.range = (from, to) =>
-      when({ from, ids }) ? Promise.resolve({ data: null, error: { message: "falha no meio" } }) : range(from, to);
+    builder.gt = (c, v) => {
+      afterId = true;
+      return gt(c, v);
+    };
+    builder.then = (resolve) =>
+      when({ from: afterId ? 1000 : 0, ids })
+        ? resolve({ data: null, error: { message: "falha no meio" } })
+        : then(resolve);
   });
 const secondPage = (read: ReadPosition) => read.from >= 1000;
 const batchWith = (docId: string) => (read: ReadPosition) => read.ids?.includes(docId) ?? false;
@@ -875,15 +883,20 @@ describe("loadCompareQueue: respostas substituídas (is_latest = false)", () => 
       patchReads(base, (table, builder) => {
         if (table !== "responses") return;
         let isLatest: unknown;
-        const { eq, range } = builder as Builder & { eq: (c: string, v: unknown) => unknown };
+        let afterId = false;
+        const { eq, gt, then } = builder as Builder & { eq: (c: string, v: unknown) => unknown };
         builder.eq = (c: string, v: unknown) => {
           if (c === "is_latest") isLatest = v;
           return eq(c, v);
         };
-        builder.range = (from, to) =>
-          isLatest === false && from >= 1000
-            ? Promise.resolve({ data: null, error: { message: "falha no meio" } })
-            : range(from, to);
+        builder.gt = (c, v) => {
+          afterId = true;
+          return gt(c, v);
+        };
+        builder.then = (resolve) =>
+          isLatest === false && afterId
+            ? resolve({ data: null, error: { message: "falha no meio" } })
+            : then(resolve);
       });
     const result = await load({ responses: many }, { wrap: failSupersededSecondPage });
     expect(result).toEqual({ ok: false, error: copyWithRef("Erro ao carregar a fila de comparação. Tente novamente.") });

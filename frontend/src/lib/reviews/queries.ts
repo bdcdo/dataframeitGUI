@@ -8,7 +8,7 @@ import type {
   RespondentAnswer,
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
-import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId } from "@/lib/supabase/fetch-all-paged";
 import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
 import { pickValidCellReviews } from "@/lib/review-validity";
 import { stableStringify } from "@/lib/schema-utils";
@@ -248,7 +248,7 @@ export async function fetchReviewBaseData(
       .is("excluded_at", null)
       .is("exclusion_pending_at", null)
       .limit(REVIEW_BASE_DATA_LIMIT),
-    fetchAllPaged<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId }), ["id"]),
+    fetchAllAfterId<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId })),
   ]);
   if (resolutionsError) throw new Error(`Não foi possível carregar as decisões: ${resolutionsError.message}`);
 

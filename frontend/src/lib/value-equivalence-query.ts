@@ -1,4 +1,4 @@
-import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId } from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import { VALUE_EQUIVALENCE_SELECT, type ValueEquivalence } from "@/lib/equivalence";
 import { PYTHON_IDENTIFIER } from "@/lib/pydantic-field";
@@ -22,9 +22,8 @@ export function fetchProjectValueEquivalences<T extends ValueEquivalence = Value
   const columns = (extraColumns
     ? `${VALUE_EQUIVALENCE_SELECT}, ${extraColumns}`
     : VALUE_EQUIVALENCE_SELECT) as typeof VALUE_EQUIVALENCE_SELECT;
-  return fetchAllPaged<T>(
+  return fetchAllAfterId<T>(
     () => client.from("value_equivalences").select(columns).eq("project_id", projectId) as never,
-    ["id"],
   );
 }
 
@@ -54,7 +53,7 @@ export function fetchFieldAnswers(
   // Tipado como `string` para o parser de select do supabase-js não tentar
   // inferir o caminho dinâmico.
   const columns: string = `id, document_id, answer_field_hashes, value:answers->${fieldName}, documents!inner(title, external_id)`;
-  return fetchAllPaged<FieldAnswerQueryRow>(
+  return fetchAllAfterId<FieldAnswerQueryRow>(
     () =>
       client
         .from("responses")
@@ -66,7 +65,6 @@ export function fetchFieldAnswers(
         // Comparação, e não se confunde com quem respondeu null.
         .not(`answers->${fieldName}`, "is", null)
         .is("documents.excluded_at", null)
-        .returns<FieldAnswerQueryRow[]>(),
-    ["id"],
+        .returns<FieldAnswerQueryRow[]>() as never,
   );
 }

@@ -35,7 +35,7 @@ import type { resolveProjectQueueIdentity } from "@/lib/auth";
 import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
 import { reviewValidity } from "@/lib/review-validity";
 import { serverErrorScope } from "@/lib/server-error";
-import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { PydanticField } from "@/lib/types";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
@@ -91,12 +91,14 @@ interface ResponseLabelRow {
 }
 
 interface VersionLogRow {
+  id: string;
   version_major: number | null;
   version_minor: number | null;
   version_patch: number | null;
 }
 
 interface AssignmentRow {
+  id: string;
   document_id: string;
   user_id: string;
   type: string;
@@ -104,6 +106,7 @@ interface AssignmentRow {
 }
 
 interface ReviewRow {
+  id: string;
   document_id: string;
   field_name: string;
   verdict: string;
@@ -115,11 +118,13 @@ interface ReviewRow {
 }
 
 interface CommentCountRow {
+  id: string;
   document_id: string | null;
   field_name: string | null;
 }
 
 interface SuggestionCountRow {
+  id: string;
   field_name: string;
 }
 
@@ -556,7 +561,7 @@ export async function loadCompareQueue(
       )
       .eq("id", projectId)
       .single(),
-    fetchAllPaged<RawResponseRow>(
+    fetchAllAfterId<RawResponseRow>(
       () =>
         supabase
           .from("responses")
@@ -569,14 +574,13 @@ export async function loadCompareQueue(
           .eq("is_latest", true)
           .is("documents.excluded_at", null)
           .is("documents.exclusion_pending_at", null),
-      ["id"],
     ),
     // As respostas substituídas (`is_latest = false`) nunca qualificam
     // (`responseQualifiesForVersion`), mas `respondentNames` e
     // `availableVersions` cobrem o histórico todo: delas vêm só essas colunas,
     // sem `answers` nem `justifications`, que cada nova rodada do LLM empilha.
     // Mesmo recorte de documentos da leitura acima.
-    fetchAllPaged<ResponseLabelRow>(
+    fetchAllAfterId<ResponseLabelRow>(
       () =>
         supabase
           .from("responses")
@@ -587,26 +591,22 @@ export async function loadCompareQueue(
           .eq("is_latest", false)
           .is("documents.excluded_at", null)
           .is("documents.exclusion_pending_at", null),
-      ["id"],
     ),
-    // A ordem não importa (as versões são ordenadas depois); a PK é a ordem
-    // total que a paginação exige.
-    fetchAllPaged<VersionLogRow>(
+    // As versões são ordenadas depois; a PK é a ordem total do cursor.
+    fetchAllAfterId<VersionLogRow>(
       () =>
         supabase
           .from("schema_change_log")
-          .select("version_major, version_minor, version_patch")
+          .select("id, version_major, version_minor, version_patch")
           .eq("project_id", projectId)
           .not("version_major", "is", null),
-      ["id"],
     ),
-    fetchAllPaged<AssignmentRow>(
+    fetchAllAfterId<AssignmentRow>(
       () =>
         supabase
           .from("assignments")
-          .select("document_id, user_id, type, status")
+          .select("id, document_id, user_id, type, status")
           .eq("project_id", projectId),
-      ["id"],
     ),
     // Equivalências de valor: escopo do projeto, uma linha por par de valores
     // (centenas por projeto), então não há o que recortar por documento.
@@ -707,7 +707,7 @@ export async function loadCompareQueue(
   // em lotes: nada qualificado, nenhuma leitura.
   const [textsRead, reviewsRead, commentsRead, suggestionsRead] = await Promise.all([
     fetchByDocumentChunks(qualifiedDocIds, (ids) =>
-      fetchAllPaged<{ id: string; text: string }>(
+      fetchAllAfterId<{ id: string; text: string }>(
         () =>
           supabase
             .from("documents")
@@ -715,42 +715,38 @@ export async function loadCompareQueue(
             .in("id", ids)
             .is("excluded_at", null)
             .is("exclusion_pending_at", null),
-        ["id"],
       ),
     ),
     // Só os reviews da identidade efetiva: a revisão é por revisor e este
     // fetch alimenta exclusivamente existingReviews/reviewedCount (ver
     // buildReviewsAndReviewedCounts). Vereditos de terceiros contaminavam o
     // estado "já revisado" da tela e travavam o fecho do parecer.
-    fetchAllPaged<ReviewRow>(
+    fetchAllAfterId<ReviewRow>(
       () =>
         supabase
           .from("reviews")
-          .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
+          .select("id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
           .eq("project_id", projectId)
           .eq("reviewer_id", queueUserId),
-      ["id"],
     ),
     fetchByDocumentChunks(qualifiedDocIds, (ids) =>
-      fetchAllPaged<CommentCountRow>(
+      fetchAllAfterId<CommentCountRow>(
         () =>
           supabase
             .from("project_comments")
-            .select("document_id, field_name")
+            .select("id, document_id, field_name")
             .eq("project_id", projectId)
             .in("document_id", ids)
             .is("resolved_at", null),
-        ["id"],
       ),
     ),
-    fetchAllPaged<SuggestionCountRow>(
+    fetchAllAfterId<SuggestionCountRow>(
       () =>
         supabase
           .from("schema_suggestions")
-          .select("field_name")
+          .select("id, field_name")
           .eq("project_id", projectId)
           .eq("status", "pending"),
-      ["id"],
     ),
   ]);
 

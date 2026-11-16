@@ -1,9 +1,10 @@
-import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 
 type DataClient = Pick<SupabaseServerClient, "from">;
 
 interface DocRow {
+  id: string;
   document_id: string;
 }
 
@@ -60,7 +61,7 @@ async function countDocsWithoutLlm(
   const [projectResult, humanResult, llmResult] = await Promise.all([
     client.from("projects").select("automation_mode").eq("id", projectId).single(),
     // O filtro de exclusão só vai no lado humano: é ele que define os candidatos.
-    fetchAllPaged<DocRow>(
+    fetchAllAfterId<DocRow>(
       () =>
         client
           .from("responses")
@@ -71,9 +72,8 @@ async function countDocsWithoutLlm(
           .eq("is_partial", false)
           .is("documents.excluded_at", null)
           .is("documents.exclusion_pending_at", null),
-      ["id"],
     ),
-    fetchAllPaged<DocRow>(
+    fetchAllAfterId<DocRow>(
       () =>
         client
           .from("responses")
@@ -82,7 +82,6 @@ async function countDocsWithoutLlm(
           .eq("respondent_type", "llm")
           .eq("is_latest", true)
           .eq("is_partial", false),
-      ["id"],
     ),
   ]);
   const firstError = projectResult.error ?? humanResult.error ?? llmResult.error;
@@ -101,14 +100,13 @@ async function countDocsWithoutLlm(
     table: "field_reviews" | "field_review_cycle_history_entries",
   ) =>
     fetchByDocumentChunks(candidates, (ids) =>
-      fetchAllPaged<DocRow>(
+      fetchAllAfterId<DocRow>(
         () =>
           client
             .from(table)
             .select("id, document_id")
             .eq("project_id", projectId)
             .in("document_id", ids),
-        ["id"],
       ),
     );
   const [reviewsResult, historyResult] = await Promise.all([

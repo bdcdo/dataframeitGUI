@@ -135,7 +135,7 @@ describe("resyncProjectCompareAssignments", () => {
     tableData.assignments = [assignment("a-doc1", "doc1", "pendente")];
     tableData.reviews = [
       ...Array.from({ length: 1000 }, (_, i) => review(`x${i}`, "doc1", HASH, `outro${i}`)),
-      review("r1", "doc1", HASH),
+      review("z-final", "doc1", HASH),
     ];
 
     const report = await resyncProjectCompareAssignments(client(), "p1", { dryRun: true });

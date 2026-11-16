@@ -10,7 +10,7 @@
 // do projeto, então não há service key aqui.
 import { createSupabaseServer, type SupabaseServerClient } from "@/lib/supabase/server";
 import { requireCoordinator } from "@/lib/auth";
-import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId } from "@/lib/supabase/fetch-all-paged";
 import { serverErrorCopy } from "@/lib/server-error";
 import type { PydanticField } from "@/lib/types";
 import {
@@ -45,7 +45,7 @@ function fetchCycles(
   projectId: string,
   currentOnly: boolean,
 ) {
-  return fetchAllPaged<CycleWithDocument>(() => {
+  return fetchAllAfterId<CycleWithDocument>(() => {
     const query = supabase
       .from(table)
       .select(CYCLE_COLUMNS)
@@ -53,7 +53,7 @@ function fetchCycles(
       .not("self_verdict", "is", null)
       .is("documents.excluded_at", null);
     return currentOnly ? query.is("superseded_at", null) : query;
-  }, ["id"]);
+  });
 }
 
 const NO_CYCLES = { data: [] as CycleWithDocument[], error: null };

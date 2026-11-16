@@ -116,6 +116,20 @@ describe("fetchDocsWithoutLlmCount", () => {
     expect(await count({ responses })).toEqual({ count: 1_500, error: null });
   });
 
+  it("remoção antes do cursor entre páginas não pula um documento", async () => {
+    const responses = Array.from({ length: 1_001 }, (_, i) => human(`h${String(i).padStart(4, "0")}`, `d${i}`));
+    let reads = 0;
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { projects: [{ id: "p1", automation_mode: "auto_review_llm" }], responses },
+      writeCalls: [],
+      afterRead: (table) => {
+        if (table === "responses" && ++reads === 1) responses.shift();
+      },
+    });
+    expect(await fetchDocsWithoutLlmCount(client as never, "p1")).toEqual({ count: 1_001, error: null });
+    expect(reads).toBeGreaterThan(2); // humano e LLM são leituras distintas
+  });
+
   it("falha de leitura vira erro explícito, não zero", async () => {
     const result = await count(
       { responses: [human("h1", "d1")] },
