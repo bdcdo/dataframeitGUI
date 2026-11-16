@@ -73,13 +73,21 @@ type QualifiedCoverage = Omit<DocCoverage, "reviewedCount">;
 // propósito: bastam os campos abaixo (structural typing ignora os demais
 // campos da row), e um index signature exigiria o mesmo em qualquer valor
 // passado.
-interface RawResponseRow {
+interface RawResponseRow extends ResponseLabelRow {
   document_id: string;
+  documents?: unknown;
+}
+
+// O que `respondentNames` e `availableVersions` leem de cada resposta. Valem
+// para o histórico todo (inclusive `is_latest = false`), que a qualificação
+// descarta: por isso as respostas substituídas vêm só com estas colunas, e não
+// com `answers`/`justifications` (ver a leitura em `loadCompareQueue`).
+interface ResponseLabelRow {
+  id: string;
   respondent_name: string | null;
   schema_version_major: number | null;
   schema_version_minor: number | null;
   schema_version_patch: number | null;
-  documents?: unknown;
 }
 
 interface VersionLogRow {
@@ -137,7 +145,7 @@ function indexResponsesByDoc(allResponses: readonly RawResponseRow[] | null): {
 }
 
 // Respondent names list (do conjunto todo, antes de filtrar)
-function extractRespondentNames(allResponses: readonly RawResponseRow[] | null): string[] {
+function extractRespondentNames(allResponses: readonly ResponseLabelRow[] | null): string[] {
   return [
     ...new Set(
       allResponses?.flatMap((r) => (r.respondent_name ? [r.respondent_name] : [])) ?? [],
@@ -150,7 +158,7 @@ function extractRespondentNames(allResponses: readonly RawResponseRow[] | null):
 // do backfill por hashes/created_at e não tem entry classificada no log).
 function buildAvailableVersions(
   versionLog: readonly VersionLogRow[] | null,
-  allResponses: readonly RawResponseRow[] | null,
+  allResponses: readonly ResponseLabelRow[] | null,
 ): string[] {
   const versionSet = new Set<string>();
   for (const v of versionLog ?? []) {
@@ -440,16 +448,22 @@ function buildReviewsAndReviewedCounts(
 }
 
 // Build comment+suggestion counts by (doc, field)
+//
+// Só os comentários dos documentos da fila: o cliente lê a contagem pelo
+// documento exibido (`fieldCommentCountOf`). O filtro aqui também impede que
+// uma linha inesperada entre no payload, além do recorte feito na consulta.
 function buildCountsByKey(
   commentCounts: readonly CommentCountRow[] | null,
   suggestionCounts: readonly SuggestionCountRow[] | null,
+  queueDocIds: ReadonlySet<string>,
 ): {
   commentCountsByKey: Record<string, number>;
   suggestionCountsByField: Record<string, number>;
 } {
   const commentCountsByKey: Record<string, number> = {};
   for (const c of commentCounts ?? []) {
-    const key = `${c.document_id ?? ""}|${c.field_name ?? ""}`;
+    if (c.document_id === null || !queueDocIds.has(c.document_id)) continue;
+    const key = `${c.document_id}|${c.field_name ?? ""}`;
     commentCountsByKey[key] = (commentCountsByKey[key] ?? 0) + 1;
   }
   const suggestionCountsByField: Record<string, number> = {};
@@ -529,6 +543,7 @@ export async function loadCompareQueue(
   const [
     projectRead,
     responsesRead,
+    supersededRead,
     versionLogRead,
     assignmentsRead,
     equivalencesRead,
@@ -551,6 +566,25 @@ export async function loadCompareQueue(
             "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, is_partial, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents!inner(id, title, external_id)",
           )
           .eq("project_id", projectId)
+          .eq("is_latest", true)
+          .is("documents.excluded_at", null)
+          .is("documents.exclusion_pending_at", null),
+      ["id"],
+    ),
+    // As respostas substituídas (`is_latest = false`) nunca qualificam
+    // (`responseQualifiesForVersion`), mas `respondentNames` e
+    // `availableVersions` cobrem o histórico todo: delas vêm só essas colunas,
+    // sem `answers` nem `justifications`, que cada nova rodada do LLM empilha.
+    // Mesmo recorte de documentos da leitura acima.
+    fetchAllPaged<ResponseLabelRow>(
+      () =>
+        supabase
+          .from("responses")
+          .select(
+            "id, respondent_name, schema_version_major, schema_version_minor, schema_version_patch, documents!inner(id)",
+          )
+          .eq("project_id", projectId)
+          .eq("is_latest", false)
           .is("documents.excluded_at", null)
           .is("documents.exclusion_pending_at", null),
       ["id"],
@@ -583,13 +617,20 @@ export async function loadCompareQueue(
   const readError = firstReadError({
     projects: projectRead,
     responses: responsesRead,
+    "responses substituídas": supersededRead,
     schema_change_log: versionLogRead,
     assignments: assignmentsRead,
     value_equivalences: equivalencesRead,
   });
   if (readError) return readError;
   const project = projectRead.data;
-  const allResponses = responsesRead.data;
+  const currentResponses = responsesRead.data;
+  // Atuais e substituídas juntas, na ordem da PK de uma leitura só: é a ordem
+  // dos nomes no filtro de respondente. O uuid vem em hexa minúsculo, e como
+  // texto ordena igual ao `ORDER BY id` do Postgres.
+  const responseLabels = [...currentResponses, ...supersededRead.data].toSorted((a, b) =>
+    a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
+  );
   const versionLog = versionLogRead.data;
   const allAssignments = assignmentsRead.data;
   const allEquivalences = equivalencesRead.data;
@@ -647,7 +688,7 @@ export async function loadCompareQueue(
     queueUserId,
   );
 
-  const { responsesByDoc, docsMetaMap } = indexResponsesByDoc(allResponses);
+  const { responsesByDoc, docsMetaMap } = indexResponsesByDoc(currentResponses);
 
   const { qualifiedDocIds, divergentFields, responsesMap, coverageByDoc: qualifiedCoverageByDoc } =
     qualifyDocumentsForCompare(responsesByDoc, docsMetaMap, {
@@ -690,14 +731,17 @@ export async function loadCompareQueue(
           .eq("reviewer_id", queueUserId),
       ["id"],
     ),
-    fetchAllPaged<CommentCountRow>(
-      () =>
-        supabase
-          .from("project_comments")
-          .select("document_id, field_name")
-          .eq("project_id", projectId)
-          .is("resolved_at", null),
-      ["id"],
+    fetchByDocumentChunks(qualifiedDocIds, (ids) =>
+      fetchAllPaged<CommentCountRow>(
+        () =>
+          supabase
+            .from("project_comments")
+            .select("document_id, field_name")
+            .eq("project_id", projectId)
+            .in("document_id", ids)
+            .is("resolved_at", null),
+        ["id"],
+      ),
     ),
     fetchAllPaged<SuggestionCountRow>(
       () =>
@@ -736,6 +780,7 @@ export async function loadCompareQueue(
   const { commentCountsByKey, suggestionCountsByField } = buildCountsByKey(
     commentCounts,
     suggestionCounts,
+    new Set(qualifiedDocIds),
   );
 
   return {
@@ -751,13 +796,13 @@ export async function loadCompareQueue(
       existingReviews,
       staleReviews,
       projectPydanticHash: project?.pydantic_hash ?? null,
-      respondentNames: extractRespondentNames(allResponses),
+      respondentNames: extractRespondentNames(responseLabels),
       defaultMinHumans: compareDefaults.minHumans,
       defaultVersion: compareDefaults.version,
       coverageByDoc: coverageByDoc,
       commentCountsByKey,
       suggestionCountsByField,
-      availableVersions: buildAvailableVersions(versionLog, allResponses),
+      availableVersions: buildAvailableVersions(versionLog, responseLabels),
       latestMajorLabel: formatVersion(latestMajorAnchor(projectVersion)),
       currentProjectVersion: formatVersion(projectVersion),
       // Maps don't cross the RSC boundary.

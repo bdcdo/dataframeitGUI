@@ -1,6 +1,7 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { loadCompareQueue, type CompareQueueIdentity } from "@/lib/compare-queue";
 import type { PydanticField } from "@/lib/types";
+import { fieldCommentCountOf } from "@/components/compare/compare-page-view";
 import { makeHumanResponse, makeProjectRow } from "@/test-utils/comparison-fixtures";
 import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { makeFilterAwareSupabaseMock, type QueryError, type ReadCall } from "@/test-utils/supabase-mock";
@@ -528,6 +529,7 @@ describe("loadCompareQueue: o que vai junto da fila", () => {
 
   it("conta comentários abertos por (doc, campo) e sugestões pendentes por campo", async () => {
     const props = await loadProps({
+      responses: divergentPair("doc1"),
       comments: [
         { document_id: "doc1", field_name: "a", resolved_at: null },
         { document_id: "doc1", field_name: "a", resolved_at: null },
@@ -542,7 +544,7 @@ describe("loadCompareQueue: o que vai junto da fila", () => {
         { field_name: "d", status: "accepted" },
       ],
     });
-    expect(props.commentCountsByKey).toEqual({ "doc1|a": 2, "doc1|b": 1, "|b": 1 });
+    expect(props.commentCountsByKey).toEqual({ "doc1|a": 2, "doc1|b": 1 });
     expect(props.suggestionCountsByField).toEqual({ a: 2, c: 1 });
   });
 
@@ -668,7 +670,11 @@ describe("loadCompareQueue: leituras completas, acima do teto do PostgREST", () 
       ]),
       ...Array.from({ length: 500 }, (_, i) => review({ document_id: `fora${i}` })),
     ],
-    comments: Array.from({ length: 1100 }, (_, i) => ({ id: `c${i}`, document_id: "doc0000", field_name: "a", resolved_at: null })),
+    // 1100 no doc0000 e 300 em documentos fora da fila, que não vão ao cliente.
+    comments: [
+      ...Array.from({ length: 1100 }, (_, i) => ({ id: `c${i}`, document_id: "doc0000", field_name: "a", resolved_at: null })),
+      ...Array.from({ length: 300 }, (_, i) => ({ id: `cf${i}`, document_id: `fora${i}`, field_name: "a", resolved_at: null })),
+    ],
     suggestions: Array.from({ length: 1100 }, (_, i) => ({ id: `s${i}`, field_name: "a", status: "pending" })),
     versionLog: [
       ...Array.from({ length: 1099 }, () => ({ version_major: 0, version_minor: 1, version_patch: 0 })),
@@ -784,5 +790,179 @@ describe("loadCompareQueue: vereditos só dos documentos da fila", () => {
     );
     expect(ids(props)).toEqual(["meu"]);
     expect(Object.keys(props.existingReviews)).toEqual(["meu"]);
+  });
+});
+
+describe("loadCompareQueue: respostas substituídas (is_latest = false)", () => {
+  // Rodadas anteriores do LLM e codificações rebaixadas: nunca qualificam, mas
+  // o filtro de respondente e o seletor de versão cobrem o histórico todo.
+  const superseded = (overrides: Row) =>
+    response({ is_latest: false, answers: { a: "antiga" }, justifications: { a: "longa" }, ...overrides });
+  const latestFilter = (call: ReadCall) =>
+    call.filters.find(([kind, column]) => kind === "eq" && column === "is_latest")?.[2];
+  const responseReads = (readCalls: ReadCall[]) => readCalls.filter((c) => c.table === "responses");
+
+  it("nomes e versões cobrem as substituídas; fila, respostas e cobertura só as atuais", async () => {
+    const props = await loadProps({
+      responses: [
+        ...divergentPair("doc1"),
+        superseded({
+          id: "old1",
+          respondent_id: "u3",
+          respondent_name: "gpt-antigo",
+          schema_version_major: 0,
+          schema_version_minor: 1,
+          schema_version_patch: 0,
+        }),
+        // Documento só com substituídas: não entra na fila.
+        ...divergentPair("doc2").map((r) => ({ ...r, is_latest: false, respondent_name: "Dora" })),
+        // Documento arquivado: fora dos nomes, como as atuais.
+        superseded({ id: "old3", document_id: "arq", respondent_name: "Eva", "documents.excluded_at": "2026-06-01T00:00:00Z" }),
+      ],
+    });
+    expect(ids(props)).toEqual(["doc1"]);
+    expect(props.responses).toEqual({ doc1: [expect.objectContaining({ id: "doc1-r1" }), expect.objectContaining({ id: "doc1-r2" })] });
+    expect(props.coverageByDoc.doc1).toMatchObject({ humanCount: 2, totalCount: 2 });
+    expect(props.respondentNames.toSorted()).toEqual(["Ana", "Bia", "Dora", "gpt-antigo"]);
+    expect(props.availableVersions).toEqual(["0.1.0"]);
+  });
+
+  it("a ordem dos nomes é a da PK, intercalando atuais e substituídas", async () => {
+    const props = await loadProps({
+      responses: [
+        response({ id: "id-3", respondent_name: "Ana" }),
+        superseded({ id: "id-1", respondent_name: "Zé" }),
+        response({ id: "id-2", document_id: "doc2", respondent_name: "Bia" }),
+        superseded({ id: "id-4", respondent_name: "Caio" }),
+      ],
+    });
+    expect(props.respondentNames).toEqual(["Zé", "Bia", "Ana", "Caio"]);
+  });
+
+  it("as substituídas vêm sem answers nem justifications, com o mesmo recorte de documentos", async () => {
+    const readCalls: ReadCall[] = [];
+    await loadProps({ responses: [...divergentPair("doc1"), superseded({ id: "old1" })] }, { readCalls });
+    const reads = responseReads(readCalls);
+    const heavy = reads.filter((c) => /\b(answers|justifications)\b/.test(c.columns));
+    expect(heavy.length).toBeGreaterThan(0);
+    expect(heavy.every((c) => latestFilter(c) === true)).toBe(true);
+    const history = reads.filter((c) => latestFilter(c) === false);
+    expect(history.length).toBeGreaterThan(0);
+    const documentFilters = (c: ReadCall) => c.filters.filter(([, column]) => column.startsWith("documents."));
+    for (const call of history) {
+      expect(call.columns).not.toMatch(/\b(answers|justifications)\b/);
+      expect(documentFilters(call)).toEqual(documentFilters(heavy[0]));
+    }
+  });
+
+  // 1100 substituídas, além do teto de 1000 do PostgREST: o nome da última
+  // só aparece se a leitura delas pagina.
+  const many = [
+    ...divergentPair("doc1"),
+    ...Array.from({ length: 1100 }, (_, i) =>
+      superseded({ id: `old${String(i).padStart(4, "0")}`, respondent_name: i === 1099 ? "Última" : "LLM" }),
+    ),
+  ];
+
+  it("mais de 1000 substituídas: a leitura pagina e nenhum nome é cortado", async () => {
+    const props = await loadProps({ responses: many });
+    expect(props.respondentNames.toSorted()).toEqual(["Ana", "Bia", "LLM", "Última"]);
+  });
+
+  it("falha na segunda página das substituídas: erro, e não uma lista de nomes parcial", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const failSupersededSecondPage = (base: MockClient) =>
+      patchReads(base, (table, builder) => {
+        if (table !== "responses") return;
+        let isLatest: unknown;
+        const { eq, range } = builder as Builder & { eq: (c: string, v: unknown) => unknown };
+        builder.eq = (c: string, v: unknown) => {
+          if (c === "is_latest") isLatest = v;
+          return eq(c, v);
+        };
+        builder.range = (from, to) =>
+          isLatest === false && from >= 1000
+            ? Promise.resolve({ data: null, error: { message: "falha no meio" } })
+            : range(from, to);
+      });
+    const result = await load({ responses: many }, { wrap: failSupersededSecondPage });
+    expect(result).toEqual({ ok: false, error: copyWithRef("Erro ao carregar a fila de comparação. Tente novamente.") });
+  });
+});
+
+describe("loadCompareQueue: comentários só dos documentos da fila", () => {
+  const open = (document_id: string | null, field_name: string | null, id: string) => ({
+    id,
+    document_id,
+    field_name,
+    resolved_at: null,
+  });
+
+  it("contagem de documento fora da fila ou sem documento não vai ao cliente; a exibida não muda", async () => {
+    const props = await loadProps({
+      responses: [...divergentPair("doc1"), ...divergentPair("semDivergencia", { a: "alpha" }, { a: "alpha" })],
+      comments: [
+        open("doc1", "a", "c1"),
+        open("doc1", "a", "c2"),
+        // Comentário do documento inteiro: soma em todo campo dele.
+        open("doc1", null, "c3"),
+        open("semDivergencia", "a", "c4"),
+        open("nuncaRespondido", "a", "c5"),
+        open(null, "a", "c6"),
+      ],
+    });
+    expect(ids(props)).toEqual(["doc1"]);
+    expect(props.commentCountsByKey).toEqual({ "doc1|a": 2, "doc1|": 1 });
+    // O que a tela mostra para o documento da fila.
+    expect(fieldCommentCountOf(props.commentCountsByKey, "doc1", "a")).toBe(3);
+    expect(fieldCommentCountOf(props.commentCountsByKey, "doc1", "b")).toBe(1);
+  });
+
+  it("fila vazia: nenhuma contagem, ainda que haja comentários abertos", async () => {
+    const props = await loadProps({
+      responses: divergentPair("doc1", { a: "alpha" }, { a: "alpha" }),
+      comments: [open("doc1", "a", "c1"), open(null, "a", "c2")],
+    });
+    expect(props.documents).toEqual([]);
+    expect(props.commentCountsByKey).toEqual({});
+  });
+
+  it("lê comentários apenas dos documentos da fila", async () => {
+    const readCalls: ReadCall[] = [];
+    await loadProps({ responses: divergentPair("doc1"), comments: [open("doc1", "a", "c1"), open("fora", "a", "c2")] }, { readCalls });
+    const reads = readCalls.filter((c) => c.table === "project_comments");
+    expect(reads).toHaveLength(1);
+    expect(reads[0].filters).toContainEqual(["in", "document_id", ["doc1"]]);
+    expect(reads[0].filters).toContainEqual(["eq", "project_id", PROJECT]);
+  });
+
+  it("fila vazia não consulta comentários", async () => {
+    const readCalls: ReadCall[] = [];
+    await loadProps({ comments: [open("fora", "a", "c1")] }, { readCalls });
+    expect(readCalls.filter((c) => c.table === "project_comments")).toEqual([]);
+  });
+
+  it("mais de cem documentos: consulta em lotes sem perder contagens", async () => {
+    const docIds = Array.from({ length: 101 }, (_, i) => `doc${String(i).padStart(3, "0")}`);
+    const readCalls: ReadCall[] = [];
+    const props = await loadProps({
+      responses: docIds.flatMap((id) => divergentPair(id)),
+      comments: docIds.map((id, i) => open(id, "a", `c${i}`)),
+    }, { readCalls });
+    expect(Object.keys(props.commentCountsByKey)).toHaveLength(101);
+    expect(props.commentCountsByKey["doc100|a"]).toBe(1);
+    const reads = readCalls.filter((c) => c.table === "project_comments");
+    expect(reads).toHaveLength(2);
+    expect(reads.flatMap((call) => call.filters.find(([kind, column]) => kind === "in" && column === "document_id")?.[2] as string[] ?? []).toSorted()).toEqual(docIds);
+  });
+
+  it("erro em um lote de comentários falha a fila inteira", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const docIds = Array.from({ length: 101 }, (_, i) => `doc${String(i).padStart(3, "0")}`);
+    const result = await load({
+      responses: docIds.flatMap((id) => divergentPair(id)),
+      comments: docIds.map((id, i) => open(id, "a", `c${i}`)),
+    }, { wrap: failingRead("project_comments", batchWith("doc100")) });
+    expect(result).toEqual({ ok: false, error: copyWithRef("Erro ao carregar a fila de comparação. Tente novamente.") });
   });
 });
