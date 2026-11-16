@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { fetchAllPaged, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllPaged, fetchAllAfterId, fetchAllAfterDocumentField, fetchByDocumentChunks } from "@/lib/supabase/fetch-all-paged";
+import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 
 const PAGE_SIZE = 1000;
 
@@ -38,6 +39,11 @@ function fakeSource(
 
 function rows(count: number, offset = 0): Row[] {
   return Array.from({ length: count }, (_, i) => ({ id: offset + i }));
+}
+
+function selectMock(mock: ReturnType<typeof makeFilterAwareSupabaseMock>, table: string, columns: string): never {
+  const builder = mock.from(table);
+  return (builder.select as (columns: string) => unknown)(columns) as never;
 }
 
 describe("fetchAllPaged", () => {
@@ -87,6 +93,66 @@ describe("fetchAllPaged", () => {
     // estrutural não devolve "menos dados", devolve número errado.
     expect(data).toHaveLength(PAGE_SIZE);
     expect(error).toEqual({ message: "conexão perdida" });
+  });
+});
+
+describe("cursor nos contratos id e (document_id, field_name)", () => {
+  it.each(["remove", "insere"] as const)("id não repete nem pula ao %s antes da segunda página", async (change) => {
+    const data = Array.from({ length: 1001 }, (_, i) => ({ id: `r${String(i).padStart(4, "0")}` }));
+    let reads = 0;
+    const mock = makeFilterAwareSupabaseMock({
+      tableData: { rows: data }, writeCalls: [],
+      afterRead: (table) => {
+        if (table !== "rows" || ++reads !== 1) return;
+        if (change === "remove") data.shift();
+        else data.unshift({ id: "r0000a" });
+      },
+    });
+    const result = await fetchAllAfterId<{ id: string }>(() => selectMock(mock, "rows", "id"));
+    expect(result.error).toBeNull();
+    expect(result.data).toHaveLength(1001);
+    expect(result.data.at(-1)?.id).toBe("r1000");
+    expect(new Set(result.data.map((row) => row.id)).size).toBe(1001);
+    expect(result.data.some((row) => row.id === "r0000a")).toBe(false);
+    expect(reads).toBe(2);
+  });
+
+  it("a chave composta avança no mesmo documento e no seguinte após remoção", async () => {
+    const data = [
+      ...Array.from({ length: 1001 }, (_, i) => ({
+        document_id: "d1", field_name: `f${String(i).padStart(4, "0")}`,
+      })),
+      { document_id: "d2", field_name: "f0000" },
+    ];
+    let reads = 0;
+    const mock = makeFilterAwareSupabaseMock({
+      tableData: { final_answers: data }, writeCalls: [],
+      afterRead: (table) => {
+        if (table === "final_answers" && ++reads === 1) data.shift();
+      },
+    });
+    const result = await fetchAllAfterDocumentField<{ document_id: string; field_name: string }>(() => selectMock(mock, "final_answers", "document_id, field_name"));
+    expect(result.error).toBeNull();
+    expect(result.data).toHaveLength(1002);
+    expect(result.data.at(-2)).toEqual({ document_id: "d1", field_name: "f1000" });
+    expect(result.data.at(-1)).toEqual({ document_id: "d2", field_name: "f0000" });
+    expect(new Set(result.data.map((row) => `${row.document_id}:${row.field_name}`)).size).toBe(1002);
+    expect(reads).toBe(2);
+  });
+
+  it("vazio e erro intermediário mantêm o contrato de erro explícito", async () => {
+    const empty = makeFilterAwareSupabaseMock({ tableData: { rows: [] }, writeCalls: [] });
+    expect(await fetchAllAfterId<{ id: string }>(() => selectMock(empty, "rows", "id"))).toEqual({ data: [], error: null });
+
+    let reads = 0;
+    const data = Array.from({ length: 1001 }, (_, i) => ({ id: `r${String(i).padStart(4, "0")}` }));
+    const failing = makeFilterAwareSupabaseMock({
+      tableData: { rows: data }, writeCalls: [],
+      queryErrorForCall: ({ table }) => table === "rows" && ++reads === 2 ? { message: "segunda página" } : undefined,
+    });
+    const result = await fetchAllAfterId<{ id: string }>(() => selectMock(failing, "rows", "id"));
+    expect(result.data).toHaveLength(1000);
+    expect(result.error).toEqual({ message: "segunda página" });
   });
 });
 

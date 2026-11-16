@@ -3,7 +3,7 @@ import { getProjectAccessContext } from "@/lib/auth";
 import { requirePageAuthUser } from "@/lib/page-auth";
 import { coordinatorGate } from "@/lib/project-access";
 import { LlmInsightsView } from "@/components/stats/LlmInsightsView";
-import { fetchAllPaged } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId, fetchAllAfterDocumentField } from "@/lib/supabase/fetch-all-paged";
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import {
   computeLlmErrorMetrics,
@@ -37,7 +37,7 @@ type SupabaseServer = Awaited<ReturnType<typeof createSupabaseServer>>;
 
 // As seis leituras de dados do projeto, com as colunas explícitas que formam o
 // contrato real com `computeLlmErrorMetrics`. Todas paginadas com ordem total:
-// ver `fetch-all-paged.ts` para por que a ordem é obrigatória.
+// ver `fetch-all-paged.ts` para a ordem e o cursor.
 function fetchMetricsSources(
   supabase: SupabaseServer,
   id: string,
@@ -48,7 +48,7 @@ function fetchMetricsSources(
     // o union-find de equivalência precisa dos dois endpoints de cada par, e
     // `chosen_response_id` pode apontar para uma resposta que não é mais
     // `is_latest`. Paginado — um projeto grande passa de 1000 responses.
-    fetchAllPaged<MetricsResponse>(
+    fetchAllAfterId<MetricsResponse>(
       () =>
         supabase
           .from("responses")
@@ -56,13 +56,12 @@ function fetchMetricsSources(
             "id, document_id, respondent_type, respondent_name, is_latest, answers, justifications, answer_field_hashes, created_at, schema_version_major, schema_version_minor, schema_version_patch",
           )
           .eq("project_id", id),
-      ["id"],
     ),
     // Todas as reviews, de qualquer rodada: quais valem e qual vale por
     // célula a métrica decide pela regra de `review-validity.ts`, que precisa
     // de `field_hash`. Sem o filtro de `chosen_response_id`, que a escolha por
     // célula aplica depois de escolher.
-    fetchAllPaged<MetricsReview>(
+    fetchAllAfterId<MetricsReview>(
       () =>
         supabase
           .from("reviews")
@@ -70,13 +69,12 @@ function fetchMetricsSources(
             "id, document_id, field_name, verdict, chosen_response_id, comment, created_at, field_hash",
           )
           .eq("project_id", id),
-      ["id"],
     ),
     // Só os documentos ativos: a métrica usa as CHAVES deste conjunto para
     // decidir o que medir, então um documento excluído some da taxa junto com
     // o título. Paginado pelo mesmo motivo das responses — sem isso, acima de
     // 1000 documentos o excedente sairia da métrica sem erro nenhum.
-    fetchAllPaged<DocumentRow>(
+    fetchAllAfterId<DocumentRow>(
       () =>
         supabase
           .from("documents")
@@ -84,12 +82,10 @@ function fetchMetricsSources(
           .eq("project_id", id)
           .is("excluded_at", null)
           .is("exclusion_pending_at", null),
-      ["id"],
     ),
-    fetchAllPaged<ErrorResolutionRow>(
+    fetchAllAfterId<ErrorResolutionRow>(
       () =>
         supabase.rpc("read_error_resolutions", { p_project_id: id }),
-      ["id"],
     ),
     // `field_hash` vem junto: equivalência de outra versão da pergunta não
     // funde nada.
@@ -101,7 +97,7 @@ function fetchMetricsSources(
     // que a invariante de uma única resposta LLM `is_latest` por documento
     // sustenta.
     usesAutoReviewSource(automationMode)
-      ? fetchAllPaged<MetricsFinalAnswer>(
+      ? fetchAllAfterDocumentField<MetricsFinalAnswer>(
           () =>
             supabase
               .from("final_answers")
@@ -109,13 +105,12 @@ function fetchMetricsSources(
                 "field_review_id, document_id, field_name, provenance, final_verdict, self_reviewed_at, final_decided_at, human_response_id, llm_response_id, human_answer_snapshot, llm_answer_snapshot, arbitrator_comment",
               )
               .eq("project_id", id),
-          ["document_id", "field_name"],
         )
       : { data: [] as MetricsFinalAnswer[], error: null },
   ] as const);
 }
 
-// Falha numa fonte ESTRUTURAL não pode virar número: `fetchAllPaged` devolve o
+// Falha numa fonte ESTRUTURAL não pode virar número: a leitura paginada devolve o
 // que já acumulou JUNTO com o erro, então ignorá-lo exibiria uma taxa calculada
 // sobre um recorte arbitrário dos dados — ou "0 erros / 0%" sem aviso nenhum.
 // As cinco são estruturais: sem `documents` a métrica mede zero documento, e

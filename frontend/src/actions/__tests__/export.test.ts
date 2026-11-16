@@ -4,10 +4,11 @@ import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 // Testa a server action getExportDataset: gate coordinator-only fail-closed,
 // queries paralelas com colunas explícitas, e delegação da montagem a
 // lib/export/assemble (o shape do contrato).
-import { makeFilterAwareSupabaseMock, type WriteCall } from "@/test-utils/supabase-mock";
+import { makeFilterAwareSupabaseMock, type ReadCall, type WriteCall } from "@/test-utils/supabase-mock";
 
-type Fixture = Pick<Parameters<typeof makeFilterAwareSupabaseMock>[0], "tableData" | "queryErrors">;
+type Fixture = Pick<Parameters<typeof makeFilterAwareSupabaseMock>[0], "tableData" | "queryErrors" | "queryErrorForCall" | "afterRead" | "readCalls" | "rpcResults">;
 let writeCalls: WriteCall[];
+let readCalls: ReadCall[];
 let server: Fixture;
 
 const hoisted = vi.hoisted(() => ({
@@ -27,12 +28,13 @@ vi.mock("@/lib/supabase/server", () => ({
   createSupabaseServer: async () =>
     // Só as colunas do select, como o PostgREST: uma coluna esquecida nele
     // passaria sem aviso com a linha inteira.
-    makeFilterAwareSupabaseMock({ ...server, writeCalls, projectColumns: true }),
+    makeFilterAwareSupabaseMock({ ...server, writeCalls, readCalls, projectColumns: true }),
 }));
 
 beforeEach(() => {
   writeCalls = [];
-  server = { tableData: {} };
+  readCalls = [];
+  server = { tableData: {}, readCalls };
   hoisted.requireCoordinator.mockResolvedValue({
     ok: true,
     user: { id: "userCoord" },
@@ -161,6 +163,83 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
     if ("error" in r) throw new Error(`esperava dataset, veio erro: ${r.error}`);
     // 1000 + 1 = todas as linhas, sem truncar no max_rows.
     expect(r.documents.rows).toHaveLength(1001);
+  });
+
+  it.each(["remove", "insere"] as const)("cursor de documents resiste quando uma escrita %s antes da página seguinte", async (change) => {
+    const documents = Array.from({ length: 1001 }, (_, i) => doc(`d${String(i).padStart(4, "0")}`, { external_id: `EXT-${i}` }));
+    let reads = 0;
+    server = {
+      tableData: withOthers({ projects: [projectRow()], documents }),
+      afterRead: (source) => {
+        if (source !== "documents" || ++reads !== 1) return;
+        if (change === "remove") server.tableData.documents.shift();
+        else server.tableData.documents.unshift(doc("d0000a", { external_id: "NOVA" }));
+      },
+    };
+    const getExportDataset = await loadAction();
+    const r = await getExportDataset("proj-1");
+    if ("error" in r) throw new Error(r.error);
+
+    expect(r.documents.rows).toHaveLength(1001);
+    const exportedIds = r.documents.rows.map((row) => row[0]);
+    expect(exportedIds).toContain("EXT-1000");
+    expect(exportedIds).not.toContain("NOVA");
+    expect(new Set(exportedIds).size).toBe(1001);
+    expect(reads).toBe(2);
+  });
+
+  it("falha na segunda página de documents sem devolver exportação parcial", async () => {
+    let reads = 0;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    server = {
+      tableData: withOthers({
+        projects: [projectRow()],
+        documents: Array.from({ length: 1001 }, (_, i) => doc(`d${String(i).padStart(4, "0")}`)),
+      }),
+      queryErrorForCall: ({ table }) => table === "documents" && ++reads === 2
+        ? { message: "segunda página falhou" } : undefined,
+    };
+    const getExportDataset = await loadAction();
+    expect(await getExportDataset("proj-1")).toEqual({ error: copyWithRef("Não foi possível carregar os dados da exportação. Tente novamente.") });
+    expect(reads).toBe(2);
+    consoleError.mockRestore();
+  });
+
+  it("pagina a RPC de resoluções e a view pela chave composta", async () => {
+    const resolutions = Array.from({ length: 1001 }, (_, i) => ({ id: `r${String(i).padStart(4, "0")}` }));
+    const finalAnswers = Array.from({ length: 1001 }, (_, i) => ({
+      project_id: "proj-1", document_id: "d1", field_name: `f${String(i).padStart(4, "0")}`,
+      provenance: "consenso", answer: null,
+    }));
+    server = {
+      tableData: withOthers({ projects: [projectRow({ automation_mode: "auto_review_llm" })], final_answers: finalAnswers }),
+      // A RPC retorna as mesmas linhas em cada chamada; o cursor restringe a segunda.
+      rpcResults: { read_error_resolutions: { data: resolutions } },
+    };
+    const getExportDataset = await loadAction();
+    const r = await getExportDataset("proj-1");
+    if ("error" in r) throw new Error(r.error);
+    expect(readCalls.filter((call) => call.table === "final_answers")).toHaveLength(2);
+    expect(readCalls.filter((call) => call.table === "final_answers")[1].filters).toEqual([
+      ["eq", "project_id", "proj-1"],
+      ["or", "", 'document_id.gt."d1",and(document_id.eq."d1",field_name.gt."f0999")'],
+    ]);
+  });
+
+  it("erro na segunda página da RPC impede exportação parcial", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    server = {
+      tableData: withOthers({ projects: [projectRow()] }),
+      rpcResults: {
+        read_error_resolutions: [
+          { data: Array.from({ length: 1000 }, (_, i) => ({ id: `r${String(i).padStart(4, "0")}` })) },
+          { error: { message: "RPC interrompida" } },
+        ],
+      },
+    };
+    const getExportDataset = await loadAction();
+    expect(await getExportDataset("proj-1")).toEqual({ error: copyWithRef("Não foi possível carregar os dados da exportação. Tente novamente.") });
+    consoleError.mockRestore();
   });
 
   // O texto do Postgres ia cru, em inglês, ao toast pt-BR: vai ao log do

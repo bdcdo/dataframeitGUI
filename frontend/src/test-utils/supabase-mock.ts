@@ -88,6 +88,17 @@ const selectedKeys = (columns: string): string[] | null => {
 // O `max_rows` do PostgREST do Supabase.
 const MAX_ROWS = 1000;
 
+const orderedRows = (rows: Record<string, unknown>[], columns: string[]) =>
+  columns.length === 0 ? rows : [...rows].sort((a, b) => {
+    for (const column of columns) {
+      const left = String(a[column] ?? "");
+      const right = String(b[column] ?? "");
+      if (left < right) return -1;
+      if (left > right) return 1;
+    }
+    return 0;
+  });
+
 // A regra do `.single()` (exatamente uma linha) e do `.maybeSingle()` (no
 // máximo uma), comum às tabelas e às RPCs. `error` é o erro da própria query,
 // que vence a contagem.
@@ -97,7 +108,7 @@ const pickOne = (found: unknown[], allowNone: boolean, error: QueryError | null 
   return Promise.resolve({ data: final ? null : (found[0] ?? null), error: final });
 };
 
-// Mock filter-aware: aplica eq/neq/is/not.is/in/match/limit/range (e o corte de
+// Mock filter-aware: aplica eq/neq/is/not.is/in/gt/match/limit/range (e o corte de
 // 1000 linhas do `max_rows`) às linhas de state.tableData[table]
 // e registra writes em state.writeCalls. Linha sem a coluna filtrada não passa
 // em .eq/.neq/.is/.in (`.is(c, null)` exige `c: null` explícito), então cada
@@ -132,6 +143,7 @@ export function makeFilterAwareSupabaseMock(state: {
   // nele não chega a quem lê. Os filtros continuam valendo sobre a linha
   // inteira.
   projectColumns?: boolean;
+  afterRead?: (source: string) => void;
 }) {
   return {
     rpc: (fn: string, args: unknown) => {
@@ -142,6 +154,9 @@ export function makeFilterAwareSupabaseMock(state: {
       // `.order()` e `.range()`, para a RPC que devolve tabela e é paginada por
       // `fetchAllPaged`: a ordem é a do array do teste.
       let rangeN: [number, number] | null = null;
+      let limitN: number | null = null;
+      let afterId: string | null = null;
+      const orderColumns: string[] = [];
       // `.single()`/`.maybeSingle()`: o resultado em array é a lista de linhas
       // (função SETOF), e o que não é array (linha, escalar ou null) é uma
       // linha só. Sem `rpcResults[fn]` falha alto: um nome de RPC errado no
@@ -154,7 +169,19 @@ export function makeFilterAwareSupabaseMock(state: {
       const call: Record<string, unknown> = {
         single: () => one(false),
         maybeSingle: () => one(true),
-        order: () => call,
+        order: (column: string) => {
+          orderColumns.push(column);
+          return call;
+        },
+        gt: (column: string, value: string) => {
+          if (column !== "id") throw new Error(`mock: RPC .gt("${column}") não suportado`);
+          afterId = value;
+          return call;
+        },
+        limit: (count: number) => {
+          limitN = count;
+          return call;
+        },
         range: (from: number, to: number) => {
           rangeN = [from, to];
           return call;
@@ -163,8 +190,15 @@ export function makeFilterAwareSupabaseMock(state: {
           if (exhausted) throw new Error(`mock: rpcResults esgotado para "${fn}"`);
           const error = result?.error ?? null;
           const data = error ? null : (result?.data ?? null);
-          const paged =
-            rangeN && Array.isArray(data) ? data.slice(rangeN[0], rangeN[1] + 1) : data;
+          const cursor = afterId;
+          const filtered = cursor !== null && Array.isArray(data)
+            ? data.filter((row) => (row as { id: string }).id > cursor)
+            : data;
+          const ordered = Array.isArray(filtered) ? orderedRows(filtered as Record<string, unknown>[], orderColumns) : filtered;
+          const paged = Array.isArray(ordered)
+            ? (rangeN ? ordered.slice(rangeN[0], rangeN[1] + 1) : ordered).slice(0, Math.min(limitN ?? MAX_ROWS, MAX_ROWS))
+            : filtered;
+          state.afterRead?.(`rpc:${fn}`);
           return resolve({ data: paged, error });
         },
       };
@@ -182,6 +216,7 @@ export function makeFilterAwareSupabaseMock(state: {
       // linha devolvida quando ela tem a chave `coluna`. Embed e coluna sem
       // alias não mudam a linha: o mock não projeta colunas.
       let aliases: Array<[string, string]> = [];
+      const orderColumns: string[] = [];
       let selected = "";
       let countRequested = false;
       let headRequested = false;
@@ -195,13 +230,19 @@ export function makeFilterAwareSupabaseMock(state: {
         );
         return builder;
       };
-      // Ordem: as linhas já saem na ordem de `tableData`, que o teste controla.
-      builder.order = () => builder;
+      builder.order = (column: string) => {
+        orderColumns.push(column);
+        return builder;
+      };
       builder.range = (from: number, to: number) => {
         rangeN = [from, to];
         return builder;
       };
-      for (const kind of ["eq", "neq", "is", "in"]) {
+      builder.or = (filters: string) => {
+        filterList.push(["or", "", filters]);
+        return builder;
+      };
+      for (const kind of ["eq", "neq", "is", "in", "gt"]) {
         builder[kind] = (c: string, v: unknown) => {
           filterList.push([kind, c, v]);
           return builder;
@@ -248,18 +289,27 @@ export function makeFilterAwareSupabaseMock(state: {
       // `col = NULL` e `NULL IN (...)` nunca são verdadeiros; `col <> x` com
       // `col` NULL também não. `.is(c, null)` exige `c: null` explícito.
       const passes = (r: Record<string, unknown>, [kind, c, v]: [string, string, unknown]) => {
+        if (kind === "or") {
+          const quoted = '"(?:\\\\.|[^"\\\\])*"';
+          const match = new RegExp(`^document_id\\.gt\\.(${quoted}),and\\(document_id\\.eq\\.(${quoted}),field_name\\.gt\\.(${quoted})\\)$`).exec(v as string);
+          if (!match) throw new Error(`mock: .or("${v}") não suportado`);
+          const [docAfter, docSame, fieldAfter] = match.slice(1).map((value) => JSON.parse(value) as string);
+          return typeof r.document_id === "string" && typeof r.field_name === "string"
+            && (r.document_id > docAfter || (r.document_id === docSame && r.field_name > fieldAfter));
+        }
         if (kind === "is") return c in r && r[c] === v;
         if (kind === "not.is") return c in r && r[c] !== v;
         if (r[c] == null) return false;
         if (kind === "eq") return r[c] === v;
         if (kind === "neq") return r[c] !== v;
+        if (kind === "gt") return typeof r[c] === "string" && r[c] > (v as string);
         return (v as unknown[]).includes(r[c]);
       };
       const filteredRows = () => {
         const data = (state.tableData[table] ?? []) as Array<
           Record<string, unknown>
         >;
-        return data.filter((r) => filterList.every((f) => passes(r, f)));
+        return orderedRows(data.filter((r) => filterList.every((f) => passes(r, f))), orderColumns);
       };
       const rows = () => {
         const filtered = filteredRows();
@@ -300,6 +350,7 @@ export function makeFilterAwareSupabaseMock(state: {
       builder.then = (resolve: (v: unknown) => unknown) => {
         const error = settle();
         const found = rows();
+        state.afterRead?.(table);
         return resolve({
           data: error || headRequested ? null : found,
           error,
