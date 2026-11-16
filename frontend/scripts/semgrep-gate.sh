@@ -8,7 +8,8 @@
 #   - 0 (o ci.yml): reprova, depois de mais duas tentativas. No servidor, um
 #     semgrep que não rodou não pode passar por verde.
 #
-# SEMGREP_UVX troca o binário (teste).
+# SEMGREP_UVX troca o binário e SEMGREP_RETRY_SLEEP a espera entre tentativas
+# (teste).
 set -uo pipefail
 
 cd "$(dirname "$0")/../.." # raiz do repositório
@@ -18,6 +19,7 @@ cd "$(dirname "$0")/../.." # raiz do repositório
 SEMGREP_VERSION=1.168.0
 ATTEMPTS=3
 UVX="${SEMGREP_UVX:-uvx}"
+RETRY_SLEEP="${SEMGREP_RETRY_SLEEP:-15}"
 fail_open="${GATE_FAIL_OPEN:-1}"
 
 infra_failure() {
@@ -41,11 +43,13 @@ if git diff --quiet "$base" HEAD -- frontend backend 2>/dev/null; then
   exit 0
 fi
 
+# Sem `--quiet`: com ele o semgrep cala também o erro de infra, e a célula
+# vermelha do CI não diria por quê. A saída só é impressa quando reprova.
 attempt=1
 while :; do
   out="$("$UVX" --from "semgrep==${SEMGREP_VERSION}" semgrep scan \
     --config p/typescript --config p/react --config p/python \
-    --baseline-commit "$base" --error --quiet frontend backend 2>&1)"
+    --baseline-commit "$base" --error frontend backend 2>&1)"
   code=$?
   [[ "$code" == 0 ]] && exit 0
   if [[ "$code" == 1 ]]; then
@@ -58,6 +62,7 @@ while :; do
     echo "$out" | tail -n 20 >&2
     infra_failure "exit $code, tentativa $attempt"
   fi
-  echo "semgrep saiu com $code (tentativa $attempt de $ATTEMPTS); tentando de novo" >&2
+  echo "semgrep saiu com $code (tentativa $attempt de $ATTEMPTS); tentando de novo em ${RETRY_SLEEP}s" >&2
+  sleep "$RETRY_SLEEP"
   attempt=$((attempt + 1))
 done

@@ -37,9 +37,13 @@ describe("semgrep-gate.sh", () => {
 
   function gate(plan: number[], env: Record<string, string> = {}) {
     fs.writeFileSync(path.join(repo, "plan"), plan.map((code) => `${code}\n`).join(""));
+    // O ci.yml dá GATE_FAIL_OPEN=0 a toda célula, inclusive à que roda este
+    // teste: sem tirá-lo, os casos do default (push local) herdariam o do CI.
+    const base = isolatedGitEnvironment();
+    delete base.GATE_FAIL_OPEN;
     const result = spawnSync("bash", [path.join(repo, "frontend/scripts/semgrep-gate.sh")], {
       encoding: "utf8",
-      env: { ...isolatedGitEnvironment(), SEMGREP_UVX: path.join(repo, "fake-uvx"), ...env },
+      env: { ...base, SEMGREP_UVX: path.join(repo, "fake-uvx"), SEMGREP_RETRY_SLEEP: "0", ...env },
     });
     const callsFile = path.join(repo, "calls");
     const calls = fs.existsSync(callsFile) ? fs.readFileSync(callsFile, "utf8").trim().split("\n") : [];
@@ -86,7 +90,7 @@ describe("semgrep-gate.sh", () => {
     expect(calls[0]).toContain(`--baseline-commit ${runGit(["rev-parse", "main"], repo).trim()} `);
   });
 
-  it.each([{}, { GATE_FAIL_OPEN: "0" }])("achado reprova, sem nova tentativa (%o)", (env) => {
+  it.each<Record<string, string>>([{}, { GATE_FAIL_OPEN: "0" }])("achado reprova, sem nova tentativa (%o)", (env) => {
     const { status, stderr, calls } = gate([1], env);
     expect(status).toBe(1);
     expect(stderr).toContain("saída do semgrep (exit 1)");

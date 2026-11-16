@@ -26,7 +26,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Só entre pushes do mesmo PR. Na main, cancelar o run do merge anterior
+  # deixaria aquele commit com X vermelho sem nunca ter sido conferido.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   discover:
@@ -80,7 +82,8 @@ jobs:
         working-directory: frontend
         run: npm ci
       # `--all-files`: o hook local mede o delta do push, o CI mede o estado do
-      # repositório (lint-types e mypy rodam no repo inteiro aqui).
+      # repositório (lint-types e mypy rodam em todo arquivo que o `files:` do
+      # hook casa).
       - name: pre-commit run ${{ matrix.id }}
         run: uvx pre-commit@4.7.0 run --hook-stage pre-push --all-files "$HOOK_ID"
         env:

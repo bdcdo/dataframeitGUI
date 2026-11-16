@@ -413,7 +413,7 @@ repos:
         name: pinos da toolchain do backend (pre-push)
         entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para conferir os pinos da toolchain" >&2; exit 1; }; cd backend && exec uv run pytest -q tests/test_toolchain_pins.py'
         language: system
-        files: ^(\.pre-commit-config\.yaml|backend/\.python-version|\.github/workflows/database-tests\.yml)$
+        files: ^(\.pre-commit-config\.yaml|backend/\.python-version|\.github/workflows/.*\.yml)$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

@@ -175,7 +175,7 @@ A matriz não é escrita no workflow. O job `discover` chama `.github/scripts/ci
 - `.github/ci-gate-shards.json`: hook dividido em fatias, que recebe a fatia em `GATE_SHARD`. Hoje o `vitest`, em duas.
 - `GATE_FAIL_OPEN=0`, que toda célula recebe: o gate que no push local libera em erro de infra (semgrep) reprova no servidor. É variável do mesmo script, e não um segundo script.
 
-O CI mede estado absoluto e o hook mede o delta: com `--all-files`, `lint-types` e `mypy` rodam no repositório inteiro, e os hooks com `files:` rodam mesmo quando o PR não toca o que eles observam. `fallow-audit` e `semgrep` seguem medindo o que o PR introduz contra `origin/main`. O job `lint` roda o que não é hook de pre-push (ruff no backend inteiro e eslint).
+O CI mede estado absoluto e o hook mede o delta: com `--all-files`, `lint-types` e `mypy` rodam em todo arquivo que o `files:` do hook casa (o `mypy` segue sem `backend/tests/`), e os hooks com `files:` rodam mesmo quando o PR não toca o que eles observam. `fallow-audit` e `semgrep` seguem medindo o que o PR introduz contra `origin/main`. O job `lint` roda o que não é hook de pre-push (ruff no backend inteiro e eslint).
 
 `ci-required` espera todos os jobs com `if: always()` e exige `success` de cada um. É o único check a marcar como obrigatório no ruleset ([#651](https://github.com/bdcdo/dataframeitGUI/issues/651)): uma lista de checks na UI do GitHub seria mais uma lista à mão. Por isso o workflow não tem filtro de `paths`: workflow que não dispara deixa o check obrigatório em "Expected" para sempre, e o PR trava sem nada vermelho para consertar. O teste de contrato barra a volta do filtro e o job que fique fora do `ci-required`.
 

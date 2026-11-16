@@ -208,16 +208,23 @@ def test_python_version_matches_dockerfile_and_mypy() -> None:
 
 
 def test_uv_version_matches_dockerfile() -> None:
-    """O uv do contrato de banco no CI (#674) é o mesmo da imagem do backend."""
+    """O uv de todo workflow (#674, #649) é o mesmo da imagem do backend."""
     docker = re.search(
         r"ghcr\.io/astral-sh/uv:(\S+)", (BACKEND / "Dockerfile").read_text()
     )
-    workflow = re.search(
-        r"astral-sh/setup-uv@.*\n\s*with:\n(?:\s*#.*\n)*\s*version:\s*\"([^\"]+)\"",
-        (REPO / ".github/workflows/database-tests.yml").read_text(),
-    )
     assert docker, "uv não encontrado em backend/Dockerfile"
-    assert workflow, "setup-uv sem `version` em .github/workflows/database-tests.yml"
-    assert docker.group(1) == workflow.group(1), (
-        f"uv diverge: Dockerfile {docker.group(1)}, database-tests.yml {workflow.group(1)}"
-    )
+    workflows = sorted((REPO / ".github/workflows").glob("*.yml"))
+    uses = 0
+    for workflow in workflows:
+        text = workflow.read_text()
+        versions = re.findall(
+            r"astral-sh/setup-uv@.*\n\s*with:\n(?:\s*#.*\n)*\s*version:\s*\"([^\"]+)\"",
+            text,
+        )
+        count = text.count("astral-sh/setup-uv@")
+        uses += count
+        assert len(versions) == count, f"setup-uv sem `version` em {workflow.name}"
+        assert set(versions) <= {docker.group(1)}, (
+            f"uv diverge: Dockerfile {docker.group(1)}, {workflow.name} {versions}"
+        )
+    assert uses, "nenhum workflow usa astral-sh/setup-uv"
