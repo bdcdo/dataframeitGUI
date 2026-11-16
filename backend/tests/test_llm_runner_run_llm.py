@@ -1120,7 +1120,7 @@ def test_run_llm_linha_do_callback_publica_o_mesmo_que_o_laco_do_frame():
     }
     row_specs["doc-1"] = {"campo_a": "a"}
     frame = pd.DataFrame([{"id": d["id"], "texto": d["text"]} for d in docs])
-    prepared = _prepare_llm_model(PYDANTIC_CODE, [], True)
+    prepared = _prepare_llm_model(PYDANTIC_CODE, True)
     resultados: list[RowResult] = []
     fake = _make_fake_dataframeit(
         row_specs,
@@ -2559,3 +2559,45 @@ def test_run_llm_recusa_provider_ou_modelo_vazio_antes_de_chamar(
     error_update = _last_update_where(sb.table("llm_runs"), status="error")
     assert error_update is not None
     assert column in error_update["error_message"]
+
+
+# Código e JSON defasados entre si (#747): no código, `so_humano` é
+# `human_only` e `oculto` é `none`; o `projects.pydantic_fields` diz o
+# contrário em todos os campos.
+TARGETED_PYDANTIC_CODE = """from pydantic import BaseModel, Field
+
+class Analysis(BaseModel):
+    campo_a: str = Field(description="Campo A")
+    so_humano: str = Field(description="Só humano", json_schema_extra={"target": "human_only"})
+    oculto: str = Field(description="Oculto", json_schema_extra={"target": "none"})
+    so_llm: str = Field(description="Só LLM", json_schema_extra={"target": "llm_only"})
+"""
+
+STALE_PYDANTIC_FIELDS = [
+    {"name": "campo_a", "target": "human_only"},
+    {"name": "so_humano", "target": "all"},
+    {"name": "oculto", "target": "all"},
+    {"name": "so_llm", "target": "none"},
+]
+
+
+def test_run_llm_reads_target_from_code_not_from_pydantic_fields(monkeypatch):
+    docs = _docs(1)
+    row_specs = {docs[0]["id"]: {"campo_a": "a", "so_llm": "l"}}
+    sb = _build_supabase(
+        _project_row(
+            pydantic_code=TARGETED_PYDANTIC_CODE,
+            pydantic_fields=STALE_PYDANTIC_FIELDS,
+        ),
+        docs,
+    )
+    calls: list[dict] = []
+
+    _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=calls)
+
+    assert {
+        name for name in calls[0]["model_fields"] if not name.endswith("_justification")
+    } == {"campo_a", "so_llm"}
+    assert _jobs[JOB_ID]["status"] == "completed"
+    (row,) = _published_responses(sb)
+    assert row["answers"] == {"campo_a": "a", "so_llm": "l"}

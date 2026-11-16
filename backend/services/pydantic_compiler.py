@@ -255,6 +255,12 @@ def _parse_question_revision(field_name: str, raw: object) -> int | None:
     return raw
 
 
+def field_target(extra: dict) -> str:
+    """`target` do campo, lido do `json_schema_extra` já normalizado
+    (`extract_json_schema_extra`); ausente é `"all"`."""
+    return extra.get("target", "all")
+
+
 def _build_field_dict(
     field_name: str, field_info, *, generate_missing_ids: bool = False
 ) -> dict:
@@ -281,7 +287,7 @@ def _build_field_dict(
         field_type=field_type,
         options=options,
         description=description,
-        target=extra.get("target", "all"),
+        target=field_target(extra),
         help_text=help_text,
         required=bool(extra.get("required", True)),
         allow_other=bool(extra.get("allowOther", False)),

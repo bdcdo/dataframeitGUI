@@ -40,6 +40,7 @@ from services.condition_evaluator import (
 from services.pydantic_compiler import (
     build_model_from_code,
     extract_json_schema_extra,
+    field_target,
     unwrap_optional,
 )
 from services.supabase_client import get_supabase
@@ -830,12 +831,14 @@ def _optional_field(info):
     return Optional[info.annotation], optional_info
 
 
-def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
+def _filter_model_for_llm(model_class):
     """Return a model class excluding fields that should not be sent to the LLM.
 
-    A field is excluded when its ``target`` in ``pydantic_fields`` is either
-    ``"none"`` (hidden from everyone) or ``"human_only"``. Returns the original
-    ``model_class`` unchanged when no fields need to be excluded.
+    A field is excluded when its ``target`` is either ``"none"`` (hidden from
+    everyone) or ``"human_only"``. The target is read from the compiled code
+    (``json_schema_extra``), not from ``projects.pydantic_fields``: the code is
+    the source of truth and the JSON can lag behind it (#747). Returns the
+    original ``model_class`` unchanged when no fields need to be excluded.
 
     Note: the filtered model is created with ``__base__=BaseModel``, so any
     custom ``model_config`` or validators on the original class are not
@@ -846,9 +849,9 @@ def _filter_model_for_llm(model_class, pydantic_fields: list[dict]):
     from pydantic import BaseModel, create_model
 
     excluded_names = {
-        f["name"]
-        for f in (pydantic_fields or [])
-        if f.get("target") in ("none", "human_only")
+        name
+        for name, info in model_class.model_fields.items()
+        if field_target(extract_json_schema_extra(info)) in ("none", "human_only")
     }
     if not excluded_names:
         return model_class
@@ -1129,13 +1132,12 @@ def _normalize_llm_kwargs(llm_kwargs: dict) -> _DataframeitRunConfig:
 
 def _prepare_llm_model(
     pydantic_code: str,
-    pydantic_fields: list[dict],
     include_justifications: bool,
 ) -> _PreparedLlmModel:
     model_class = _compile_model(pydantic_code)
     if not model_class:
         raise RuntimeError("Nenhuma classe BaseModel encontrada no código Pydantic.")
-    model_class = _filter_model_for_llm(model_class, pydantic_fields)
+    model_class = _filter_model_for_llm(model_class)
     field_conditions = extract_field_conditions(model_class)
     model_class, nested_field_map = _flatten_nested_basemodels(model_class)
     if include_justifications:
@@ -2446,7 +2448,12 @@ def run_llm(
         llm_kwargs = project["llm_kwargs"] or {}
         pydantic_hash = _pydantic_code_hash(pydantic_code)
 
-        # Build per-field hash snapshot for staleness detection
+        # Build per-field hash snapshot for staleness detection. Continua vindo
+        # de `pydantic_fields`, e não do código compilado (#747): quem lê o
+        # snapshot (Comparação, `response_answers_current_question`) o compara
+        # com o `hash` gravado nesse JSON, e o código ainda não reproduz esse
+        # valor em todo campo — as respostas padronizadas de campo de texto
+        # entram no hash e não são emitidas no código.
         answer_field_hashes = {
             f["name"]: f.get("hash") for f in (project.get("pydantic_fields") or [])
         }
@@ -2477,7 +2484,6 @@ def run_llm(
         include_justifications = bool(llm_kwargs.pop("include_justifications", True))
         prepared_model = _prepare_llm_model(
             pydantic_code,
-            project.get("pydantic_fields") or [],
             include_justifications,
         )
         run_config = _normalize_llm_kwargs(llm_kwargs)

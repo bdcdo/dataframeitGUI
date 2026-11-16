@@ -54,7 +54,7 @@ def _assert_only_standard_keys(properties: dict) -> None:
 def test_schema_enviado_ao_provider_so_tem_chaves_de_json_schema(
     include_justifications,
 ):
-    prepared = _prepare_llm_model(GENERATED_CODE, [], include_justifications)
+    prepared = _prepare_llm_model(GENERATED_CODE, include_justifications)
 
     schema = prepared.model_class.model_json_schema()
 
@@ -73,7 +73,7 @@ def test_schema_enviado_ao_provider_so_tem_chaves_de_json_schema(
 
 
 def test_o_que_o_runner_le_do_extra_e_lido_antes_do_filtro():
-    prepared = _prepare_llm_model(GENERATED_CODE, [], True)
+    prepared = _prepare_llm_model(GENERATED_CODE, True)
     model = prepared.model_class
 
     # `justification_prompt` virou a descrição do campo gerado...
@@ -130,7 +130,7 @@ class Item(BaseModel):
 class Analysis(BaseModel):
     itens: Optional[list[Item]] = Field(default=None, description="Itens")
 """
-    model = _prepare_llm_model(code, [], False).model_class
+    model = _prepare_llm_model(code, False).model_class
 
     schema = model.model_json_schema()
 
@@ -179,7 +179,7 @@ def test_dataframeit_real_entrega_ao_cliente_o_schema_sem_chaves_internas(monkey
             return FakeStructuredChat()
 
     monkeypatch.setattr(chat_models, "init_chat_model", lambda *_a, **_k: FakeChat())
-    prepared = _prepare_llm_model(GENERATED_CODE, [], True)
+    prepared = _prepare_llm_model(GENERATED_CODE, True)
 
     result = dataframeit(
         pd.DataFrame([{"id": "1", "texto": "documento"}]),
