@@ -147,6 +147,15 @@ RETURNS JSONB LANGUAGE sql AS $$
     'source', p_source));
 $$;
 
+-- O par canonico e (menor, maior) na ordem do jsonb, que compara strings pela
+-- collation do banco (a mesma do CHECK value_equivalences_canonical_order): a
+-- ordem de "Não informado" e "nao identificavel" depende dela, e o teste nao a
+-- fixa a mao.
+CREATE FUNCTION pg_temp.canon_a() RETURNS JSONB LANGUAGE sql IMMUTABLE AS
+$$ SELECT LEAST('"Não informado"'::JSONB, '"nao identificavel"'::JSONB) $$;
+CREATE FUNCTION pg_temp.canon_b() RETURNS JSONB LANGUAGE sql IMMUTABLE AS
+$$ SELECT GREATEST('"Não informado"'::JSONB, '"nao identificavel"'::JSONB) $$;
+
 -- (b) Gravar, como a pesquisadora dona (e3).
 SELECT set_config('request.jwt.claims',
   '{"sub":"5e000000-0000-0000-0000-000000000003","supabase_uid":"5e000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
@@ -161,7 +170,7 @@ BEGIN
   END IF;
   SELECT * INTO v_row FROM public.value_equivalences
   WHERE project_id = '5e100000-0000-0000-0000-000000000001';
-  IF v_row.value_a <> '"Não informado"'::JSONB OR v_row.value_b <> '"nao identificavel"'::JSONB
+  IF v_row.value_a <> pg_temp.canon_a() OR v_row.value_b <> pg_temp.canon_b()
      OR v_row.field_hash <> 'f00000000001' OR v_row.source <> 'comparacao'
      OR v_row.origin_document_id <> '5e200000-0000-0000-0000-000000000001'
      OR v_row.reviewer_id <> '5e000000-0000-0000-0000-000000000003' THEN
@@ -410,7 +419,7 @@ DECLARE
 BEGIN
   SELECT * INTO v_row FROM public.value_equivalences WHERE project_id = '5e100000-0000-0000-0000-000000000001';
   IF v_row.id IS NULL OR v_row.source <> 'auto_revisao' OR v_row.field_hash <> 'f00000000001'
-     OR v_row.value_a <> '"Não informado"'::JSONB OR v_row.value_b <> '"nao identificavel"'::JSONB
+     OR v_row.value_a <> pg_temp.canon_a() OR v_row.value_b <> pg_temp.canon_b()
      OR v_row.reviewer_id <> '5e000000-0000-0000-0000-000000000004'
      OR v_row.origin_document_id <> '5e200000-0000-0000-0000-000000000002' THEN
     RAISE EXCEPTION 'FALHOU: veredito equivalente deveria gravar a equivalencia de valor: %', row_to_json(v_row);
