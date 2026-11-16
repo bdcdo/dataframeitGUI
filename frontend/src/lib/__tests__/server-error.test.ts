@@ -11,7 +11,7 @@ import {
   serverErrorCopy,
   serverErrorScope,
 } from "@/lib/server-error";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { maskedServerError } from "@/test-utils/masked-server-error";
 
 describe("serverErrorCopy", () => {
@@ -25,10 +25,9 @@ describe("serverErrorCopy", () => {
       { generic: "Tente novamente.", byCode: { P0001: "Já resolvida." } },
     );
     expect(copy).toEqual(copyWithRef("Tente novamente."));
-    expect(consoleError).toHaveBeenCalledWith(loggedScope("[x] falhou"), {
-      code: "57014",
-      message: "statement timeout",
-    });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[x] falhou", { code: "57014", message: "statement timeout" }),
+    );
   });
 
   // Sem digest do Next, o código é sorteado: o mesmo no toast e na linha do
@@ -39,9 +38,25 @@ describe("serverErrorCopy", () => {
     const first = serverErrorCopy("[x] falhou", error, { generic: "Tente novamente." });
     const second = serverErrorCopy("[x] falhou", error, { generic: "Tente novamente." });
     const ref = (copy: string) => copy.split(" — código ")[1];
-    expect(consoleError.mock.calls[0][0]).toBe(`[erro ${ref(first)}] [x] falhou`);
-    expect(consoleError.mock.calls[1][0]).toBe(`[erro ${ref(second)}] [x] falhou`);
+    // Uma linha só: o grep pelo código traz também o code e a mensagem.
+    expect(consoleError.mock.calls[0]).toEqual([
+      `[erro ${ref(first)}] [x] falhou {"code":"57014","message":"statement timeout"}`,
+    ]);
+    expect(consoleError.mock.calls[1][0]).toMatch(new RegExp(`^\\[erro ${ref(second)}\\] `));
     expect(ref(first)).not.toBe(ref(second));
+  });
+
+  // No navegador (fetchFastAPI de componente cliente) o log vai para o console
+  // de quem usa, e um código ali não acharia nada no log do servidor.
+  it("no navegador devolve a copy sem código", () => {
+    vi.stubGlobal("window", {});
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const error = { code: "502", message: "Bad Gateway" };
+    expect(serverErrorCopy("[api] /x falhou", error, { generic: "Tente novamente." })).toBe(
+      "Tente novamente.",
+    );
+    expect(consoleError).toHaveBeenCalledWith("[api] /x falhou", error);
+    vi.unstubAllGlobals();
   });
 
   it("código mapeado ganha copy própria e não vai ao log", () => {
@@ -67,10 +82,9 @@ describe("serverErrorScope", () => {
       "Tente novamente.",
     );
     expect(copy).toEqual(copyWithRef("Tente novamente."));
-    expect(consoleError).toHaveBeenCalledWith(loggedScope("[members] leitura do e-mail falhou"), {
-      code: "57014",
-      message: "statement timeout",
-    });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[members] leitura do e-mail falhou", { code: "57014", message: "statement timeout" }),
+    );
   });
 });
 
@@ -83,24 +97,23 @@ describe("caughtErrorCopy", () => {
     expect(caughtErrorCopy("[x] falhou", coded, "Tente novamente.")).toEqual(
       copyWithRef("Tente novamente."),
     );
-    expect(consoleError).toHaveBeenCalledWith(loggedScope("[x] falhou"), {
-      code: "57014",
-      message: "statement timeout",
-    });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[x] falhou", { code: "57014", message: "statement timeout" }),
+    );
   });
 
   it("code não string (status do ApiError) e erro sem code saem com code undefined", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     caughtErrorCopy("[x] falhou", Object.assign(new Error("boom"), { code: 502 }), "g");
     caughtErrorCopy("[x] falhou", new TypeError("fetch failed"), "g");
-    expect(consoleError).toHaveBeenNthCalledWith(1, loggedScope("[x] falhou"), {
-      code: undefined,
-      message: "boom",
-    });
-    expect(consoleError).toHaveBeenNthCalledWith(2, loggedScope("[x] falhou"), {
-      code: undefined,
-      message: "fetch failed",
-    });
+    expect(consoleError).toHaveBeenNthCalledWith(
+      1,
+      loggedLine("[x] falhou", { code: undefined, message: "boom" }),
+    );
+    expect(consoleError).toHaveBeenNthCalledWith(
+      2,
+      loggedLine("[x] falhou", { code: undefined, message: "fetch failed" }),
+    );
   });
 });
 

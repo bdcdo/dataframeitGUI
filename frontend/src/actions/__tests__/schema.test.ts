@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import {
   makeSupabaseMock,
   type FilterCall,
@@ -284,8 +284,7 @@ describe("saveSchemaFromGUI", () => {
       message: copyWithRef("Não foi possível salvar o schema. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[schema] commit_project_schema falhou"),
-      expect.objectContaining({ code: "22023" }),
+      loggedLine("[schema] commit_project_schema falhou", { code: "22023" }),
     );
     consoleError.mockRestore();
   });
@@ -635,8 +634,7 @@ describe("backfillSchemaVersionHistory", () => {
       message: copyWithRef("Não foi possível ler o schema do projeto. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[schema] leitura do projeto falhou"),
-      expect.objectContaining({ code: "57014" }),
+      loggedLine("[schema] leitura do projeto falhou", { code: "57014" }),
     );
     expect(state.rpcs).toHaveLength(0);
     consoleError.mockRestore();
@@ -689,8 +687,7 @@ describe("backfillSchemaVersionHistory", () => {
       message: copyWithRef("Não foi possível reconstruir o histórico. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[schema] backfill falhou"),
-      expect.objectContaining({ message: expect.stringMatching(/null/) }),
+      loggedLine("[schema] backfill falhou", { message: expect.stringMatching(/null/) }),
     );
     expect(state.rpcs).toHaveLength(0);
     consoleError.mockRestore();
@@ -791,10 +788,9 @@ describe("erro de servidor não chega cru ao toast", () => {
 
     expect(result).toEqual({ error: copyWithRef(copy) });
     expect(consoleError).toHaveBeenCalledWith(
-      expect.stringContaining("falhou"),
       // O `code` do Postgres é o que diferencia timeout de violação no log:
       // `updateOrThrow` o descartava, e o log saía com `code: undefined`.
-      expect.objectContaining({ code: postgresError.code, message: postgresError.message }),
+      loggedLine(/\[schema\] save d[oa] (?:prompt|configuração do LLM) falhou/, { code: postgresError.code, message: postgresError.message }),
     );
     consoleError.mockRestore();
   });
@@ -821,8 +817,7 @@ describe("erro de servidor não chega cru ao toast", () => {
       error: copyWithRef("Não foi possível recuperar os campos do código armazenado. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[schema] recuperação dos campos falhou"),
-      expect.objectContaining({ message: failure.message }),
+      loggedLine("[schema] recuperação dos campos falhou", { message: failure.message }),
     );
     consoleError.mockRestore();
   });

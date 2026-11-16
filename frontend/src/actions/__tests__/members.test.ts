@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 
 import {
   makeSupabaseMock,
@@ -154,8 +154,7 @@ vi.mock("@/actions/comparisons", () => ({
 let consoleError: ReturnType<typeof vi.spyOn>;
 function expectLogged(message: string) {
   expect(consoleError).toHaveBeenCalledWith(
-    loggedScope(/^\[members\] .* falhou$/),
-    expect.objectContaining({ message }),
+    loggedLine(/^\[members\] .* falhou$/, { message }),
   );
 }
 

@@ -31,13 +31,24 @@ export function serverErrorCopy(
 ): string {
   const specific = error.code ? copy.byCode?.[error.code] : undefined;
   if (specific) return specific;
-  const ref = newErrorRef();
-  console.error(`[erro ${ref}] ${scope}`, { code: error.code, message: error.message });
-  return `${copy.generic} — código ${ref}`;
+  // No navegador (o `fetchFastAPI` dos componentes cliente), o log fica no
+  // console de quem usa: um código ali não acharia nada no `fly logs`.
+  if (typeof window !== "undefined") {
+    console.error(scope, { code: error.code, message: error.message });
+    return copy.generic;
+  }
+  // Uma linha só, com o JSON no fim, como a do `instrumentation.ts`: o objeto
+  // passado à parte o Node quebra em várias linhas, e o grep pelo código
+  // traria só o escopo.
+  const ref = crypto.getRandomValues(new Uint32Array(1))[0].toString(36).padStart(6, "0");
+  console.error(
+    `[erro ${ref}] ${scope} ${JSON.stringify({ code: error.code, message: error.message })}`,
+  );
+  return appendErrorCode(copy.generic, ref);
 }
 
-function newErrorRef(): string {
-  return crypto.getRandomValues(new Uint32Array(1))[0].toString(36).padStart(6, "0");
+function appendErrorCode(copy: string, code: string): string {
+  return `${copy} — código ${code}`;
 }
 
 // O mesmo para o módulo de actions que loga vários passos: o escopo do log sai
@@ -111,7 +122,7 @@ export function actionErrorMessage(error: unknown, fallback: string): string {
 export function withErrorCode(error: unknown, copy: string): string {
   if (isStaleActionError(error)) return STALE_PAGE_ERROR;
   const code = errorCode(error);
-  return code ? `${copy} — código ${code}` : copy;
+  return code ? appendErrorCode(copy, code) : copy;
 }
 
 // Detalhe que as telas de erro (`error.tsx`, `global-error.tsx`) mostram: o

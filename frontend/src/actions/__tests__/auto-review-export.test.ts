@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 
 // Testa a server action getAutoReviewVerdicts: gate coordinator-only
 // fail-closed, recorte do banco (projeto, veredito preenchido, arbitrados só
@@ -202,8 +202,7 @@ describe("getAutoReviewVerdicts — leitura", () => {
     const getAutoReviewVerdicts = await loadAction();
     expect(await getAutoReviewVerdicts("p1")).toEqual({ error: copyWithRef("Não foi possível carregar os vereditos da auto-revisão. Tente novamente.") });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[auto-review-export] leitura falhou"),
-      expect.objectContaining({ message: "boom" }),
+      loggedLine("[auto-review-export] leitura falhou", { message: "boom" }),
     );
     consoleError.mockRestore();
   });

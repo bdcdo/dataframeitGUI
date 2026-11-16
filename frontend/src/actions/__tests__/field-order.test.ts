@@ -1,5 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { createProjectIdentityActionHarness } from "./project-identity-harness";
 
 const resolveMemberUserId = vi.hoisted(() =>
@@ -87,8 +87,7 @@ describe("researcher field order — erro do banco", () => {
     // action duplicaria o evento.
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope(/^\[field-order\] .* falhou$/),
-      pgError,
+      loggedLine(/^\[field-order\] .* falhou$/, pgError),
     );
     consoleError.mockRestore();
   });

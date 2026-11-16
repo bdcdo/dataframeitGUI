@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import {
   makeSupabaseMock,
   type RpcCall,
@@ -97,8 +97,7 @@ describe("erros do Postgres não chegam crus ao toast", () => {
 
     expect(r.error).toEqual(copyWithRef("Não foi possível enviar a sugestão. Tente novamente."));
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[suggestions] criação da sugestão falhou"),
-      expect.objectContaining({ code: "57014" }),
+      loggedLine("[suggestions] criação da sugestão falhou", { code: "57014" }),
     );
     consoleError.mockRestore();
   });
@@ -128,8 +127,7 @@ describe("erros do Postgres não chegam crus ao toast", () => {
 
     expect(r.error).toEqual(copyWithRef("Não foi possível rejeitar a sugestão. Tente novamente."));
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[suggestions] rejeição da sugestão falhou"),
-      expect.objectContaining({ code: "57014" }),
+      loggedLine("[suggestions] rejeição da sugestão falhou", { code: "57014" }),
     );
     consoleError.mockRestore();
   });

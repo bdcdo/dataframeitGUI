@@ -1,5 +1,5 @@
 import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { AUTOMATION_MODES } from "@/lib/types";
 import {
   makeSupabaseMock,
@@ -174,8 +174,7 @@ describe("erro do banco não chega cru ao toast", () => {
 
     expect(await run()).toEqual({ error: copyWithRef(copy) });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope(/^\[projects\] .* falhou$/),
-      dbError,
+      loggedLine(/^\[projects\] .* falhou$/, dbError),
     );
     consoleError.mockRestore();
   });

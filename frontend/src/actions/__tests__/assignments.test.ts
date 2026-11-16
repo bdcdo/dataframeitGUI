@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 
 // Regressão da issue #182: getLotteryDocStats (path de exibição do dialog de
 // sorteio) passa a ler a view agregada `lottery_doc_stats` em vez de fazer
@@ -1010,8 +1010,7 @@ describe("clearPendingAssignments — erro do banco", () => {
       error: copyWithRef("Não foi possível limpar as atribuições pendentes. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[assignments] limpeza das pendentes falhou"),
-      pgError,
+      loggedLine("[assignments] limpeza das pendentes falhou", pgError),
     );
     consoleError.mockRestore();
   });

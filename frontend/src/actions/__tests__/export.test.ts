@@ -1,5 +1,5 @@
 import { beforeAll, describe, it, expect, beforeEach, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 
 // Testa a server action getExportDataset: gate coordinator-only fail-closed,
 // queries paralelas com colunas explícitas, e delegação da montagem a
@@ -221,8 +221,7 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
     const r = await getExportDataset("proj-1");
     expect(r).toEqual({ error: copyWithRef("Não foi possível carregar os dados da exportação. Tente novamente.") });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[export] leitura falhou"),
-      expect.objectContaining({ message: "boom na query de documentos" }),
+      loggedLine("[export] leitura falhou", { message: "boom na query de documentos" }),
     );
     consoleError.mockRestore();
   });

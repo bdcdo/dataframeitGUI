@@ -1,5 +1,5 @@
 import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import {
   makeFilterAwareSupabaseMock,
   type RpcCall,
@@ -422,8 +422,7 @@ describe("submitAutoReview — conclusão do assignment", () => {
     });
     expect(updateCallsOf()).toHaveLength(0);
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[field-reviews] envio da auto-revisão falhou"),
-      expect.objectContaining({ message: "lock timeout" }),
+      loggedLine("[field-reviews] envio da auto-revisão falhou", { message: "lock timeout" }),
     );
     consoleError.mockRestore();
   });

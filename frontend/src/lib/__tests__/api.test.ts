@@ -8,7 +8,7 @@
  * código de produção, e é assim que a precedência de headers apareceu quebrada.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import { fetchFastAPI, requireSupabaseToken } from "../api";
 
 const fetchMock = vi.fn();
@@ -142,8 +142,7 @@ describe("fetchFastAPI", () => {
       message: copyWithRef("Erro no servidor (HTTP 502). Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[api] /api/llm/run falhou"),
-      expect.objectContaining({ code: "502", message: "Bad Gateway" }),
+      loggedLine("[api] /api/llm/run falhou", { code: "502", message: "Bad Gateway" }),
     );
     consoleError.mockRestore();
   });
@@ -165,8 +164,7 @@ describe("fetchFastAPI", () => {
       message: copyWithRef("O servidor recusou a requisição (HTTP 422)."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[api] /api/llm/run falhou"),
-      expect.objectContaining({ code: "422", message: JSON.stringify(detail) }),
+      loggedLine("[api] /api/llm/run falhou", { code: "422", message: JSON.stringify(detail) }),
     );
     consoleError.mockRestore();
   });
@@ -220,8 +218,7 @@ describe("fetchFastAPI", () => {
       "O servidor recusou a requisição (HTTP 405).",
     );
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[api] /api/llm/run falhou"),
-      expect.objectContaining({ code: "404", message: "Not Found" }),
+      loggedLine("[api] /api/llm/run falhou", { code: "404", message: "Not Found" }),
     );
     fetchMock.mockResolvedValueOnce({
       ok: false,

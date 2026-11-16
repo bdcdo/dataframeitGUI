@@ -1,5 +1,5 @@
 import { beforeAll, describe, it, expect, vi, beforeEach } from "vitest";
-import { copyWithRef, loggedScope } from "@/test-utils/error-ref";
+import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
 import {
   makeSupabaseMock,
   type TableResults,
@@ -194,8 +194,7 @@ describe("cancelExclusionRequest", () => {
       error: copyWithRef("Não foi possível cancelar o pedido de exclusão. Tente novamente."),
     });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedScope("[project-comments] cancelar exclusão falhou"),
-      pgError,
+      loggedLine("[project-comments] cancelar exclusão falhou", pgError),
     );
     consoleError.mockRestore();
   });
