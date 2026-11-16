@@ -156,8 +156,8 @@ def test_document_list_has_explicit_upper_bound() -> None:
 def test_run_field_route_does_not_exist(client: TestClient) -> None:
     # A rota prometia rodar só os campos de `field_names`, rodava o schema
     # inteiro e pulava a guarda de somente-leitura da impersonação (#746).
-    # Sem chamador, foi removida: quem a chamar recebe 404 antes de qualquer
-    # autorização, rate limit ou job.
+    # Sem chamador, foi removida: mesmo autenticado e com payload que a rota
+    # aceitava, quem a chamar recebe 404, sem autorização, rate limit nem job.
     response = client.post(
         "/api/llm/run-field",
         json={"project_id": PROJECT_ID, "field_names": ["q1"]},

@@ -1,5 +1,5 @@
 import uuid
-from typing import Annotated, Literal, Self, TypeVar
+from typing import Annotated, Literal, Self
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi.concurrency import run_in_threadpool
@@ -31,21 +31,12 @@ from services.supabase_client import get_supabase
 router = APIRouter()
 
 
-UniqueValue = TypeVar("UniqueValue", uuid.UUID, str)
-
-
-def _ensure_unique(values: list[UniqueValue], field_name: str) -> list[UniqueValue]:
+def _reject_duplicate_document_ids(values: list[uuid.UUID]) -> list[uuid.UUID]:
     if len(values) != len(set(values)):
-        raise ValueError(f"{field_name} must not contain duplicates")
+        raise ValueError("document_ids must not contain duplicates")
     return values
 
 
-def _reject_duplicate_document_ids(values: list[uuid.UUID]) -> list[uuid.UUID]:
-    return _ensure_unique(values, "document_ids")
-
-
-# Uniqueness travels with the type, so any request model that takes document
-# ids inherits it from one place.
 DocumentIds = Annotated[
     list[uuid.UUID],
     Field(min_length=1, max_length=10_000),
