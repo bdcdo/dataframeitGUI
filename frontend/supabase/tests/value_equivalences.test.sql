@@ -1,3 +1,4 @@
+-- @test-role: supabase_admin
 -- Contrato da equivalencia "=" por VALOR (`value_equivalences`,
 -- 20261112120000): "no campo X, na versao da pergunta com hash H, o valor A
 -- equivale ao valor B", no projeto inteiro.
@@ -24,9 +25,20 @@
 --
 -- Quem age como usuario troca tambem a autorizacao da sessao para
 -- `authenticator`: as RPCs liberam `SESSION_USER = 'postgres'` (migrations e
--- scripts), e com a sessao de superusuario nenhuma recusa seria exercitada.
+-- scripts), e com a sessao de `postgres` nenhuma recusa seria exercitada.
+-- Trocar a autorizacao exige que o usuario da conexao seja superusuario, e o
+-- `postgres` da imagem do Supabase nao e: a diretiva da primeira linha faz o
+-- scripts/run-sql-test.sh conectar como `supabase_admin`, e a primeira
+-- instrucao volta a `postgres`, que e quem roda as fixtures e as RPCs de
+-- manutencao. SET SESSION AUTHORIZATION nao aplica os ajustes por papel, entao
+-- o search_path do `postgres` no Supabase vai explicito.
+-- Cada bloco de usuario termina voltando a `postgres` (e nao com RESET, que
+-- voltaria ao `supabase_admin` da conexao) (#913).
 --
 -- Roda numa transacao e nao deixa fixture no banco local.
+
+SET SESSION AUTHORIZATION postgres;
+SET search_path TO "$user", public, extensions;
 
 BEGIN;
 
@@ -200,7 +212,7 @@ BEGIN
 END;
 $$;
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION postgres;
 
 SELECT set_config('request.jwt.claims',
   '{"sub":"5e000000-0000-0000-0000-000000000005","supabase_uid":"5e000000-0000-0000-0000-000000000005","role":"authenticated"}', true);
@@ -237,7 +249,7 @@ BEGIN
 END;
 $$;
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION postgres;
 
 -- (d) Escrita direta pela API, mesmo pela coordenadora: nenhuma policy de
 -- escrita, entao INSERT falha e UPDATE/DELETE nao alcancam linha.
@@ -278,7 +290,7 @@ BEGIN
 END;
 $$;
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION postgres;
 
 -- (e) Execucao nova do LLM no documento 1, com o mesmo valor em `f`, e o
 -- humano do documento 2 salvo de novo com o mesmo valor: a equivalencia fica.
@@ -323,7 +335,7 @@ BEGIN
 END;
 $$;
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION postgres;
 
 SELECT set_config('request.jwt.claims',
   '{"sub":"5e000000-0000-0000-0000-000000000003","supabase_uid":"5e000000-0000-0000-0000-000000000003","role":"authenticated"}', true);
@@ -357,7 +369,7 @@ BEGIN
 END;
 $$;
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION postgres;
 
 SELECT set_config('request.jwt.claims',
   '{"sub":"5e000000-0000-0000-0000-000000000002","supabase_uid":"5e000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
@@ -375,7 +387,7 @@ BEGIN
 END;
 $$;
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION postgres;
 
 -- (g) Auto-revisao do documento 2: o veredito 'equivalente' grava a
 -- equivalencia de valor com o carimbo do ciclo. A action chama a RPC pelo
@@ -416,7 +428,7 @@ SET LOCAL ROLE authenticated;
 SELECT public.enqueue_auto_review_reconciliation_for_documents(
   '5e100000-0000-0000-0000-000000000001', ARRAY['5e200000-0000-0000-0000-000000000002'::UUID]);
 RESET ROLE;
-RESET SESSION AUTHORIZATION;
+SET LOCAL SESSION AUTHORIZATION postgres;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.auto_review_reconciliation_requests

@@ -1,14 +1,12 @@
 -- Prova de serialização do `FOR UPDATE` de `schema_write_gate`.
 --
 -- Como rodar depois de `npx supabase start` e `npx supabase db reset`:
---   npm run test:db:schema-revision-serialization
+--   npm run test:db -- schema_revision_serialization
 --
--- As duas sessões concorrentes conectam por dblink no endereço e na porta da
--- própria sessão (`inet_server_addr()`/`inet_server_port()`), com senha, como
--- `llm_rate_limit`: o `dblink_connect` chamado por quem não é superusuário (o
--- `postgres` do Supabase não é) exige que a senha seja de fato usada, e sobre
--- 127.0.0.1 o pg_hba é `trust`, que não a usa (#572). O run-sql-test.sh conecta
--- pelo IP do container, cuja rota autentica por scram. As sessões entram como
+-- As duas sessões concorrentes conectam por dblink com
+-- `pg_temp.self_dblink_connstr()`, que o run-sql-test.sh define antes da suíte
+-- (supabase/tests/lib/self_dblink.sql, onde está o porquê da senha e do
+-- endereço, #572). As sessões entram como
 -- `postgres` e assumem `authenticated` via SET LOCAL ROLE, como a suíte irmã.
 --
 -- Identidade canônica (migration 20260716155000, #440): `clerk_uid()` só resolve
@@ -92,12 +90,7 @@ GRANT SELECT, INSERT ON public.schema_change_log TO authenticated;
 GRANT SELECT ON public.project_members TO authenticated;
 
 -- ----- Duas sessões concorrentes -----
-SELECT format(
-  'hostaddr=%s port=%s dbname=%s user=postgres password=postgres',
-  host(inet_server_addr()),
-  inet_server_port(),
-  current_database()
-) AS connstr \gset
+SELECT pg_temp.self_dblink_connstr() AS connstr \gset
 SELECT dblink_connect('writer_one', :'connstr');
 SELECT dblink_connect('writer_two', :'connstr');
 

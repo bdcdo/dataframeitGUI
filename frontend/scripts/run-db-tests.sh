@@ -19,7 +19,11 @@
 #      falha pedindo a promoção para GATE_SUITES — a exceção não apodrece
 #      silenciosamente até alguém reparar (drift no sentido bom, mas ainda drift).
 #   3. Diagnóstico em falha: a saída de cada suíte vai para um log; em FAIL de
-#      gate a cauda é impressa, sem exigir re-run do npm script individual.
+#      gate a cauda é impressa, sem exigir re-run da suíte.
+#
+# Uso: `npm run test:db` roda tudo; `npm run test:db -- <suíte> [<suíte>...]`
+# roda só as nomeadas (o nome do arquivo sem `.test.sql`, ou
+# `backend_integration`). As listas abaixo são a fonte única das suítes.
 
 # Sem `-e`: a varredura precisa continuar após uma suíte falhar.
 set -uo pipefail
@@ -81,22 +85,15 @@ GATE_SUITES=(
   schema_revision_rpcs
   error_resolution_cycle
   schema_revision_serialization
+  value_equivalences
 )
 
 # Suíte vermelha rastreada em issue própria. Roda e é reportada, mas NÃO
 # derruba o gate até ser consertada. Isto NÃO é silenciamento: aparece no resumo
 # com sua issue; ao consertar, mover para GATE_SUITES (a guarda 2 força esse
-# passo).
-#
-# value_equivalences (#851) troca a sessão com `SET SESSION AUTHORIZATION
-# authenticator` para exercitar as recusas das RPCs, que liberam
-# `SESSION_USER = 'postgres'`. Isso exige superusuário, e o `postgres` da imagem
-# do Supabase não é: a suíte nunca passou no CI nem no hook local. Apareceu quando o CI passou a rodar GATE_SUITES (#913); o conserto
-# (rodar como `supabase_admin` ou outra forma de trocar o SESSION_USER) fica com
-# o dono.
-declare -A KNOWN_RED=(
-  [value_equivalences]="#913"
-)
+# passo). Vazia hoje: value_equivalences (#913) foi a última, e passou a rodar
+# como `supabase_admin` (diretiva no topo da suíte, lida pelo run-sql-test.sh).
+declare -A KNOWN_RED=()
 
 # ── Guarda 1: drift entre o runner e o disco (fecha a causa raiz da #557). ────
 # O conjunto classificado é a união dos três; a fonte da verdade de "quem é
@@ -122,6 +119,18 @@ if [[ ${#drift[@]} -gt 0 ]]; then
   echo "adicione a suíte a GATE_SUITES/KNOWN_RED (ou remova a entrada obsoleta)." >&2
   exit 1
 fi
+
+# Suítes pedidas na linha de comando; nenhuma = todas. Nome fora das listas é
+# erro, e não um subconjunto vazio que passaria em silêncio.
+declare -A SELECTED=()
+for name in "$@"; do
+  if [[ -z "$name" ]] || [[ -z "${CLASSIFIED[$name]:-}" && "$name" != backend_integration ]]; then
+    echo "suíte desconhecida: ${name} (veja GATE_SUITES/PGTAP_SUITES/KNOWN_RED)" >&2
+    exit 2
+  fi
+  SELECTED["$name"]=1
+done
+selected() { [[ ${#SELECTED[@]} -eq 0 || -n "${SELECTED[$1]:-}" ]]; }
 
 pass=()
 fail_gate=()
@@ -204,19 +213,25 @@ report() {
   fi
 }
 
-echo "▸ suítes de contrato do banco (varredura completa)"
+if [[ ${#SELECTED[@]} -eq 0 ]]; then
+  echo "▸ suítes de contrato do banco (varredura completa)"
+else
+  echo "▸ suítes de contrato do banco: ${!SELECTED[*]}"
+fi
 
 for s in "${PGTAP_SUITES[@]}"; do
-  run_suite gate "$s" run_pgtap "$s"
+  selected "$s" && run_suite gate "$s" run_pgtap "$s"
 done
 for s in "${GATE_SUITES[@]}"; do
-  run_suite gate "$s" run_psql "$s"
+  selected "$s" && run_suite gate "$s" run_psql "$s"
 done
 for s in "${!KNOWN_RED[@]}"; do
-  run_suite known "$s" run_psql "$s"
+  selected "$s" && run_suite known "$s" run_psql "$s"
 done
 # Contrato do llm_runner em `llm_runs` (#674), pytest contra este mesmo stack.
-run_suite gate backend_integration bash scripts/run-backend-integration.sh
+if selected backend_integration; then
+  run_suite gate backend_integration bash scripts/run-backend-integration.sh
+fi
 
 echo "────────────────────────────────────────"
 printf 'PASS=%d  FAIL(gate)=%d  RED*(conhecida)=%d  VERDE(promover)=%d\n' \
@@ -235,7 +250,9 @@ if [[ ${#fail_gate[@]} -gt 0 ]]; then
   echo "FALHOU: ${fail_gate[*]}"
   status=1
 fi
-if [[ ${status} -eq 0 ]]; then
+if [[ ${status} -eq 0 && ${#SELECTED[@]} -gt 0 ]]; then
+  echo "OK: as suítes pedidas passaram (execução parcial)."
+elif [[ ${status} -eq 0 ]]; then
   echo "OK: todas as suítes de gate passaram."
 fi
 exit ${status}

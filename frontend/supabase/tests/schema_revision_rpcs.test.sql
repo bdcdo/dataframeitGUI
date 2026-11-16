@@ -1,7 +1,7 @@
 -- Regressão da revisão monotônica e das RPCs atômicas de schema.
 --
 -- Como rodar depois de `npx supabase start` e `npx supabase db reset`:
---   npm run test:db:schema-revision-rpcs
+--   npm run test:db -- schema_revision_rpcs
 --
 -- O teste inteiro roda em BEGIN ... ROLLBACK. Os GRANTs compensam o ambiente
 -- local e também são revertidos.

@@ -24,7 +24,7 @@ COMMIT;
 SELECT set_config('request.jwt.claims', '{"sub":"b9a00000-0000-0000-0000-000000000001","supabase_uid":"b9a00000-0000-0000-0000-000000000001"}', false);
 DO $$
 DECLARE
-  conn TEXT := format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database());
+  conn TEXT := pg_temp.self_dblink_connstr();
   init TEXT := 'BEGIN; SET LOCAL ROLE authenticated; SET LOCAL "request.jwt.claims" = ''{"sub":"b9a00000-0000-0000-0000-000000000001","supabase_uid":"b9a00000-0000-0000-0000-000000000001"}'';';
   context JSONB;
   query TEXT;

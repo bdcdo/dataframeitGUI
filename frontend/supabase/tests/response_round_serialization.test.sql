@@ -29,11 +29,11 @@ INSERT INTO public.rounds (id, project_id, label) VALUES
 
 SELECT extensions.dblink_connect(
   'round_writer',
-  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
+  pg_temp.self_dblink_connstr()
 );
 SELECT extensions.dblink_connect(
   'round_switcher',
-  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
+  pg_temp.self_dblink_connstr()
 );
 
 -- O helper converte somente a rejeicao esperada em dado observavel. Qualquer

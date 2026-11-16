@@ -1,7 +1,7 @@
 -- Unicidade da resposta humana corrente em `responses` (issue #609).
 --
 -- Como rodar (após `npx supabase start` e `npx supabase db reset`):
---   npm run test:db:responses-human-latest
+--   npm run test:db -- responses_one_latest_human
 -- ou, à mão:
 --   docker exec -e PGPASSWORD=postgres -i supabase_db_frontend \
 --     psql -U postgres -d postgres -X -v ON_ERROR_STOP=1 \

@@ -37,6 +37,11 @@ case "$1" in
     esac ;;
   exec)
     input="$(mktemp -p "$FAKE_BIN")"; cat >"$input"
+    # Cada chamada registra no log o usuário (-U), se o preâmbulo do dblink
+    # veio por -c, e a primeira linha da suíte que entrou por stdin.
+    user="$(printf '%s\n' "$@" | grep -A1 -x -- -U | tail -1)"
+    preamble="$(printf '%s\n' "$@" | grep -c "pg_temp.self_dblink_connstr")"
+    echo "$user $preamble $(head -1 "$input")" >>"$FAKE_BIN/psql.log"
     same_sql() { cmp -s "$input" "$1"; }
     ${failIfListed("same_sql")} ;;
   *) echo "docker inesperado: $*" >&2; exit 64 ;;
@@ -68,29 +73,77 @@ afterEach(() => {
   fs.rmSync(bin, { recursive: true, force: true });
 });
 
-function run(failing: string[], env: Record<string, string> = {}) {
+function run(failing: string[], env: Record<string, string> = {}, suites: string[] = []) {
   // O próprio CI define GITHUB_ACTIONS; aqui só o caso que o pede o tem.
-  return spawnSync("/bin/bash", [runner], {
+  return spawnSync("/bin/bash", [runner, ...suites], {
     env: { ...process.env, GITHUB_ACTIONS: "", PATH: `${bin}:${process.env.PATH}`, FAKE_BIN: bin, FAKE_FAIL_FILES: failing.map(suite).join(":"), ...env },
     encoding: "utf8",
   });
 }
 
-// A órfã conhecida (value_equivalences, que exige superusuário) falha em toda
-// execução de hoje.
-const knownRed = "value_equivalences";
+const psqlLog = () => fs.readFileSync(path.join(bin, "psql.log"), "utf8");
 
 describe("run-db-tests.sh", () => {
-  it("reporta a órfã conhecida como RED* sem reprovar", () => {
-    const { status, stdout } = run([knownRed]);
-    expect(stdout).toContain(`RED*  ${knownRed} (conhecida, #913)`);
+  it("sem falha, aprova a varredura inteira", () => {
+    const { status, stdout } = run([]);
     expect(stdout).toContain("OK: todas as suítes de gate passaram.");
+    expect(stdout).toContain("RED*(conhecida)=0");
     expect(status).toBe(0);
+  });
+
+  // value_equivalences saiu de KNOWN_RED (#913): conecta como supabase_admin,
+  // a única que não usa postgres, e a falha dela reprova.
+  it("value_equivalences é gate e conecta como supabase_admin", () => {
+    const { status, stdout } = run(["value_equivalences"]);
+    expect(stdout).toContain("  FAIL  value_equivalences");
+    expect(status).toBe(1);
+    const calls = psqlLog().trim().split("\n");
+    // A única conexão de supabase_admin é a da suíte com a diretiva.
+    const directive = fs.readFileSync(suite("value_equivalences"), "utf8").split("\n")[0];
+    expect(directive).toBe("-- @test-role: supabase_admin");
+    expect(calls.filter((line) => line.startsWith("supabase_admin "))).toEqual([
+      `supabase_admin 1 ${directive}`,
+    ]);
+    expect(calls.filter((line) => !/^(postgres|supabase_admin) /.test(line))).toEqual([]);
+  });
+
+  // O connstr do dblink das suítes concorrentes vem do preâmbulo, por -c, na
+  // mesma sessão e antes da suíte (supabase/tests/lib/self_dblink.sql); a suíte
+  // entra inteira por stdin.
+  it("toda suíte psql recebe o preâmbulo do dblink por -c e a suíte por stdin", () => {
+    run([]);
+    const calls = psqlLog().trim().split("\n").map((line) => line.split(" "));
+    const dir = path.join(frontend, "supabase/tests");
+    const suites = fs.readdirSync(dir).filter((name) => name.endsWith(".test.sql"));
+    const firstLines = new Set(
+      suites.map((name) => fs.readFileSync(path.join(dir, name), "utf8").split("\n")[0]),
+    );
+    // Todas menos as duas pgTAP, que rodam por `supabase test db`.
+    expect(calls).toHaveLength(suites.length - 2);
+    for (const [, preamble, ...firstLine] of calls) {
+      expect(preamble).toBe("1");
+      expect(firstLines.has(firstLine.join(" "))).toBe(true);
+    }
+  });
+
+  it("com nomes, roda só as suítes pedidas; nome desconhecido é erro", () => {
+    const only = run([], {}, ["rls_audit", "responses_llm_actor_integrity"]);
+    expect(only.status).toBe(0);
+    expect(only.stdout).toContain("  PASS  rls_audit");
+    expect(only.stdout).toContain("  PASS  responses_llm_actor_integrity");
+    expect(only.stdout).toMatch(/PASS=2 {2}FAIL\(gate\)=0/);
+    expect(only.stdout).not.toContain("backend_integration");
+    expect(only.stdout).toContain("OK: as suítes pedidas passaram (execução parcial).");
+
+    const unknown = run([], {}, ["nao_existe"]);
+    expect(unknown.status).toBe(2);
+    expect(unknown.stderr).toContain("suíte desconhecida: nao_existe");
+    expect(run([], {}, [""]).status).toBe(2);
   });
 
   it("reprova a suíte de gate que falha, com a cauda da saída", () => {
     // schema_revision_serialization saiu de KNOWN_RED (#572): a falha dela reprova.
-    const { status, stdout } = run([knownRed, "rls_audit", "schema_revision_serialization"]);
+    const { status, stdout } = run(["rls_audit", "schema_revision_serialization"]);
     expect(status).toBe(1);
     expect(stdout).toContain("  FAIL  rls_audit");
     expect(stdout).toContain("  FAIL  schema_revision_serialization");
@@ -102,7 +155,7 @@ describe("run-db-tests.sh", () => {
   // O workflow roda tudo num passo só. O passo por suíte de antes mostrava a
   // saída inteira de cada uma e, num travamento, qual suíte estava rodando.
   it("no GitHub Actions abre um grupo por suíte, antes de rodá-la, com a saída inteira", () => {
-    const { status, stdout } = run([knownRed, "rls_audit", "responses_llm_actor_integrity"], { GITHUB_ACTIONS: "true" });
+    const { status, stdout } = run(["rls_audit", "responses_llm_actor_integrity"], { GITHUB_ACTIONS: "true" });
     expect(status).toBe(1);
     for (const failed of ["rls_audit", "responses_llm_actor_integrity"]) {
       const start = stdout.indexOf(`::group::${failed}\n`);
@@ -114,8 +167,8 @@ describe("run-db-tests.sh", () => {
       expect(stdout).toContain(`::error title=Suíte do banco ${failed}::`);
     }
     expect(stdout).toContain("::group::backend_integration\n");
-    expect(stdout).toContain(`::group::${knownRed}\n`);
-    expect(stdout).not.toContain(`::error title=Suíte do banco ${knownRed}`);
+    expect(stdout).toContain("::group::value_equivalences\n");
+    expect(stdout).not.toContain("::error title=Suíte do banco value_equivalences");
     // A saída inteira já está no grupo: a cauda não se repete.
     expect(stdout).not.toContain("saída (cauda)");
   });

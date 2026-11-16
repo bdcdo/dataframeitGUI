@@ -1,6 +1,6 @@
 -- Provas concorrentes do protocolo de locks da auto-revisão (PR #440).
 --
--- Execução: npm run test:db:auto-review-concurrency.
+-- Execução: npm run test:db -- auto_review_assignment_concurrency.
 --
 -- Diferentemente dos testes transacionais comuns, as fixtures precisam estar
 -- commitadas para duas conexões dblink enxergarem o mesmo estado. O arquivo usa
@@ -79,11 +79,11 @@ VALUES (
 
 SELECT extensions.dblink_connect(
   'auto_review_a',
-  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
+  pg_temp.self_dblink_connstr()
 );
 SELECT extensions.dblink_connect(
   'auto_review_b',
-  format('host=%s port=%s dbname=%s user=postgres password=postgres', inet_server_addr(), inet_server_port(), current_database())
+  pg_temp.self_dblink_connstr()
 );
 
 -- ========== sync vs assign ==========

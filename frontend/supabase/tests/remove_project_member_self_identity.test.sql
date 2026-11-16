@@ -1,7 +1,7 @@
 -- Contrato da remoção de membros (issue #177).
 --
 -- Como rodar:
---   npm run test:db:remove-member
+--   npm run test:db -- remove_project_member_self_identity
 --
 -- O runner conecta como `postgres`, que é OWNER das tabelas e portanto BYPASSA
 -- RLS. Todo bloco que exercita a policy troca para o role `authenticated` com

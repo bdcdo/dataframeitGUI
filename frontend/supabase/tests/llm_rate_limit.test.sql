@@ -250,21 +250,11 @@ CREATE TEMP TABLE concurrent_results (
 
 SELECT extensions.dblink_connect(
   'rate_limit_a',
-  format(
-    'hostaddr=%s port=%s dbname=%s user=postgres password=postgres',
-    host(inet_server_addr()),
-    inet_server_port(),
-    current_database()
-  )
+  pg_temp.self_dblink_connstr()
 );
 SELECT extensions.dblink_connect(
   'rate_limit_b',
-  format(
-    'hostaddr=%s port=%s dbname=%s user=postgres password=postgres',
-    host(inet_server_addr()),
-    inet_server_port(),
-    current_database()
-  )
+  pg_temp.self_dblink_connstr()
 );
 
 SELECT extensions.dblink_exec(

@@ -26,6 +26,12 @@ on:
       # que o contrato exercita.
       - "backend/pyproject.toml"
       - "backend/uv.lock"
+      # O conftest lê a URL e as chaves por config.py, e o Python do contrato
+      # vem do .python-version.
+      - "backend/config.py"
+      - "backend/.python-version"
+      # Portas, extensões e auth do Supabase local que as suítes usam.
+      - "frontend/supabase/config.toml"
   workflow_dispatch:
 
 permissions:

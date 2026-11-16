@@ -38,13 +38,11 @@ fi
 
 echo "▸ ${SQL_FILE}"
 
-# TCP no IP roteável do container em vez do socket unix, por dois motivos
-# compostos das suítes com dblink (llm_rate_limit): (1) sobre socket,
-# inet_server_addr()/inet_server_port() são NULL e a conexão derivada vira
-# "port=", falhando em qualquer ambiente; (2) sobre 127.0.0.1 o pg_hba é
-# trust, e dblink chamado por não-superuser (postgres não é superuser na
-# imagem do Supabase) exige que a senha seja efetivamente usada — só as rotas
-# privadas (172.16/12 etc.) autenticam por scram. PGPASSWORD idem.
+# TCP no IP roteável do container em vez do socket unix, pela conexão dblink
+# das suítes concorrentes (supabase/tests/lib/self_dblink.sql): sobre socket,
+# inet_server_addr()/inet_server_port() são NULL, e sobre 127.0.0.1 o pg_hba é
+# trust, que não usa a senha que o dblink de não-superusuário exige; só as
+# rotas privadas (172.16/12 etc.) autenticam por scram. PGPASSWORD idem.
 #
 # Assume o container numa única rede roteável (o caso do Supabase local). Se
 # estiver em mais de uma, `println` emite um IP por linha e `grep -m1 .` pega o
@@ -54,7 +52,20 @@ CONTAINER_IP="$(docker inspect -f \
   '{{range .NetworkSettings.Networks}}{{println .IPAddress}}{{end}}' "${CONTAINER}" \
   | grep -m1 .)"
 
+# Usuário do psql: `postgres`, ou o da diretiva `-- @test-role: <papel>` nas
+# primeiras 40 linhas da suíte (#650). value_equivalences precisa trocar o SESSION_USER, o que exige
+# conexão de superusuário, e o `postgres` da imagem do Supabase não é: ela pede
+# `supabase_admin`, cuja senha na imagem é a mesma do `postgres`
+# (POSTGRES_PASSWORD), e volta a `postgres` na primeira instrução (#913). A
+# diretiva mora na suíte para valer em todo jeito de rodá-la.
+PSQL_USER="$(head -40 "${SQL_FILE}" | sed -n 's/^-- @test-role: *\([a-z_]*\)$/\1/p' | head -1)"
+
+# O preâmbulo (supabase/tests/lib/self_dblink.sql) roda antes da suíte, na
+# mesma sessão, e define a conexão dblink das suítes concorrentes. Vai por -c, e
+# a suíte por stdin, para que o `psql:<stdin>:N` de um erro aponte a linha da
+# suíte.
+PREAMBLE="$(cat "$(dirname "$0")/../supabase/tests/lib/self_dblink.sql")"
 docker exec -e PGPASSWORD=postgres -i "${CONTAINER}" \
-  psql -h "${CONTAINER_IP}" -p 5432 -U postgres -d "${DATABASE}" \
-  -X -v ON_ERROR_STOP=1 \
+  psql -h "${CONTAINER_IP}" -p 5432 -U "${PSQL_USER:-postgres}" -d "${DATABASE}" \
+  -X -v ON_ERROR_STOP=1 -c "${PREAMBLE}" -f - \
   < "${SQL_FILE}"
