@@ -185,7 +185,7 @@ describe("fetchReviewBaseData: lê as tabelas inteiras, página a página", () =
   const tableData = () => ({
     projects: [{ id: "p1", pydantic_fields: [x], pydantic_hash: null, created_by: "owner" }],
     responses: docs.map((doc) => ({
-      id: `r-${doc}`, project_id: "p1", document_id: doc, respondent_id: "ana", respondent_type: "humano", respondent_name: "Ana",
+      id: `r-${doc}`, project_id: "p1", round_id: "round-1", document_id: doc, respondent_id: "ana", respondent_type: "humano", respondent_name: "Ana",
       answers: { x: "A" } as Record<string, string>, justifications: null, is_latest: true, pydantic_hash: null,
       answer_field_hashes: { x: HASH } as Record<string, string>, created_at: "2026-09-01T00:00:00Z",
     })),
@@ -212,6 +212,34 @@ describe("fetchReviewBaseData: lê as tabelas inteiras, página a página", () =
     const last = reviewed.find((doc) => doc.documentId === docId(TOTAL - 1));
     expect(last?.documentTitle).toBe(`Título ${docId(TOTAL - 1)}`);
     expect(last?.fields[0].respondentAnswers).toHaveLength(1);
+  });
+
+  // Cada página é um statement: a republicação do LLM entre duas delas tirava
+  // o documento do Gabarito (ou o punha duas vezes) sem erro nenhum.
+  it("resposta republicada entre duas páginas não some nem duplica o respondente", async () => {
+    const data = tableData();
+    let reads = 0;
+    const client = makeFilterAwareSupabaseMock({
+      tableData: data, writeCalls: [], rpcResults: { read_error_resolutions: { data: [] } },
+      afterRead: (table) => {
+        if (table !== "responses" || ++reads !== 1) return;
+        const now = new Date().toISOString();
+        // Ainda não lida (2ª página): a nova vigente cai antes do cursor.
+        const unread = data.responses.at(-1)!;
+        data.responses.push({ ...unread, id: "r-a", created_at: now });
+        unread.is_latest = false;
+        // Já lida (1ª página): a nova vigente cai depois do cursor.
+        const seen = data.responses[0];
+        data.responses.push({ ...seen, id: "r-z", created_at: now });
+        seen.is_latest = false;
+      },
+    });
+
+    const ctx = await fetchReviewBaseData(client as never, "p1");
+
+    expect(ctx.responsesByDoc.size).toBe(TOTAL);
+    expect(ctx.responsesByDoc.get(docId(TOTAL - 1))?.map((r) => r.id)).toEqual(["r-a"]);
+    expect(ctx.responsesByDoc.get(docId(0))?.map((r) => r.id)).toEqual(["r-z"]);
   });
 
   it("os respondentes de um documento saem na ordem de gravação, não na da PK", async () => {

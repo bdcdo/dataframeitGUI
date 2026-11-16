@@ -8,6 +8,7 @@
 // coordenador ou criador do projeto.
 
 import { scanComparisonBacklog } from "@/lib/auto-comparison";
+import { rowsOrThrow } from "@/lib/supabase/fetch-all-paged";
 import type { SupabaseServerClient } from "@/lib/supabase/server";
 
 type SelfComparisonSource = { kind: "backlog" } | { kind: "documents"; ids: string[] };
@@ -100,11 +101,6 @@ export function planSelfComparisons(input: {
     else plan.assign.push(documentId);
   }
   return plan;
-}
-
-function rowsOrThrow<T>(label: string, result: { data: T[] | null; error: { message: string } | null }): T[] {
-  if (result.error) throw new Error(`${label}: ${result.error.message}`);
-  return result.data ?? [];
 }
 
 interface ProjectRow {

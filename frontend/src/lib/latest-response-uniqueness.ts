@@ -40,7 +40,7 @@ interface Violation {
 }
 
 /** Chave do índice que cobre a linha, ou null quando alguma coluna dela é NULL. */
-function indexKey(r: LatestResponseRow): string | null {
+export function latestResponseIndexKey(r: Omit<LatestResponseRow, "id">): string | null {
   const columns =
     r.respondent_type === "llm"
       ? [r.project_id, r.document_id]
@@ -52,7 +52,7 @@ export function latestResponseUniquenessViolations(
   rows: readonly LatestResponseRow[],
 ): Violation[] {
   const keyed = rows.flatMap((r) => {
-    const key = indexKey(r);
+    const key = latestResponseIndexKey(r);
     return key === null ? [] : [{ key, id: r.id }];
   });
   return [...groupBy(keyed, (r) => r.key)]
