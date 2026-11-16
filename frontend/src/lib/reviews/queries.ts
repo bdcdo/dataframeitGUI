@@ -185,11 +185,10 @@ export async function fetchReviewBaseData(
       .eq("id", projectId)
       .single(),
     readAllOrThrow(
-      // `round_id` é da leitura coerente entre páginas.
-      fetchLatestResponses<ResponseRow & { round_id: string }>(
+      fetchLatestResponses<ResponseRow>(
         supabase,
         projectId,
-        "id, round_id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, pydantic_hash, answer_field_hashes, created_at",
+        "respondent_name, answers, justifications, pydantic_hash, answer_field_hashes, created_at",
       ),
       "as respostas",
     ),

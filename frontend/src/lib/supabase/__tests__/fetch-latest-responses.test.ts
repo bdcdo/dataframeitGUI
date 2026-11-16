@@ -5,7 +5,6 @@ import { makeFilterAwareSupabaseMock } from "@/test-utils/supabase-mock";
 // Publicar uma resposta LLM troca a vigente do documento por uma linha nova,
 // e cada página do cursor é um statement: a troca cabe entre duas páginas.
 describe("fetchLatestResponses: troca de is_latest entre duas páginas", () => {
-  const SELECT = "id, round_id, document_id, respondent_type, respondent_id";
   interface Latest {
     id: string; round_id: string; document_id: string; respondent_type: "humano" | "llm"; respondent_id: string | null;
   }
@@ -28,7 +27,7 @@ describe("fetchLatestResponses: troca de is_latest entre duas páginas", () => {
       tableData: { responses: data }, writeCalls: [],
       afterRead: () => { if (++reads === 1) betweenPages(); },
     });
-    return fetchLatestResponses<Latest>(mock as never, "p1", SELECT);
+    return fetchLatestResponses<Latest>(mock as never, "p1", "created_at");
   };
   const docsOf = (rows: Latest[]) => rows.map((row) => row.document_id).sort();
   const everyDocOnce = seed().map((row) => row.document_id);
@@ -70,7 +69,7 @@ describe("fetchLatestResponses: troca de is_latest entre duas páginas", () => {
     const mock = makeFilterAwareSupabaseMock({
       tableData: { responses: seed().slice(0, 10) }, writeCalls: [], afterRead: () => { reads += 1; },
     });
-    const { data: rows } = await fetchLatestResponses<Latest>(mock as never, "p1", SELECT);
+    const { data: rows } = await fetchLatestResponses<Latest>(mock as never, "p1", "created_at");
     expect(rows).toHaveLength(10);
     expect(reads).toBe(1);
   });
@@ -80,7 +79,7 @@ describe("fetchLatestResponses: troca de is_latest entre duas páginas", () => {
       tableData: { responses: seed() }, writeCalls: [],
       queryErrorForCall: ({ filters }) => filters.some(([, column]) => column === "created_at") ? { message: "gateway fora" } : undefined,
     });
-    const { error } = await fetchLatestResponses<Latest>(mock as never, "p1", SELECT);
+    const { error } = await fetchLatestResponses<Latest>(mock as never, "p1", "created_at");
     expect(error).toEqual({ message: "gateway fora" });
   });
 });
