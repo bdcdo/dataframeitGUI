@@ -124,11 +124,19 @@ describe("useLlmRunProgress", () => {
     const { result } = renderHook(() => useLlmRunProgress("p1", null));
     await waitFor(() => expect(getRunningLlmJob).toHaveBeenCalled());
 
+    // Relógio falso, como no teste abaixo: a 2ª tick só vem depois de um
+    // intervalo de polling (2 s de relógio real).
+    vi.useFakeTimers();
     act(() => result.current.start("job-x"));
+    // A 1ª tick roda no start; o avanço de zero deixa a falha dela assentar.
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(fetchFastAPI).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe("running");
 
-    await waitFor(() => expect(result.current.status).toBe("completed"), {
-      timeout: 5000,
-    });
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+
+    expect(fetchFastAPI).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toBe("completed");
     expect(toastError).not.toHaveBeenCalled();
   });
 
