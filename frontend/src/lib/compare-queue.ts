@@ -1,34 +1,45 @@
-// Funções puras que montam a fila de comparação (analyze/compare/page.tsx).
+// Carregador da fila de comparação (analyze/compare/page.tsx), #751.
 //
-// Extraído do Server Component `ComparePageRoute` (issue #388, epic #376):
-// ele não usa hooks React (é async, sem useState/useEffect), então a extração
-// de complexidade cabível ali é para funções puras em src/lib/ — o mesmo
-// padrão já usado por compare-filters.ts, compare-divergence.ts e
-// compare-version.ts (extraídos deste mesmo arquivo em refactors anteriores).
-// A página fica responsável só por buscar dados no Supabase, chamar estas
-// funções em sequência e montar as props de <ComparePage>.
+// `loadCompareQueue` faz as buscas no Supabase e compõe, em ordem, as funções
+// puras deste arquivo (extraídas do Server Component no #388) até as props de
+// <ComparePage>. As funções são internas: a composição é o que tem contrato, e
+// é por ela que os testes entram, para que mexer na ordem (o que alimenta o
+// quê) quebre um teste. A página fica com autenticação, erro e render.
 
 import {
   currentValueEquivalences,
+  groupValueEquivalencesByField,
   type ValueEquivalence,
   type ValueEquivalencesByField,
 } from "@/lib/equivalence";
 import { comparisonSet, type ComparisonSet } from "@/lib/comparison-set";
-import type { CompareFiltersValue } from "@/lib/compare-filters";
+import {
+  assignedCompareDocIds,
+  compareDefaultsForMode,
+  readCompareFilters,
+  resolveShowAllQueue,
+  type CompareFiltersValue,
+} from "@/lib/compare-filters";
 import {
   type ProjectVersionContext,
   type SchemaVersion,
   formatVersion,
   compareVersions,
+  deriveProjectVersionContext,
+  latestMajorAnchor,
+  resolveMinVersion,
   responseVersionLabel,
   storedVersion,
 } from "@/lib/compare-version";
+import type { resolveProjectQueueIdentity } from "@/lib/auth";
 import type { ReviewsByDoc, StaleReviewsByDoc } from "@/lib/compare-reviews";
 import { reviewValidity } from "@/lib/review-validity";
+import type { SupabaseServerClient } from "@/lib/supabase/server";
 import type { PydanticField } from "@/lib/types";
+import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import type { CompareResponse } from "@/components/compare/compare-types";
 
-export interface CompareDoc {
+interface CompareDoc {
   id: string;
   title: string | null;
   external_id: string | null;
@@ -44,7 +55,7 @@ export interface CompareDoc {
 // (`responsesMap` sai daqui e entra na prop tipada com o wire), compilando em
 // silêncio porque no call site não é object literal e não há excess property
 // check.
-export interface CompareQueueResponse extends CompareResponse {
+interface CompareQueueResponse extends CompareResponse {
   document_id: string;
 }
 
@@ -59,14 +70,18 @@ export interface DocCoverage {
   assignmentStatus: "pendente" | "em_andamento" | "concluido" | null;
 }
 
+// A cobertura que a qualificação do documento consegue medir: tudo menos o
+// `reviewedCount`, que depende dos vereditos buscados depois dela (ver
+// `buildReviewsAndReviewedCounts`).
+type QualifiedCoverage = Omit<DocCoverage, "reviewedCount">;
+
 // Row solta o suficiente para aceitar o resultado do select do Supabase (que
 // também traz o join `documents`, cujo tipo inferido não bate 1:1 com
 // Omit<CompareDoc, "text">) sem replicar seu tipo inferido — mesma pragmática
-// de `as unknown as CompareQueueResponse` que o page.tsx já usava. Sem index
-// signature de propósito: bastam os campos abaixo (structural typing ignora
-// os demais campos da row real/de teste), e um index signature exigiria o
-// mesmo em qualquer valor passado (inclusive em fixtures de teste tipadas
-// como CompareQueueResponse).
+// do `as unknown as CompareQueueResponse` abaixo. Sem index signature de
+// propósito: bastam os campos abaixo (structural typing ignora os demais
+// campos da row), e um index signature exigiria o mesmo em qualquer valor
+// passado.
 interface RawResponseRow {
   document_id: string;
   respondent_name: string | null;
@@ -76,17 +91,12 @@ interface RawResponseRow {
   documents?: unknown;
 }
 
-export interface VersionLogRow {
+interface VersionLogRow {
   version_major: number | null;
   version_minor: number | null;
   version_patch: number | null;
 }
 
-// Local de propósito: é a row de SELECT que `compare/page.tsx` passa
-// posicionalmente (checagem estrutural, sem importar o nome), não um tipo de
-// domínio. Exportá-lo colidia com o `AssignmentRow` homônimo de
-// `auto-review-backlog.ts`, que é um payload de INSERT com outro shape
-// (tem project_id; type/status são literais lá, string solto aqui).
 interface AssignmentRow {
   document_id: string;
   user_id: string;
@@ -94,7 +104,7 @@ interface AssignmentRow {
   status: string;
 }
 
-export interface ReviewRow {
+interface ReviewRow {
   document_id: string;
   field_name: string;
   verdict: string;
@@ -105,16 +115,16 @@ export interface ReviewRow {
   field_hash: string | null;
 }
 
-export interface CommentCountRow {
+interface CommentCountRow {
   document_id: string | null;
   field_name: string | null;
 }
 
-export interface SuggestionCountRow {
+interface SuggestionCountRow {
   field_name: string;
 }
 
-export function indexResponsesByDoc(allResponses: readonly RawResponseRow[] | null): {
+function indexResponsesByDoc(allResponses: readonly RawResponseRow[] | null): {
   responsesByDoc: Map<string, CompareQueueResponse[]>;
   docsMetaMap: Map<string, Omit<CompareDoc, "text">>;
 } {
@@ -136,7 +146,7 @@ export function indexResponsesByDoc(allResponses: readonly RawResponseRow[] | nu
 }
 
 // Respondent names list (do conjunto todo, antes de filtrar)
-export function extractRespondentNames(allResponses: readonly RawResponseRow[] | null): string[] {
+function extractRespondentNames(allResponses: readonly RawResponseRow[] | null): string[] {
   return [
     ...new Set(
       allResponses?.flatMap((r) => (r.respondent_name ? [r.respondent_name] : [])) ?? [],
@@ -147,7 +157,7 @@ export function extractRespondentNames(allResponses: readonly RawResponseRow[] |
 // Build distinct ordered version list desc — une versões do schema_change_log
 // com as efetivamente gravadas em responses (cobre respostas cuja versão veio
 // do backfill por hashes/created_at e não tem entry classificada no log).
-export function buildAvailableVersions(
+function buildAvailableVersions(
   versionLog: readonly VersionLogRow[] | null,
   allResponses: readonly RawResponseRow[] | null,
 ): string[] {
@@ -164,7 +174,7 @@ export function buildAvailableVersions(
 }
 
 // Coding-type assignments map per doc (denominator for % atribuídos)
-export function buildCodingAssignedByDoc(
+function buildCodingAssignedByDoc(
   allAssignments: readonly AssignmentRow[] | null,
 ): Map<string, Set<string>> {
   const codingAssignedByDoc = new Map<string, Set<string>>();
@@ -182,7 +192,7 @@ export function buildCodingAssignedByDoc(
 // showAll (coordenador na aba "Todos") não tem um único assignment individual
 // de referência — mapa vazio. Na aba "Meus" (showAll=false), vale tanto para
 // coordenador quanto para não-coordenador: mesmo filtro por user_id.
-export function buildCompareAssignmentStatusByDoc(
+function buildCompareAssignmentStatusByDoc(
   allAssignments: readonly AssignmentRow[] | null,
   showAll: boolean,
   userId: string,
@@ -202,7 +212,7 @@ export function buildCompareAssignmentStatusByDoc(
   return compareAssignmentStatusByDoc;
 }
 
-export interface QualifyDocumentsContext {
+interface QualifyDocumentsContext {
   compareAssignedDocIds: Set<string> | null;
   codingAssignedByDoc: Map<string, Set<string>>;
   compareAssignmentStatusByDoc: Map<string, "pendente" | "em_andamento" | "concluido">;
@@ -214,11 +224,11 @@ export interface QualifyDocumentsContext {
   equivalencesByField: ValueEquivalencesByField;
 }
 
-export interface QualifiedDocumentsResult {
+interface QualifiedDocumentsResult {
   qualifiedDocIds: string[];
   divergentFields: Record<string, string[]>;
   responsesMap: Record<string, CompareQueueResponse[]>;
-  coverageByDoc: Record<string, DocCoverage>;
+  coverageByDoc: Record<string, QualifiedCoverage>;
 }
 
 // Lentes efêmeras da URL (since/respondent). Aplicadas antes do conjunto de
@@ -284,7 +294,7 @@ function meetsCoverageThresholds(metrics: CoverageMetrics, filters: CompareFilte
 interface QualifiedDocument {
   qualifiedResponses: CompareQueueResponse[];
   divergent: string[];
-  coverage: DocCoverage;
+  coverage: QualifiedCoverage;
 }
 
 function qualifyDocument(
@@ -317,13 +327,12 @@ function qualifyDocument(
       assignedCodingCount: metrics.assignedCodingCount,
       humansFromAssigned: metrics.humansFromAssigned,
       divergentCount: divergent.length,
-      reviewedCount: 0, // preenchido depois, por buildReviewsAndReviewedCounts
       assignmentStatus: ctx.compareAssignmentStatusByDoc.get(docId) ?? null,
     },
   };
 }
 
-export function qualifyDocumentsForCompare(
+function qualifyDocumentsForCompare(
   responsesByDoc: Map<string, CompareQueueResponse[]>,
   docsMetaMap: Map<string, Omit<CompareDoc, "text">>,
   ctx: QualifyDocumentsContext,
@@ -331,7 +340,7 @@ export function qualifyDocumentsForCompare(
   const qualifiedDocIds: string[] = [];
   const divergentFields: Record<string, string[]> = {};
   const responsesMap: Record<string, CompareQueueResponse[]> = {};
-  const coverageByDoc: Record<string, DocCoverage> = {};
+  const coverageByDoc: Record<string, QualifiedCoverage> = {};
 
   for (const [docId, docResponses] of responsesByDoc) {
     if (ctx.compareAssignedDocIds && !ctx.compareAssignedDocIds.has(docId)) continue;
@@ -352,7 +361,7 @@ export function qualifyDocumentsForCompare(
 // textMap só contém docs com excluded_at IS NULL (filtrado na query). Usar
 // como gate final garante que docs soft-deletados saiam da comparação por
 // completo, não apenas com texto vazio.
-export function buildDocumentsForCompare(
+function buildDocumentsForCompare(
   qualifiedDocIds: string[],
   textMap: Map<string, string>,
   docsMetaMap: Map<string, Omit<CompareDoc, "text">>,
@@ -365,10 +374,13 @@ export function buildDocumentsForCompare(
     });
 }
 
-export function buildReviewsAndReviewedCounts(
+// Vereditos da identidade efetiva e, a partir deles, a cobertura final de
+// cada documento qualificado: a medida na qualificação mais o `reviewedCount`,
+// quantas das divergências do documento ela já revisou.
+function buildReviewsAndReviewedCounts(
   reviews: readonly ReviewRow[] | null,
   userId: string,
-  qualifiedDocIds: string[],
+  qualifiedCoverageByDoc: Record<string, QualifiedCoverage>,
   divergentFields: Record<string, string[]>,
   fieldByName: ReadonlyMap<string, PydanticField>,
 ): {
@@ -380,7 +392,7 @@ export function buildReviewsAndReviewedCounts(
    * referência.
    */
   staleReviews: StaleReviewsByDoc;
-  reviewedCountByDoc: Record<string, number>;
+  coverageByDoc: Record<string, DocCoverage>;
 } {
   const existingReviews: ReviewsByDoc = {};
   const staleReviews: StaleReviewsByDoc = {};
@@ -419,18 +431,21 @@ export function buildReviewsAndReviewedCounts(
     reviewedFields.add(r.field_name);
   });
 
-  const reviewedCountByDoc: Record<string, number> = {};
-  for (const docId of qualifiedDocIds) {
+  const coverageByDoc: Record<string, DocCoverage> = {};
+  for (const [docId, coverage] of Object.entries(qualifiedCoverageByDoc)) {
     const reviewed = myReviewsByDoc.get(docId) ?? new Set<string>();
     const divergent = divergentFields[docId] ?? [];
-    reviewedCountByDoc[docId] = divergent.filter((fn) => reviewed.has(fn)).length;
+    coverageByDoc[docId] = {
+      ...coverage,
+      reviewedCount: divergent.filter((fn) => reviewed.has(fn)).length,
+    };
   }
 
-  return { existingReviews, staleReviews, reviewedCountByDoc };
+  return { existingReviews, staleReviews, coverageByDoc };
 }
 
 // Build comment+suggestion counts by (doc, field)
-export function buildCountsByKey(
+function buildCountsByKey(
   commentCounts: readonly CommentCountRow[] | null,
   suggestionCounts: readonly SuggestionCountRow[] | null,
 ): {
@@ -449,9 +464,8 @@ export function buildCountsByKey(
   return { commentCountsByKey, suggestionCountsByField };
 }
 
-// Sort docs: most unreviewed divergences first. `.toSorted` para não mutar o
-// array recebido (o caller ainda pode precisar da ordem original).
-export function sortDocumentsByPendingDivergence(
+// Sort docs: most unreviewed divergences first.
+function sortDocumentsByPendingDivergence(
   documents: CompareDoc[],
   coverageByDoc: Record<string, DocCoverage>,
 ): CompareDoc[] {
@@ -467,7 +481,7 @@ export function sortDocumentsByPendingDivergence(
 // Serialize equivalences for the client component (Maps don't cross the RSC
 // boundary). Only the current question version of each field ships: an
 // equivalence of another version fuses nothing, and values can be long texts.
-export function serializeEquivalencesForClient(
+function serializeEquivalencesForClient(
   equivalencesByField: ValueEquivalencesByField,
   fields: readonly PydanticField[],
 ): Record<string, ValueEquivalence[]> {
@@ -477,4 +491,224 @@ export function serializeEquivalencesForClient(
     if (current.length > 0) serialized[field.name] = current;
   }
   return serialized;
+}
+
+// Quem vê a fila, resolvido pela página (autenticação e impersonação ficam
+// lá). `queueUserId` é a identidade efetiva: a do membro impersonado, quando
+// há; `ownMemberUserId` é a de quem está logado.
+export type CompareQueueIdentity = ReturnType<typeof resolveProjectQueueIdentity> & {
+  isCoordinator: boolean;
+};
+
+export async function loadCompareQueue(
+  supabase: Pick<SupabaseServerClient, "from">,
+  projectId: string,
+  // Promise para que a resolução de acesso corra em paralelo com as buscas
+  // que não dependem dela. Se a página a rejeitar (identidade indisponível),
+  // o carregador rejeita junto. Ela precisa entrar no primeiro Promise.all,
+  // sem `await` antes: senão a rejeição fica um tempo sem handler e a
+  // checagem de acesso passa a correr depois das buscas.
+  identity: Promise<CompareQueueIdentity>,
+  searchParams: Record<string, string | undefined>,
+) {
+  const [
+    { data: project },
+    { data: allResponses, error: responsesError },
+    { data: versionLog },
+    { data: allAssignments },
+    { data: allEquivalences },
+    { ownMemberUserId, queueUserId, isImpersonating, isCoordinator },
+  ] = await Promise.all([
+    supabase
+      .from("projects")
+      .select(
+        "pydantic_hash, pydantic_fields, min_responses_for_comparison, schema_version_major, schema_version_minor, schema_version_patch, automation_mode",
+      )
+      .eq("id", projectId)
+      .single(),
+    supabase
+      .from("responses")
+      // `documents!inner` + filtro excluded_at: documentos arquivados não
+      // entram na fila de comparação (consistente com a contagem de B4).
+      .select(
+        "id, document_id, respondent_type, respondent_name, respondent_id, answers, justifications, is_latest, is_partial, pydantic_hash, answer_field_hashes, schema_version_major, schema_version_minor, schema_version_patch, created_at, documents!inner(id, title, external_id)",
+      )
+      .eq("project_id", projectId)
+      .is("documents.excluded_at", null)
+      .is("documents.exclusion_pending_at", null)
+      .limit(5000),
+    supabase
+      .from("schema_change_log")
+      .select("version_major, version_minor, version_patch")
+      .eq("project_id", projectId)
+      .not("version_major", "is", null)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("assignments")
+      .select("document_id, user_id, type, status")
+      .eq("project_id", projectId),
+    // Equivalências de valor: escopo do projeto, uma linha por par de valores
+    // (centenas por projeto), então não há o que recortar por documento.
+    fetchProjectValueEquivalences(supabase, projectId),
+    identity,
+  ]);
+
+  if (responsesError) return { ok: false as const, error: responsesError.message };
+
+  // fieldName -> equivalências de valor do projeto. Serve à divergência no
+  // servidor e à fusão dos cards no cliente.
+  const equivalencesByField = groupValueEquivalencesByField(allEquivalences);
+
+  // Fail-CLOSED (ao contrario de comments/llm-insights): showAllQueue decide
+  // quais documentos aparecem na fila — quem não pediu "todos" ve so os
+  // atribuidos a si (compareAssignedDocIds). A policy RLS deixa qualquer
+  // membro ler todas as responses, entao esse recorte e so aplicacional;
+  // fail-open exporia documentos/respostas de terceiros em erro transitorio.
+  //
+  // Coordenador também compara documentos (não só supervisiona) — por isso o
+  // padrão é a fila pessoal dele, igual pesquisador. "Todos" é uma escolha
+  // explícita via aba/param `queue=all`, só alcançável por coordenador (um
+  // não-coordenador nunca chega a showAllQueue=true, mesmo editando a URL).
+  // resolveShowAllQueue é testada isoladamente (ver compare-filters.test.ts) —
+  // é a mesma classe de expressão que já causou o bug original da página.
+  const showAllQueue = resolveShowAllQueue(isCoordinator, searchParams.queue);
+
+  const fields = (project?.pydantic_fields || []) as PydanticField[];
+
+  // Defaults da fila derivados do modo de automação do projeto. Em compare_llm
+  // o piso de humanos cai para 1 (a 2ª resposta exigida por minTotal é o LLM) —
+  // sem isso a aba ficaria vazia para documentos de 1 codificador + LLM. A
+  // revisora ainda pode estreitar a lente via o filtro `min_humans` na URL.
+  const compareDefaults = compareDefaultsForMode(
+    project?.automation_mode,
+    project?.min_responses_for_comparison ?? 2,
+  );
+  const filters = readCompareFilters(searchParams, compareDefaults);
+
+  // Contexto de versão do helper compartilhado (compare-version.ts) — a MESMA
+  // fonte e fallback {0,1,0} do fecho (compare-sync.ts) e do gatilho
+  // (auto-comparison.ts). A fila resolve seu `minVersion` a partir da URL
+  // (`filters.version`, que pode ser uma lente manual), não da constante.
+  const { version: projectVersion, ctx: projectVersionCtx } =
+    deriveProjectVersionContext(project ?? {});
+  const minVersion = resolveMinVersion(filters.version, projectVersion);
+  const sinceMs = filters.since ? new Date(filters.since).getTime() : null;
+
+  // Compare-type assignments filter (ver assignedCompareDocIds).
+  const compareAssignedDocIds = assignedCompareDocIds(
+    showAllQueue,
+    allAssignments,
+    queueUserId,
+  );
+
+  // Status per user-doc for compare assignment (used in list and panel)
+  const compareAssignmentStatusByDoc = buildCompareAssignmentStatusByDoc(
+    allAssignments,
+    showAllQueue,
+    queueUserId,
+  );
+
+  const { responsesByDoc, docsMetaMap } = indexResponsesByDoc(allResponses);
+
+  const { qualifiedDocIds, divergentFields, responsesMap, coverageByDoc: qualifiedCoverageByDoc } =
+    qualifyDocumentsForCompare(responsesByDoc, docsMetaMap, {
+      compareAssignedDocIds,
+      codingAssignedByDoc: buildCodingAssignedByDoc(allAssignments),
+      compareAssignmentStatusByDoc,
+      filters,
+      minVersion,
+      projectVersionCtx,
+      sinceMs,
+      fields,
+      equivalencesByField,
+    });
+
+  // Fetch text + reviews + comment counts
+  const [{ data: docTexts }, { data: reviews }, { data: commentCounts }, { data: suggestionCounts }] =
+    await Promise.all([
+      qualifiedDocIds.length > 0
+        ? supabase
+            .from("documents")
+            .select("id, text")
+            .in("id", qualifiedDocIds)
+            .is("excluded_at", null)
+            .is("exclusion_pending_at", null)
+        : Promise.resolve({ data: [] as { id: string; text: string }[] }),
+      // Só os reviews da identidade efetiva: a revisão é por revisor e este
+      // fetch alimenta exclusivamente existingReviews/reviewedCount (ver
+      // buildReviewsAndReviewedCounts). Vereditos de terceiros contaminavam o
+      // estado "já revisado" da tela e travavam o fecho do parecer.
+      supabase
+        .from("reviews")
+        .select("document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, field_hash")
+        .eq("project_id", projectId)
+        .eq("reviewer_id", queueUserId),
+      supabase
+        .from("project_comments")
+        .select("document_id, field_name")
+        .eq("project_id", projectId)
+        .is("resolved_at", null),
+      supabase
+        .from("schema_suggestions")
+        .select("field_name")
+        .eq("project_id", projectId)
+        .eq("status", "pending"),
+    ]);
+
+  const textMap = new Map((docTexts || []).map((d) => [d.id, d.text]));
+
+  // Reviews da identidade efetiva — na impersonação, o progresso exibido é o
+  // do dono da fila, não o do master.
+  const { existingReviews, staleReviews, coverageByDoc } = buildReviewsAndReviewedCounts(
+    reviews,
+    queueUserId,
+    qualifiedCoverageByDoc,
+    divergentFields,
+    new Map(fields.map((f) => [f.name, f])),
+  );
+
+  const { commentCountsByKey, suggestionCountsByField } = buildCountsByKey(
+    commentCounts,
+    suggestionCounts,
+  );
+
+  return {
+    ok: true as const,
+    props: {
+      documents: sortDocumentsByPendingDivergence(
+        buildDocumentsForCompare(qualifiedDocIds, textMap, docsMetaMap),
+        coverageByDoc,
+      ),
+      responses: responsesMap,
+      divergentFields,
+      fields,
+      existingReviews,
+      staleReviews,
+      projectPydanticHash: project?.pydantic_hash ?? null,
+      respondentNames: extractRespondentNames(allResponses),
+      defaultMinHumans: compareDefaults.minHumans,
+      defaultVersion: compareDefaults.version,
+      coverageByDoc: coverageByDoc,
+      commentCountsByKey,
+      suggestionCountsByField,
+      availableVersions: buildAvailableVersions(versionLog, allResponses),
+      latestMajorLabel: formatVersion(latestMajorAnchor(projectVersion)),
+      currentProjectVersion: formatVersion(projectVersion),
+      // Maps don't cross the RSC boundary.
+      equivalencesByField: serializeEquivalencesForClient(equivalencesByField, fields),
+      currentUserId: ownMemberUserId,
+      canManageAnyPair: isCoordinator,
+      isCoordinator,
+      queueContext: {
+        showingAll: showAllQueue,
+        // Distingue "sem nada atribuído" de "tem atribuído, mas foi filtrado
+        // por cobertura/divergência" — usado só pela mensagem de estado vazio
+        // em ComparePage (trocar de aba não resolve o segundo caso). Só é
+        // não-null quando showAllQueue=false (aba "Meus"), que é justamente
+        // quando a mensagem é exibida.
+        hasAssignedDocs: (compareAssignedDocIds?.size ?? 0) > 0,
+        isImpersonating,
+      },
+    },
+  };
 }
