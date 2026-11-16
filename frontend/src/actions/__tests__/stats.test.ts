@@ -114,7 +114,7 @@ describe("resolveNote / reopenNote", () => {
 
     expect(r).toEqual({ success: false, error: copyWithRef(copy) });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedLine(/^\[stats\] .* falhou$/, { code: "57014", message: "canceling statement due to statement timeout" }),
+      loggedLine(/\[stats\] .* falhou/, { code: "57014", message: "canceling statement due to statement timeout" }),
     );
     expect(hoisted.revalidate).not.toHaveBeenCalled();
     consoleError.mockRestore();

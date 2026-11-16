@@ -174,7 +174,7 @@ describe("erro do banco não chega cru ao toast", () => {
 
     expect(await run()).toEqual({ error: copyWithRef(copy) });
     expect(consoleError).toHaveBeenCalledWith(
-      loggedLine(/^\[projects\] .* falhou$/, dbError),
+      loggedLine(/\[projects\] .* falhou/, dbError),
     );
     consoleError.mockRestore();
   });

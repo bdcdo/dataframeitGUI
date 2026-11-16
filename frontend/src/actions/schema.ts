@@ -364,10 +364,11 @@ export async function recoverFieldsFromStoredCode(
   } catch (e) {
     // O 4xx do backend já vem com copy pt-BR acionável (projeto sem código,
     // acesso negado). O 5xx o fetchFastAPI já levou ao log, com status e
-    // detail; falha de rede ("fetch failed") é diagnóstico que ainda não foi.
-    // Os dois dão a copy pt-BR do fluxo.
+    // detail, e a mensagem dele traz o código daquela linha: vai como está.
+    // Falha de rede ("fetch failed") é diagnóstico que ainda não foi ao log e
+    // dá a copy pt-BR do fluxo.
     const generic = "Não foi possível recuperar os campos do código armazenado. Tente novamente.";
-    if (e instanceof ApiError) return { error: e.status < 500 ? e.message : generic };
+    if (e instanceof ApiError) return { error: e.message };
     return { error: caughtErrorCopy("[schema] recuperação dos campos falhou", e, generic) };
   }
 }

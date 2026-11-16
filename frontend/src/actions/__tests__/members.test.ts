@@ -154,7 +154,7 @@ vi.mock("@/actions/comparisons", () => ({
 let consoleError: ReturnType<typeof vi.spyOn>;
 function expectLogged(message: string) {
   expect(consoleError).toHaveBeenCalledWith(
-    loggedLine(/^\[members\] .* falhou$/, { message }),
+    loggedLine(/\[members\] .* falhou/, { message }),
   );
 }
 

@@ -823,18 +823,16 @@ describe("erro de servidor não chega cru ao toast", () => {
   });
 
   // O 5xx já foi para o log no fetchFastAPI, com o status e o detail; a
-  // mensagem do ApiError aqui é a copy dele, e logá-la de novo só duplica.
-  it("recoverFieldsFromStoredCode com 5xx devolve copy pt-BR sem logar de novo", async () => {
+  // mensagem do ApiError aqui é a copy dele, com o código daquela linha do log,
+  // e vai ao toast como está. Logá-la de novo só duplicaria.
+  it("recoverFieldsFromStoredCode com 5xx devolve a copy do fetchFastAPI, com o código, sem logar de novo", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    fetchMock.mockRejectedValueOnce(
-      new ApiError("Erro no servidor (HTTP 502). Tente novamente.", 502),
-    );
+    const copy = "Erro no servidor (HTTP 502). Tente novamente. — código 0f3k2a";
+    fetchMock.mockRejectedValueOnce(new ApiError(copy, 502));
 
     const result = await recoverFieldsFromStoredCode("p1");
 
-    expect(result).toEqual({
-      error: "Não foi possível recuperar os campos do código armazenado. Tente novamente.",
-    });
+    expect(result).toEqual({ error: copy });
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });

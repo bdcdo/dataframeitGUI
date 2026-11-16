@@ -87,7 +87,7 @@ describe("researcher field order — erro do banco", () => {
     // action duplicaria o evento.
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalledWith(
-      loggedLine(/^\[field-order\] .* falhou$/, pgError),
+      loggedLine(/\[field-order\] .* falhou/, pgError),
     );
     consoleError.mockRestore();
   });

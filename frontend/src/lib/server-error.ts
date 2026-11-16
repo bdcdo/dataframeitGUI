@@ -33,18 +33,22 @@ export function serverErrorCopy(
   if (specific) return specific;
   // No navegador (o `fetchFastAPI` dos componentes cliente), o log fica no
   // console de quem usa: um código ali não acharia nada no `fly logs`.
+  const detail = { code: error.code, message: error.message };
   if (typeof window !== "undefined") {
-    console.error(scope, { code: error.code, message: error.message });
+    console.error(scope, detail);
     return copy.generic;
   }
   // Uma linha só, com o JSON no fim, como a do `instrumentation.ts`: o objeto
   // passado à parte o Node quebra em várias linhas, e o grep pelo código
   // traria só o escopo.
-  const ref = crypto.getRandomValues(new Uint32Array(1))[0].toString(36).padStart(6, "0");
-  console.error(
-    `[erro ${ref}] ${scope} ${JSON.stringify({ code: error.code, message: error.message })}`,
-  );
+  const ref = formatErrorCode(crypto.getRandomValues(new Uint32Array(1))[0]);
+  console.error(`[erro ${ref}] ${scope} ${JSON.stringify(detail)}`);
   return appendErrorCode(copy.generic, ref);
+}
+
+// Um formato só para o código sorteado e o do digest, que o grep acha igual.
+function formatErrorCode(n: number): string {
+  return n.toString(36).padStart(6, "0");
 }
 
 function appendErrorCode(copy: string, code: string): string {
@@ -87,7 +91,7 @@ export function errorCode(error: unknown): string | null {
       ? error.digest
       : undefined;
   if (typeof digest !== "string" || !/^\d+$/.test(digest)) return null;
-  return Number(digest).toString(36).padStart(6, "0");
+  return formatErrorCode(Number(digest));
 }
 
 // Server Action que o servidor não reconhece: a página foi aberta antes de um

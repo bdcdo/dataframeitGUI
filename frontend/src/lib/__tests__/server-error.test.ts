@@ -108,12 +108,14 @@ describe("caughtErrorCopy", () => {
     caughtErrorCopy("[x] falhou", new TypeError("fetch failed"), "g");
     expect(consoleError).toHaveBeenNthCalledWith(
       1,
-      loggedLine("[x] falhou", { code: undefined, message: "boom" }),
+      loggedLine("[x] falhou", { message: "boom" }),
     );
     expect(consoleError).toHaveBeenNthCalledWith(
       2,
-      loggedLine("[x] falhou", { code: undefined, message: "fetch failed" }),
+      loggedLine("[x] falhou", { message: "fetch failed" }),
     );
+    // Sem code string, a linha não leva a chave.
+    expect(consoleError.mock.calls.flat().join()).not.toContain('"code"');
   });
 });
 

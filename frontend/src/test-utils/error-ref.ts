@@ -10,25 +10,14 @@ export function copyWithRef(copy: string) {
   return expect.stringMatching(new RegExp(`^${escape(copy)} — código ${REF}$`));
 }
 
-interface AsymmetricMatcher {
-  asymmetricMatch(actual: unknown): boolean;
-}
-
-function matches(expected: unknown, actual: unknown): boolean {
-  if (typeof expected === "object" && expected !== null && "asymmetricMatch" in expected) {
-    return (expected as AsymmetricMatcher).asymmetricMatch(actual);
-  }
-  return Object.is(expected, actual);
-}
-
 /**
  * A linha `[erro <código>] <escopo> <json>` de `serverErrorCopy`. O escopo é
  * exato (string) ou um padrão (RegExp, sem âncoras); `payload`, quando dado,
- * confere só as chaves que traz.
+ * confere só as chaves que traz (`expect.objectContaining`).
  */
 export function loggedLine(scope: string | RegExp, payload?: Record<string, unknown>) {
-  const scopePattern =
-    typeof scope === "string" ? escape(scope) : scope.source.replace(/^\^/, "").replace(/\$$/, "");
+  const scopePattern = typeof scope === "string" ? escape(scope) : scope.source;
+  const description = `loggedLine(${String(scope)}, ${JSON.stringify(payload)})`;
   const line = new RegExp(`^\\[erro ${REF}\\] (?:${scopePattern}) (\\{.*\\})$`);
   return {
     asymmetricMatch(actual: unknown): boolean {
@@ -36,10 +25,9 @@ export function loggedLine(scope: string | RegExp, payload?: Record<string, unkn
       const json = line.exec(actual)?.[1];
       if (json === undefined) return false;
       if (!payload) return true;
-      const logged = JSON.parse(json) as Record<string, unknown>;
-      return Object.entries(payload).every(([key, value]) => matches(value, logged[key]));
+      return expect.objectContaining(payload).asymmetricMatch(JSON.parse(json));
     },
-    toString: () => `loggedLine(${String(scope)}, ${JSON.stringify(payload)})`,
-    toAsymmetricMatcher: () => `loggedLine(${String(scope)}, ${JSON.stringify(payload)})`,
+    toString: () => description,
+    toAsymmetricMatcher: () => description,
   };
 }
