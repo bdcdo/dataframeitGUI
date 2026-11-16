@@ -213,6 +213,15 @@ assert_no_probe() {
   fi
 }
 
+# O conserto termina com a sonda que diz se o health voltou.
+assert_probe_after_repair() {
+  assert_contains "$CALLS_LOG.summary" "depois do conserto"
+  if [[ ! -s "$CALLS_LOG.curl" ]]; then
+    echo "o conserto tem de terminar com a sonda" >&2
+    exit 1
+  fi
+}
+
 CALLS_LOG="$tmp_dir/calls"
 bash -n "$vigia" "$0"
 
@@ -229,6 +238,7 @@ MACHINES_JSON="$(machines "$(machine m1)" "$(machine m2 failed)")"
 expect_failure
 assert_calls "machine clone m2 -a app-teste --region gru --name vigia-m2
 machine destroy m2 -a app-teste --force"
+assert_probe_after_repair
 
 # Crash em loop que esgotou os restarts (Machine "stopped") na SEGUNDA
 # Machine: recria, e prova que a regra olha todas, não só .[0].
@@ -406,6 +416,7 @@ DESTROY_FAILS=""
 expect_failure
 assert_calls "machine destroy m2 -a app-teste --force"
 assert_state "m1 clone1"
+assert_probe_after_repair
 expect_success
 assert_calls ""
 
