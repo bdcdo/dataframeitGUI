@@ -12,14 +12,21 @@ on:
 permissions:
   contents: read
 
+# Dois grupos de concorrência, porque o deploy espera as runs de LLM por até
+# 4 h e o vigia da API (fly-vigia.yml) ficava na fila esse tempo todo (#840):
+#   - este, do workflow inteiro, só põe os deploys do backend em fila entre si,
+#     na ordem dos pushes, como antes;
+#   - `fly-deploy-backend`, no job `deploy`, é o que o vigia divide com o
+#     deploy, e cobre só o trecho que mexe nas Machines.
+# O build e a espera longa ficam no job `prepare`, fora do segundo grupo.
 concurrency:
-  group: fly-deploy-backend
+  group: fly-deploy-backend-pipeline
   cancel-in-progress: false
   queue: max
 
 jobs:
-  deploy:
-    name: flyctl deploy
+  prepare:
+    name: build e espera das runs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,7 +43,8 @@ jobs:
         working-directory: backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-      - name: Esperar as runs de LLM em curso terminarem
+      - &wait_llm_runs
+        name: Esperar as runs de LLM em curso terminarem
         # Trocar a Machine no meio de uma run mata o job, e o kill_timeout de
         # 5 min não cobre runs de horas. O /health informa quantas runs estão
         # ativas; o deploy espera zerar, por até 4 h, e segue se a API não
@@ -103,6 +111,28 @@ jobs:
             echo "$active_jobs run(s) em curso; nova consulta em ${poll_seconds} s."
             sleep "$poll_seconds"
           done
+
+  deploy:
+    name: flyctl deploy
+    needs: prepare
+    runs-on: ubuntu-latest
+    # A fila que o vigia da API divide com o deploy: durante a troca há Machines
+    # transitórias que o vigia não pode tomar por presas, e o vigia não pode
+    # recriar Machine no meio do preflight, do deploy ou do postflight.
+    concurrency:
+      group: fly-deploy-backend
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1
+      # A mesma espera do job `prepare`, repetida já dentro da fila do vigia.
+      # Entre o fim daquela espera e este ponto passam a subida do runner e, se
+      # houver uma passada do vigia em curso, a passada inteira; uma run
+      # iniciada nesse intervalo morreria na troca. Quase sempre esta leitura
+      # vê zero runs e sai na hora. Se vir uma run, espera por ela aqui dentro,
+      # com o vigia na fila: é o caso raro que sobra do #840.
+      - *wait_llm_runs
       - name: Recusar cardinalidade divergente antes do deploy
         run: bash .github/scripts/check-backend-fly-machines.sh pre
         env:
@@ -123,8 +153,10 @@ jobs:
   # push e workflow_dispatch; portanto a notificacao nao forma loop recursivo.
   notify-failure:
     name: Registrar falha do deploy
-    needs: deploy
-    if: ${{ always() && needs.deploy.result == 'failure' }}
+    # Falha no build ou na espera deixa o job `deploy` como "skipped", e não
+    # "failure": sem olhar o `prepare`, ela não abriria incidente.
+    needs: [prepare, deploy]
+    if: ${{ always() && (needs.prepare.result == 'failure' || needs.deploy.result == 'failure') }}
     permissions:
       issues: write
     uses: ./.github/workflows/notify-deploy-failure.yml

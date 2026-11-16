@@ -118,11 +118,13 @@ repos:
 
       # Contrato de custo/disponibilidade do backend no Fly: o workflow só
       # converge de 0/1 para uma Machine e valida tamanho, região e health.
+      # O fly-vigia.yml entra porque o teste lê dele o grupo de concorrência que
+      # o job de deploy tem de dividir com o vigia da API.
       - id: backend-fly-machine-contract
         name: backend Fly machine contract
         entry: .github/scripts/test-backend-fly-machine-contract.sh
         language: system
-        files: ^(\.github/(workflows/fly-deploy\.yml|scripts/((check|test)-backend-fly-machine.*\.sh|fly-toml-contract\.py))|backend/fly\.toml)$
+        files: ^(\.github/(workflows/fly-(deploy|vigia)\.yml|scripts/((check|test)-backend-fly-machine.*\.sh|fly-toml-contract\.py))|backend/fly\.toml)$
         pass_filenames: false
         require_serial: true
 

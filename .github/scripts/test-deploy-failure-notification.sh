@@ -44,8 +44,15 @@ ruby -ryaml -e '
     abort("caller não pode cancelar deploy em execução: #{path}") unless concurrency["cancel-in-progress"] == false
 
     caller = workflow.fetch("jobs").fetch("notify-failure")
-    abort("caller sem dependência do deploy: #{path}") unless caller["needs"] == "deploy"
-    abort("caller sem condição de failure: #{path}") unless caller.fetch("if").include?("needs.deploy.result == \u0027failure\u0027")
+    # Todo job do caller, menos o próprio notificador, tem de estar no `needs`
+    # e na condição: no backend o deploy tem dois jobs, e a falha do primeiro
+    # deixa o segundo "skipped", que não é "failure".
+    watched = workflow.fetch("jobs").keys - ["notify-failure"]
+    abort("caller sem dependência de todos os jobs do deploy: #{path}") unless Array(caller["needs"]).sort == watched.sort
+    watched.each do |job|
+      abort("caller sem condição de failure do job #{job}: #{path}") unless caller.fetch("if").include?("needs.#{job}.result == \u0027failure\u0027")
+    end
+    abort("caller precisa rodar depois de job que falhou: #{path}") unless caller.fetch("if").include?("always()")
     abort("caller não usa workflow canônico: #{path}") unless caller["uses"] == "./.github/workflows/notify-deploy-failure.yml"
     abort("caller precisa somente de issues: write: #{path}") unless caller.fetch("permissions") == { "issues" => "write" }
 
