@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { productionSourceFiles, SOURCE_EXTENSIONS, SRC_ROOT } from "@/test-utils/source-files";
 import { runGit } from "@/test-utils/isolated-git";
 
 const mockedCreateClient = vi.hoisted(() => vi.fn(() => ({ client: true })));
@@ -10,20 +11,9 @@ const mockedCreateClient = vi.hoisted(() => vi.fn(() => ({ client: true })));
 vi.mock("server-only", () => ({}));
 vi.mock("@supabase/supabase-js", () => ({ createClient: mockedCreateClient }));
 
-const SRC_ROOT = path.resolve(process.cwd(), "src");
 const FRONTEND_ROOT = path.resolve(process.cwd());
 const REPO_ROOT = path.resolve(FRONTEND_ROOT, "..");
 const ADMIN_FILE = path.join(SRC_ROOT, "lib/supabase/admin.ts");
-const SOURCE_EXTENSIONS = [
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-];
 const SECURITY_TEXT_EXTENSIONS = new Set([
   ...SOURCE_EXTENSIONS,
   ".bash",
@@ -67,27 +57,6 @@ const EXPECTED_RUNTIME_IMPORTERS = [
   // foi autorizada pela RPC que a gravou.
   "lib/value-equivalence-effects.ts",
 ];
-
-function sourceFiles(dir: string): string[] {
-  const files: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const absolute = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name !== "__tests__" && entry.name !== "test-utils") {
-        files.push(...sourceFiles(absolute));
-      }
-      continue;
-    }
-    if (
-      SOURCE_EXTENSIONS.includes(path.extname(entry.name)) &&
-      !entry.name.includes(".test.") &&
-      !entry.name.includes(".spec.")
-    ) {
-      files.push(absolute);
-    }
-  }
-  return files;
-}
 
 // Cada arquivo passa pelo parser uma única vez por execução. O teste de
 // caminho runtime faz uma busca no grafo a partir de cada módulo "use client"
@@ -372,7 +341,7 @@ beforeAll(async () => {
 describe("fronteira do Supabase admin client", () => {
   // Grafo e contagem saem da coleta, que não tem timeout: o percurso da AST de
   // todo `src/` dentro de um caso chegou a 1,7 s com a suíte sob carga.
-  const files = sourceFiles(SRC_ROOT);
+  const files = productionSourceFiles();
   const graph = importGraph(files);
   const adminFactoryCalls = countAdminFactoryCalls(files);
 

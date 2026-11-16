@@ -4,12 +4,12 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import config from "../../../vitest.config";
 import { isolatedGitEnvironment, runGit, stripGitEnvironment } from "@/test-utils/isolated-git";
+import { listFiles, SRC_ROOT } from "@/test-utils/source-files";
 
 // Teste que chama git em subprocesso sem passar por src/test-utils/isolated-git.ts
 // herda, no pre-push, o GIT_DIR do hook e age sobre o repositório do push. A
 // regra é textual: reprova a chamada direta de git por child_process em
 // arquivo de teste, e o helper é o único lugar autorizado.
-const SRC_ROOT = path.resolve(process.cwd(), "src");
 // O helper é o lugar autorizado, e este arquivo traz amostras da regra.
 const ALLOWED = new Set([
   path.join(SRC_ROOT, "test-utils/isolated-git.ts"),
@@ -17,17 +17,11 @@ const ALLOWED = new Set([
 ]);
 const DIRECT_GIT_CALL = /\b(?:execFileSync|execFile|execSync|exec|spawnSync|spawn)\(\s*["'`]git\b/;
 
-function testFiles(dir: string): string[] {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const absolute = path.join(dir, entry.name);
-    if (entry.isDirectory()) return testFiles(absolute);
-    return /\.test\.(?:ts|tsx|mts|mjs)$/.test(entry.name) ? [absolute] : [];
-  });
-}
+const isTestFile = (name: string) => /\.test\.(?:ts|tsx|mts|mjs)$/.test(name);
 
 describe("git em subprocesso nos testes", () => {
   it("só pelo helper que limpa o ambiente do hook", () => {
-    const offenders = testFiles(SRC_ROOT)
+    const offenders = listFiles(SRC_ROOT, isTestFile)
       .filter((file) => !ALLOWED.has(file) && DIRECT_GIT_CALL.test(fs.readFileSync(file, "utf8")))
       .map((file) => path.relative(SRC_ROOT, file));
     expect(offenders).toEqual([]);

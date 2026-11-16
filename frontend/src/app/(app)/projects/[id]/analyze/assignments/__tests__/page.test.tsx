@@ -101,7 +101,7 @@ describe("AssignmentsPage — gate antes dos readers service role", () => {
     expect(state.serverFactoryCalls).toBe(0);
   });
 
-  it("acesso confirmado libera os readers cacheados", async () => {
+  it("acesso confirmado libera os readers admin", async () => {
     await expect(renderPage()).resolves.toBeDefined();
     expect(state.serverFactoryCalls).toBe(1);
     expect(state.adminFactoryCalls).toBe(1);

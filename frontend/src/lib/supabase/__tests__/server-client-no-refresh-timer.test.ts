@@ -18,6 +18,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { productionSourceFiles, SRC_ROOT } from "@/test-utils/source-files";
 
 vi.mock("@clerk/nextjs/server", () => ({
   auth: async () => ({ getToken: async () => null }),
@@ -25,8 +26,6 @@ vi.mock("@clerk/nextjs/server", () => ({
 
 const { createSupabaseServer } = await import("../server");
 const { createSupabaseAdmin } = await import("../admin");
-
-const SRC_ROOT = path.resolve(process.cwd(), "src");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -57,21 +56,6 @@ describe("clientes Supabase do servidor não deixam timer vivo", () => {
     ).toBe(0);
   });
 });
-
-function sourceFiles(dir: string): string[] {
-  const files: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const absolute = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.name !== "__tests__" && entry.name !== "test-utils") {
-        files.push(...sourceFiles(absolute));
-      }
-    } else if (/\.(ts|tsx|mts|cts)$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name)) {
-      files.push(absolute);
-    }
-  }
-  return files;
-}
 
 function property(
   object: ts.ObjectLiteralExpression,
@@ -147,7 +131,7 @@ cc(u, k, { auth: { autoRefreshToken: false, persistSession: false } });`),
 
   it("nenhum módulo em src cria cliente com o timer ligado", () => {
     const violations: string[] = [];
-    for (const file of sourceFiles(SRC_ROOT)) {
+    for (const file of productionSourceFiles()) {
       const text = fs.readFileSync(file, "utf8");
       if (!text.includes("@supabase/supabase-js")) continue;
       for (const line of callsWithTimerOn(parseText(text))) {

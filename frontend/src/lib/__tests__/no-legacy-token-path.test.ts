@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { productionSourceFiles, SRC_ROOT } from "@/test-utils/source-files";
+import { readFileSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 
 // Gate estrutural que falha se o caminho crítico de autenticação regredir:
@@ -8,34 +9,16 @@ import { join, relative } from "node:path";
 // barato que lê o código-fonte e trava invariantes que uma edição futura
 // poderia desfazer em silêncio.
 
-const SRC = join(__dirname, "..", "..");
 
 function read(rel: string): string {
-  return readFileSync(join(SRC, rel), "utf8");
-}
-
-/** Todos os `.ts`/`.tsx` de produção sob `src/`, com os testes de fora.
- *
- * Exclui tanto os diretórios `__tests__` quanto arquivos `*.test.ts(x)` soltos —
- * nem todo teste do projeto mora num `__tests__` (ex.: `app/api/webhooks/clerk/
- * route.test.ts`), e um teste varrido aqui viraria falso-positivo por citar de
- * propósito a forma que o gate proíbe. */
-function sourceFiles(dir: string = SRC): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      return entry.name === "__tests__" ? [] : sourceFiles(full);
-    }
-    if (/\.test\.tsx?$/.test(entry.name)) return [];
-    return /\.tsx?$/.test(entry.name) ? [full] : [];
-  });
+  return readFileSync(join(SRC_ROOT, rel), "utf8");
 }
 
 describe("gate de regressão do render path autenticado", () => {
   it("a rota de debug de token não volta (superfície de token-debug)", () => {
     // A rota diagnóstica que despejava claims/JWT/supabase_uid foi removida.
     // Sua reintrodução reabriria a exposição de token ao usuário.
-    expect(existsSync(join(SRC, "app/api/debug-token/route.ts"))).toBe(false);
+    expect(existsSync(join(SRC_ROOT, "app/api/debug-token/route.ts"))).toBe(false);
   });
 
   it("layouts protegidos delegam identidade ao page-auth", () => {
@@ -84,11 +67,11 @@ describe("gate de regressão do render path autenticado", () => {
     // Casa a CHAMADA com objeto literal, nunca a passagem da referência
     // (`requireSupabaseToken(getToken)`), e ignora testes: o contrato do session
     // token cita a forma legada de propósito, ao explicar por que ela não volta.
-    const offenders = sourceFiles()
+    const offenders = productionSourceFiles()
       .filter((file) =>
         /getToken\s*\(\s*\{[^}]*\btemplate\b/.test(readFileSync(file, "utf8")),
       )
-      .map((file) => relative(SRC, file));
+      .map((file) => relative(SRC_ROOT, file));
     expect(offenders).toEqual([]);
   });
 
