@@ -1,5 +1,4 @@
 import { mapWithConcurrency } from "@/lib/upload-chunking";
-import { latestResponseIndexKey, type LatestResponseRow } from "@/lib/latest-response-uniqueness";
 
 // Paginação de leitura do PostgREST. O builder é de uso único (o await o
 // executa), por isso o caller passa uma FÁBRICA de query, não a query pronta.
@@ -16,7 +15,7 @@ import { latestResponseIndexKey, type LatestResponseRow } from "@/lib/latest-res
 // `is_latest` que sumir tira o documento inteiro do numerador E do denominador.
 // A ordem aplicada precisa ser TOTAL — as colunas passadas têm que desempatar
 // até a última linha, tipicamente a PK.
-const PAGE_SIZE = 1000;
+export const PAGE_SIZE = 1000;
 
 interface PagedQueryBuilder<T> {
   order: (column: string) => PagedQueryBuilder<T>;
@@ -53,8 +52,8 @@ export async function fetchAllPaged<T>(
 // Chaves que pertencem ao contrato das linhas lidas por cursor.
 // O cursor evita que INSERT/DELETE antes da página seguinte desloque o OFFSET;
 // cada página ainda é um statement separado, sem snapshot transacional (para as
-// respostas vigentes, ver `fetchLatestResponses`).
-interface CursorQueryBuilder<T> extends PromiseLike<{ data: T[] | null; error: { message: string } | null }> {
+// respostas vigentes, ver `fetch-latest-responses.ts`).
+export interface CursorQueryBuilder<T> extends PromiseLike<{ data: T[] | null; error: { message: string } | null }> {
   order: (column: string) => CursorQueryBuilder<T>;
   limit: (count: number) => CursorQueryBuilder<T>;
   gt: (column: string, value: string) => CursorQueryBuilder<T>;
@@ -106,49 +105,6 @@ export function rowsOrThrow<T>(
 ): T[] {
   if (error) throw new Error(`${label}: ${error.message}`, { cause: error });
   return data ?? [];
-}
-
-// Folga para o relógio do servidor do app estar adiantado em relação ao do
-// banco: o que a releitura trouxer a mais sai na deduplicação.
-const CLOCK_SKEW_MARGIN_MS = 5 * 60_000;
-
-// As colunas que `fetchLatestResponses` exige no select.
-export type LatestResponseCursorRow = Omit<LatestResponseRow, "project_id"> & { created_at: string };
-
-function isNewerResponse(a: LatestResponseCursorRow, b: LatestResponseCursorRow): boolean {
-  const diff = Date.parse(a.created_at) - Date.parse(b.created_at);
-  return diff > 0 || (diff === 0 && a.id > b.id);
-}
-
-// Respostas vigentes (`is_latest`) de UM projeto, coerentes entre as páginas.
-// `build` já traz os filtros de projeto e de `is_latest`.
-//
-// Cada página do cursor é um statement, e publicar uma resposta LLM troca a
-// vigente do documento por uma linha nova (id novo) entre dois deles. Se a
-// antiga já foi lida e a nova cai depois do cursor, o respondente sai duas
-// vezes; se a antiga ainda não foi lida e a nova cai antes do cursor, ele some.
-// Por isso a leitura de mais de um statement relê o que foi criado desde o
-// começo e fica com a linha mais nova de cada chave dos índices únicos de
-// `is_latest`. Só linha nova vira vigente (a resposta humana é atualizada no
-// lugar, sem trocar de id), então a releitura alcança toda troca.
-export async function fetchLatestResponses<T extends LatestResponseCursorRow>(
-  projectId: string,
-  build: () => CursorQueryBuilder<T>,
-): PagedRead<T> {
-  const readStart = new Date(Date.now() - CLOCK_SKEW_MARGIN_MS).toISOString();
-  const paged = await fetchAllAfterId<T>(build);
-  // Menos de uma página é um statement só, coerente por si.
-  if (paged.error || paged.data.length < PAGE_SIZE) return paged;
-  const created = await fetchAllAfterId<T>(() => build().gt("created_at", readStart));
-  if (created.error) return { data: paged.data, error: created.error };
-  const newest = new Map<string, T>();
-  for (const row of [...paged.data, ...created.data]) {
-    // Linha sem chave de índice não colide com nenhuma outra.
-    const key = latestResponseIndexKey({ ...row, project_id: projectId }) ?? row.id;
-    const kept = newest.get(key);
-    if (!kept || isNewerResponse(row, kept)) newest.set(key, row);
-  }
-  return { data: [...newest.values()], error: null };
 }
 
 // Lote do `.in("document_id", ...)`: uma lista longa de UUIDs vai na URL do

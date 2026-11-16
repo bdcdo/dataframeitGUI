@@ -2,7 +2,8 @@
  * Regra da invariante `responses-is-latest-unica`
  * (scripts/invariants/check-invariants.ts), separada da leitura do banco para
  * poder ser testada: o script faz o SELECT e este módulo decide o que é
- * violação.
+ * violação. A chave também deduplica a leitura paginada das vigentes
+ * (`supabase/fetch-latest-responses.ts`).
  *
  * A chave de cada tipo de respondente é a do índice UNIQUE correspondente, sem
  * tirar nem pôr:

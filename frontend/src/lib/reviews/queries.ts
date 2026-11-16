@@ -8,7 +8,8 @@ import type {
   RespondentAnswer,
 } from "./types";
 import { buildReviewLookupMaps } from "./lookup-maps";
-import { fetchAllAfterId, fetchLatestResponses, rowsOrThrow, type PagedRead } from "@/lib/supabase/fetch-all-paged";
+import { fetchAllAfterId, rowsOrThrow, type PagedRead } from "@/lib/supabase/fetch-all-paged";
+import { fetchLatestResponses } from "@/lib/supabase/fetch-latest-responses";
 import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS, isBlankAnswer, type ErrorResolutionRow, type EffectiveErrorResolution } from "@/lib/error-resolution";
 import { pickValidCellReviews } from "@/lib/review-validity";
 import { stableStringify } from "@/lib/schema-utils";
@@ -185,14 +186,10 @@ export async function fetchReviewBaseData(
       .single(),
     readAllOrThrow(
       // `round_id` é da leitura coerente entre páginas.
-      fetchLatestResponses<ResponseRow & { round_id: string }>(projectId, () =>
-        supabase
-          .from("responses")
-          .select(
-            "id, round_id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, pydantic_hash, answer_field_hashes, created_at",
-          )
-          .eq("project_id", projectId)
-          .eq("is_latest", true),
+      fetchLatestResponses<ResponseRow & { round_id: string }>(
+        supabase,
+        projectId,
+        "id, round_id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, pydantic_hash, answer_field_hashes, created_at",
       ),
       "as respostas",
     ),

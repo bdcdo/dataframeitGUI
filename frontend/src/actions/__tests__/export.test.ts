@@ -302,6 +302,48 @@ describe("getExportDataset — monta o dataset a partir das queries", () => {
   });
 });
 
+// Cada página da leitura é um statement: a republicação do LLM entre duas
+// delas punha o documento duas vezes na exportação, ou o tirava dela.
+describe("getExportDataset: resposta republicada entre duas páginas", () => {
+  it("cada documento sai uma vez, com a resposta nova", async () => {
+    const TOTAL = 1001;
+    const docId = (i: number) => `d${String(i).padStart(4, "0")}`;
+    const llm = (id: string, document_id: string, value: string, created_at = "2026-09-01T00:00:00.000Z") =>
+      response(id, "llm", value, { document_id, respondent_id: null, round_id: "round-1", created_at });
+    const responses = Array.from({ length: TOTAL }, (_, i) => llm(`r${docId(i)}`, docId(i), "antiga"));
+    const republish = (old: (typeof responses)[number], newId: string) => {
+      old.is_latest = false;
+      responses.push(llm(newId, old.document_id as string, "nova", new Date().toISOString()));
+    };
+    let reads = 0;
+    server = {
+      tableData: {
+        projects: [projectRow({ pydantic_fields: [{ name: "campo", type: "text", options: null, description: "", hash: "h" }] })],
+        documents: Array.from({ length: TOTAL }, (_, i) => doc(docId(i), { external_id: docId(i) })),
+        responses,
+      },
+      rpcResults: { read_error_resolutions: { data: [] } },
+      afterRead: (table) => {
+        if (table !== "responses" || ++reads !== 1) return;
+        // Já lida, com a nova depois do cursor; e não lida, com a nova antes.
+        republish(responses[0], "rz");
+        republish(responses[TOTAL - 1], "ra");
+      },
+    };
+
+    const r = await (await loadAction())("proj-1");
+
+    if ("error" in r) throw new Error(`esperava dataset, veio erro: ${r.error}`);
+    const campo = r.responses.headers.indexOf("campo");
+    const byDoc = new Map<string, unknown[]>();
+    for (const row of r.responses.rows) byDoc.set(String(row[0]), [...(byDoc.get(String(row[0])) ?? []), row[campo]]);
+    expect(byDoc.size).toBe(TOTAL);
+    expect(byDoc.get(docId(0))).toEqual(["nova"]);
+    expect(byDoc.get(docId(TOTAL - 1))).toEqual(["nova"]);
+    expect(r.responses.rows).toHaveLength(TOTAL);
+  });
+});
+
 // A ligação com o banco das duas fontes de julgamento que o export lê além das
 // respostas: os pares "=" da Comparação e a view `final_answers` da
 // auto-revisão. Um erro ignorado ou uma coluna faltando não quebra nada à
