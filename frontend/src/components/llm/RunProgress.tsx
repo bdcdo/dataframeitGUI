@@ -23,19 +23,24 @@ function formatEta(seconds: number): string {
   return `${hours}h ${remainMins}min`;
 }
 
-const PHASE_LABELS: Record<string, string> = {
-  loading: "Carregando",
-  processing: "Processando",
-  saving: "Salvando",
+const PHASE_BADGES: Record<
+  string,
+  { label: string; variant?: "outline"; className?: string }
+> = {
+  loading: { label: "Carregando" },
+  processing: {
+    label: "Processando",
+    className: "bg-brand text-brand-foreground",
+  },
+  saving: { label: "Salvando", variant: "outline" },
 };
 
 function PhaseBadge({ phase }: { phase: string }) {
-  const label = PHASE_LABELS[phase];
-  if (phase === "processing") {
-    return <Badge className="bg-brand text-brand-foreground">{label}</Badge>;
-  }
+  const { label, variant = "secondary", className } = PHASE_BADGES[phase] ?? {};
   return (
-    <Badge variant={phase === "saving" ? "outline" : "secondary"}>{label}</Badge>
+    <Badge variant={variant} className={className}>
+      {label}
+    </Badge>
   );
 }
 

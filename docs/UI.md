@@ -42,9 +42,11 @@ A alternativa descartada foi uma opção do projeto em Configurações > Regras 
 
 ## O progresso da execução do LLM não mostra lote
 
-O cartão de progresso mostra a fase, os documentos processados sobre o total, o tempo restante estimado e os contadores de respostas completas, parciais e vazias. O rótulo "Lote x/y" que ficava ao lado da fase saiu, junto com os campos `current_batch` e `total_batches` do status da execução ([#832](https://github.com/bdcdo/dataframeitGUI/issues/832)).
+O rótulo "Lote x/y" que ficava ao lado da fase saiu do cartão de progresso, junto com os campos `current_batch` e `total_batches` do status da execução ([#832](https://github.com/bdcdo/dataframeitGUI/issues/832)). Nada entrou no lugar.
 
-O rótulo descrevia um modelo que deixou de existir: com a fila contínua do [#830](https://github.com/bdcdo/dataframeitGUI/pull/830), depois do documento de teste a execução entrega todos os demais à biblioteca numa chamada só, e os dois campos ficavam sempre em zero. As alternativas descartadas foram pôr no lugar os documentos em voo ou a latência média por documento. A contagem de processados e o tempo restante já respondem o que o coordenador acompanha (quanto falta e quando termina), e a latência média é só o insumo desse tempo restante. Documentos em voo, enquanto a fila tem o que processar, é o próprio paralelismo configurado na execução: um número que não muda e não informa andamento.
+O rótulo contava lotes de documentos, que deixaram de existir com a fila contínua do [#830](https://github.com/bdcdo/dataframeitGUI/pull/830), e os dois campos ficavam sempre em zero. Resta um caso de execução em etapas: quando o provider recusa o schema inteiro, os campos são divididos em grupos e há uma chamada por grupo. Esse caso é raro e já não alimentava o rótulo. Ali o progresso continua contado em documentos, na proporção das chamadas que já voltaram.
+
+As alternativas descartadas foram pôr no lugar os documentos em voo ou a latência média por documento. A contagem de processados e o tempo restante já respondem o que o coordenador acompanha (quanto falta e quando termina), e a latência média é só o insumo desse tempo restante. Documentos em voo, enquanto a fila tem o que processar, é o próprio paralelismo configurado na execução: um número que não muda e não informa andamento.
 
 ## Onde procurar o que este arquivo não descreve
 

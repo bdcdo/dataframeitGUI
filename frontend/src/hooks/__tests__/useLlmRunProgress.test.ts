@@ -74,7 +74,11 @@ describe("useLlmRunProgress", () => {
 
   it("start() dispara o polling e conclui ao receber status completed", async () => {
     getRunningLlmJob.mockResolvedValue(null);
-    fetchFastAPI.mockResolvedValue(statusRes({ status: "completed" }));
+    // Um backend anterior ao #832 ainda manda os campos de lote; o hook os
+    // ignora.
+    fetchFastAPI.mockResolvedValue(
+      statusRes({ status: "completed", current_batch: 2, total_batches: 5 }),
+    );
     const { result } = renderHook(() => useLlmRunProgress("p1", null));
     await waitFor(() => expect(getRunningLlmJob).toHaveBeenCalled());
 
@@ -87,6 +91,8 @@ describe("useLlmRunProgress", () => {
       "test-token",
     );
     expect(result.current.progress).toBe(5);
+    expect(result.current).not.toHaveProperty("currentBatch");
+    expect(result.current).not.toHaveProperty("totalBatches");
     expect(toastSuccess).toHaveBeenCalledWith("LLM concluído!");
     // refresh: uma vez no start (badge) + uma na conclusão.
     expect(refresh).toHaveBeenCalled();
