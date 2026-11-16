@@ -37,10 +37,9 @@ vi.mock("../SchemaEditorHeader", () => ({
     <div>Versão {currentVersion}</div>
   ),
 }));
-vi.mock("../SchemaEditorBanners", () => ({
-  SchemaEditorBanners: ({ draftConflict }: { draftConflict: unknown }) =>
-    draftConflict ? <div role="alert">Rascunho conflitante</div> : null,
-}));
+// SchemaEditorBanners fica real: é presentacional e leve, e o mock que havia
+// aqui condicionava o render a uma prop que o componente não tem — a fiação de
+// `storageBlocked`/`staleDraftDiscarded` passava sem nenhum teste ver.
 vi.mock("../SchemaEditorDialogs", () => ({
   SchemaEditorDialogs: ({
     conflict,
@@ -134,6 +133,35 @@ async function editAndSave() {
   await userEvent.click(screen.getByRole("button", { name: "Editar campo" }));
   await userEvent.click(screen.getByRole("button", { name: "Salvar" }));
 }
+
+describe("SchemaEditor — avisos do storage do rascunho", () => {
+  it("avisa quando um rascunho de formato anterior foi descartado no mount", async () => {
+    window.localStorage.setItem(
+      schemaDraftStorageKey(SCOPE),
+      JSON.stringify({ formatVersion: 1, writeToken: "build-antigo" }),
+    );
+    await renderEditor();
+
+    expect(
+      screen.getByText("Um rascunho anterior não pôde ser recuperado."),
+    ).toBeTruthy();
+  });
+
+  it("avisa quando o slot do rascunho pertence a outra aba", async () => {
+    window.localStorage.setItem(
+      schemaDraftStorageKey(SCOPE),
+      JSON.stringify({ formatVersion: 99, writeToken: "build-mais-novo" }),
+    );
+    await renderEditor();
+    expect(screen.queryByText("Este projeto está aberto em outra aba.")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Editar campo" }));
+
+    expect(
+      await screen.findByText("Este projeto está aberto em outra aba."),
+    ).toBeTruthy();
+  });
+});
 
 describe("SchemaEditor — ciclo do draft", () => {
   it("erro transacional preserva o rascunho e o estado não salvo", async () => {

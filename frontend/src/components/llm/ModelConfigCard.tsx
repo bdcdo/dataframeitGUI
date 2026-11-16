@@ -18,6 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Info } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { toggleLlmField } from "@/actions/schema";
 import { LLM_AMBIGUITIES_FIELD } from "@/lib/standard-questions";
@@ -71,6 +72,7 @@ export function ModelConfigCard({
   const [optimisticAmbiguities, setOptimisticAmbiguities] =
     useOptimistic(ambiguitiesEnabled);
   const [isPending, startTransition] = useTransition();
+  const { refresh } = useRouter();
 
   // `undefined` remove a chave em vez de gravar `undefined`: kwarg ausente é o
   // que faz o provider aplicar o default dele (caso da temperatura).
@@ -115,12 +117,20 @@ export function ModelConfigCard({
     startTransition(async () => {
       setOptimisticAmbiguities(checked);
       try {
-        const r = await toggleLlmField(
-          projectId,
-          LLM_AMBIGUITIES_FIELD,
-          checked,
-          schemaBaseline,
-        );
+        const toggle = (baseline: SchemaBaselineIdentity) =>
+          toggleLlmField(projectId, LLM_AMBIGUITIES_FIELD, checked, baseline);
+        let r = await toggle(schemaBaseline);
+        // O servidor recomputa a mutação sobre o schema atual (põe ou tira o
+        // campo pelo nome), então não há edição local que o conflito possa
+        // atropelar: repetir uma vez sobre a revisão devolvida é seguro.
+        // O conflito também provou que as props desta página estão defasadas
+        // (o Switch e a revisão), seja qual for o resultado da repetição; e um
+        // toggle que o remoto já tinha aplicado volta `saved` sem commit, logo
+        // sem revalidação.
+        if (r.status === "conflict") {
+          r = await toggle({ revision: r.current.revision });
+          refresh();
+        }
         if (r.status === "error") {
           toast.error(r.message);
           return;

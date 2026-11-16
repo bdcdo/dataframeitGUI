@@ -109,11 +109,6 @@ type StorageWrite =
   | { status: "blocked" }
   | { status: "unavailable" };
 
-interface StorageDelete {
-  available: boolean;
-  deleted: boolean;
-}
-
 // O rascunho pertence a um par usuário+projeto, nunca a um projeto sozinho: o
 // localStorage é do navegador, não da sessão, e nada o limpa no logout. Sem o
 // usuário na chave, dois coordenadores que dividem a mesma máquina veem o
@@ -235,12 +230,27 @@ function writeDraftIfTokenMatches(
   }
 }
 
+// O rascunho perdeu a razão de existir: sai do storage (se ainda for desta aba)
+// e o estado volta a `clean` sobre `snapshot`. Sem token persistido não há o que
+// apagar, e o storage nem é tocado: a disponibilidade conhecida continua
+// valendo. Supor `true` aí apagava o aviso de storage quebrado ao desfazer até
+// a baseline, até a próxima escrita falhar de novo.
+function cleanStateAfterDraftDelete(
+  snapshot: SchemaSnapshot,
+  storage: DraftStorageState,
+  scope: SchemaDraftScope,
+): CleanState {
+  return cleanState(snapshot, deleteDraftIfTokenMatches(scope, storage));
+}
+
+// Devolve se o storage está disponível.
 function deleteDraftIfTokenMatches(
   scope: SchemaDraftScope,
-  writeToken: string | null,
-): StorageDelete {
-  if (!writeToken) return { available: true, deleted: false };
-  if (typeof window === "undefined") return { available: false, deleted: false };
+  storage: DraftStorageState,
+): boolean {
+  const writeToken = storage.persistedToken;
+  if (!writeToken) return storage.available;
+  if (typeof window === "undefined") return false;
   try {
     const stored = readSchemaDraft(
       window.localStorage.getItem(schemaDraftStorageKey(scope)),
@@ -249,13 +259,12 @@ function deleteDraftIfTokenMatches(
       stored.kind === "draft" || stored.kind === "convertible"
         ? stored.draft.writeToken
         : null;
-    if (storedToken !== writeToken) {
-      return { available: true, deleted: false };
+    if (storedToken === writeToken) {
+      window.localStorage.removeItem(schemaDraftStorageKey(scope));
     }
-    window.localStorage.removeItem(schemaDraftStorageKey(scope));
-    return { available: true, deleted: true };
+    return true;
   } catch {
-    return { available: false, deleted: false };
+    return false;
   }
 }
 
@@ -319,6 +328,29 @@ function cleanState(
   };
 }
 
+// Um merge sem colisões pendentes aterrissa sobre o remoto: se o resultado já é
+// o remoto, o rascunho perdeu a razão de existir e sai do storage; senão vira um
+// rascunho rebasado sobre a revisão nova. Os três pontos em que o merge fecha (o
+// mount, a revisão remota que chega sem colisão e a aplicação do merge resolvido
+// no diálogo) passam por aqui.
+function stateAfterMergeLanded(
+  mergedFields: PydanticField[],
+  remote: SchemaSnapshot,
+  storage: DraftStorageState,
+  scope: SchemaDraftScope,
+): SchemaDraftState {
+  if (sameFields(mergedFields, remote.fields)) {
+    return cleanStateAfterDraftDelete(remote, storage, scope);
+  }
+  const rebased = createDraft(mergedFields, remote);
+  return dirtyAfterWrite(
+    rebased,
+    "rebased",
+    storage,
+    writeDraftIfTokenMatches(scope, rebased, storage.persistedToken),
+  );
+}
+
 function initialState({
   projectId,
   userId,
@@ -353,8 +385,7 @@ function initialState({
   }
   if (draft.base.revision === remote.revision) {
     if (sameFields(draft.fields, remote.fields)) {
-      const deleted = deleteDraftIfTokenMatches(scope, draft.writeToken);
-      return cleanState(remote, deleted.available);
+      return cleanStateAfterDraftDelete(remote, storage, scope);
     }
     return {
       kind: "dirty",
@@ -373,17 +404,7 @@ function initialState({
       storage,
     };
   }
-  if (sameFields(merge.fields, remote.fields)) {
-    const deleted = deleteDraftIfTokenMatches(scope, draft.writeToken);
-    return cleanState(remote, deleted.available);
-  }
-  const rebased = createDraft(merge.fields, remote);
-  return dirtyAfterWrite(
-    rebased,
-    "rebased",
-    storage,
-    writeDraftIfTokenMatches(scope, rebased, draft.writeToken),
-  );
+  return stateAfterMergeLanded(merge.fields, remote, storage, scope);
 }
 
 function stateAfterFieldsChange(
@@ -394,11 +415,7 @@ function stateAfterFieldsChange(
   if (current.kind === "conflict") return current;
   const baseline = stateBaseline(current);
   if (sameFields(fields, baseline.fields)) {
-    const deleted = deleteDraftIfTokenMatches(
-      scope,
-      current.storage.persistedToken,
-    );
-    return cleanState(baseline, deleted.available);
+    return cleanStateAfterDraftDelete(baseline, current.storage, scope);
   }
   return {
     kind: "dirty",
@@ -427,11 +444,7 @@ function stateAfterSave(
 ): SchemaDraftState {
   const fields = inheritQuestionRevisions(saved.fields, stateFields(current));
   if (sameFields(fields, saved.fields)) {
-    const deleted = deleteDraftIfTokenMatches(
-      scope,
-      current.storage.persistedToken,
-    );
-    return cleanState(saved, deleted.available);
+    return cleanStateAfterDraftDelete(saved, current.storage, scope);
   }
   const draft = createDraft(fields, saved);
   return dirtyAfterWrite(
@@ -477,24 +490,7 @@ function stateAfterRemoteChange(
     resolutions,
   );
   if (unresolvedSchemaConflicts(merge).length === 0) {
-    if (sameFields(merge.fields, remote.fields)) {
-      const deleted = deleteDraftIfTokenMatches(
-        scope,
-        current.storage.persistedToken,
-      );
-      return cleanState(remote, deleted.available);
-    }
-    const rebased = createDraft(merge.fields, remote);
-    return dirtyAfterWrite(
-      rebased,
-      "rebased",
-      current.storage,
-      writeDraftIfTokenMatches(
-        scope,
-        rebased,
-        current.storage.persistedToken,
-      ),
-    );
+    return stateAfterMergeLanded(merge.fields, remote, current.storage, scope);
   }
   const stored = readStoredDraft(scope, remote.fields);
   const expectedToken = current.storage.persistedToken;
@@ -569,20 +565,7 @@ function stateAfterResolvedDraftApplication(
     return current;
   }
   const { remote, merge } = current.conflict;
-  if (sameFields(merge.fields, remote.fields)) {
-    const deleted = deleteDraftIfTokenMatches(
-      scope,
-      current.storage.persistedToken,
-    );
-    return cleanState(remote, deleted.available);
-  }
-  const draft = createDraft(merge.fields, remote);
-  return dirtyAfterWrite(
-    draft,
-    "rebased",
-    current.storage,
-    writeDraftIfTokenMatches(scope, draft, current.storage.persistedToken),
-  );
+  return stateAfterMergeLanded(merge.fields, remote, current.storage, scope);
 }
 
 function stateAfterConflictDiscard(
@@ -590,11 +573,7 @@ function stateAfterConflictDiscard(
   scope: SchemaDraftScope,
 ): SchemaDraftState {
   if (current.kind !== "conflict") return current;
-  const deleted = deleteDraftIfTokenMatches(
-    scope,
-    current.storage.persistedToken,
-  );
-  return cleanState(current.conflict.remote, deleted.available);
+  return cleanStateAfterDraftDelete(current.conflict.remote, current.storage, scope);
 }
 
 function persistedDraft(state: SchemaDraftState): SchemaDraftEnvelope | null {
@@ -763,10 +742,10 @@ export function useSchemaDraft(params: UseSchemaDraftParams) {
   const fields = stateFields(state);
   const baseline = stateBaseline(state);
   // `dirty` já significa "difere da baseline": todo ponto que constrói o estado
-  // volta `clean` antes quando os campos coincidem — os cinco que passam por
-  // `dirtyAfterWrite` por uma guarda `sameFields` direta, e o de rascunho
-  // recuperado na mesma revisão porque revisão igual é schema igual (o trigger
-  // do banco exige +1 a cada mudança). Recomparar aqui não protegeria de nada:
+  // volta `clean` antes quando os campos coincidem — quem cria um rascunho novo
+  // por uma guarda `sameFields` direta, e o de rascunho recuperado na mesma
+  // revisão porque revisão igual é schema igual (o trigger do banco exige +1 a
+  // cada mudança). Recomparar aqui não protegeria de nada:
   // se algum construtor violasse a invariante, isto mascararia o estado
   // inconsistente em vez de deixá-lo aparecer.
   //

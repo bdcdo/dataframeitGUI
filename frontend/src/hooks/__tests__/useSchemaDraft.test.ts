@@ -310,6 +310,24 @@ describe("useSchemaDraft", () => {
     expect(storedDraft()?.fields).toEqual(later);
   });
 
+  // Desfazer até a baseline sem nada persistido não toca o storage: não há o
+  // que apagar. Sem tocar, também não há o que informar, e o aviso de storage
+  // indisponível precisa sobreviver até uma operação de fato dizer o contrário.
+  it("mantém o storage indisponível ao desfazer até a baseline sem rascunho gravado", () => {
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota", "QuotaExceededError");
+    });
+    const view = renderDraft();
+    act(() => view.result.current.setFields(EDITED_FIELDS));
+    flushDebounce();
+    expect(view.result.current.storageAvailable).toBe(false);
+
+    act(() => view.result.current.setFields(BASE_FIELDS));
+
+    expect(view.result.current.isDirty).toBe(false);
+    expect(view.result.current.storageAvailable).toBe(false);
+  });
+
   it("remove o draft quando os campos retornam ao baseline", () => {
     const view = renderDraft();
     act(() => view.result.current.setFields(EDITED_FIELDS));

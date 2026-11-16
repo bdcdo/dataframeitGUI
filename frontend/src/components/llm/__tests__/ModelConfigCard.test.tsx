@@ -4,13 +4,17 @@ import { warmUpJsdom } from "@/test-utils/jsdom-warm-up";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-const { toggleLlmField } = vi.hoisted(() => ({ toggleLlmField: vi.fn() }));
+const { toggleLlmField, refresh } = vi.hoisted(() => ({
+  toggleLlmField: vi.fn(),
+  refresh: vi.fn(),
+}));
 const { toastSuccess, toastError } = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
 
 vi.mock("@/actions/schema", () => ({ toggleLlmField }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
 vi.mock("sonner", () => ({
   toast: { success: toastSuccess, error: toastError },
 }));
@@ -89,6 +93,59 @@ describe("ModelConfigCard — toggle de ambiguidades", () => {
     await waitFor(() =>
       expect(ambiguitiesSwitch().getAttribute("aria-checked")).toBe("false"),
     );
+  });
+
+  // Ligar/desligar o campo é recomputado no servidor sobre o schema atual, então
+  // um conflito de revisão não tem edição local a preservar: repetir sobre a
+  // revisão devolvida resolve sem mandar o usuário recarregar a página.
+  it("repete uma vez sobre a revisão atual quando o schema mudou em outra sessão", async () => {
+    toggleLlmField
+      .mockResolvedValueOnce({
+        status: "conflict",
+        current: { fields: [], version: "0.2.0", revision: 3 },
+      })
+      .mockResolvedValueOnce({
+        status: "saved",
+        snapshot: { fields: [], version: "0.3.0", revision: 4 },
+      });
+    const user = userEvent.setup();
+    render(<ModelConfigCard {...baseProps} />);
+
+    await user.click(ambiguitiesSwitch());
+
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith("Campo de ambiguidades adicionado"),
+    );
+    expect(toggleLlmField).toHaveBeenNthCalledWith(
+      2,
+      "p1",
+      LLM_AMBIGUITIES_FIELD,
+      true,
+      { revision: 3 },
+    );
+    expect(toastError).not.toHaveBeenCalled();
+    // O conflito provou que as props desta página estão defasadas.
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it("pede para recarregar quando o schema muda de novo durante a repetição", async () => {
+    toggleLlmField.mockResolvedValue({
+      status: "conflict",
+      current: { fields: [], version: "0.2.0", revision: 3 },
+    });
+    const user = userEvent.setup();
+    render(<ModelConfigCard {...baseProps} />);
+
+    await user.click(ambiguitiesSwitch());
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "O schema mudou em outra sessão. Recarregue a página antes de alterar este campo.",
+      ),
+    );
+    expect(toggleLlmField).toHaveBeenCalledTimes(2);
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalled();
   });
 
   it("reflete o schema quando o campo já existe", () => {
