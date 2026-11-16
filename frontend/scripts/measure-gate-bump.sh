@@ -62,16 +62,20 @@ sides=(antiga nova)
 declare -A rev_of=([antiga]="$base" [nova]="$head")
 summary=()
 
-# Da config de um lado: os ids de hook (linha 1) e o repo e o rev do hook
-# gitleaks (linhas 2 e 3). Falha alto se o gitleaks deixou de vir do repositório
-# dele: a troca de entry abaixo depende disso.
+# Da config de um lado: os ids de hook (linha 1), o repo e o rev do hook
+# gitleaks (linhas 2 e 3) e o rótulo da versão (linha 4): a tag do comentário
+# `# frozen:` quando o rev é um SHA (#555), que o YAML descarta, ou o próprio
+# rev. Falha alto se o gitleaks deixou de vir do repositório dele: a troca de
+# entry abaixo depende disso.
 read_hooks() {
   ruby -ryaml -e '
     repos = YAML.safe_load(File.read(ARGV.fetch(0))).fetch("repos")
     gitleaks = repos.find { |r| r["hooks"]&.any? { |h| h["id"] == "gitleaks" } }
     abort("hook gitleaks ausente") unless gitleaks
     abort("hook gitleaks fora do repo gitleaks/gitleaks: #{gitleaks["repo"]}") unless gitleaks["repo"].to_s.end_with?("gitleaks/gitleaks")
-    puts repos.flat_map { |r| (r["hooks"] || []).map { |h| h["id"] } }.join(" "), gitleaks["repo"], gitleaks.fetch("rev")
+    rev = gitleaks.fetch("rev").to_s
+    frozen = File.read(ARGV.fetch(0))[/^\s*rev:\s*#{Regexp.escape(rev)}\s+#\s*frozen:\s*(\S+)/, 1]
+    puts repos.flat_map { |r| (r["hooks"] || []).map { |h| h["id"] } }.join(" "), gitleaks["repo"], rev, frozen ? "#{frozen} (#{rev[0, 9]})" : rev
   ' "$1"
 }
 
@@ -88,11 +92,11 @@ measure_pre_commit() {
   canary="ghp_$(od -An -N18 -tx1 /dev/urandom | tr -d ' \n')"
   printf 'token = "%s"\n' "$canary" >"$tree/gate-bump-canary.txt"
 
-  local side config hook hooks status repo_url rev report config_gitleaks counts
+  local side config hook hooks status repo_url rev label report config_gitleaks counts
   for side in "${sides[@]}"; do
     config="$work/$side.pre-commit-config.yaml"
     git show "${rev_of[$side]}:.pre-commit-config.yaml" >"$config"
-    { read -r hooks; read -r repo_url; read -r rev; } < <(read_hooks "$config") || die "$side: hook gitleaks irreconhecível"
+    { read -r hooks; read -r repo_url; read -r rev; read -r label; } < <(read_hooks "$config") || die "$side: hook gitleaks irreconhecível"
 
     for hook in check-merge-conflict actionlint; do
       echo "== $hook ($side, ${rev_of[$side]:0:9})"
@@ -118,17 +122,17 @@ repos:
       - id: gitleaks
         entry: gitleaks dir --no-banner --redact --exit-code 0 --config $tree/.gitleaks.toml --report-format json --report-path $report $tree
 EOF
-    echo "== gitleaks $rev ($side)"
+    echo "== gitleaks $label ($side)"
     # --exit-code 0: achado não é erro aqui. Exit != 0 é a ferramenta que não
     # rodou, e isso não vira contagem.
     pre-commit run gitleaks --all-files --verbose --config "$config_gitleaks" \
-      || die "gitleaks $rev ($side) não rodou"
-    [[ -s "$report" ]] || die "gitleaks $rev ($side) não gravou o relatório: nada foi escaneado"
+      || die "gitleaks $label ($side) não rodou"
+    [[ -s "$report" ]] || die "gitleaks $label ($side) não gravou o relatório: nada foi escaneado"
     # Canários achados e o resto dos achados.
     mapfile -t counts < <(jq 'map(.File | endswith("/gate-bump-canary.txt")) | (map(select(.)) | length), (map(select(not)) | length)' "$report")
     [[ "${counts[0]}" -ge 1 ]] \
-      || die "gitleaks $rev ($side) não achou o canário plantado: a varredura não leu a árvore"
-    summary+=("gitleaks $rev ($side): ${counts[1]} achado(s)")
+      || die "gitleaks $label ($side) não achou o canário plantado: a varredura não leu a árvore"
+    summary+=("gitleaks $label ($side): ${counts[1]} achado(s)")
   done
 }
 

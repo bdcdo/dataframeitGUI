@@ -148,17 +148,24 @@ describe("measure-gate-bump.sh pre-commit", () => {
     expect(stdout).toContain("actionlint (nova): exit 0");
   });
 
-  it("acha o rev do gitleaks na .pre-commit-config.yaml real do repo", () => {
-    const pinned = realPreCommitConfig.match(/repo: https:\/\/github\.com\/gitleaks\/gitleaks\n\s+rev: (\S+)/);
+  // O rev real é um SHA com a tag em `# frozen:` (#555): o hook roda o SHA, e o
+  // resumo nomeia a tag, que o YAML descarta junto com o comentário.
+  it("acha o rev do gitleaks na .pre-commit-config.yaml real do repo e rotula pela tag do # frozen:", () => {
+    const pinned = realPreCommitConfig.match(
+      /repo: https:\/\/github\.com\/gitleaks\/gitleaks\n\s+rev: ([0-9a-f]{40})\s+# frozen: (\S+)/,
+    );
     expect(pinned).not.toBeNull();
+    const [, sha, tag] = pinned!;
     const head = commit({ ".pre-commit-config.yaml": realPreCommitConfig });
-    const { status, stderr, calls } = measure(["pre-commit", head]);
+    const { status, stdout, stderr, calls } = measure(["pre-commit", head]);
     expect(stderr).toBe("");
     expect(status).toBe(0);
     expect(calls.filter((call) => call.startsWith("gitleaks"))).toEqual([
-      `gitleaks gerada rev=${pinned![1]}`,
-      `gitleaks gerada rev=${pinned![1]}`,
+      `gitleaks gerada rev=${sha}`,
+      `gitleaks gerada rev=${sha}`,
     ]);
+    expect(stdout).toContain(`gitleaks ${tag} (${sha.slice(0, 9)}) (antiga): `);
+    expect(stdout).toContain(`gitleaks ${tag} (${sha.slice(0, 9)}) (nova): `);
   });
 });
 
