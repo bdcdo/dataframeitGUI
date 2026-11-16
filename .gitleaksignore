@@ -16,7 +16,12 @@
 # scan da historia inteira (`workflow_dispatch` do secret-scan.yml) acusaria os
 # dois para sempre. O scan de PR e o de push leem so os commits novos e nunca
 # chegaram a este.
-# O commit anterior ao squash do #140 carrega o mesmo arquivo, mas so e
-# alcancavel por `refs/pull/140/head`, que o checkout do workflow nao busca.
 fd9593737785d0f48ffb4dfa79ef373b90013a2e:frontend/.clerk/.tmp/keyless.json:stripe-access-token:1
 fd9593737785d0f48ffb4dfa79ef373b90013a2e:frontend/.clerk/.tmp/keyless.json:generic-api-key:1
+# O commit anterior ao squash do #140 carrega o mesmo arquivo (mesmo blob,
+# d71d4b2f, logo as mesmas duas credenciais revogadas). So e alcancavel por
+# `refs/pull/140/head`, que o checkout do workflow nao busca: estas duas linhas
+# servem ao scan de um clone espelho (`git clone --mirror`, `--log-opts=--all`),
+# que le tambem as refs de PR.
+6932f3c6ed1c728be40671b0430d86726c4bf613:frontend/.clerk/.tmp/keyless.json:stripe-access-token:1
+6932f3c6ed1c728be40671b0430d86726c4bf613:frontend/.clerk/.tmp/keyless.json:generic-api-key:1
