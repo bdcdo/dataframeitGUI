@@ -74,7 +74,7 @@ describe("useCachedResource", () => {
 
   it("erro-como-valor: fetcher que faz catch nunca seta error", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
-    const fetcher = vi.fn(async (_k: string) => {
+    const fetcher = vi.fn<(key: string) => Promise<null>>(async () => {
       try {
         throw new Error("boom");
       } catch {

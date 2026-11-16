@@ -27,14 +27,16 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, refresh }),
 }));
 
-/** Espelha a assinatura real do `getToken` do Clerk. O parâmetro é declarado
- * (mesmo sem uso) para que as asserções possam inspecionar `mock.calls[0][0]` —
+/** Espelha a assinatura real do `getToken` do Clerk. O argumento é tipado
+ * para que as asserções possam inspecionar `mock.calls[0][0]` —
  * é justamente o argumento que este teste existe para vigiar. */
-const getToken = vi.fn(
-  async (_opts?: {
+const getToken = vi.fn<
+  (opts?: {
     skipCache?: boolean;
     template?: string;
-  }): Promise<string | null> => {
+  }) => Promise<string | null>
+>(
+  async () => {
     calls.push("getToken");
     return "tok";
   },

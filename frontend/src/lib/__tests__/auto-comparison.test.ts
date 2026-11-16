@@ -302,6 +302,7 @@ describe("createAutoComparisonIfDiverges — compare_humans", () => {
     // O mock ignora o select, então a coluna esquecida só aparece como linha
     // sem a chave; `toVersioned` precisa tratá-la como parcial.
     const { is_partial: _omitido, ...semColuna } = makeHumanResponse("userB", "B");
+    expect(_omitido).toBe(false);
     tableData.responses = [makeHumanResponse("userA", "A"), semColuna];
     tableData.project_members = [makeProjectMember("userC")];
     const r = await runAutoComparison();
