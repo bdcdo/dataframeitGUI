@@ -160,7 +160,10 @@ repos:
         name: react-doctor (changed lines, fail on new warnings/errors)
         entry: bash frontend/scripts/react-doctor-gate.sh
         language: system
-        files: ^frontend/.*\.(mts|ts|tsx)$
+        # O package.json (e o lock) tambem: um bump do react-doctor sem linha TS
+        # alterada passa pela guarda de versao do script, que falha fechado com
+        # o node_modules desatualizado.
+        files: ^frontend/(.*\.(mts|ts|tsx)|package(-lock)?\.json)$
         pass_filenames: false
         require_serial: true
 
@@ -213,19 +216,18 @@ repos:
         require_serial: true
         stages: [pre-push]
 
-      # Suites do vitest que leem arquivos que nao sao TS e que mudam (os que
-      # nao casam com o glob por extensao do hook do vitest): as migrations e o
-      # backend/services/llm_runner.py (model-registry: DEFAULT de llm_model e
-      # llm_kwargs, DEFAULT_PARALLEL_REQUESTS), os JSON de paridade do backend
-      # (pydantic-field-names, schema-roundtrip) e a suite SQL do ciclo de
-      # resolucao de erros (error-resolution-cycle). Roda so essas suites, e nao
+      # Suites do vitest que leem arquivos que nao sao TS e que mudam fora do
+      # frontend/src (migrations e suites SQL, o backend, a config dos hooks), que
+      # o hook do vitest, por extensao TS, nao pega. Roda so essas suites, e nao
       # a suite inteira, para que um push so de backend nao pague o frontend
-      # todo. Suite nova que leia arquivo desses entra nas duas listas abaixo.
+      # todo. As suites saem de uma varredura no script, e o disparo tambem e
+      # dele (always_run): pelo diff do push, que enxerga arquivo removido, o que
+      # o `files:` do pre-commit nao enxerga.
       - id: vitest-non-ts-inputs
         name: vitest das suites que leem SQL, Python e JSON do backend (pre-push)
-        entry: bash -c 'cd frontend && test -x ./node_modules/.bin/vitest && exec ./node_modules/.bin/vitest run src/lib/__tests__/model-registry.test.ts src/lib/__tests__/pydantic-field-names.test.ts src/lib/__tests__/schema-roundtrip.property.test.ts src/lib/__tests__/error-resolution-cycle.test.ts || { echo "vitest ausente em frontend/node_modules; rode (cd frontend && npm install)" >&2; exit 1; }'
+        entry: bash frontend/scripts/vitest-non-ts-inputs.sh
         language: system
-        files: ^(frontend/supabase/(migrations/.*|tests/error_resolution_cycle\.test)\.sql|backend/(services/llm_runner\.py|tests/(reserved_field_names|schema_roundtrip_cases)\.json))$
+        always_run: true
         pass_filenames: false
         require_serial: true
         stages: [pre-push]

@@ -1,3 +1,4 @@
+// @vitest-non-ts-inputs: varre o repositório inteiro, inclusive backend e migrations.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
