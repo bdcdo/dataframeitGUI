@@ -543,6 +543,122 @@ describe("scanComparisonBacklog — compare_llm", () => {
   });
 });
 
+describe("scanComparisonBacklog — documento já comparado (#748)", () => {
+  const comparison = (over: Record<string, unknown> = {}) => ({
+    id: "a1",
+    project_id: "p1",
+    document_id: "doc1",
+    user_id: "userC",
+    type: "comparacao",
+    status: "concluido",
+    round_id: "round-2",
+    ...over,
+  });
+  const verdict = (over: Record<string, unknown> = {}) => ({
+    id: "rev1",
+    project_id: "p1",
+    document_id: "doc1",
+    reviewer_id: "userC",
+    field_name: "q1",
+    verdict: "A",
+    field_hash: "q1-hash",
+    chosen_response_id: null,
+    ...over,
+  });
+
+  async function scanWith(
+    assignments: unknown[],
+    reviews: unknown[],
+    currentRoundId: string | null = "round-2",
+  ) {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.projects = [makeProjectRow({ current_round_id: currentRoundId })];
+    // O veredito não altera `responses`: o documento segue divergente depois
+    // de a comparação fechar.
+    tableData.responses = [makeHumanResponse("userA", "A"), makeHumanResponse("userB", "B")];
+    tableData.assignments = assignments;
+    tableData.reviews = reviews;
+    const backlog = await scanComparisonBacklog(makeClient() as never, "p1", "compare_humans");
+    return backlog.map((entry) => entry.documentId);
+  }
+
+  it("comparação concluída na rodada, com a divergência julgada, tira o documento do backlog", async () => {
+    expect(await scanWith([comparison()], [verdict()])).toEqual([]);
+  });
+
+  it("comparação concluída em rodada anterior não cobre a rodada corrente", async () => {
+    expect(await scanWith([comparison({ round_id: "round-1" })], [verdict()])).toEqual(["doc1"]);
+  });
+
+  it("veredito que perdeu a validade não cobre: o documento volta ao backlog", async () => {
+    // A pergunta mudou depois do fecho (hash do veredito ≠ hash do campo).
+    expect(
+      await scanWith([comparison()], [verdict({ field_hash: "q1-hash-antigo" })]),
+    ).toEqual(["doc1"]);
+  });
+
+  it("veredito de outra pessoa não cobre a comparação concluída do revisor", async () => {
+    expect(
+      await scanWith([comparison()], [verdict({ reviewer_id: "userD" })]),
+    ).toEqual(["doc1"]);
+  });
+
+  it("basta uma comparação concluída que cubra, entre várias do documento", async () => {
+    expect(
+      await scanWith(
+        [comparison(), comparison({ id: "a2", user_id: "userD" })],
+        [verdict({ reviewer_id: "userD" })],
+      ),
+    ).toEqual([]);
+  });
+
+  it("divergência nova depois do fecho, em campo sem veredito, volta ao backlog", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    const [q1] = makeProjectRow().pydantic_fields;
+    tableData.projects = [
+      makeProjectRow({
+        current_round_id: "round-2",
+        pydantic_fields: [q1, { ...q1, id: "00000000-0000-4000-8000-000000000002", name: "q2", hash: "q2-hash" }],
+      }),
+    ];
+    // userC julgou q1 e concluiu; depois as respostas passaram a divergir em q2.
+    tableData.responses = [
+      makeHumanResponse("userA", "A", { answers: { q1: "A", q2: "X" } }),
+      makeHumanResponse("userB", "B", { answers: { q1: "B", q2: "Y" } }),
+    ];
+    tableData.assignments = [comparison()];
+    tableData.reviews = [verdict()];
+    const scan = () => scanComparisonBacklog(makeClient() as never, "p1", "compare_humans");
+    expect((await scan()).map((entry) => entry.documentId)).toEqual(["doc1"]);
+
+    // Com q2 também julgado, a comparação concluída volta a cobrir.
+    tableData.reviews = [verdict(), verdict({ id: "rev2", field_name: "q2", verdict: "X", field_hash: "q2-hash" })];
+    expect(await scan()).toEqual([]);
+  });
+
+  it("compare_llm: humano × LLM já julgado na rodada fica fora do backlog", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.projects = [
+      makeProjectRow({ automation_mode: "compare_llm", current_round_id: "round-2" }),
+    ];
+    tableData.responses = [makeHumanResponse("userA", "A"), llm("B")];
+    tableData.assignments = [comparison()];
+    tableData.reviews = [verdict()];
+    const backlog = await scanComparisonBacklog(makeClient() as never, "p1", "compare_llm");
+    expect(backlog).toEqual([]);
+  });
+
+  it("sem comparação concluída a varredura não lê `reviews`", async () => {
+    // A leitura falharia se acontecesse: o documento entra no backlog sem ela.
+    queryErrors["reviews:select"] = { message: "reviews não deveria ser lida" };
+    expect(await scanWith([], [])).toEqual(["doc1"]);
+  });
+
+  it("projeto sem rodada corrente não tem comparação concluída que cubra", async () => {
+    expect(await scanWith([comparison()], [verdict()], null)).toEqual(["doc1"]);
+  });
+});
+
 describe("scanComparisonBacklog — equivalências", () => {
   it("doc cuja divergência foi fundida por equivalência fica fora do backlog", async () => {
     const { scanComparisonBacklog } = await loadLib();

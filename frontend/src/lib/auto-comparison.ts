@@ -21,6 +21,16 @@ import {
 import { fetchProjectValueEquivalences } from "@/lib/value-equivalence-query";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { PostgrestWriteError } from "@/lib/supabase/rls-guard";
+import {
+  fetchAllAfterId,
+  fetchByDocumentChunks,
+} from "@/lib/supabase/fetch-all-paged";
+import {
+  COMPARE_REVIEW_SELECT,
+  compareAssignmentStatusFor,
+  type CompareReviewRow,
+} from "@/lib/compare-assignment-sync";
+import { groupBy } from "@/lib/utils";
 
 // Both factories return the same data-client shape. Coordinator flows pass an
 // authenticated reader; automatic writes pass a service-role client.
@@ -127,6 +137,15 @@ function toCandidate(
     answers: r.answers,
     answer_field_hashes: r.answer_field_hashes,
   };
+}
+
+function toCandidates(
+  humanResponses: ResponseRow[],
+  llmResponse: ResponseRow | null | undefined,
+): ComparisonCandidate[] {
+  const candidates = humanResponses.map((r) => toCandidate(r, "humano"));
+  if (llmResponse) candidates.push(toCandidate(llmResponse, "llm"));
+  return candidates;
 }
 
 export async function loadOpenComparisonLoad(
@@ -280,11 +299,9 @@ function analyzeComparison({
   mode,
 }: ComparisonAnalysisInput): { verdict: TriggerVerdict; coderIds: Set<string> } {
   const { minVersion, ctx } = versionGate(project);
-  const responses = humanResponses.map((r) => toCandidate(r, "humano"));
-  if (llmResponse) responses.push(toCandidate(llmResponse, "llm"));
   const verdict = comparisonSet({
     fields,
-    responses,
+    responses: toCandidates(humanResponses, llmResponse),
     minVersion,
     versionCtx: ctx,
     equivalencesByField,
@@ -454,6 +471,7 @@ export async function createAutoComparisonIfDiverges(
 
 interface ComparisonProjectRow extends ComparisonProjectSettings {
   pydantic_fields: PydanticField[];
+  current_round_id: string | null;
 }
 
 interface HumanResponseMeta extends Pick<
@@ -523,7 +541,7 @@ async function loadBacklogCandidates(
       admin
         .from("projects")
         .select(
-          `pydantic_fields, min_responses_for_comparison, comparison_includes_llm, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch`,
+          `pydantic_fields, min_responses_for_comparison, comparison_includes_llm, pydantic_hash, schema_version_major, schema_version_minor, schema_version_patch, current_round_id`,
         )
         .eq("id", projectId)
         .single(),
@@ -578,12 +596,63 @@ function groupHumanResponsesByDocument(
   return byDocument;
 }
 
-async function loadBacklogComparisonData(
+interface ConcludedComparisonRow {
+  id: string;
+  document_id: string;
+  user_id: string;
+}
+
+// As comparações já concluídas na rodada corrente. Comparação de rodada
+// anterior fica de fora, como no fecho (compare-sync.ts): `is_latest` só marca
+// respostas da rodada corrente, que ninguém reviu ainda; e projeto sem rodada
+// corrente não tem o que ler. Paginado porque só cresce ao longo da rodada.
+async function loadConcludedComparisons(
+  admin: SupabaseDataClient,
+  projectId: string,
+  roundId: string | null,
+): Promise<ConcludedComparisonRow[]> {
+  if (!roundId) return [];
+  return queryData(
+    await fetchAllAfterId<ConcludedComparisonRow>(() =>
+      admin
+        .from("assignments")
+        .select("id, document_id, user_id")
+        .eq("project_id", projectId)
+        .eq("type", "comparacao")
+        .eq("status", "concluido")
+        .eq("round_id", roundId),
+    ),
+  );
+}
+
+// Os vereditos dos documentos, agrupados por documento e revisor. Em lotes e
+// paginado: é um veredito por campo por documento, e passa de 1000 linhas.
+async function loadReviewsByDocumentReviewer(
   admin: SupabaseDataClient,
   projectId: string,
   documentIds: string[],
+): Promise<Map<string, CompareReviewRow[]>> {
+  const reviews = queryData(
+    await fetchByDocumentChunks(documentIds, (ids) =>
+      fetchAllAfterId<CompareReviewRow>(() =>
+        admin
+          .from("reviews")
+          .select(COMPARE_REVIEW_SELECT)
+          .eq("project_id", projectId)
+          .in("document_id", ids),
+      ),
+    ),
+  );
+  return groupBy(reviews, (r) => `${r.document_id}:${r.reviewer_id}`);
+}
+
+async function loadBacklogComparisonData(
+  admin: SupabaseDataClient,
+  projectId: string,
+  roundId: string | null,
+  documentIds: string[],
 ) {
-  const [humanResponsesResult, llmResponsesResult, equivalencesResult] =
+  const [humanResponsesResult, llmResponsesResult, equivalencesResult, concluded] =
     await Promise.all([
       admin
         .from("responses")
@@ -604,6 +673,7 @@ async function loadBacklogComparisonData(
         .eq("is_latest", true)
         .in("document_id", documentIds),
       fetchProjectValueEquivalences(admin, projectId),
+      loadConcludedComparisons(admin, projectId, roundId),
     ]);
 
   const humans = (queryData(humanResponsesResult) ??
@@ -616,11 +686,47 @@ async function loadBacklogComparisonData(
       llms.map((response) => [response.document_id, response]),
     ),
     equivalencesByField: groupValueEquivalencesByField(equivalences),
+    concludedByDocument: groupBy(concluded, (c) => c.document_id),
   };
 }
 
-// Varre o projeto e devolve os documentos que DIVERGEM (segundo o modo) e ainda
-// nao tem comparacao ativa — o "backlog" sem revisor. Usado pelo retry
+// Se alguma comparação concluída na rodada corrente ainda cobre a divergência
+// do documento. O veredito da revisora não altera `responses`, então o
+// documento já comparado segue divergente para sempre: sem esta checagem ele
+// voltava ao backlog, inflava a pendência da tela de membros e ganhava um
+// segundo revisor a cada retry (#748).
+//
+// "Cobre" é a regra do fecho (`compareAssignmentStatusFor`): a comparação
+// continuaria concluída se fosse recalculada agora. Divergência que surgiu
+// depois do fecho (campo novo sem veredito, veredito que perdeu a validade)
+// não está coberta, e o documento volta ao backlog em vez de sumir. A regra do
+// fecho não olha o modo, de propósito: o disparo (`analyzeComparison`) decide
+// se há o que rever, e o fecho decide se já foi revisto.
+function isCoveredByConcludedComparison(
+  project: ComparisonProjectRow,
+  documentId: string,
+  responses: ComparisonCandidate[],
+  equivalencesByField: ValueEquivalencesByField,
+  concluded: ConcludedComparisonRow[],
+  reviewsByDocumentReviewer: Map<string, CompareReviewRow[]>,
+): boolean {
+  return concluded.some((comparison) => {
+    const status = compareAssignmentStatusFor({
+      project,
+      documentId,
+      responses,
+      reviews:
+        reviewsByDocumentReviewer.get(`${documentId}:${comparison.user_id}`) ??
+        [],
+      equivalencesByField,
+    });
+    return status === "concluido";
+  });
+}
+
+// Varre o projeto e devolve os documentos que DIVERGEM (segundo o modo), ainda
+// nao tem comparacao ativa e cuja divergencia nenhuma comparacao concluida da
+// rodada corrente cobre — o "backlog" sem revisor. Usado pelo retry
 // (atribui) e pelo banner de pendencia (conta). Varredura em 2 fases para nao
 // puxar `answers` de todo doc: fase 1 acha candidatos por metadado leve, fase 2
 // busca answers so deles e recomputa divergencia.
@@ -634,21 +740,54 @@ export async function scanComparisonBacklog(
   const comparisonData = await loadBacklogComparisonData(
     admin,
     projectId,
+    candidates.project.current_round_id,
     candidates.documentIds,
   );
-  const result: Array<{ documentId: string; coderIds: Set<string> }> = [];
+  const divergent: Array<{
+    documentId: string;
+    coderIds: Set<string>;
+    responses: ComparisonCandidate[];
+  }> = [];
   for (const documentId of candidates.documentIds) {
+    const humanResponses = comparisonData.humansByDocument.get(documentId) ?? [];
+    const llmResponse = comparisonData.llmByDocument.get(documentId);
     const { verdict, coderIds } = analyzeComparison({
       fields: candidates.project.pydantic_fields,
       project: candidates.project,
-      humanResponses: comparisonData.humansByDocument.get(documentId) ?? [],
-      llmResponse: comparisonData.llmByDocument.get(documentId),
+      humanResponses,
+      llmResponse,
       equivalencesByField: comparisonData.equivalencesByField,
       mode,
     });
     if (verdict.kind !== "divergent") continue;
-    result.push({ documentId, coderIds });
+    divergent.push({
+      documentId,
+      coderIds,
+      responses: toCandidates(humanResponses, llmResponse),
+    });
   }
 
-  return result;
+  // Vereditos só dos divergentes que têm comparação concluída na rodada: sem
+  // nenhum, a varredura não lê `reviews`.
+  const { concludedByDocument } = comparisonData;
+  const reviewsByDocumentReviewer = await loadReviewsByDocumentReviewer(
+    admin,
+    projectId,
+    divergent
+      .map((entry) => entry.documentId)
+      .filter((documentId) => concludedByDocument.has(documentId)),
+  );
+  return divergent
+    .filter(
+      ({ documentId, responses }) =>
+        !isCoveredByConcludedComparison(
+          candidates.project,
+          documentId,
+          responses,
+          comparisonData.equivalencesByField,
+          concludedByDocument.get(documentId) ?? [],
+          reviewsByDocumentReviewer,
+        ),
+    )
+    .map(({ documentId, coderIds }) => ({ documentId, coderIds }));
 }
