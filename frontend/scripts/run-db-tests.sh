@@ -83,6 +83,7 @@ GATE_SUITES=(
   unmark_equivalence_atomic
   auto_review_reconciliation_outbox
   arbitration_reopen
+  arbitration_current_cycle
   rls_audit
   remove_project_member_self_identity
   visible_if_no_codigo_pydantic
