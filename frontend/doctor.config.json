@@ -120,14 +120,6 @@
       },
       {
         "files": [
-          "src/app/**/reviews/comments/page.tsx"
-        ],
-        "rules": [
-          "react-doctor/no-giant-component"
-        ]
-      },
-      {
-        "files": [
           "scripts/e2e-fixtures/**",
           "scripts/invariants/**"
         ],
