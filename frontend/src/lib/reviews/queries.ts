@@ -30,6 +30,27 @@ interface ResponseRow {
   created_at: string;
 }
 
+// A linha de `responses` como o PostgREST a devolve, antes de o nome do
+// respondente ser resolvido pelo perfil.
+interface FetchedResponseRow {
+  id: string;
+  document_id: string;
+  respondent_id: string | null;
+  respondent_type: string;
+  respondent_name: string | null;
+  answers: unknown;
+  justifications: unknown;
+  pydantic_hash: string | null;
+  answer_field_hashes: unknown;
+  created_at: string;
+}
+
+interface ReviewDocumentRow {
+  id: string;
+  title: string | null;
+  external_id: string | null;
+}
+
 export interface ReviewRow {
   id: string;
   document_id: string;
@@ -47,12 +68,6 @@ export interface ReviewRow {
 
 /* ── Context shared across computations ── */
 
-export interface ReviewDataTruncation {
-  responses: boolean;
-  reviews: boolean;
-  documents: boolean;
-}
-
 export interface ReviewComputationContext {
   fields: PydanticField[];
   comparableFields: PydanticField[];
@@ -63,10 +78,6 @@ export interface ReviewComputationContext {
   responsesByDoc: Map<string, ResponseRow[]>;
   uniqueReviews: ReviewRow[];
   errorResolutions?: ErrorResolutionRow[];
-  // true para cada tabela cuja query atingiu REVIEW_BASE_DATA_LIMIT — os
-  // dados agregados podem estar silenciosamente errados. As paginas de
-  // reviews renderizam um TruncationBanner quando alguma flag e true.
-  truncated: ReviewDataTruncation;
 }
 
 /* ── Pure helpers ── */
@@ -155,25 +166,6 @@ function getRespondentKey(r: {
 
 /* ── Fetch base data ── */
 
-export const REVIEW_BASE_DATA_LIMIT = 50000;
-
-/**
- * Marca como `true` cada tabela cuja query atingiu o teto de
- * REVIEW_BASE_DATA_LIMIT linhas. Query que falhou (`null`) nao conta como
- * truncada — `null?.length` e `undefined`, nunca igual ao teto.
- */
-export function computeTruncation(
-  responses: unknown[] | null,
-  reviews: unknown[] | null,
-  documents: unknown[] | null,
-): ReviewDataTruncation {
-  return {
-    responses: responses?.length === REVIEW_BASE_DATA_LIMIT,
-    reviews: reviews?.length === REVIEW_BASE_DATA_LIMIT,
-    documents: documents?.length === REVIEW_BASE_DATA_LIMIT,
-  };
-}
-
 /**
  * A review vigente de cada (documento, campo) do Gabarito, pela regra única de
  * `review-validity.ts`: vale o veredito enquanto a pergunta não muda, de
@@ -187,30 +179,30 @@ export function gabaritoReviews(
   return [...pickValidCellReviews(reviews, fieldMap).values()];
 }
 
+// Lança em vez de devolver a leitura parcial: metade das linhas renderizaria um
+// Gabarito com cara de completo.
+async function readAllOrThrow<T>(
+  read: PromiseLike<{ data: T[]; error: { message: string } | null }>,
+  what: string,
+): Promise<T[]> {
+  const { data, error } = await read;
+  if (error) throw new Error(`Não foi possível carregar ${what}: ${error.message}`);
+  return data;
+}
+
+// As três tabelas são lidas inteiras, página a página: o PostgREST corta cada
+// resposta em `max_rows` sem erro, e um `.limit()` acima disso não muda o corte.
 export async function fetchReviewBaseData(
   supabase: SupabaseClient,
   projectId: string,
   options?: { since?: string },
 ): Promise<ReviewComputationContext> {
-  let responsesQuery = supabase
-    .from("responses")
-    .select(
-      "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, created_at",
-    )
-    .eq("project_id", projectId)
-    .eq("is_latest", true)
-    .limit(REVIEW_BASE_DATA_LIMIT);
-
-  if (options?.since) {
-    responsesQuery = responsesQuery.gte("created_at", options.since);
-  }
-
   const [
     { data: project },
-    { data: responses },
-    { data: reviews },
-    { data: documents },
-    { data: errorResolutions, error: resolutionsError },
+    responses,
+    reviews,
+    documents,
+    errorResolutions,
     profileNames,
   ] = await Promise.all([
     supabase
@@ -218,34 +210,50 @@ export async function fetchReviewBaseData(
       .select("pydantic_fields, pydantic_hash, created_by")
       .eq("id", projectId)
       .single(),
-    responsesQuery,
-    supabase
-      .from("reviews")
-      .select(
-        "id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, created_at, field_hash",
-      )
-      .eq("project_id", projectId)
-      .limit(REVIEW_BASE_DATA_LIMIT),
-    supabase
-      .from("documents")
-      .select("id, title, external_id")
-      .eq("project_id", projectId)
-      .is("excluded_at", null)
-      .is("exclusion_pending_at", null)
-      .limit(REVIEW_BASE_DATA_LIMIT),
-    fetchAllAfterId<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId })),
+    readAllOrThrow(
+      fetchAllAfterId<FetchedResponseRow>(() => {
+        const query = supabase
+          .from("responses")
+          .select(
+            "id, document_id, respondent_id, respondent_type, respondent_name, answers, justifications, is_latest, pydantic_hash, answer_field_hashes, created_at",
+          )
+          .eq("project_id", projectId)
+          .eq("is_latest", true);
+        return options?.since ? query.gte("created_at", options.since) : query;
+      }),
+      "as respostas",
+    ),
+    readAllOrThrow(
+      fetchAllAfterId<ReviewRow>(() =>
+        supabase
+          .from("reviews")
+          .select(
+            "id, document_id, field_name, verdict, chosen_response_id, comment, reviewer_id, created_at, field_hash",
+          )
+          .eq("project_id", projectId),
+      ),
+      "as revisões",
+    ),
+    readAllOrThrow(
+      fetchAllAfterId<ReviewDocumentRow>(() =>
+        supabase
+          .from("documents")
+          .select("id, title, external_id")
+          .eq("project_id", projectId)
+          .is("excluded_at", null)
+          .is("exclusion_pending_at", null),
+      ),
+      "os documentos",
+    ),
+    readAllOrThrow(
+      fetchAllAfterId<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId })),
+      "as decisões",
+    ),
     fetchProfileNames(supabase, projectId),
   ]);
-  if (resolutionsError) throw new Error(`Não foi possível carregar as decisões: ${resolutionsError.message}`);
-
-  const truncated = computeTruncation(responses, reviews, documents);
-  for (const [name, isTruncated] of Object.entries(truncated)) {
-    if (isTruncated) {
-      console.warn(
-        `fetchReviewBaseData: ${name} atingiu o teto de ${REVIEW_BASE_DATA_LIMIT} linhas para o projeto ${projectId} — dados podem estar truncados, considere paginar.`,
-      );
-    }
-  }
+  // O cursor devolve as respostas na ordem da PK, que é aleatória. A ordem
+  // dos respondentes na tela segue a de gravação.
+  responses.sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id));
 
   const fields = (project?.pydantic_fields || []) as PydanticField[];
   const projectPydanticHash = project?.pydantic_hash || null;
@@ -255,7 +263,7 @@ export async function fetchReviewBaseData(
 
   // Group responses by document_id
   const responsesByDoc = new Map<string, ResponseRow[]>();
-  responses?.forEach((r) => {
+  responses.forEach((r) => {
     const list = responsesByDoc.get(r.document_id) || [];
     list.push({
       id: r.id,
@@ -272,7 +280,7 @@ export async function fetchReviewBaseData(
     responsesByDoc.set(r.document_id, list);
   });
 
-  const uniqueReviews = gabaritoReviews(reviews as ReviewRow[] | null, fieldMap);
+  const uniqueReviews = gabaritoReviews(reviews, fieldMap);
 
   const comparableFields = fields.filter(isComparedField);
 
@@ -286,7 +294,6 @@ export async function fetchReviewBaseData(
     responsesByDoc,
     uniqueReviews,
     errorResolutions,
-    truncated,
   };
 }
 

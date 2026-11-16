@@ -1,10 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   computeReviewedDocuments,
-  computeTruncation,
   fetchReviewBaseData,
   gabaritoReviews,
-  REVIEW_BASE_DATA_LIMIT,
   resolveViewedRespondentId,
 } from "@/lib/reviews/queries";
 import { buildReviewLookupMaps } from "@/lib/reviews/lookup-maps";
@@ -32,62 +30,6 @@ describe("buildReviewLookupMaps", () => {
       ["d2", "ext-2"],
       ["d3", "d3"],
     ]);
-  });
-});
-
-// Array esparso: `.length` e o teto sem alocar 50k elementos.
-const atLimit = () => Array(REVIEW_BASE_DATA_LIMIT);
-const belowLimit = () => Array(REVIEW_BASE_DATA_LIMIT - 1);
-
-describe("computeTruncation — flags do TruncationBanner (issue #105)", () => {
-  it("nenhuma tabela no teto → todas false", () => {
-    expect(computeTruncation(belowLimit(), belowLimit(), belowLimit())).toEqual({
-      responses: false,
-      reviews: false,
-      documents: false,
-    });
-  });
-
-  it("marca apenas a tabela que atingiu o teto", () => {
-    expect(computeTruncation(atLimit(), belowLimit(), belowLimit())).toEqual({
-      responses: true,
-      reviews: false,
-      documents: false,
-    });
-    expect(computeTruncation(belowLimit(), atLimit(), belowLimit())).toEqual({
-      responses: false,
-      reviews: true,
-      documents: false,
-    });
-    expect(computeTruncation(belowLimit(), belowLimit(), atLimit())).toEqual({
-      responses: false,
-      reviews: false,
-      documents: true,
-    });
-  });
-
-  it("todas no teto → todas true", () => {
-    expect(computeTruncation(atLimit(), atLimit(), atLimit())).toEqual({
-      responses: true,
-      reviews: true,
-      documents: true,
-    });
-  });
-
-  it("query que falhou (null) nao conta como truncada", () => {
-    expect(computeTruncation(null, null, null)).toEqual({
-      responses: false,
-      reviews: false,
-      documents: false,
-    });
-  });
-
-  it("array vazio nao conta como truncado", () => {
-    expect(computeTruncation([], [], [])).toEqual({
-      responses: false,
-      reviews: false,
-      documents: false,
-    });
   });
 });
 
@@ -227,5 +169,71 @@ describe("fetchReviewBaseData: autoria vem do perfil", () => {
 
     expect(doc.fields[0].respondentAnswers.map((r) => r.respondentName).toSorted()).toEqual(["Ana Lima", "bia@example.com"]);
     expect(ctx.responsesByDoc.get("doc1")?.map((r) => r.respondent_name).toSorted()).toEqual(["Ana Lima", "bia@example.com"]);
+  });
+});
+
+// As leituras tinham `.limit(50000)`, mas o PostgREST corta em `max_rows`
+// (1000) sem erro: o Gabarito de um projeto maior saía com as primeiras 1000
+// linhas de cada tabela como se fossem todas.
+describe("fetchReviewBaseData: lê as tabelas inteiras, página a página", () => {
+  const HASH = "aaaaaaaaaaaa";
+  const x = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", description: "Pergunta", options: null, hash: HASH } as PydanticField;
+  // Acima de uma página do cursor (1000), sem ser múltiplo dela.
+  const TOTAL = 1203;
+  const docId = (i: number) => `doc-${String(i).padStart(5, "0")}`;
+  const docs = Array.from({ length: TOTAL }, (_, i) => docId(i));
+  const tableData = () => ({
+    projects: [{ id: "p1", pydantic_fields: [x], pydantic_hash: null, created_by: "owner" }],
+    responses: docs.map((doc) => ({
+      id: `r-${doc}`, project_id: "p1", document_id: doc, respondent_id: "ana", respondent_type: "humano", respondent_name: "Ana",
+      answers: { x: "A" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z",
+    })),
+    reviews: docs.map((doc) => ({
+      id: `rv-${doc}`, project_id: "p1", document_id: doc, field_name: "x", verdict: "A", chosen_response_id: `r-${doc}`, comment: null,
+      reviewer_id: "caio", created_at: "2026-09-02T00:00:00Z", field_hash: HASH,
+    })),
+    documents: docs.map((doc) => ({ id: doc, project_id: "p1", title: `Título ${doc}`, external_id: null, excluded_at: null, exclusion_pending_at: null })),
+    profiles: [],
+  });
+
+  it("documentos, respostas e revisões além da primeira página chegam ao Gabarito", async () => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: tableData(), writeCalls: [], rpcResults: { read_error_resolutions: { data: [] } },
+    });
+
+    const ctx = await fetchReviewBaseData(client as never, "p1");
+    const reviewed = computeReviewedDocuments(ctx);
+
+    expect(ctx.docMap.size).toBe(TOTAL);
+    expect(ctx.responsesByDoc.size).toBe(TOTAL);
+    expect(ctx.uniqueReviews).toHaveLength(TOTAL);
+    expect(reviewed).toHaveLength(TOTAL);
+    const last = reviewed.find((doc) => doc.documentId === docId(TOTAL - 1));
+    expect(last?.documentTitle).toBe(`Título ${docId(TOTAL - 1)}`);
+    expect(last?.fields[0].respondentAnswers).toHaveLength(1);
+  });
+
+  it("os respondentes de um documento saem na ordem de gravação, não na da PK", async () => {
+    const data = tableData();
+    data.responses = [
+      { ...data.responses[0], id: "r-b", respondent_id: "bia", respondent_name: "Bia", created_at: "2026-09-01T00:00:00Z" },
+      { ...data.responses[0], id: "r-a", respondent_id: "ana", respondent_name: "Ana", created_at: "2026-09-03T00:00:00Z" },
+    ];
+    const client = makeFilterAwareSupabaseMock({
+      tableData: data, writeCalls: [], rpcResults: { read_error_resolutions: { data: [] } },
+    });
+
+    const ctx = await fetchReviewBaseData(client as never, "p1");
+
+    expect(ctx.responsesByDoc.get(docId(0))?.map((r) => r.id)).toEqual(["r-b", "r-a"]);
+  });
+
+  it.each(["responses", "reviews", "documents"])("erro na leitura de %s falha alto em vez de montar o Gabarito sem a tabela", async (table) => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: tableData(), writeCalls: [], rpcResults: { read_error_resolutions: { data: [] } },
+      queryErrors: { [`${table}:select`]: { message: "gateway fora" } },
+    });
+
+    await expect(fetchReviewBaseData(client as never, "p1")).rejects.toThrow("gateway fora");
   });
 });
