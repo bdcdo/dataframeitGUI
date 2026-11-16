@@ -7,19 +7,34 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { getToken, fetchFastAPI } = vi.hoisted(() => ({
+import {
+  LINKED_CLAIMS,
+  UNLINKED_CLAIMS,
+  sessionTokenWith,
+} from "@/test-utils/session-token";
+
+const { getToken, currentUser, fetchFastAPI } = vi.hoisted(() => ({
   getToken: vi.fn(),
+  currentUser: vi.fn(),
   fetchFastAPI: vi.fn(),
 }));
 
-vi.mock("@clerk/nextjs/server", () => ({ auth: async () => ({ getToken }) }));
-vi.mock("@/lib/api", () => ({ fetchFastAPI }));
+vi.mock("@clerk/nextjs/server", () => ({
+  auth: async () => ({ getToken }),
+  currentUser,
+}));
+// Só a fronteira de rede é dublê: o erro e a leitura do claim são os reais.
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  fetchFastAPI,
+}));
 
 const { fetchFastAPIServer } = await import("../api-server");
 
 beforeEach(() => {
   getToken.mockReset().mockResolvedValue("tok");
   fetchFastAPI.mockReset().mockResolvedValue({ ok: true });
+  currentUser.mockReset().mockResolvedValue({ publicMetadata: {} });
 });
 
 describe("fetchFastAPIServer", () => {
@@ -56,5 +71,46 @@ describe("fetchFastAPIServer", () => {
     await expect(fetchFastAPIServer("/api/llm/cleanup-stale")).resolves.toEqual({
       cleaned: 3,
     });
+  });
+});
+
+// #532: o mesmo token sem `supabase_uid` é dois estados diferentes, e só a
+// metadata da conta os separa.
+describe("fetchFastAPIServer — token sem o vínculo (supabase_uid)", () => {
+  const unlinked = sessionTokenWith(UNLINKED_CLAIMS);
+
+  it("sessão válida, metadata sem supabase_uid: o request não sai", async () => {
+    getToken.mockResolvedValue(unlinked);
+    currentUser.mockResolvedValue({ publicMetadata: {} });
+
+    await expect(
+      fetchFastAPIServer("/api/pydantic/recover-fields"),
+    ).rejects.toMatchObject({
+      name: "AccessLinkPendingError",
+      message:
+        "Seu acesso ainda não foi concluído. Recarregue a página para concluir o acesso.",
+    });
+    expect(fetchFastAPI).not.toHaveBeenCalled();
+  });
+
+  it("metadata COM supabase_uid: segue para o backend, que falha alto (#487)", async () => {
+    // Instância Clerk sem os custom claims: a conta tem o vínculo e só o token
+    // não o carrega. Barrar aqui com "conclua o acesso" esconderia a config
+    // quebrada atrás de uma instrução que não resolve; o 503 do backend é a
+    // resposta certa e não pode ser interceptado.
+    getToken.mockResolvedValue(unlinked);
+    currentUser.mockResolvedValue({
+      publicMetadata: { supabase_uid: LINKED_CLAIMS.supabase_uid },
+    });
+
+    await fetchFastAPIServer("/api/pydantic/recover-fields");
+    expect(fetchFastAPI.mock.calls[0][2]).toBe(unlinked);
+  });
+
+  it("token com o claim não consulta a conta no Clerk", async () => {
+    getToken.mockResolvedValue(sessionTokenWith(LINKED_CLAIMS));
+    await fetchFastAPIServer("/api/pydantic/recover-fields");
+    expect(currentUser).not.toHaveBeenCalled();
+    expect(fetchFastAPI).toHaveBeenCalled();
   });
 });

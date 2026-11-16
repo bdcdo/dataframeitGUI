@@ -196,9 +196,13 @@ def verify_jwt(token: str) -> AuthUser:
         # renderia 403/404 "acesso negado" espalhados, escondendo a causa real
         # (claim ausente na config do session token) atrás de um erro de permissão.
         # 503, não 401: a credencial está boa; quem está quebrado é o servidor.
-        # Este ramo também pega o usuário recém-criado cujo vínculo ainda não foi
-        # gravado no metadata do Clerk — caso legítimo, que precisa ser resolvido
-        # no fluxo de pós-login e não aqui: ver issue #532.
+        # Do token puro, este estado é idêntico ao do usuário recém-criado cujo
+        # vínculo ainda não foi gravado no metadata do Clerk. Quem os separa é o
+        # frontend, que lê o metadata: token sem a claim de conta sem vínculo não
+        # sai de lá (`requireSupabaseToken` em `lib/api.ts`, `fetchFastAPIServer`
+        # em `lib/api-server.ts`), e a pessoa é conduzida à conclusão de acesso
+        # (#532). O que chega aqui é a config quebrada, ou um cliente que não é o
+        # nosso — por isso o status e o detail seguem os do #487.
         logger.error(
             "Token sem claim `supabase_uid` — verificar os custom claims do "
             "session token na instância Clerk (iss=%s).",

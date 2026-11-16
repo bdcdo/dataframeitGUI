@@ -14,3 +14,38 @@ export function readSupabaseUidFromMetadata(
 ): string | undefined {
   return user?.publicMetadata?.supabase_uid as string | undefined;
 }
+
+/** O contrato que a RLS e o backend FastAPI exigem do session token do Clerk:
+ *  - `supabase_uid`: lido por `clerk_uid()` (migration 20260401200000), que toda
+ *    policy usa como identidade, e por `verify_jwt` no backend;
+ *  - `role: "authenticated"`: sem ele o PostgREST trata a request como `anon`.
+ *
+ * Os dois são custom claims configurados no Dashboard (Sessions → Customize
+ * session token), não claims default — e o Postgres não reclama quando faltam:
+ * `clerk_uid()` vira NULL e as policies simplesmente não casam. */
+export type SessionTokenClaims = { supabase_uid?: string; role?: string };
+
+/** Lê o payload do session token SEM verificar a assinatura. Não é validação:
+ * quem valida é quem recebe o token (Supabase e FastAPI, contra o JWKS do
+ * Clerk). Serve para conferir, antes de o request sair, se o token carrega o
+ * que o destino exige. `null` quando o texto não é um JWT legível — julgar esse
+ * token é papel de quem o verifica.
+ *
+ * `atob` + `TextDecoder`, e não `Buffer`: roda igual no servidor e no browser
+ * (`lib/api.ts` é importado por client components). */
+export function readSessionTokenClaims(token: string): SessionTokenClaims | null {
+  const payload = token.split(".")[1];
+  if (!payload) return null;
+  try {
+    const base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    // O `catch` cobre base64/JSON inválido; o teste de tipo cobre o que ele não
+    // pega — JSON válido que não é objeto (`null`, número, string).
+    const claims: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    return typeof claims === "object" && claims !== null
+      ? (claims as SessionTokenClaims)
+      : null;
+  } catch {
+    return null;
+  }
+}

@@ -20,6 +20,7 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ getToken }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: toastError } }));
 
+import { UNLINKED_CLAIMS, sessionTokenWith } from "@/test-utils/session-token";
 import { RunLlmButton } from "../RunLlmButton";
 
 // Exigido pela regra test-jsdom-warm-up (eslint-rules/test-jsdom-warm-up.mjs).
@@ -28,6 +29,8 @@ beforeAll(() => warmUpJsdom(), 30_000);
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
+  getToken.mockImplementation(async () => "tok-123");
 });
 
 describe("RunLlmButton", () => {
@@ -88,6 +91,23 @@ describe("RunLlmButton", () => {
       ),
     );
     // Falha fechada antes do request: fetchFastAPI nem chega a ser chamado.
+    expect(fetchFastAPI).not.toHaveBeenCalled();
+  });
+
+  it("sessão sem o vínculo concluído: toast diz o que fazer e nada vai ao backend (#532)", async () => {
+    // Payload só com os claims default do Clerk — sem `supabase_uid`.
+    const unlinked = sessionTokenWith(UNLINKED_CLAIMS);
+    getToken.mockResolvedValue(unlinked);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<RunLlmButton projectId="p1" documentId="d1" canRunLlm />);
+
+    await userEvent.click(screen.getByRole("button"));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Seu acesso ainda não foi concluído. Recarregue a página para concluir o acesso.",
+      ),
+    );
     expect(fetchFastAPI).not.toHaveBeenCalled();
   });
 });

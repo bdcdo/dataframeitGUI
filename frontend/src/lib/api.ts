@@ -1,4 +1,5 @@
-import { serverErrorCopy } from "@/lib/server-error";
+import { readSessionTokenClaims } from "@/lib/clerk-supabase-uid";
+import { serverErrorCopy, UserFacingError } from "@/lib/server-error";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -10,6 +11,31 @@ class MissingAuthTokenError extends Error {
     super("Sessão indisponível. Faça login novamente.");
     this.name = "MissingAuthTokenError";
   }
+}
+
+/** Sessão válida cujo token ainda não carrega o vínculo com os dados
+ * (`supabase_uid`). O backend responderia 503 "Autenticação mal configurada no
+ * servidor" — certo para a instância Clerk sem os custom claims (#487), mas sem
+ * ação possível para quem só não concluiu o acesso (#532). O request não sai, e
+ * a copy diz o que fazer: recarregar leva a página protegida a conduzir a pessoa
+ * à conclusão de acesso (`/auth/post-login`).
+ *
+ * `UserFacingError`: é estado esperado com copy pronta, então os `catch` das
+ * actions a devolvem como veio em vez de trocá-la pela genérica do fluxo. */
+export class AccessLinkPendingError extends UserFacingError {
+  constructor() {
+    super(
+      "Seu acesso ainda não foi concluído. Recarregue a página para concluir o acesso.",
+    );
+    this.name = "AccessLinkPendingError";
+  }
+}
+
+/** `true` quando o token é um JWT legível sem `supabase_uid`. Token ilegível
+ * não entra aqui: quem o julga é o backend, que responde 401. */
+export function lacksSupabaseUid(token: string): boolean {
+  const claims = readSessionTokenClaims(token);
+  return claims !== null && !claims.supabase_uid;
 }
 
 /** Resposta não-ok do backend. Carrega o status para o caller separar o 4xx,
@@ -60,15 +86,38 @@ function apiErrorCopy(path: string, status: number, statusText: string, body: un
   );
 }
 
-type GetToken = () => Promise<string | null>;
+type GetToken = (options?: { skipCache?: boolean }) => Promise<string | null>;
 
-/** Busca o session token do Clerk e falha fechado (lança) quando vem nulo, em
- * vez de mandar um request sem `Authorization` que o backend rejeitaria com um
- * 401 ambíguo. Use em client components antes de cada request/poll. */
+/** Busca o session token do Clerk e falha fechado (lança) quando ele não serve
+ * ao backend, em vez de mandar um request que voltaria com um erro sem ação.
+ * Use em client components antes de cada request/poll.
+ *
+ *  - Token nulo (deslogado, sessão expirada): `MissingAuthTokenError`.
+ *  - Token sem `supabase_uid`: o token em cache pode ter sido emitido antes de
+ *    o vínculo ser gravado na metadata (o webhook ou a conclusão de acesso
+ *    rodaram depois), então uma reemissão com `skipCache` é tentada uma vez. Se
+ *    o claim continua ausente, `AccessLinkPendingError` — o request não sai.
+ *
+ * Daqui não dá para separar o vínculo pendente da instância Clerk sem os custom
+ * claims (#487): o cliente só vê o token. A separação fica com o servidor — na
+ * instância mal configurada, o recarregamento pedido pela mensagem cai na
+ * barreira de `lib/supabase/server.ts`, que falha alto em toda página protegida;
+ * e o 503 do backend segue valendo para qualquer chamada que chegue lá. */
 export async function requireSupabaseToken(getToken: GetToken): Promise<string> {
   const token = await getToken();
   if (!token) throw new MissingAuthTokenError();
-  return token;
+  if (!lacksSupabaseUid(token)) return token;
+
+  const fresh = await getToken({ skipCache: true });
+  if (!fresh) throw new MissingAuthTokenError();
+  if (lacksSupabaseUid(fresh)) {
+    console.error(
+      "[api] session token sem `supabase_uid` mesmo após reemissão: vínculo " +
+        "pendente ou custom claims ausentes na instância Clerk",
+    );
+    throw new AccessLinkPendingError();
+  }
+  return fresh;
 }
 
 /**

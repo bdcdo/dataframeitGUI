@@ -9,6 +9,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { copyWithRef, loggedLine } from "@/test-utils/error-ref";
+import {
+  LINKED_CLAIMS,
+  UNLINKED_CLAIMS,
+  sessionTokenWith,
+} from "@/test-utils/session-token";
 import { fetchFastAPI, requireSupabaseToken } from "../api";
 
 const fetchMock = vi.fn();
@@ -62,6 +67,77 @@ describe("requireSupabaseToken", () => {
     await expect(
       requireSupabaseToken(vi.fn().mockResolvedValue(null)),
     ).rejects.toThrow(/^(?!.*template).*$/i);
+  });
+});
+
+// #532: sessão válida cujo token não carrega `supabase_uid`. O backend
+// responderia 503 "Autenticação mal configurada no servidor", que não dá ação a
+// quem só não concluiu o acesso — o request não pode sair.
+describe("requireSupabaseToken — token sem o vínculo (supabase_uid)", () => {
+  const linked = sessionTokenWith(LINKED_CLAIMS);
+  const unlinked = sessionTokenWith(UNLINKED_CLAIMS);
+
+  beforeEach(() => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("token com o claim passa sem reemissão", async () => {
+    const getToken = vi.fn().mockResolvedValue(linked);
+    await expect(requireSupabaseToken(getToken)).resolves.toBe(linked);
+    expect(getToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("token em cache emitido antes do vínculo: reemite e usa o novo", async () => {
+    // O webhook (ou a conclusão de acesso) gravou a metadata depois que o token
+    // em cache foi emitido; a pessoa já tem o vínculo e não deve ver erro.
+    const getToken = vi
+      .fn()
+      .mockResolvedValueOnce(unlinked)
+      .mockResolvedValueOnce(linked);
+    await expect(requireSupabaseToken(getToken)).resolves.toBe(linked);
+    expect(getToken.mock.calls).toEqual([[], [{ skipCache: true }]]);
+  });
+
+  it("vínculo pendente: falha antes do request, com copy acionável", async () => {
+    const getToken = vi.fn().mockResolvedValue(unlinked);
+    const error = await requireSupabaseToken(getToken).catch((e: unknown) => e);
+    expect(error).toMatchObject({
+      name: "AccessLinkPendingError",
+      message:
+        "Seu acesso ainda não foi concluído. Recarregue a página para concluir o acesso.",
+    });
+    // Uma reemissão só: o helper roda a cada poll e não pode virar laço.
+    expect(getToken).toHaveBeenCalledTimes(2);
+    // A copy não é a string de erro do servidor (critério de aceite do #532).
+    expect((error as Error).message).not.toMatch(/servidor|configurad/i);
+  });
+
+  it("vínculo pendente deixa rastro no console, sem ecoar o token", async () => {
+    await requireSupabaseToken(vi.fn().mockResolvedValue(unlinked)).catch(
+      () => {},
+    );
+    const logged = vi.mocked(console.error).mock.calls.flat().join(" ");
+    expect(logged).toContain("supabase_uid");
+    expect(logged).not.toContain(unlinked);
+  });
+
+  it("sessão que cai durante a reemissão vira MissingAuthTokenError", async () => {
+    const getToken = vi
+      .fn()
+      .mockResolvedValueOnce(unlinked)
+      .mockResolvedValueOnce(null);
+    await expect(requireSupabaseToken(getToken)).rejects.toMatchObject({
+      name: "MissingAuthTokenError",
+    });
+  });
+
+  it("token ilegível segue adiante: quem o julga é o backend (401)", async () => {
+    const getToken = vi.fn().mockResolvedValue("nao-e-jwt");
+    await expect(requireSupabaseToken(getToken)).resolves.toBe("nao-e-jwt");
+    expect(getToken).toHaveBeenCalledTimes(1);
   });
 });
 
