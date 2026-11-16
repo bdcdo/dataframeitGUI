@@ -10,6 +10,7 @@ import {
   type ArbitrationField,
 } from "@/components/arbitration/ArbitrationPage";
 import { assignOrder } from "@/lib/arbitration-order";
+import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import {
   buildReviewQueueDocumentMap,
@@ -21,6 +22,54 @@ import type { ArbitrationVerdict, PydanticField } from "@/lib/types";
 // labels humano/llm enquanto blind_verdict IS NULL. Quando blind ja foi decidido,
 // montamos o payload `reveal` com aSide/bSide + nomes + justificativa para a
 // fase 2 trabalhar normalmente.
+
+interface ArbitrationFieldReviewRow {
+  id: string;
+  field_name: string;
+  human_answer_snapshot: unknown;
+  llm_answer_snapshot: unknown;
+  llm_justification_snapshot: unknown;
+  blind_verdict: string | null;
+  self_justification: string | null;
+}
+
+function buildArbitrationField(
+  fr: ArbitrationFieldReviewRow,
+  humanName: string | null,
+  llmName: string | null,
+): ArbitrationField {
+  const humanAnswer = fr.human_answer_snapshot;
+  const llmAnswer = fr.llm_answer_snapshot;
+
+  const order = assignOrder(fr.id);
+  const aSide: ArbitrationVerdict = order === "human_first" ? "humano" : "llm";
+  const bSide: ArbitrationVerdict = order === "human_first" ? "llm" : "humano";
+  const aAnswer = order === "human_first" ? humanAnswer : llmAnswer;
+  const bAnswer = order === "human_first" ? llmAnswer : humanAnswer;
+  const blindVerdict = (fr.blind_verdict as ArbitrationVerdict | null) ?? null;
+
+  return {
+    fieldReviewId: fr.id,
+    fieldName: fr.field_name,
+    aAnswer,
+    bAnswer,
+    blindVerdict,
+    reveal:
+      blindVerdict !== null
+        ? {
+            aSide,
+            bSide,
+            humanName,
+            llmName,
+            llmJustification:
+              typeof fr.llm_justification_snapshot === "string"
+                ? fr.llm_justification_snapshot
+                : null,
+            selfJustification: fr.self_justification ?? null,
+          }
+        : null,
+  };
+}
 
 export default async function ArbitrationRoute({
   params,
@@ -44,20 +93,22 @@ export default async function ArbitrationRoute({
   );
   const { queueUserId } = resolveProjectQueueIdentity(access, sp.viewAsUser);
 
-  const [{ data: project }, { data: assignments }] = await Promise.all([
-    supabase
-      .from("projects")
-      .select("pydantic_fields, name, arbitration_blind")
-      .eq("id", id)
-      .single(),
-    supabase
-      .from("assignments")
-      .select("document_id, status")
-      .eq("project_id", id)
-      .eq("user_id", queueUserId)
-      .eq("type", "arbitragem")
-      .neq("status", "concluido"),
-  ]);
+  const [{ data: project }, { data: assignments }, profileNames] =
+    await Promise.all([
+      supabase
+        .from("projects")
+        .select("pydantic_fields, name, arbitration_blind")
+        .eq("id", id)
+        .single(),
+      supabase
+        .from("assignments")
+        .select("document_id, status")
+        .eq("project_id", id)
+        .eq("user_id", queueUserId)
+        .eq("type", "arbitragem")
+        .neq("status", "concluido"),
+      fetchProfileNames(supabase, id),
+    ]);
 
   const docIds = (assignments ?? []).map((a) => a.document_id);
   const { documents: docs, fieldReviews } = await loadReviewQueueRows(
@@ -87,12 +138,14 @@ export default async function ArbitrationRoute({
       ? await supabase
           .from("responses")
           .select(
-            "id, document_id, respondent_type, respondent_name, answers, justifications",
+            "id, document_id, respondent_type, respondent_id, respondent_name, answers, justifications",
           )
           .in("id", responseIds)
       : { data: [] };
 
-  const responsesById = new Map((responses ?? []).map((r) => [r.id, r]));
+  const responsesById = new Map(
+    withProfileNames(responses, profileNames).map((r) => [r.id, r]),
+  );
 
   const docMap = buildReviewQueueDocumentMap<ArbitrationField>(docs);
 
@@ -102,40 +155,13 @@ export default async function ArbitrationRoute({
     const human = responsesById.get(fr.human_response_id);
     const llm = responsesById.get(fr.llm_response_id);
 
-    const humanAnswer = fr.human_answer_snapshot;
-    const llmAnswer = fr.llm_answer_snapshot;
-
-    const order = assignOrder(fr.id);
-    const aSide: ArbitrationVerdict =
-      order === "human_first" ? "humano" : "llm";
-    const bSide: ArbitrationVerdict =
-      order === "human_first" ? "llm" : "humano";
-    const aAnswer = order === "human_first" ? humanAnswer : llmAnswer;
-    const bAnswer = order === "human_first" ? llmAnswer : humanAnswer;
-    const blindVerdict =
-      (fr.blind_verdict as ArbitrationVerdict | null) ?? null;
-
-    payload.fields.push({
-      fieldReviewId: fr.id,
-      fieldName: fr.field_name,
-      aAnswer,
-      bAnswer,
-      blindVerdict,
-      reveal:
-        blindVerdict !== null
-          ? {
-              aSide,
-              bSide,
-              humanName: human?.respondent_name ?? null,
-              llmName: llm?.respondent_name ?? null,
-              llmJustification:
-                typeof fr.llm_justification_snapshot === "string"
-                  ? fr.llm_justification_snapshot
-                  : null,
-              selfJustification: fr.self_justification ?? null,
-            }
-          : null,
-    });
+    payload.fields.push(
+      buildArbitrationField(
+        fr,
+        human?.respondent_name ?? null,
+        llm?.respondent_name ?? null,
+      ),
+    );
   }
 
   const arbitratableDocs: ArbitrationDoc[] = Array.from(docMap.values()).filter(

@@ -189,3 +189,43 @@ describe("fetchReviewBaseData: decisão ancorada em veredito válido que não é
     },
   );
 });
+
+// O mapa de nomes lia `profiles.full_name`, coluna que não existe: a leitura
+// voltava com erro, o mapa ficava vazio e o Gabarito mostrava a autoria
+// congelada em `respondent_name` (#622).
+describe("fetchReviewBaseData: autoria vem do perfil", () => {
+  const HASH = "aaaaaaaaaaaa";
+  const x = { id: "00000000-0000-4000-8000-000000000001", name: "x", type: "text", description: "Pergunta", options: null, hash: HASH } as PydanticField;
+  const human = (id: string, respondent: string, recorded: string) => ({
+    id, project_id: "p1", document_id: "doc1", respondent_id: respondent, respondent_type: "humano", respondent_name: recorded,
+    answers: { x: "A" }, justifications: null, is_latest: true, pydantic_hash: null, answer_field_hashes: { x: HASH }, created_at: "2026-09-01T00:00:00Z",
+  });
+
+  it("mostra o nome do perfil, e o nome gravado para quem não tem nome no perfil", async () => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: {
+        projects: [{ id: "p1", pydantic_fields: [x], pydantic_hash: null, created_by: "owner" }],
+        responses: [human("r1", "ana", "ana@example.com"), human("r2", "bia", "bia@example.com")],
+        reviews: [{ id: "rv", project_id: "p1", document_id: "doc1", field_name: "x", verdict: "A", chosen_response_id: "r1", comment: null, reviewer_id: "caio", created_at: "2026-09-02T00:00:00Z", field_hash: HASH }],
+        documents: [{ id: "doc1", project_id: "p1", title: "Documento", external_id: null, excluded_at: null, exclusion_pending_at: null }],
+        project_members: [
+          { project_id: "p1", user_id: "ana", profiles: { first_name: "Ana", last_name: "Lima" } },
+          { project_id: "p1", user_id: "bia", profiles: { first_name: null, last_name: null } },
+        ],
+        // Como o banco devolve a linha: sem `full_name`.
+        profiles: [
+          { id: "ana", first_name: "Ana", last_name: "Lima" },
+          { id: "bia", first_name: null, last_name: null },
+        ],
+      },
+      writeCalls: [],
+      rpcResults: { read_error_resolutions: { data: [] } },
+    });
+
+    const ctx = await fetchReviewBaseData(client as never, "p1");
+    const [doc] = computeReviewedDocuments(ctx);
+
+    expect(doc.fields[0].respondentAnswers.map((r) => r.respondentName).toSorted()).toEqual(["Ana Lima", "bia@example.com"]);
+    expect(ctx.responsesByDoc.get("doc1")?.map((r) => r.respondent_name).toSorted()).toEqual(["Ana Lima", "bia@example.com"]);
+  });
+});

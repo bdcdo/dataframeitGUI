@@ -13,6 +13,7 @@ import { effectiveErrorResolution, errorResolutionComment, ERROR_DECISION_LABELS
 import { pickValidCellReviews } from "@/lib/review-validity";
 import { stableStringify } from "@/lib/schema-utils";
 import { isComparedField } from "@/lib/compare-divergence";
+import { fetchProfileNames, respondentDisplayName } from "@/lib/respondent-names";
 
 /* ── Raw row shapes ── */
 
@@ -227,6 +228,7 @@ export async function fetchReviewBaseData(
     { data: reviews },
     { data: documents },
     { data: errorResolutions, error: resolutionsError },
+    profileMap,
   ] = await Promise.all([
     supabase
       .from("projects")
@@ -249,6 +251,7 @@ export async function fetchReviewBaseData(
       .is("exclusion_pending_at", null)
       .limit(REVIEW_BASE_DATA_LIMIT),
     fetchAllAfterId<ErrorResolutionRow>(() => supabase.rpc("read_error_resolutions", { p_project_id: projectId })),
+    fetchProfileNames(supabase, projectId),
   ]);
   if (resolutionsError) throw new Error(`Não foi possível carregar as decisões: ${resolutionsError.message}`);
 
@@ -267,26 +270,6 @@ export async function fetchReviewBaseData(
   const { fieldMap, docMap } = buildReviewLookupMaps(fields, documents);
   const currentFieldHashes = buildFieldHashMap(fields);
 
-  // Fetch profile names
-  const respondentIds = new Set<string>();
-  responses?.forEach((r) => {
-    if (r.respondent_id) respondentIds.add(r.respondent_id);
-  });
-  reviews?.forEach((r) => {
-    if (r.reviewer_id) respondentIds.add(r.reviewer_id);
-  });
-
-  let profileMap = new Map<string, string>();
-  if (respondentIds.size > 0) {
-    const { data: profiles } = await supabase
-      .from("profiles")
-      .select("id, full_name")
-      .in("id", [...respondentIds]);
-    profileMap = new Map(
-      profiles?.map((p) => [p.id, p.full_name || p.id]) || [],
-    );
-  }
-
   // Group responses by document_id
   const responsesByDoc = new Map<string, ResponseRow[]>();
   responses?.forEach((r) => {
@@ -296,7 +279,7 @@ export async function fetchReviewBaseData(
       document_id: r.document_id,
       respondent_id: r.respondent_id,
       respondent_type: r.respondent_type as "humano" | "llm",
-      respondent_name: r.respondent_name,
+      respondent_name: respondentDisplayName(r, profileMap),
       answers: r.answers as Record<string, unknown>,
       justifications: r.justifications as Record<string, string> | null,
       pydantic_hash: r.pydantic_hash,

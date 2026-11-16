@@ -6,6 +6,7 @@ import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { MyVerdictsView } from "@/components/reviews/MyVerdictsView";
 import { resolveViewedRespondentId } from "@/lib/reviews/queries";
 import { buildMyVerdictItems, type MyVerdictReviewRow } from "@/lib/reviews/my-verdicts";
+import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
 import type { PydanticField } from "@/lib/types";
 
 export type { VerdictItem } from "@/lib/reviews/my-verdicts";
@@ -78,6 +79,7 @@ export default async function MyVerdictsPage({
     { data: documents },
     { data: acknowledgments },
     { data: allRespondents },
+    profileNames,
   ] = await Promise.all([
     supabase
       .from("reviews")
@@ -97,17 +99,18 @@ export default async function MyVerdictsPage({
     isCoordinator
       ? supabase
           .from("responses")
-          .select("respondent_id, respondent_name")
+          .select("respondent_id, respondent_type, respondent_name")
           .eq("project_id", id)
           .eq("respondent_type", "humano")
           .eq("is_latest", true)
       : Promise.resolve({ data: null }),
+    isCoordinator ? fetchProfileNames(supabase, id) : new Map<string, string>(),
   ]);
 
   // Deduplicate respondents
   const respondentsList = isCoordinator && allRespondents
     ? [...new Map(
-        allRespondents
+        withProfileNames(allRespondents, profileNames)
           .filter((r) => r.respondent_id && r.respondent_id !== memberUserId)
           .map((r) => [r.respondent_id, { id: r.respondent_id as string, name: r.respondent_name || "Anônimo" }]),
       ).values()]

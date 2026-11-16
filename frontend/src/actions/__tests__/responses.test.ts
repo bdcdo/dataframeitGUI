@@ -69,7 +69,7 @@ interface State {
   documentExcludedAt: string | null;
   automationMode: string | null;
   // Linha de `profiles` de quem grava; `null` = leitura sem linha.
-  profile: { first_name: string | null; last_name: string | null } | null;
+  profile: { first_name: string | null; last_name: string | null; email?: string } | null;
 }
 
 let state: State;
@@ -715,6 +715,18 @@ describe("saveResponse — autoria acompanha o perfil (#622)", () => {
 
     expect(r.success).toBe(true);
     expect(displayedAuthorship()).toBe("Ana Lima");
+  });
+
+  // Conta vinculada grava como o membro canônico: sem nome no perfil, a
+  // autoria caía no e-mail da conta logada, e o membro aparecia sob um
+  // endereço que não é o dele.
+  it("sem nome no perfil, a autoria é o e-mail do membro, e não o da conta logada", async () => {
+    state.profile = { first_name: null, last_name: null, email: "membro@test.com" };
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
+
+    expect(r.success).toBe(true);
+    expect(displayedAuthorship()).toBe("membro@test.com");
   });
 
   it.each([

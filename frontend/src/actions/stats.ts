@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import type { LlmErrorSource } from "@/lib/llm-error-metrics";
 import { caughtErrorCopy, serverErrorScope } from "@/lib/server-error";
 import { ambiguityCommentBody } from "@/lib/reviews/ambiguity-comment";
+import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
 import { carriesValue, decisionDependsOnSource, errorResolutionInputSchema, errorResolutionContextSchema, type ErrorDecision, type ErrorResolutionInput, type ErrorResolutionContext } from "@/lib/error-resolution";
 
 // Erro do Postgres ou PostgREST: o texto vai para o log, e o toast recebe a
@@ -270,21 +271,27 @@ export async function fetchGabaritoForComment(
 
     const supabase = await createSupabaseServer();
 
-    const { data: responses, error } = await supabase
-      .from("responses")
-      .select("id, respondent_name, respondent_type, answers")
-      .eq("project_id", projectId)
-      .eq("document_id", documentId)
-      // Só respostas ativas: humanas rebaixadas (is_latest=false) ou LLM antigo
-      // não devem aparecer no gabarito do comentário.
-      .eq("is_latest", true);
+    const [{ data: responses, error }, profileNames] = await Promise.all([
+      supabase
+        .from("responses")
+        .select("id, respondent_id, respondent_name, respondent_type, answers")
+        .eq("project_id", projectId)
+        .eq("document_id", documentId)
+        // Só respostas ativas: humanas rebaixadas (is_latest=false) ou LLM
+        // antigo não devem aparecer no gabarito do comentário.
+        .eq("is_latest", true),
+      fetchProfileNames(supabase, projectId),
+    ]);
 
     // Sem este retorno, a leitura que falha mostrava um gabarito vazio, como
     // se ninguém tivesse respondido (P3).
     if (error) return { answers: [], error: statsServerError("leitura do gabarito", error, GABARITO_FAILED) };
     if (!responses) return { answers: [] };
 
-    const result: GabaritoRespondentAnswer[] = responses.map((r) => ({
+    const result: GabaritoRespondentAnswer[] = withProfileNames(
+      responses,
+      profileNames,
+    ).map((r) => ({
       id: r.id,
       respondentName: r.respondent_name || "Anônimo",
       respondentType: r.respondent_type as "humano" | "llm",

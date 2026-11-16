@@ -13,6 +13,7 @@ import {
   type ValueEquivalencesByField,
 } from "@/lib/equivalence";
 import { comparisonSet, type ComparisonSet } from "@/lib/comparison-set";
+import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
 import {
   assignedCompareDocIds,
   compareDefaultsForMode,
@@ -84,6 +85,8 @@ interface RawResponseRow extends ResponseLabelRow {
 // com `answers`/`justifications` (ver a leitura em `loadCompareQueue`).
 interface ResponseLabelRow {
   id: string;
+  respondent_type: string;
+  respondent_id: string | null;
   respondent_name: string | null;
   schema_version_major: number | null;
   schema_version_minor: number | null;
@@ -552,6 +555,7 @@ export async function loadCompareQueue(
     versionLogRead,
     assignmentsRead,
     equivalencesRead,
+    profileNames,
     { ownMemberUserId, queueUserId, isImpersonating, isCoordinator },
   ] = await Promise.all([
     supabase
@@ -585,7 +589,7 @@ export async function loadCompareQueue(
         supabase
           .from("responses")
           .select(
-            "id, respondent_name, schema_version_major, schema_version_minor, schema_version_patch, documents!inner(id)",
+            "id, respondent_type, respondent_id, respondent_name, schema_version_major, schema_version_minor, schema_version_patch, documents!inner(id)",
           )
           .eq("project_id", projectId)
           .eq("is_latest", false)
@@ -611,6 +615,7 @@ export async function loadCompareQueue(
     // Equivalências de valor: escopo do projeto, uma linha por par de valores
     // (centenas por projeto), então não há o que recortar por documento.
     fetchProjectValueEquivalences(supabase, projectId),
+    fetchProfileNames(supabase, projectId),
     identity,
   ]);
 
@@ -624,11 +629,17 @@ export async function loadCompareQueue(
   });
   if (readError) return readError;
   const project = projectRead.data;
-  const currentResponses = responsesRead.data;
+  // O nome vem do perfil antes de qualquer uso: é ele que o filtro por
+  // respondente lista e compara, e com o nome gravado a mesma pessoa aparecia
+  // duas vezes (e-mail e nome) conforme a data de cada resposta (#622).
+  const currentResponses = withProfileNames(responsesRead.data, profileNames);
   // Atuais e substituídas juntas, na ordem da PK de uma leitura só: é a ordem
   // dos nomes no filtro de respondente. O uuid vem em hexa minúsculo, e como
   // texto ordena igual ao `ORDER BY id` do Postgres.
-  const responseLabels = [...currentResponses, ...supersededRead.data].toSorted((a, b) =>
+  const responseLabels = [
+    ...currentResponses,
+    ...withProfileNames(supersededRead.data, profileNames),
+  ].toSorted((a, b) =>
     a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
   );
   const versionLog = versionLogRead.data;

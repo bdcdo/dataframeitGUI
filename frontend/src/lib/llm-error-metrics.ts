@@ -118,6 +118,7 @@ export interface ReviewedEntry {
 
 export interface MetricsResponse {
   id: string;
+  respondent_id?: string | null;
   respondent_name?: string | null;
   document_id: string;
   respondent_type: "humano" | "llm";

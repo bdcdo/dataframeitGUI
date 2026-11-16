@@ -13,6 +13,7 @@ import {
   type MetricsResponse,
   type MetricsReview,
 } from "@/lib/llm-error-metrics";
+import { fetchProfileNames, withProfileNames } from "@/lib/respondent-names";
 import type { PydanticField } from "@/lib/types";
 
 interface DocumentRow {
@@ -53,7 +54,7 @@ function fetchMetricsSources(
         supabase
           .from("responses")
           .select(
-            "id, document_id, respondent_type, respondent_name, is_latest, answers, justifications, answer_field_hashes, created_at, schema_version_major, schema_version_minor, schema_version_patch",
+            "id, document_id, respondent_type, respondent_id, respondent_name, is_latest, answers, justifications, answer_field_hashes, created_at, schema_version_major, schema_version_minor, schema_version_patch",
           )
           .eq("project_id", id),
     ),
@@ -131,13 +132,14 @@ async function loadInsightsData(
   id: string,
   user: Awaited<ReturnType<typeof requirePageAuthUser>>,
 ) {
-  const [{ data: project }, accessResult] = await Promise.all([
+  const [{ data: project }, accessResult, profileNames] = await Promise.all([
     supabase
       .from("projects")
       .select("pydantic_fields, schema_revision, automation_mode")
       .eq("id", id)
       .single(),
     getProjectAccessContext(id, user),
+    fetchProfileNames(supabase, id),
   ]);
 
   const [
@@ -152,7 +154,7 @@ async function loadInsightsData(
   return {
     project,
     accessResult,
-    responses: responsesResult.data,
+    responses: withProfileNames(responsesResult.data, profileNames),
     reviews: reviewsResult.data,
     documents: documentsResult.data,
     errorResolutions: errorResolutionsResult.data,

@@ -96,6 +96,8 @@ interface Seed {
   suggestions?: Row[];
   equivalences?: Row[];
   versionLog?: Row[];
+  // Membros com o join de `profiles`, como a leitura dos nomes os devolve.
+  members?: Row[];
 }
 
 function tables(seed: Seed): Record<string, unknown[]> {
@@ -114,6 +116,7 @@ function tables(seed: Seed): Record<string, unknown[]> {
     reviews: withProject(seed.reviews),
     project_comments: withProject(seed.comments),
     schema_suggestions: withProject(seed.suggestions),
+    project_members: withProject(seed.members),
   };
 }
 
@@ -480,6 +483,33 @@ describe("loadCompareQueue: qualificação do documento", () => {
     );
     // só Ana qualifica — cai abaixo do total de 2
     expect(props.documents).toEqual([]);
+  });
+
+  // #622: `respondent_name` congela o que o perfil tinha no dia da gravação.
+  // Quem preencheu o nome depois aparecia duas vezes no filtro (e-mail e
+  // nome), e nenhuma das duas opções trazia todos os seus documentos.
+  it("a mesma pessoa gravada sob dois nomes é um respondente só, com o nome do perfil", async () => {
+    const [ana1, bia1] = divergentPair("doc1");
+    const [ana2, bia2] = divergentPair("doc2");
+    const props = await loadProps({
+      members: [{ user_id: "u1", profiles: { first_name: "Ana", last_name: "Lima" } }],
+      responses: [
+        { ...ana1, respondent_name: "ana@example.com" },
+        bia1,
+        { ...ana2, respondent_name: "Ana Lima" },
+        bia2,
+        response({ id: "old", is_latest: false, respondent_id: "u1", respondent_name: "ana@example.com" }),
+      ],
+    });
+
+    expect(props.respondentNames.toSorted()).toEqual(["Ana Lima", "Bia"]);
+    expect(ids(props).toSorted()).toEqual(["doc1", "doc2"]);
+    expect(Object.values(props.responses).flat().map((r) => r.respondent_name).toSorted()).toEqual([
+      "Ana Lima",
+      "Ana Lima",
+      "Bia",
+      "Bia",
+    ]);
   });
 
   it("por padrão a fila fica na major corrente do projeto", async () => {

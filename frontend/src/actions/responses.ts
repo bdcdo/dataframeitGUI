@@ -9,6 +9,7 @@ import { syncCodingAssignmentStatus } from "@/lib/coding-sync";
 import { deriveProjectVersionContext } from "@/lib/compare-version";
 import type { AnswerFieldHashes, PydanticField } from "@/lib/types";
 import { caughtErrorCopy, serverErrorCopy, type ServerError } from "@/lib/server-error";
+import { profileFullName } from "@/lib/respondent-names";
 
 export interface SaveResponseOpts {
   notes?: string;
@@ -84,7 +85,7 @@ async function fetchSaveContext(
   ] = await Promise.all([
     supabase
       .from("profiles")
-      .select("first_name, last_name")
+      .select("first_name, last_name, email")
       .eq("id", effectiveId)
       .single(),
     existingQuery
@@ -520,8 +521,10 @@ async function runSaveAttempt({
     projectId,
     documentId,
     effectiveId,
-    profileName: resolveProfileName(profile),
-    fallbackName: userEmail,
+    profileName: profileFullName(profile),
+    // O e-mail é o do membro por quem a resposta é gravada: com conta
+    // vinculada, o da conta logada poria a autoria sob outro endereço.
+    fallbackName: profile?.email || userEmail,
     payload,
     roundId: expectedRoundId,
   });
@@ -601,21 +604,6 @@ async function syncAssignmentAfterSave({
     roundId,
   });
   return error;
-}
-
-// Nome exibido como autoria da resposta, ou `null` enquanto o perfil não tem
-// nome — caso em que o INSERT recorre ao e-mail.
-function resolveProfileName(
-  profile:
-    { first_name: string | null; last_name: string | null } | null | undefined,
-): string | null {
-  // O trim impede que um nome só de espaços conte como nome e, no UPDATE,
-  // apague a autoria gravada.
-  const name = [profile?.first_name, profile?.last_name]
-    .map((part) => part?.trim())
-    .filter(Boolean)
-    .join(" ");
-  return name || null;
 }
 
 // Duas tentativas, não mais: o conflito só acontece quando outra sessão criou
