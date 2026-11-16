@@ -13,6 +13,7 @@ Os testes de #828 atravessam o dataframeit instalado com cliente LLM local.
 """
 
 import inspect
+import logging
 import sys
 import warnings
 from collections.abc import Callable
@@ -32,6 +33,7 @@ from services.llm_runner import (
     DEFAULT_LLM_CALL_TIMEOUT_SECONDS,
     DEFAULT_PARALLEL_REQUESTS,
     _jobs,
+    _persist_run_progress,
     _prepare_llm_model,
     _process_and_save_rows,
     _row_from_result,
@@ -990,6 +992,12 @@ def test_run_llm_faz_uma_chamada_so_depois_do_canario(monkeypatch):
     sb = _build_supabase(
         _project_row(llm_kwargs={"parallel_requests": 2}),
         docs,
+    )
+    # Relógio que anda 5 s a cada leitura, como o canário de verdade, que leva
+    # mais que os 2 s do throttle aberto pela gravação da fase `processing`.
+    relogio = iter(range(0, 10_000, 5))
+    monkeypatch.setattr(
+        "services.llm_runner.time", SimpleNamespace(time=lambda: float(next(relogio)))
     )
 
     _run_llm_sync(monkeypatch, sb, row_specs, dataframeit_calls=dataframeit_calls)
@@ -2650,14 +2658,61 @@ def test_progresso_persistido_carrega_a_fase_da_run(monkeypatch):
     assert progressos[0]["progress"] == 0
     assert {payload["phase"] for payload in progressos} == {"processing"}
     # A fase `processing` aparece como "progresso/total": sem o total na
-    # linha, o fallback mostraria "2/0 documentos processados".
-    assert {payload["total"] for payload in progressos} == {3}
+    # linha, o fallback mostraria "2/0 documentos processados". O total é
+    # constante, então sai uma vez, no snapshot, antes de qualquer progresso.
+    updates = sb.table("llm_runs").update_calls
+    (snapshot,) = [payload for payload in updates if "document_count" in payload]
+    assert snapshot["total"] == 3
+    assert updates.index(snapshot) < updates.index(progressos[0])
+    assert not any("total" in payload for payload in progressos)
     filtros = [
         filters
         for _name, op, payload, filters in sb.operation_log
         if op == "update" and payload in progressos
     ]
     assert all(("eq", "status", "running") in f for f in filtros)
+
+
+def test_gravacao_direta_da_fase_acerta_o_relogio_do_throttle(monkeypatch):
+    # A mudança de fase grava o progresso sem esperar o throttle. Com o
+    # relógio do throttle parado em zero, a primeira linha processada
+    # regravava o mesmo progresso logo em seguida.
+    docs = _docs(3)
+    sb = _build_supabase(_project_row(), docs)
+    # Relógio parado: depois da gravação direta, nenhum intervalo de 2 s passa.
+    monkeypatch.setattr(
+        "services.llm_runner.time", SimpleNamespace(time=lambda: 1_000.0)
+    )
+
+    _run_llm_sync(
+        monkeypatch,
+        sb,
+        {doc["id"]: {"campo_a": "a", "campo_b": "b", "campo_c": "c"} for doc in docs},
+    )
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    progressos = [
+        payload
+        for payload in sb.table("llm_runs").update_calls
+        if "heartbeat_at" in payload and "status" not in payload
+    ]
+    assert [(p["phase"], p["progress"]) for p in progressos] == [("processing", 0)]
+
+
+def test_progresso_sem_fase_no_estado_ainda_renova_o_heartbeat(caplog):
+    # A leitura da fase ficava dentro do `try` que só loga: um estado sem a
+    # chave perdia o UPDATE inteiro, e a run viva ficava sem heartbeat.
+    sb = _build_supabase(_project_row(), [])
+
+    with caplog.at_level(logging.ERROR, logger="services.llm_runner"):
+        _persist_run_progress(sb, JOB_ID, {"progress": 2})
+
+    (payload,) = sb.table("llm_runs").update_calls
+    assert payload["progress"] == 2
+    assert payload["heartbeat_at"]
+    # Sem fase conhecida, a coluna fica como está, e o defeito vai para o log.
+    assert "phase" not in payload
+    assert "sem fase" in caplog.text
 
 
 @pytest.mark.parametrize(

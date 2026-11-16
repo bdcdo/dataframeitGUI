@@ -205,25 +205,36 @@ def _persist_run_progress(sb, job_id: str, jobs_state: dict) -> None:
     Chamado periodicamente pelo save loop (throttle 2s). Erros aqui são
     logados, não re-lançados: a run principal não deve abortar só porque uma
     atualização de progresso falhou. O próximo tick tenta de novo.
+
+    O `total` não entra aqui: é constante durante a run e sai uma vez, em
+    `_persist_run_snapshot`.
     """
+    payload = {
+        "processed_complete": jobs_state.get("processed_complete", 0),
+        "processed_partial": jobs_state.get("processed_partial", 0),
+        "processed_empty": jobs_state.get("processed_empty", 0),
+        "progress": jobs_state.get("progress", 0),
+        "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Fase: o fallback de status (backend reiniciado) lê daqui o que o cartão
+    # mostra. Lida fora do `try` que só loga: um estado sem a chave perderia o
+    # UPDATE inteiro, e sem heartbeat a run viva seria marcada como abandonada.
+    # Sem fase, a coluna fica como está e o defeito aparece no log.
+    phase = jobs_state.get("phase")
+    if phase is None:
+        logger.error(
+            "Estado do job %s sem fase: progresso gravado sem atualizar a fase",
+            job_id,
+        )
+    else:
+        payload["phase"] = phase
     try:
-        sb.table("llm_runs").update(
-            {
-                "processed_complete": jobs_state.get("processed_complete", 0),
-                "processed_partial": jobs_state.get("processed_partial", 0),
-                "processed_empty": jobs_state.get("processed_empty", 0),
-                "progress": jobs_state.get("progress", 0),
-                # Fase e total: o fallback de status (backend reiniciado) lê
-                # daqui o que o cartão mostra, e `processing` é exibida como
-                # "progresso/total".
-                "phase": jobs_state["phase"],
-                "total": jobs_state.get("total", 0),
-                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
-            }
-            # Só em run viva: a fase de uma linha já encerrada (inclusive por
-            # mark_stale_runs_as_error, com a run ainda rodando) não volta
-            # para `processing`.
-        ).eq("job_id", job_id).eq("status", "running").execute()
+        # Só em run viva: a fase de uma linha já encerrada (inclusive por
+        # mark_stale_runs_as_error, com a run ainda rodando) não volta
+        # para `processing`.
+        sb.table("llm_runs").update(payload).eq("job_id", job_id).eq(
+            "status", "running"
+        ).execute()
     except Exception:
         logger.exception("Failed to UPDATE llm_runs progress for job %s", job_id)
 
@@ -294,6 +305,11 @@ def _persist_run_snapshot(sb, job_id: str, project: dict, doc_count: int) -> Non
             "llm_provider": project.get("llm_provider"),
             "llm_model": project.get("llm_model"),
             "document_count": doc_count,
+            # O total que o cartão mostra em "progresso/total". Constante
+            # durante a run, por isso sai aqui, antes da fase `processing`, e
+            # não a cada gravação de progresso: o fallback de status (backend
+            # reiniciado) nunca lê "5/0 documentos processados".
+            "total": doc_count,
             "pydantic_code": project.get("pydantic_code"),
             # A rodada é capturada junto do restante do snapshot da execução.
             # Mesmo que o coordenador inicie outra rodada enquanto o provider
@@ -1913,10 +1929,18 @@ def _persist_run_progress_throttled(sb, job_id: str, jobs_state: dict) -> None:
     publica. Com o intervalo repetido nos dois, um ajuste num deixaria o outro
     martelando `llm_runs` ou deixando o heartbeat envelhecer.
     """
-    now_ts = time.time()
-    if now_ts - jobs_state["last_progress_persist"] >= 2.0:
-        _persist_run_progress(sb, job_id, jobs_state)
-        jobs_state["last_progress_persist"] = now_ts
+    if time.time() - jobs_state["last_progress_persist"] >= 2.0:
+        _persist_run_progress_now(sb, job_id, jobs_state)
+
+
+def _persist_run_progress_now(sb, job_id: str, jobs_state: dict) -> None:
+    """`_persist_run_progress` sem esperar o throttle, acertando o relógio dele.
+
+    Para a mudança de fase, que não pode esperar 2 s. Sem acertar o relógio, a
+    linha seguinte regravava o mesmo progresso logo depois.
+    """
+    _persist_run_progress(sb, job_id, jobs_state)
+    jobs_state["last_progress_persist"] = time.time()
 
 
 class _RowPublisher:
@@ -2264,7 +2288,7 @@ def _run_dataframeit_and_publish(
     jobs_state["phase"] = "processing"
     # Já aqui, e não só na primeira linha processada: o canário pode levar
     # minutos, e até ele voltar a linha diria `loading`.
-    _persist_run_progress(sb, job_id, jobs_state)
+    _persist_run_progress_now(sb, job_id, jobs_state)
 
     def _call(frame: pd.DataFrame, model, on_row_done=None):
         return dataframeit(
@@ -2379,7 +2403,7 @@ def _run_dataframeit_and_publish(
         # alguma linha.
         jobs_state["progress"] = len(canary_result) + len(result)
         jobs_state.update(phase="saving", eta_seconds=None)
-        _persist_run_progress(sb, job_id, jobs_state)
+        _persist_run_progress_now(sb, job_id, jobs_state)
         _process_and_save_rows(publisher, result)
 
 

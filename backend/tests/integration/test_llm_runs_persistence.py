@@ -132,6 +132,8 @@ def test_snapshot_writes_config_and_captured_round(sb, project):
         llm_provider="google_genai",
         llm_model="gemini-test",
         document_count=7,
+        # O total do cartão sai junto, uma vez: o progresso não o regrava.
+        total=7,
         pydantic_code=code,
         round_id=other_round,
     )
