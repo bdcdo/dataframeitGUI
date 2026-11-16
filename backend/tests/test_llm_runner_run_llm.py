@@ -1,14 +1,15 @@
-"""Teste de integração de run_llm (issue #377).
+"""Testes de integração de run_llm (issues #377 e #828).
 
 Pré-requisito bloqueante do refactor: hoje nenhum teste chama `run_llm`
 diretamente (os outros arquivos `test_llm_runner_*` só cobrem os helpers já
-extraídos). Mocka só a fronteira externa — cliente Supabase e `dataframeit` —
+extraídos). Os testes de #377 mockam cliente Supabase e `dataframeit` —
 e deixa rodar de verdade a compilação Pydantic, o flatten/filtro de campos e a
 classificação de cobertura, para servir de rede de segurança antes de extrair
 o laço de pós-processamento por linha (linhas 970-1120).
 
 Cobre os 4 cenários pedidos pela issue: happy path, run parcial (não falha),
 run comprometida (RuntimeError) e exceção não tratada persistida.
+Os testes de #828 atravessam o dataframeit instalado com cliente LLM local.
 """
 
 import inspect
@@ -22,6 +23,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+from pydantic import BaseModel, Field
 from supabase import PostgrestAPIError
 
 from services.llm_runner import (
@@ -840,6 +842,116 @@ def test_run_llm_routes_kwargs_without_leaking_internal_options(monkeypatch):
     ]:
         assert internal_key not in kwargs
         assert internal_key not in kwargs["model_kwargs"]
+
+
+@pytest.mark.parametrize("temperature", [None, 0])
+def test_run_llm_with_real_dataframeit_preserves_provider_kwargs_and_justifications(
+    monkeypatch, temperature
+):
+    """Exercise the installed package through chat creation, without network I/O."""
+    from langchain import chat_models
+
+    client_kwargs = []
+    model_fields = []
+
+    class FakeChat:
+        def with_structured_output(self, model, *, include_raw):
+            assert include_raw is True
+            model_fields.append(set(model.model_fields))
+
+            class FakeStructuredChat:
+                def invoke(self, _messages):
+                    values = {name: f"resposta {name}" for name in model.model_fields}
+                    return {"parsed": model.model_validate(values), "raw": None}
+
+            return FakeStructuredChat()
+
+    def create_chat(_model, **kwargs):
+        client_kwargs.append(kwargs)
+        return FakeChat()
+
+    monkeypatch.setattr(chat_models, "init_chat_model", create_chat)
+    project_kwargs = {"include_justifications": True}
+    if temperature is not None:
+        project_kwargs["temperature"] = temperature
+    sb = _build_supabase(
+        _project_row(
+            llm_provider="openai", llm_model="fake", llm_kwargs=project_kwargs
+        ),
+        _docs(1),
+    )
+    monkeypatch.setattr("services.llm_runner.get_supabase", lambda: sb)
+    monkeypatch.setattr(
+        "services.llm_runner.wake_auto_review_reconciliation_sync", lambda: True
+    )
+
+    init_job(JOB_ID, PROJECT_ID, "all")
+    run_llm(JOB_ID, PROJECT_ID)
+
+    assert _jobs[JOB_ID]["status"] == "completed"
+    assert len(client_kwargs) == 1
+    assert client_kwargs[0].get("temperature") == temperature
+    assert ("temperature" in client_kwargs[0]) is (temperature is not None)
+    assert "include_justifications" not in client_kwargs[0]
+    assert "campo_a_justification" in model_fields[0]
+    published = _published_responses(sb)
+    assert len(published) == 1
+    assert published[0]["justifications"]["campo_a"] == "resposta campo_a_justification"
+
+
+def test_real_dataframeit_rejects_legacy_condition_and_text_column_collision(
+    monkeypatch,
+):
+    from dataframeit import dataframeit
+    from langchain import chat_models
+
+    monkeypatch.setattr(
+        chat_models,
+        "init_chat_model",
+        lambda *_args, **_kwargs: pytest.fail("nenhum cliente LLM deve ser criado"),
+    )
+
+    class LegacyCondition(BaseModel):
+        campo: str = Field(
+            json_schema_extra={"condition": {"field": "id", "equals": "1"}}
+        )
+
+    class CollidingField(BaseModel):
+        texto: str
+
+    frame = pd.DataFrame([{"id": "1", "texto": "documento"}])
+    with pytest.raises(ValueError, match="condition.*use_search"):
+        dataframeit(
+            frame.copy(), LegacyCondition, "{texto}", model="fake", provider="openai"
+        )
+    with pytest.raises(ValueError, match="campo 'texto'.*coluna de texto"):
+        dataframeit(
+            frame.copy(), CollidingField, "{texto}", model="fake", provider="openai"
+        )
+
+
+def test_real_dataframeit_marks_blank_text_without_calling_provider(monkeypatch):
+    from dataframeit import dataframeit
+    from langchain import chat_models
+
+    def unexpected_chat(*_args, **_kwargs):
+        pytest.fail("texto vazio não deve chegar ao cliente LLM")
+
+    monkeypatch.setattr(chat_models, "init_chat_model", unexpected_chat)
+
+    class Answer(BaseModel):
+        campo: str
+
+    with pytest.warns(UserWarning, match=r"1 linha\(s\) sem texto"):
+        result = dataframeit(
+            pd.DataFrame([{"id": "1", "texto": "  "}]),
+            Answer,
+            "{texto}",
+            model="fake",
+            provider="openai",
+        )
+    assert result.at[0, "_dataframeit_status"] == "error"
+    assert result.at[0, "_error_details"] == "Texto ausente"
 
 
 def test_run_llm_repassa_timeout_do_projeto_em_vez_do_default(monkeypatch):
