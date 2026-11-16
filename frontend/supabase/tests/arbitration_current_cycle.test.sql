@@ -12,7 +12,9 @@
 -- únicos caminhos que poderiam quebrá-la:
 --
 --   1. o reconciliador, único produtor de `superseded_at` na tabela
---      operacional, marca o ciclo e, na mesma transação, ou o recicla
+--      operacional (o INSERT não é: `snapshot_field_review_cycle` zera a
+--      coluna; e o backfill da 20260717120000 reciclou ou apagou, na própria
+--      migration, o que marcou), marca o ciclo e, na mesma transação, ou o recicla
 --      (pergunta mudou, campo segue divergente) ou o move para o histórico
 --      (campo deixou de divergir). Nos dois casos o árbitro é solto e o
 --      assignment de arbitragem aberto sai;
@@ -123,14 +125,16 @@ VALUES
 -- ========== 1. O cliente não grava superseded_at ==========
 -- Cada ator tenta a transição que o gatilho de fase lhe permite (controle: sem
 -- superseded_at ela passa, e é desfeita) e depois a mesma transição levando
--- superseded_at junto. O controle é o que garante que a recusa vem de
+-- só superseded_at junto (sem superseded_reason, que seria recusado por conta
+-- própria e esconderia um gatilho que deixasse superseded_at passar). O
+-- controle é o que garante que a recusa vem de
 -- superseded_at, e não de GRANT, RLS ou de uma transição inválida por outro
 -- motivo. Quem recusa aqui é enforce_field_review_phase_transition;
 -- guard_field_review_update_columns também recusaria, mas sai cedo quando o
 -- SESSION_USER é postgres, que é como a suíte roda.
 --
--- O ambiente local não concede DML do schema public por padrão (no remoto ele
--- vem dos default privileges).
+-- Um Postgres sem os default privileges do Supabase não concede DML do schema
+-- public; o GRANT sai no ROLLBACK.
 GRANT SELECT, UPDATE ON public.field_reviews TO authenticated;
 SET LOCAL ROLE authenticated;
 
@@ -181,8 +185,7 @@ BEGIN
 
     BEGIN
       EXECUTE pg_catalog.format(
-        'UPDATE public.field_reviews SET %s, superseded_at = now(), '
-        'superseded_reason = ''answer_changed'' WHERE id = %L',
+        'UPDATE public.field_reviews SET %s, superseded_at = now() WHERE id = %L',
         item.transition, item.review_id);
       GET DIAGNOSTICS v_rows = ROW_COUNT;
       v_outcome := 'gravou ' || v_rows || ' linha(s)';
