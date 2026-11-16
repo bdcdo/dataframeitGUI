@@ -63,32 +63,30 @@ export async function loadReviewQueueRows<
       ),
     );
 
-  if (!onlyDocumentsWithReviews) {
-    const [documents, fieldReviews] = await Promise.all([
-      loadDocuments(documentIds),
-      fieldReviewsRead,
-    ]);
-    const error = documents.error ?? fieldReviews.error;
-    if (error) throw queueReadError(error);
-    return { documents: documents.data, fieldReviews: fieldReviews.data };
+  // `fetchByDocumentChunks` devolve lista vazia na falha: os ciclos que não
+  // vieram não pedem documento nenhum, e o erro é lançado abaixo.
+  const idsToLoad = onlyDocumentsWithReviews
+    ? withReviews(documentIds, (await fieldReviewsRead).data)
+    : documentIds;
+  const [documents, fieldReviews] = await Promise.all([
+    loadDocuments(idsToLoad),
+    fieldReviewsRead,
+  ]);
+  const error = documents.error ?? fieldReviews.error;
+  if (error) {
+    throw new Error(
+      `Não foi possível carregar a fila de revisão: ${error.message}`,
+    );
   }
-
-  const fieldReviews = await fieldReviewsRead;
-  if (fieldReviews.error) throw queueReadError(fieldReviews.error);
-  const reviewedIds = new Set(
-    fieldReviews.data.map((review) => review.document_id),
-  );
-  const documents = await loadDocuments(
-    documentIds.filter((id) => reviewedIds.has(id)),
-  );
-  if (documents.error) throw queueReadError(documents.error);
   return { documents: documents.data, fieldReviews: fieldReviews.data };
 }
 
-function queueReadError(error: { message: string }): Error {
-  return new Error(
-    `Não foi possível carregar a fila de revisão: ${error.message}`,
-  );
+function withReviews(
+  documentIds: readonly string[],
+  fieldReviews: readonly { document_id: string }[],
+): string[] {
+  const reviewed = new Set(fieldReviews.map((review) => review.document_id));
+  return documentIds.filter((id) => reviewed.has(id));
 }
 
 export function buildReviewQueueDocumentMap<TField>(
