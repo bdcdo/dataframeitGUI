@@ -51,7 +51,7 @@ describe("RunLlmButton", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("dispara /api/llm/run com token do template supabase ao clicar", async () => {
+  it("dispara /api/llm/run com o session token ao clicar", async () => {
     fetchFastAPI.mockResolvedValue({ job_id: "j1" });
     render(<RunLlmButton projectId="p1" documentId="d1" canRunLlm />);
 
@@ -85,7 +85,7 @@ describe("RunLlmButton", () => {
     expect(JSON.parse(opts.body)).toMatchObject({ impersonating: true });
   });
 
-  it("mostra erro acionável quando o token vem nulo (template/sessão)", async () => {
+  it("mostra erro acionável quando o token vem nulo (sessão)", async () => {
     getToken.mockResolvedValueOnce(null);
     render(<RunLlmButton projectId="p1" documentId="d1" canRunLlm />);
 
