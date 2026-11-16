@@ -3,10 +3,15 @@ import type { SupabaseServerClient } from "@/lib/supabase/server";
 
 // A fila de arbitragem (analyze/arbitragem/page.tsx) mostra o documento que
 // passa nas duas regras abaixo, e a aba (analyze/layout.tsx) só aparece quando
-// algum documento passa nas duas. O banco deveria manter uma em sincronia com
-// a outra, mas não mantém em todo caminho: o fechamento do assignment conta
-// campo de ciclo superado, e tirar a permissão de arbitrar apaga o assignment
-// sem tocar em field_reviews.
+// algum documento passa nas duas. As funções do banco que mexem na arbitragem
+// gravam assignments e field_reviews na mesma transação, mas nenhuma
+// constraint amarra uma tabela à outra, e um lado pode ficar sem o outro:
+// remover o membro apaga os assignments pendentes dele e deixa os field_reviews
+// com o árbitro (release_pending_assignments_on_member_delete). Por isso a
+// fila cruza as duas regras em vez de confiar numa só. A sincronia nos dados
+// é conferida por um par de invariantes em scripts/invariants/check-invariants.ts:
+// `arbitragem-contestada-tem-assignment-aberto` e
+// `arbitragem-aberta-tem-contestacao-pendente`.
 
 // Assignment de arbitragem ainda aberto, de documento que não foi excluído nem
 // está com exclusão pendente.
