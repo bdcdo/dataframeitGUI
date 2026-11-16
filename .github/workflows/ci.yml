@@ -30,7 +30,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # Um grupo por PR e, na main, um por commit: no grupo único da main, o
+  # terceiro push seguido tirava da fila o run pendente do segundo, e os
+  # commits daquele push ficavam sem o gitleaks, que só lê os do próprio push.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   # Só entre pushes do mesmo PR. Na main, cancelar o run do merge anterior
   # deixaria aquele commit com X vermelho sem nunca ter sido conferido.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -137,11 +140,12 @@ jobs:
         run: npm ci
       # Os ambientes dos hooks de repositório remoto (o actionlint, compilado
       # em Go, e o pre-commit-hooks): sem o cache, cada execução os remonta. A
-      # chave muda com o `rev` de qualquer hook e com o pre-commit do CI.
+      # chave muda com o `rev` de qualquer hook, com o pre-commit do CI e com
+      # as exceções, que decidem quais ambientes o job monta.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', '.github/ci-tools/uv.lock') }}
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', '.github/ci-tools/uv.lock', '.github/ci-exempt-gates.json') }}
       # ruby, jq, python3 e go (o actionlint) vêm na imagem ubuntu-latest. O
       # `--fix` e o format do ruff reprovam do mesmo jeito: o pre-commit falha
       # quando o hook altera arquivo.

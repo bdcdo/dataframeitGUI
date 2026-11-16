@@ -8,8 +8,6 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 matrix_script="$repo_root/.github/scripts/ci-gate-matrix.sh"
 real_config="$repo_root/.pre-commit-config.yaml"
 workflow="$repo_root/.github/workflows/ci.yml"
-database_workflow="$repo_root/.github/workflows/database-tests.yml"
-secret_scan_workflow="$repo_root/.github/workflows/secret-scan.yml"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -155,6 +153,9 @@ ruby -ryaml -e '
   # Workflow com filtro que não dispara deixa o check obrigatório em
   # "Expected" para sempre, e o PR trava sem nada vermelho.
   abort("ci.yml precisa disparar em todo pull_request") unless trigger.key?("pull_request")
+  # O banco e o gitleaks não têm gatilho próprio: sem o push aqui, a main
+  # ficaria sem os dois, e o gitleaks só lê os commits do próprio push.
+  abort("ci.yml precisa disparar em push na main") unless Array(trigger.dig("push", "branches")).include?("main")
   trigger.each do |event, filters|
     next unless filters.is_a?(Hash)
     filtered = filters.keys & %w[paths paths-ignore]
@@ -176,26 +177,26 @@ ruby -ryaml -e '
   light = jobs.fetch("lint").fetch("steps").map { |step| step["run"].to_s }.find { |text| text.include?("--hook-stage pre-commit --all-files") } or abort("o lint não roda os hooks de pre-commit com --all-files")
   abort("o lint precisa tirar o SKIP de ci-exempt-gates.json") unless light =~ /SKIP="\$\(jq -r .keys \| join\(","\). \.github\/ci-exempt-gates\.json\)"/
 
-  # As exceções db-tests, llm-runs-contract e gitleaks apontam para estes
-  # jobs. Workflow chamado que deixe de aceitar a chamada, ou peça permissão
-  # que o job não concede, derruba o ci.yml inteiro na largada: nenhum job roda
-  # e o check obrigatório fica "Expected".
-  called_runs = { "database" => ARGV.fetch(1), "secret-scan" => ARGV.fetch(2) }.to_h do |job, path|
-    file = File.basename(path)
-    abort("o job #{job} precisa chamar o #{file}") unless jobs.dig(job, "uses") == "./.github/workflows/#{file}"
-    called = YAML.safe_load(File.read(path), aliases: true)
+  # As exceções db-tests, llm-runs-contract e gitleaks apontam para os jobs
+  # que chamam outro workflow. Workflow chamado que deixe de aceitar a chamada,
+  # ou peça permissão que o job não concede, derruba o ci.yml inteiro na
+  # largada: nenhum job roda e o check obrigatório fica "Expected". A lista sai
+  # dos jobs com `uses:`, então o próximo workflow chamado entra sozinho.
+  called_steps = jobs.select { |_, job| job["uses"] }.to_h do |id, job|
+    file = job["uses"][%r{\A\./\.github/workflows/([^/]+\.yml)\z}, 1] or abort("o job #{id} precisa chamar workflow deste repositório, e chama #{job["uses"]}")
+    called = YAML.safe_load(File.read(File.join(File.dirname(ARGV.fetch(0)), file)), aliases: true)
     called_trigger = called["on"] || called[true]
     abort("#{file} precisa de workflow_call: é o ci.yml que o chama") unless called_trigger.key?("workflow_call")
     own = called_trigger.keys & %w[pull_request push]
     abort("#{file} não pode disparar sozinho em #{own.join(", ")}: rodaria duas vezes") unless own.empty?
-    abort("#{file} pede permissão diferente da que o job #{job} concede") unless called["permissions"] == jobs.dig(job, "permissions")
+    abort("#{file} pede permissão diferente da que o job #{id} concede") unless called["permissions"] == job["permissions"]
     # Grupo próprio cancelaria, na main, o job do merge anterior, e o
     # ci-required daquele commit ficaria vermelho.
     abort("#{file} não pode ter concurrency próprio: vale o do ci.yml") if called.key?("concurrency") || called.fetch("jobs").values.any? { |called_job| called_job.key?("concurrency") }
-    [job, called.fetch("jobs").values.flat_map { |called_job| called_job.fetch("steps") }]
+    [file, called.fetch("jobs").values.flat_map { |called_job| called_job.fetch("steps") }]
   end
-  abort("database-tests.yml precisa rodar o runner (npm run test:db)") unless called_runs.fetch("database").any? { |step| step["run"] == "npm run test:db" }
-  abort("secret-scan.yml precisa rodar a gitleaks-action") unless called_runs.fetch("secret-scan").any? { |step| step["uses"].to_s.start_with?("gitleaks/gitleaks-action@") }
+  abort("o ci.yml precisa chamar o database-tests.yml e rodar nele o runner (npm run test:db)") unless called_steps.fetch("database-tests.yml", []).any? { |step| step["run"] == "npm run test:db" }
+  abort("o ci.yml precisa chamar o secret-scan.yml e rodar nele a gitleaks-action") unless called_steps.fetch("secret-scan.yml", []).any? { |step| step["uses"].to_s.start_with?("gitleaks/gitleaks-action@") }
 
   gate = jobs.fetch("gate")
   abort("a matriz do gate precisa vir do job discover") unless gate.dig("strategy", "matrix") == "${{ fromJSON(needs.discover.outputs.matrix) }}"
@@ -204,6 +205,6 @@ ruby -ryaml -e '
   env = run.fetch("env")
   abort("o gate precisa passar o id e o shard da célula ao hook") unless env["HOOK_ID"] == "${{ matrix.id }}" && env["GATE_SHARD"] == "${{ matrix.shard }}"
   abort("o gate precisa de GATE_FAIL_OPEN=0: no servidor, gate que não rodou não passa") unless env["GATE_FAIL_OPEN"] == "0"
-' "$workflow" "$database_workflow" "$secret_scan_workflow"
+' "$workflow"
 
 echo "contrato da matriz de gates: ok"
