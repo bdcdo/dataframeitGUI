@@ -76,7 +76,9 @@ jobs:
           # Mesmo uv do backend/Dockerfile.
           version: "0.9.18"
           enable-cache: true
-          cache-dependency-glob: backend/uv.lock
+          cache-dependency-glob: |
+            backend/uv.lock
+            .github/ci-tools/uv.lock
           # Cada hook enche o cache com coisa diferente (só o pre-commit, o
           # backend inteiro, o semgrep): com uma chave só, vale o primeiro.
           cache-suffix: ${{ matrix.id }}
@@ -119,7 +121,19 @@ jobs:
         with:
           version: "0.9.18"
           enable-cache: true
-          cache-dependency-glob: backend/uv.lock
+          cache-dependency-glob: |
+            backend/uv.lock
+            .github/ci-tools/uv.lock
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # Antes dos hooks, como nas células: hook de pre-commit que precise do
+      # node_modules encontra o mesmo ambiente do push local.
+      - name: Instalar o frontend
+        working-directory: frontend
+        run: npm ci
       # ruby, jq, python3 e go (o actionlint) vêm na imagem ubuntu-latest. O
       # `--fix` e o format do ruff reprovam do mesmo jeito: o pre-commit falha
       # quando o hook altera arquivo.
@@ -128,15 +142,7 @@ jobs:
           SKIP="$(jq -r 'keys | join(",")' .github/ci-exempt-gates.json)"
           export SKIP
           uv run --locked --project .github/ci-tools pre-commit run --hook-stage pre-commit --all-files
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - name: Frontend — instalar
-        working-directory: frontend
-        run: npm ci
-      - name: Frontend — eslint
+      - name: eslint
         working-directory: frontend
         run: npm run lint
 

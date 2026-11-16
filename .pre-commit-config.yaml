@@ -159,7 +159,7 @@ repos:
         name: CI gate matrix contract
         entry: .github/scripts/test-ci-gate-matrix.sh
         language: system
-        files: ^(\.pre-commit-config\.yaml|\.github/(ci-(exempt-gates|gate-shards)\.json|workflows/ci\.yml|scripts/(test-)?ci-gate-matrix\.sh))$
+        files: ^(\.pre-commit-config\.yaml|\.github/(ci-(exempt-gates|gate-shards)\.json|workflows/(ci|database-tests)\.yml|scripts/(test-)?ci-gate-matrix\.sh))$
         pass_filenames: false
         require_serial: true
 
@@ -260,8 +260,8 @@ repos:
       # Playwright e2e smoke: fecha o loop aberto pela #107 (agent/CI travava
       # no login do Clerk sem Testing Tokens) fazendo esses specs rodarem sem
       # depender de alguem lembrar de digitar `npm run test:e2e` (issue #306).
-      # Nao ha CI bloqueante (sem branch protection no free tier — ver
-      # docs/CODE_QUALITY_TOOLING.md), entao pre-push e o unico lugar onde
+      # No servidor este hook nao roda (precisa de segredo do Clerk — ver
+      # .github/ci-exempt-gates.json), entao pre-push e o unico lugar onde
       # "testar antes do PR" pode ser automatico de verdade.
       #
       # No modo manual (`npm run test:e2e`), os specs ainda fazem test.skip()
@@ -406,15 +406,16 @@ repos:
 
       # Pinos da toolchain do backend declarados fora do backend: o ruff acima
       # vindo do uv.lock (sem `rev` proprio), e o backend/.python-version contra
-      # o Dockerfile e o mypy (backend/tests/test_toolchain_pins.py). Roda so esse
-      # teste quando o push toca um desses dois arquivos; os demais lados
+      # o Dockerfile e o mypy, e o pre-commit do CI vindo de .github/ci-tools
+      # (backend/tests/test_toolchain_pins.py). Roda so esse teste quando o push
+      # toca um desses arquivos; os demais lados
       # (uv.lock, Dockerfile, pyproject.toml) ja disparam o backend-pytest
       # inteiro, que inclui o teste.
       - id: toolchain-pins
         name: pinos da toolchain do backend (pre-push)
         entry: bash -c 'command -v uv >/dev/null 2>&1 || { echo "uv ausente — instale o astral uv para conferir os pinos da toolchain" >&2; exit 1; }; cd backend && exec uv run pytest -q tests/test_toolchain_pins.py'
         language: system
-        files: ^(\.pre-commit-config\.yaml|backend/\.python-version|\.github/workflows/.*\.yml)$
+        files: ^(\.pre-commit-config\.yaml|backend/\.python-version|\.github/(workflows/.*\.yml|ci-tools/.*|dependabot\.yml))$
         pass_filenames: false
         require_serial: true
         stages: [pre-push]
