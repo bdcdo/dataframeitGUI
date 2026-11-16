@@ -1,0 +1,20 @@
+# Achados que o gitleaks deixa de acusar, um por linha, pela impressao digital
+# (`Fingerprint` do relatorio: commit:arquivo:regra:linha). Diferente da
+# allowlist do .gitleaks.toml, que libera um formato de valor, cada linha daqui
+# libera um unico achado num unico commit: o mesmo valor em outro commit ou em
+# outro arquivo volta a ser acusado.
+#
+# So entra aqui credencial ja revogada, com o registro da revogacao ao lado.
+
+# Clerk keyless (`frontend/.clerk/.tmp/keyless.json`), commitado por engano no
+# #140 e tirado do versionamento no #157. A mesma linha do arquivo rende dois
+# achados: a secret key de teste (regra stripe-access-token, pelo prefixo
+# sk_test_) e o token do claimUrl (generic-api-key). Os dois morreram em
+# 2026-07-02, quando a aplicacao keyless foi reivindicada e apagada no Clerk; a
+# issue #165 registra a remocao e a validacao (a chave passou a responder 404).
+# A historia nao foi reescrita, por decisao registrada na mesma issue, entao o
+# scan da historia inteira (`workflow_dispatch` do secret-scan.yml) acusaria os
+# dois para sempre. O scan de PR e o de push leem so os commits novos e nunca
+# chegaram a este.
+fd9593737785d0f48ffb4dfa79ef373b90013a2e:frontend/.clerk/.tmp/keyless.json:stripe-access-token:1
+fd9593737785d0f48ffb4dfa79ef373b90013a2e:frontend/.clerk/.tmp/keyless.json:generic-api-key:1
