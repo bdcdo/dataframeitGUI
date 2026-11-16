@@ -720,8 +720,7 @@ function isCoveredByConcludedComparison(
         [],
       equivalencesByField,
     });
-    // `null`: o fecho não tem o que decidir e deixa o status como está.
-    return status === null || status === "concluido";
+    return status === "concluido";
   });
 }
 
@@ -791,5 +790,4 @@ export async function scanComparisonBacklog(
         ),
     )
     .map(({ documentId, coderIds }) => ({ documentId, coderIds }));
-
 }

@@ -612,6 +612,48 @@ describe("scanComparisonBacklog — documento já comparado (#748)", () => {
     ).toEqual([]);
   });
 
+  it("divergência nova depois do fecho, em campo sem veredito, volta ao backlog", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    const [q1] = makeProjectRow().pydantic_fields;
+    tableData.projects = [
+      makeProjectRow({
+        current_round_id: "round-2",
+        pydantic_fields: [q1, { ...q1, id: "00000000-0000-4000-8000-000000000002", name: "q2", hash: "q2-hash" }],
+      }),
+    ];
+    // userC julgou q1 e concluiu; depois as respostas passaram a divergir em q2.
+    tableData.responses = [
+      makeHumanResponse("userA", "A", { answers: { q1: "A", q2: "X" } }),
+      makeHumanResponse("userB", "B", { answers: { q1: "B", q2: "Y" } }),
+    ];
+    tableData.assignments = [comparison()];
+    tableData.reviews = [verdict()];
+    const scan = () => scanComparisonBacklog(makeClient() as never, "p1", "compare_humans");
+    expect((await scan()).map((entry) => entry.documentId)).toEqual(["doc1"]);
+
+    // Com q2 também julgado, a comparação concluída volta a cobrir.
+    tableData.reviews = [verdict(), verdict({ id: "rev2", field_name: "q2", verdict: "X", field_hash: "q2-hash" })];
+    expect(await scan()).toEqual([]);
+  });
+
+  it("compare_llm: humano × LLM já julgado na rodada fica fora do backlog", async () => {
+    const { scanComparisonBacklog } = await loadLib();
+    tableData.projects = [
+      makeProjectRow({ automation_mode: "compare_llm", current_round_id: "round-2" }),
+    ];
+    tableData.responses = [makeHumanResponse("userA", "A"), llm("B")];
+    tableData.assignments = [comparison()];
+    tableData.reviews = [verdict()];
+    const backlog = await scanComparisonBacklog(makeClient() as never, "p1", "compare_llm");
+    expect(backlog).toEqual([]);
+  });
+
+  it("sem comparação concluída a varredura não lê `reviews`", async () => {
+    // A leitura falharia se acontecesse: o documento entra no backlog sem ela.
+    queryErrors["reviews:select"] = { message: "reviews não deveria ser lida" };
+    expect(await scanWith([], [])).toEqual(["doc1"]);
+  });
+
   it("projeto sem rodada corrente não tem comparação concluída que cubra", async () => {
     expect(await scanWith([comparison()], [verdict()], null)).toEqual(["doc1"]);
   });
