@@ -7,6 +7,7 @@ import { syncCompareAssignment } from "@/lib/compare-sync";
 import { errorMessage } from "@/lib/utils";
 import { copiedVerdictInDomain, OUT_OF_DOMAIN_VOTE_MESSAGE, reviewIsValid } from "@/lib/review-validity";
 import { fetchFieldDefinition } from "@/lib/reviews/field-definition";
+import { ambiguityCommentBody } from "@/lib/reviews/ambiguity-comment";
 import type { PydanticField } from "@/lib/types";
 
 export interface ResponseSnapshotEntry {
@@ -124,13 +125,6 @@ async function syncAmbiguityComment(
 ): Promise<void> {
   if (verdict === "ambiguo") await ensureAmbiguityComment(supabase, cell, comment, authorId);
   else await removeOrphanAmbiguityComment(supabase, cell, field);
-}
-
-function ambiguityCommentBody(comment: string | undefined): string {
-  const note = comment?.trim();
-  return note
-    ? `Campo marcado como ambíguo na revisão (aba Comparar): ${note}`
-    : "Campo marcado como ambíguo na revisão (aba Comparar).";
 }
 
 async function ensureAmbiguityComment(

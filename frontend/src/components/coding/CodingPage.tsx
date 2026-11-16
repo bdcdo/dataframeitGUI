@@ -532,16 +532,13 @@ function CodingPageInner({
           confirmado. Fica aqui — e não dentro do painel de perguntas — porque o
           sinal é da PÁGINA (o documento aberto), e porque duplicá-lo por modo
           obrigava cada view a repassá-lo. */}
-      {!isFullscreen && activeDocUnsent && (
-        <div className="flex items-center gap-2 border-b px-4 py-1.5">
-          <UnsentChangesBadge visible />
-        </div>
-      )}
+      <UnsentChangesBadge visible={!isFullscreen && activeDocUnsent} />
       {/* Em fullscreen a faixa fica sem oferta, mas montada: sair do
           fullscreen é uma chegada, e a região live dela tem de existir antes
           (#635). */}
       <CodingDraftBanner
         recovery={isFullscreen ? NO_RECOVERY : drafts.recovery}
+        offeredAt={drafts.recoveryAt}
         fields={fields}
         onRestore={handleRestoreDraft}
         onDiscard={handleDiscardDraft}

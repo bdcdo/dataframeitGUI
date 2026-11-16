@@ -37,44 +37,48 @@ function humanizeAge(updatedAt: number, now: number): string {
 
 type DraftOffer = Extract<CodingDraftRecovery, { kind: "resumable" | "diverged" }>;
 
-// A mensagem da oferta, numa fonte só: é renderizada duas vezes — na faixa
-// visível e na região live `sr-only` — e as duas cópias não podem divergir.
-function DraftOfferMessage({
+function DraftAge({ offer, reference }: { offer: DraftOffer; reference: number }) {
+  return (
+    <span>
+      Você tem alterações não enviadas neste documento, salvas neste navegador{" "}
+      {humanizeAge(offer.updatedAt, reference)}.
+    </span>
+  );
+}
+
+function OverwriteWarning({
   offer,
   fields,
-  reference,
+  hidden,
 }: {
   offer: DraftOffer;
   fields: PydanticField[];
-  reference: number;
+  /** Fora da árvore de acessibilidade: a cópia visível, que o leitor já ouve
+   *  pela região live. */
+  hidden?: boolean;
 }) {
+  // Só o que retomar de fato sobrescreve — ver `overwrittenFields`, que é a
+  // interseção e não tudo que o servidor mudou.
   const overwritten = offer.kind === "diverged" ? offer.overwrittenFields : [];
+  if (overwritten.length === 0) return null;
   return (
-    <>
+    <div
+      className="flex items-start gap-2 text-amber-800 dark:text-amber-200"
+      aria-hidden={hidden || undefined}
+    >
+      <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
       <span>
-        Você tem alterações não enviadas neste documento, salvas neste navegador{" "}
-        {humanizeAge(offer.updatedAt, reference)}.
+        Este documento foi salvo depois que o rascunho foi criado. Retomar
+        substitui{" "}
+        {overwritten.length === 1
+          ? "a resposta de "
+          : `as respostas de ${overwritten.length} perguntas: `}
+        <strong>
+          {overwritten.map((name) => fieldLabel(name, fields)).join(", ")}
+        </strong>
+        .
       </span>
-
-      {overwritten.length > 0 && (
-        // Só o que retomar de fato sobrescreve — ver `overwrittenFields`, que é
-        // a interseção e não tudo que o servidor mudou.
-        <div className="flex items-start gap-2 text-amber-800 dark:text-amber-200">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          <span>
-            Este documento foi salvo depois que o rascunho foi criado. Retomar
-            substitui{" "}
-            {overwritten.length === 1
-              ? "a resposta de "
-              : `as respostas de ${overwritten.length} perguntas: `}
-            <strong>
-              {overwritten.map((name) => fieldLabel(name, fields)).join(", ")}
-            </strong>
-            .
-          </span>
-        </div>
-      )}
-    </>
+    </div>
   );
 }
 
@@ -89,9 +93,10 @@ interface CodingDraftBannerProps {
   fields: PydanticField[];
   onRestore: () => void;
   onDiscard: () => void;
-  /** Instante de referência da idade do rascunho. Injetável para o teste não
-   *  depender do relógio real; omitido, é capturado no mount. */
-  now?: number;
+  /** Instante em que a oferta chegou (`recoveryAt` de `useCodingDrafts`): a
+   *  idade do rascunho é medida dele, e não do mount da página, que pode ter
+   *  sido horas antes de a pesquisadora abrir este documento. */
+  offeredAt: number;
 }
 
 export function CodingDraftBanner({
@@ -99,14 +104,8 @@ export function CodingDraftBanner({
   fields,
   onRestore,
   onDiscard,
-  now,
+  offeredAt,
 }: CodingDraftBannerProps) {
-  // `Date.now()` no corpo do componente é impuro no render. A idade exibida é
-  // uma ordem de grandeza ("há 2 horas"), não um cronômetro: capturar o instante
-  // no mount, num inicializador lazy, dá o mesmo texto sem a impureza.
-  const [mountedAt] = useState(() => Date.now());
-  const reference = now ?? mountedAt;
-
   const [regionSettled, setRegionSettled] = useState(false);
   useEffect(() => {
     const timer = setTimeout(() => setRegionSettled(true), LIVE_REGION_SETTLE_MS);
@@ -130,24 +129,33 @@ export function CodingDraftBanner({
             acessibilidade, e sair dele equivale a inserção;
           - uma região por frase troca o anúncio atômico das duas por dois
             anúncios em ordem imprevisível.
-          O preço é o texto duplicado no DOM; `DraftOfferMessage` é a fonte
-          única das duas cópias, e a visível sai da árvore de acessibilidade
-          (`aria-hidden`) para o leitor não lê-la duas vezes — esta vem logo
-          antes dos botões, que é onde a visível estava. Os controles ficam fora
-          daqui pelo mesmo motivo do #634: dentro de live region, botão é ruído
-          reanunciado. */}
+          O preço é o texto duplicado no DOM, e a cópia visível sai da árvore
+          de acessibilidade (`aria-hidden`) para o leitor não lê-la duas vezes —
+          esta vem logo antes dos botões, que é onde a visível estava. Os
+          controles ficam fora daqui pelo mesmo motivo do #634: dentro de live
+          region, botão é ruído reanunciado.
+          O conteúdo é keyed pela chegada da oferta (`offeredAt`, um instante
+          por documento aberto): de um documento para outro, a mesma frase
+          ("há 2 horas") não mudaria o DOM, e o leitor não anunciaria a oferta
+          nova. Com a key, os nós são trocados e a chegada é anunciada. */}
       <div role="status" className="sr-only">
         {announced && (
-          <DraftOfferMessage offer={announced} fields={fields} reference={reference} />
+          <div key={offeredAt}>
+            <DraftAge offer={announced} reference={offeredAt} />
+            <OverwriteWarning offer={announced} fields={fields} />
+          </div>
         )}
       </div>
 
       {offer && (
-        <div className="border-b bg-amber-50 px-4 py-2.5 text-sm dark:bg-amber-950/30">
+        // Fora da árvore de acessibilidade, a cópia visível volta ao layout
+        // de antes do #634: a frase ao lado dos botões e o aviso de
+        // sobrescrita numa linha própria, em largura total.
+        <div className="flex flex-col gap-2 border-b bg-amber-50 px-4 py-2.5 text-sm dark:bg-amber-950/30">
           <div className="flex items-start gap-2">
             <FileClock className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
-            <div className="flex flex-1 flex-col gap-2" aria-hidden>
-              <DraftOfferMessage offer={offer} fields={fields} reference={reference} />
+            <div className="flex-1" aria-hidden>
+              <DraftAge offer={offer} reference={offeredAt} />
             </div>
 
             <Button size="sm" variant="default" onClick={onRestore}>
@@ -157,6 +165,7 @@ export function CodingDraftBanner({
               Descartar
             </Button>
           </div>
+          <OverwriteWarning offer={offer} fields={fields} hidden />
         </div>
       )}
     </>
@@ -197,14 +206,21 @@ export function CodingDraftUnavailableBanner({ visible }: { visible: boolean }) 
 // O sinal que o alimenta vem da sujeira em memória, nunca do storage — ver
 // `useDirtyDocs`.
 export function UnsentChangesBadge({ visible }: { visible: boolean }) {
-  if (!visible) return null;
+  // A região live é o próprio contêiner da linha, montado sempre e vazio sem
+  // pendência, pelo mesmo motivo da faixa do rascunho (#635, #898): inserida
+  // já populada, costuma ser lida como conteúdo estático, e a primeira edição
+  // não era anunciada. Vazio, o contêiner não tem classe nem altura.
   return (
-    <span
+    <div
       role="status"
-      className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      className={visible ? "flex items-center gap-2 border-b px-4 py-1.5" : undefined}
     >
-      <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
-      Alterações não enviadas
-    </span>
+      {visible && (
+        <span className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <span className="size-1.5 rounded-full bg-amber-500" aria-hidden />
+          Alterações não enviadas
+        </span>
+      )}
+    </div>
   );
 }

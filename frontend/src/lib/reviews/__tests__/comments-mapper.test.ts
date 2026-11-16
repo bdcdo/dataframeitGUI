@@ -381,26 +381,26 @@ describe("mapProjectComments", () => {
   });
 });
 
-describe("buildOrderedComments", () => {
-  function comment(overrides: Partial<ReviewComment>): ReviewComment {
-    return {
-      id: "id",
-      documentId: "doc1",
-      documentTitle: "Documento 1",
-      fieldName: "campo1",
-      fieldDescription: "desc",
-      verdict: "correto",
-      comment: "texto",
-      reviewerName: "ana",
-      resolvedAt: null,
-      createdAt: "2026-01-01T00:00:00Z",
-      chosenResponseId: null,
-      source: "review",
-      responseSnapshot: null,
-      ...overrides,
-    };
-  }
+function comment(overrides: Partial<ReviewComment>): ReviewComment {
+  return {
+    id: "id",
+    documentId: "doc1",
+    documentTitle: "Documento 1",
+    fieldName: "campo1",
+    fieldDescription: "desc",
+    verdict: "correto",
+    comment: "texto",
+    reviewerName: "ana",
+    resolvedAt: null,
+    createdAt: "2026-01-01T00:00:00Z",
+    chosenResponseId: null,
+    source: "review",
+    responseSnapshot: null,
+    ...overrides,
+  };
+}
 
+describe("buildOrderedComments", () => {
   it("coloca exclusões pendentes primeiro, depois sugestões pendentes, depois o resto por data desc", () => {
     const older = comment({ id: "old", source: "review", createdAt: "2026-01-01T00:00:00Z" });
     const newer = comment({ id: "new", source: "nota", createdAt: "2026-01-02T00:00:00Z" });
@@ -440,5 +440,51 @@ describe("buildOrderedComments", () => {
       "new",
       "old",
     ]);
+  });
+});
+
+describe("buildOrderedComments — veredito ambíguo e comentário de ambiguidade", () => {
+  const base = comment({
+    id: "r1",
+    verdict: "ambiguo",
+    comment: "a pergunta admite duas leituras",
+  });
+  const note = comment({
+    id: "anotacao-a1",
+    verdict: "ambiguidade",
+    source: "anotacao",
+    comment:
+      "Campo marcado como ambíguo na revisão (aba Comparar): a pergunta admite duas leituras",
+  });
+  const build = (reviewComments: ReviewComment[], annotationComments: ReviewComment[]) =>
+    buildOrderedComments({
+      reviewComments,
+      noteComments: [],
+      difficultyComments: [],
+      duvidaComments: [],
+      annotationComments,
+      suggestionComments: [],
+      exclusionComments: [],
+    });
+
+  it("a célula aparece num card só: o da revisão, que responde pelos dois filtros", () => {
+    const result = build([base], [note]);
+    expect(result.map((c) => c.id)).toEqual(["r1"]);
+    expect(result[0]).toMatchObject({ verdict: "ambiguo", coversAmbiguityComment: true });
+  });
+
+  it("revisores com a mesma nota seguem em cards próprios", () => {
+    const second = { ...base, id: "r2", reviewerName: "bia" };
+    expect(build([base, second], [note]).map((c) => c.id).sort()).toEqual(["r1", "r2"]);
+  });
+
+  it("comentário de ambiguidade com outro texto, de outra célula ou sem veredito ambíguo fica", () => {
+    const otherText = { ...base, comment: "outra leitura" };
+    const otherDoc = { ...base, documentId: "doc2" };
+    const notAmbiguous = { ...base, verdict: "correto" };
+    for (const review of [otherText, otherDoc, notAmbiguous]) {
+      const ids = build([review], [note]).map((c) => c.id);
+      expect(ids.sort()).toEqual(["anotacao-a1", "r1"]);
+    }
   });
 });

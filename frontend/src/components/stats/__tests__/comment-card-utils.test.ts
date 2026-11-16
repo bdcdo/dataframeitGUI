@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   commentFilterType,
   formatVerdictLabel,
+  matchesCommentFilter,
 } from "@/components/stats/comment-card-utils";
 
 describe("formatVerdictLabel", () => {
@@ -31,5 +32,21 @@ describe("commentFilterType", () => {
     ["Deferido", "answer"],
   ])("%s cai no tipo %s", (verdict, type) => {
     expect(commentFilterType(verdict)).toBe(type);
+  });
+});
+
+describe("matchesCommentFilter", () => {
+  it("o card da revisão que cobre a ambiguidade entra nos dois filtros", () => {
+    const covering = { verdict: "ambiguo", coversAmbiguityComment: true as const };
+    expect(matchesCommentFilter(covering, "ambiguo")).toBe(true);
+    expect(matchesCommentFilter(covering, "ambiguidade")).toBe(true);
+    expect(matchesCommentFilter(covering, "anotacao")).toBe(false);
+  });
+
+  it("sem cobrir, o veredito ambíguo fica só no seu filtro", () => {
+    const plain = { verdict: "ambiguo" };
+    expect(matchesCommentFilter(plain, "ambiguo")).toBe(true);
+    expect(matchesCommentFilter(plain, "ambiguidade")).toBe(false);
+    expect(matchesCommentFilter(plain, "all")).toBe(true);
   });
 });

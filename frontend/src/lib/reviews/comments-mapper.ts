@@ -1,3 +1,4 @@
+import { ambiguityCommentBody } from "@/lib/reviews/ambiguity-comment";
 import type { PydanticField } from "@/lib/types";
 import type { ReviewComment } from "@/components/stats/comment-card-utils";
 import { invalidReasonOf } from "@/lib/review-validity";
@@ -339,6 +340,42 @@ export function mapProjectComments(
   return { annotationComments, exclusionComments };
 }
 
+// O veredito "Ambíguo" com comentário cria também o comentário kind='ambiguity'
+// da célula, cujo corpo repete a nota (`ambiguityCommentBody`): os dois cards
+// diriam a mesma coisa (#680). Fica o da revisão, que tem o snapshot das
+// respostas, a validade do veredito, a resolução própria e entra na revisão
+// por documento; ele passa a responder também pelo filtro "Campos ambíguos".
+// O comentário de ambiguidade só sai quando algum card da revisão na célula
+// tem exatamente o texto dele; senão, segue como card próprio.
+function cellKey(c: ReviewComment): string {
+  return `${c.documentId}\u0000${c.fieldName}`;
+}
+
+function mergeAmbiguityRepeats(
+  reviewComments: ReviewComment[],
+  annotationComments: ReviewComment[],
+): { reviewComments: ReviewComment[]; annotationComments: ReviewComment[] } {
+  const ambiguityBodies = new Map(
+    annotationComments
+      .filter((c) => c.verdict === "ambiguidade")
+      .map((c) => [cellKey(c), c.comment]),
+  );
+  const coveredCells = new Set<string>();
+  const reviews = reviewComments.map((r) => {
+    if (r.verdict !== "ambiguo") return r;
+    const key = cellKey(r);
+    if (ambiguityBodies.get(key) !== ambiguityCommentBody(r.comment)) return r;
+    coveredCells.add(key);
+    return { ...r, coversAmbiguityComment: true as const };
+  });
+  return {
+    reviewComments: reviews,
+    annotationComments: annotationComments.filter(
+      (c) => c.verdict !== "ambiguidade" || !coveredCells.has(cellKey(c)),
+    ),
+  };
+}
+
 // Pending suggestions e exclusoes primeiro, demais por data.
 export function buildOrderedComments(input: {
   reviewComments: ReviewComment[];
@@ -350,14 +387,16 @@ export function buildOrderedComments(input: {
   exclusionComments: ReviewComment[];
 }): ReviewComment[] {
   const {
-    reviewComments,
     noteComments,
     difficultyComments,
     duvidaComments,
-    annotationComments,
     suggestionComments,
     exclusionComments,
   } = input;
+  const { reviewComments, annotationComments } = mergeAmbiguityRepeats(
+    input.reviewComments,
+    input.annotationComments,
+  );
 
   const pendingSuggestions = suggestionComments.filter(
     (s) => s.suggestionStatus === "pending",

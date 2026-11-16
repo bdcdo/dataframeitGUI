@@ -31,6 +31,12 @@ export interface ReviewComment {
    * (`review-validity.ts`), que a tela usa para rotulá-lo (#758).
    */
   verdictInvalidReason?: ReviewInvalidReason;
+  /**
+   * Só em comentário de review com veredito "Ambíguo" cujo texto o comentário
+   * kind='ambiguity' da célula repete: o card da ambiguidade sai da lista, e
+   * este responde também pelo filtro "Campos ambíguos" (`buildOrderedComments`).
+   */
+  coversAmbiguityComment?: true;
   source:
     | "review"
     | "nota"
@@ -81,6 +87,17 @@ export type CommentFilterType =
   | "anotacao"
   | "duvida"
   | "exclusao";
+
+// Se o comentário entra no filtro de tipo escolhido. O card da revisão que
+// ficou no lugar do comentário de ambiguidade repetido responde pelos dois
+// tipos (#680).
+export function matchesCommentFilter(
+  comment: Pick<ReviewComment, "verdict" | "coversAmbiguityComment">,
+  filter: string,
+): boolean {
+  if (filter === "all" || commentFilterType(comment.verdict) === filter) return true;
+  return filter === "ambiguidade" && comment.coversAmbiguityComment === true;
+}
 
 export function commentFilterType(verdict: string): CommentFilterType {
   if (verdict === "nota") return "nota";

@@ -103,3 +103,14 @@ describe("filtro de tipo da aba Comentários", () => {
     expect(screen.queryByText(/marcado como ambíguo na revisão/)).toBeNull();
   });
 });
+
+describe("filtro de status da aba Comentários", () => {
+  it("o seletor de status tem nome acessível e filtra", async () => {
+    show();
+    const status = screen.getByRole("combobox", { name: "Filtrar por status" });
+    expect(status.textContent).toBe("Abertos");
+    await userEvent.click(status);
+    await userEvent.click(await screen.findByRole("option", { name: "Resolvidos" }));
+    expect(screen.getByText("Nenhum comentário encontrado.")).toBeTruthy();
+  });
+});

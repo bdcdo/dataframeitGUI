@@ -13,7 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { PanelLeftClose } from "lucide-react";
 import { CommentCard, type ReviewComment } from "./CommentCard";
-import { commentFilterType } from "./comment-card-utils";
+import { matchesCommentFilter } from "./comment-card-utils";
 import { CommentsSplitView } from "./CommentsSplitView";
 import { EditFieldDialog, type PendingSuggestion } from "./EditFieldDialog";
 import { SuggestFieldDialog } from "./SuggestFieldDialog";
@@ -70,8 +70,7 @@ function useReviewCommentsFilters(comments: ReviewComment[]) {
       if (fieldFilter !== "all" && c.fieldName !== fieldFilter) return false;
       if (statusFilter === "open" && c.resolvedAt) return false;
       if (statusFilter === "resolved" && !c.resolvedAt) return false;
-      if (verdictFilter !== "all" && commentFilterType(c.verdict) !== verdictFilter)
-        return false;
+      if (!matchesCommentFilter(c, verdictFilter)) return false;
       if (
         searchQuery &&
         !c.documentTitle.toLowerCase().includes(searchQuery.toLowerCase()) &&
@@ -256,7 +255,7 @@ export function ReviewCommentsView({
           className="w-44"
         />
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-32">
+          <SelectTrigger className="w-32" aria-label="Filtrar por status">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

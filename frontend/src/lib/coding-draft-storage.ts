@@ -109,6 +109,10 @@ export interface CodingDraftsApi {
   // casos em que a frase seria falsa. Chame depois de `flushAll()`.
   hasStoredDraft(docId: string): boolean;
   recovery: CodingDraftRecovery;
+  // Instante (ms) em que `recovery` chegou: a faixa mede dele a idade do
+  // rascunho. Medida do mount da página, a idade de um documento aberto horas
+  // depois saía como "agora há pouco".
+  recoveryAt: number;
   // `false` quando esta aba não está conseguindo manter a cópia local — seja
   // porque o storage não responde (janela anônima, quota estourada) ou porque o
   // slot pertence a outra aba. Um sinal só: a conclusão para a pesquisadora é a

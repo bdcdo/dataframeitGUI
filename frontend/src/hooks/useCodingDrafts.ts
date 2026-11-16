@@ -25,7 +25,10 @@ export type { CodingDraftsApi, UseCodingDraftsParams };
 export function useCodingDrafts(params: UseCodingDraftsParams): CodingDraftsApi {
   const { projectId, userId, enabled, fields } = params;
 
-  const [recovery, setRecovery] = useState<CodingDraftRecovery>({ kind: "none" });
+  const [offer, setOffer] = useState<{ recovery: CodingDraftRecovery; at: number }>({
+    recovery: { kind: "none" },
+    at: 0,
+  });
   const [storageAvailable, setStorageAvailable] = useState(true);
 
   // Sessão criada uma única vez, por inicializador lazy de `useState`: um
@@ -34,7 +37,8 @@ export function useCodingDrafts(params: UseCodingDraftsParams): CodingDraftsApi 
   // usam os setters do React, cuja identidade é garantida.
   const [session] = useState<CodingDraftSession>(() =>
     createCodingDraftSession({
-      onRecovery: setRecovery,
+      // O instante é lido aqui, no callback da sessão, e não no render.
+      onRecovery: (recovery) => setOffer({ recovery, at: Date.now() }),
       onStorageAvailable: setStorageAvailable,
     }),
   );
@@ -104,7 +108,8 @@ export function useCodingDrafts(params: UseCodingDraftsParams): CodingDraftsApi 
     submitConfirmed,
     flushAll,
     hasStoredDraft,
-    recovery,
+    recovery: offer.recovery,
+    recoveryAt: offer.at,
     storageAvailable,
   };
 }

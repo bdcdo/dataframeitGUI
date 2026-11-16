@@ -5,6 +5,7 @@ import { act, render, screen, cleanup, within } from "@testing-library/react";
 import {
   CodingDraftBanner,
   LIVE_REGION_SETTLE_MS,
+  UnsentChangesBadge,
 } from "@/components/coding/CodingDraftBanner";
 import type { CodingDraftRecovery } from "@/lib/coding-draft";
 import type { PydanticField } from "@/lib/types";
@@ -47,11 +48,21 @@ const resumable: CodingDraftRecovery = {
 
 const NONE: CodingDraftRecovery = { kind: "none" };
 
-function mount(initial: CodingDraftRecovery) {
-  const base = { fields: FIELDS, onRestore: () => {}, onDiscard: () => {}, now: Date.now() };
-  const { rerender } = render(<CodingDraftBanner recovery={initial} {...base} />);
-  return (next: CodingDraftRecovery) =>
-    rerender(<CodingDraftBanner recovery={next} {...base} />);
+// Monta a faixa e devolve como trocar a oferta. `offeredAt` é o instante em
+// que a oferta chegou; a troca mantém o instante anterior quando omitido.
+function mount(initial: CodingDraftRecovery, offeredAt = Date.now()) {
+  const banner = (recovery: CodingDraftRecovery, arrivedAt: number) => (
+    <CodingDraftBanner
+      recovery={recovery}
+      fields={FIELDS}
+      onRestore={() => {}}
+      onDiscard={() => {}}
+      offeredAt={arrivedAt}
+    />
+  );
+  const { rerender } = render(banner(initial, offeredAt));
+  return (next: CodingDraftRecovery, nextOfferedAt = offeredAt) =>
+    rerender(banner(next, nextOfferedAt));
 }
 
 function settle() {
@@ -156,5 +167,57 @@ describe("CodingDraftBanner — a chegada da oferta é anunciada", () => {
     expect(screen.getByRole("status")).toBe(live);
     expect(live.textContent).toBe("");
     expect(screen.queryByRole("button")).toBeNull();
+  });
+});
+
+describe("CodingDraftBanner — oferta seguinte e idade", () => {
+  // De um documento com rascunho para outro, a frase pode ser a mesma ("há 2
+  // horas"). Sem trocar os nós, o DOM da região não muda e o leitor de tela
+  // não anuncia a oferta nova.
+  // Uma nova chegada (outro documento aberto) troca os nós da região, mesmo com
+  // a mesma frase; a mesma oferta re-renderizada, não.
+  it.each([
+    ["outra chegada com a mesma frase troca os nós da região", 1, false],
+    ["a mesma chegada não troca os nós", 0, true],
+  ])("%s", (_name, delay, sameNodes) => {
+    const arrived = resumable.updatedAt;
+    const update = mount(resumable, arrived);
+    settle();
+    const live = screen.getByRole("status");
+    const before = live.firstElementChild;
+    update({ ...resumable }, arrived + delay);
+    expect(live.textContent).toBe(before?.textContent);
+    expect(live.firstElementChild === before).toBe(sameNodes);
+  });
+
+  it("a idade é medida do instante em que a oferta chegou", () => {
+    mount(resumable, resumable.updatedAt + 3 * 60 * 60_000);
+    settle();
+    expect(screen.getByRole("status").textContent).toContain("há 3 horas");
+  });
+
+  // O aviso de sobrescrita volta à linha própria, fora da linha dos botões.
+  it("o aviso de sobrescrita fica fora da linha dos botões", () => {
+    mount(diverged);
+    const button = screen.getByRole("button", { name: "Retomar rascunho" });
+    const visibleWarning = screen
+      .getAllByText(/foi salvo depois/)
+      .find((el) => !screen.getByRole("status").contains(el));
+    expect(visibleWarning).toBeDefined();
+    expect(button.parentElement?.contains(visibleWarning!)).toBe(false);
+  });
+});
+
+describe("UnsentChangesBadge — região live", () => {
+  it("a região existe vazia antes da pendência e é ela que se preenche", () => {
+    const { rerender } = render(<UnsentChangesBadge visible={false} />);
+    const live = screen.getByRole("status");
+    expect(live.textContent).toBe("");
+    rerender(<UnsentChangesBadge visible />);
+    expect(screen.getByRole("status")).toBe(live);
+    expect(live.textContent).toBe("Alterações não enviadas");
+    rerender(<UnsentChangesBadge visible={false} />);
+    expect(screen.getByRole("status")).toBe(live);
+    expect(live.textContent).toBe("");
   });
 });

@@ -242,6 +242,23 @@ describe("recuperação — oferecer, nunca aplicar em silêncio", () => {
     });
   });
 
+  // A faixa mede a idade do rascunho a partir daqui: o mount da página pode ter
+  // sido horas antes de o documento com rascunho ser aberto.
+  it("marca o instante em que a oferta chega, e não o do mount", () => {
+    const mountedAt = Date.now();
+    const view = render({ openDocId: null });
+    expect(view.result.current.recovery.kind).toBe("none");
+
+    vi.setSystemTime(mountedAt + 3 * 60 * 60_000);
+    plant({ updatedAt: mountedAt + 2 * 60 * 60_000 });
+    act(() => {
+      view.result.current.openDocument(DOC, EMPTY);
+    });
+
+    expect(view.result.current.recovery.kind).toBe("resumable");
+    expect(view.result.current.recoveryAt).toBe(mountedAt + 3 * 60 * 60_000);
+  });
+
   // Mutação vermelha: aplicar o conteúdo no `recovery` sem passar por
   // `restoreDraft`. Oferecer e aplicar são coisas diferentes — é o requisito
   // central da issue.
