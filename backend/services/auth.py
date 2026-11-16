@@ -12,7 +12,7 @@ migrations 20260401*_clerk_uid_rls.sql), então é ela que usamos como user_id.
 O session token do Clerk NÃO emite `aud` (os claims default são azp, exp, fva,
 iat, iss, jti, nbf, sid, sub, v). Quem identifica o emissor — e, portanto,
 separa a instância de produção da de desenvolvimento — é `iss`, exigido sempre
-que o JWKS estiver configurado (ver `_require_issuer`).
+(ver `_require_issuer`).
 
 Fail-closed: sem configuração de verificação, ou com token/claim inválido, a
 request é rejeitada. Nunca passa.

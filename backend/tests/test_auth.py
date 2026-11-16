@@ -12,7 +12,8 @@ from unittest.mock import Mock
 
 import jwt
 import pytest
-from conftest import TEST_ISSUER, TEST_RSA_PRIVATE_KEY
+from conftest import TEST_ISSUER as ISSUER
+from conftest import TEST_RSA_PRIVATE_KEY
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -40,11 +41,14 @@ JOB = "33333333-3333-3333-3333-333333333333"
 # Duas instâncias Clerk: a "de produção" (que o backend aceita) e a "de
 # desenvolvimento" (que ele deve recusar). É esse par que exercita o cutover —
 # ver test_verify_jwt_issuer_de_outra_instancia_rejeitado.
-ISSUER = TEST_ISSUER
 ISSUER_DEV = "https://test-dev.clerk.accounts.dev"
 
 
-def make_token(claims: dict | None = None, private_key=TEST_RSA_PRIVATE_KEY) -> str:
+def make_token(
+    claims: dict | None = None,
+    private_key=TEST_RSA_PRIVATE_KEY,
+    headers: dict | None = None,
+) -> str:
     """Token RS256 com a forma real de um session token do Clerk.
 
     Espelha os claims default do session token (azp, iat, jti, nbf, sid, sub, v)
@@ -67,7 +71,7 @@ def make_token(claims: dict | None = None, private_key=TEST_RSA_PRIVATE_KEY) -> 
         "supabase_uid": USER,
         **(claims or {}),
     }
-    return jwt.encode(payload, private_key, algorithm="RS256")
+    return jwt.encode(payload, private_key, algorithm="RS256", headers=headers)
 
 
 def make_hs256_token() -> str:
@@ -156,18 +160,13 @@ def use_supabase(monkeypatch, fake):
 # enquanto produção quebra (#487, #488).
 
 
-def test_verify_jwt_valid_extracts_supabase_uid():
-    user = verify_jwt(make_token())
-    assert user == AuthUser(id=USER)
-
-
 def test_verify_jwt_session_token_sem_aud_e_aceito():
     # O session token do Clerk não emite `aud`. Um token com a forma real de
     # produção precisa passar — se este teste falhar com 401, a checagem de
     # audience voltou e o cutover quebra inteiro.
     token = make_token()
     assert "aud" not in jwt.decode(token, options={"verify_signature": False})
-    assert verify_jwt(token).id == USER
+    assert verify_jwt(token) == AuthUser(id=USER)
 
 
 def test_verify_jwt_sem_supabase_uid_e_503_e_nao_usa_sub():
@@ -313,13 +312,7 @@ def test_verify_jwt_resolve_a_chave_pelo_kid(monkeypatch):
     # `kid` é a do PyJWKClient: o `kid` do JWKS passa, e um desconhecido é 503
     # (indistinguível, do lado de cá, de um JWKS desatualizado ou fora do ar).
     _real_jwks_client(monkeypatch, kid="k1")
-    known = jwt.encode(
-        jwt.decode(make_token(), options={"verify_signature": False}),
-        TEST_RSA_PRIVATE_KEY,
-        algorithm="RS256",
-        headers={"kid": "k1"},
-    )
-    assert verify_jwt(known).id == USER
+    assert verify_jwt(make_token(headers={"kid": "k1"})).id == USER
     with pytest.raises(HTTPException) as exc:
         verify_jwt(make_token())  # sem `kid`
     assert exc.value.status_code == 503
