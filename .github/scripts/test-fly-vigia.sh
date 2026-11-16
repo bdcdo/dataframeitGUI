@@ -20,9 +20,9 @@ mkdir -p "$tmp_dir/bin"
 #
 # Com MACHINES_STATE (arquivo com a lista), o flyctl falso guarda estado entre
 # as passadas: `machine list` lê o arquivo, `machine clone` acrescenta uma
-# Machine iniciada (com o `--name` pedido ou, sem ele, um nome gerado, como o
-# Fly faz), e `machine destroy` tira a Machine da lista,
-# menos as de DESTROY_FAILS, para as quais falha sem mudar nada.
+# Machine iniciada com o nome do `--name`, o último argumento, e `machine
+# destroy` tira a Machine da lista, menos as de DESTROY_FAILS, para as quais
+# falha sem mudar nada.
 cat >"$tmp_dir/bin/flyctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -62,11 +62,7 @@ case "${1:-} ${2:-}" in
     if [[ -n "${MACHINES_STATE:-}" ]]; then
       serial="$(($(cat "$MACHINES_STATE.serial" 2>/dev/null || echo 0) + 1))"
       echo "$serial" >"$MACHINES_STATE.serial"
-      name="gerado-$serial"
-      args=("$@")
-      for ((i = 0; i < ${#args[@]}; i += 1)); do
-        [[ "${args[i]}" == "--name" ]] && name="${args[i + 1]}"
-      done
+      name="${*: -1}"
       jq -c --arg id "clone$serial" --arg name "$name" \
         '. + [{id: $id, name: $name, state: "started", region: "gru", events: []}]' \
         "$MACHINES_STATE" >"$MACHINES_STATE.tmp"
