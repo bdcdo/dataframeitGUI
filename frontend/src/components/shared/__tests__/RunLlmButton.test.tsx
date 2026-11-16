@@ -17,7 +17,15 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   fetchFastAPI,
 }));
-vi.mock("@clerk/nextjs", () => ({ useAuth: () => ({ getToken }) }));
+// A conta que o Clerk expõe no browser: a metadata dela separa o acesso ainda
+// não concluído (sem `supabase_uid`) da instância sem os custom claims (#487).
+const { clerkUser } = vi.hoisted(() => ({
+  clerkUser: { publicMetadata: {} as { supabase_uid?: string } },
+}));
+vi.mock("@clerk/nextjs", () => ({
+  useAuth: () => ({ getToken }),
+  useUser: () => ({ user: clerkUser }),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: toastError } }));
 
 import { UNLINKED_CLAIMS, sessionTokenWith } from "@/test-utils/session-token";
@@ -31,6 +39,7 @@ afterEach(() => {
   vi.clearAllMocks();
   vi.restoreAllMocks();
   getToken.mockImplementation(async () => "tok-123");
+  clerkUser.publicMetadata = {};
 });
 
 describe("RunLlmButton", () => {
@@ -96,7 +105,7 @@ describe("RunLlmButton", () => {
 
   it("sessão sem o vínculo concluído: toast diz o que fazer e nada vai ao backend (#532)", async () => {
     // Payload só com os claims default do Clerk — sem `supabase_uid`.
-    const unlinked = sessionTokenWith(UNLINKED_CLAIMS);
+    const unlinked = sessionTokenWith({ ...UNLINKED_CLAIMS, jti: "pendente" });
     getToken.mockResolvedValue(unlinked);
     vi.spyOn(console, "error").mockImplementation(() => {});
     render(<RunLlmButton projectId="p1" documentId="d1" canRunLlm />);
@@ -109,5 +118,23 @@ describe("RunLlmButton", () => {
       ),
     );
     expect(fetchFastAPI).not.toHaveBeenCalled();
+  });
+
+  it("conta COM vínculo e token sem o claim: o request segue para o 503 do backend (#487)", async () => {
+    // Instância Clerk sem os custom claims: dizer "conclua o acesso" a quem já
+    // o concluiu esconderia a config quebrada. O backend é quem responde, alto.
+    const unlinked = sessionTokenWith({ ...UNLINKED_CLAIMS, jti: "cutover" });
+    getToken.mockResolvedValue(unlinked);
+    clerkUser.publicMetadata = { supabase_uid: "11111111-1111-1111-1111-111111111111" };
+    fetchFastAPI.mockRejectedValue(new Error("Autenticação mal configurada no servidor"));
+    render(<RunLlmButton projectId="p1" documentId="d1" canRunLlm />);
+
+    await userEvent.click(screen.getByRole("button"));
+
+    await waitFor(() => expect(fetchFastAPI).toHaveBeenCalled());
+    expect(fetchFastAPI.mock.calls[0][2]).toBe(unlinked);
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Autenticação mal configurada no servidor"),
+    );
   });
 });

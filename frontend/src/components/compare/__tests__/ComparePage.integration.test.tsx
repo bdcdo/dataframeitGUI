@@ -77,6 +77,7 @@ vi.mock("next/navigation", () => ({
 // A árvore real monta RunCard, que usa useAuth().getToken para anexar o JWT.
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: compareMocks.getToken }),
+  useUser: () => ({ user: null }),
 }));
 
 import { ComparePage } from "@/components/compare/ComparePage";

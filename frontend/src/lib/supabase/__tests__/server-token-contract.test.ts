@@ -7,6 +7,7 @@
  * Estes testes fixam a única barreira que transforma isso em erro visível.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LINKED_CLAIMS, sessionTokenWith } from "@/test-utils/session-token";
 
 let token: string | null = null;
 const getTokenArgs: unknown[][] = [];
@@ -36,20 +37,8 @@ vi.mock("@supabase/supabase-js", () => ({
 
 const { createSupabaseServer } = await import("../server");
 
-/** JWT sintético: só o payload importa — a assinatura nunca é verificada aqui
- * (quem verifica é o Supabase, contra o JWKS do Clerk). */
-function jwtWith(claims: Record<string, unknown>): string {
-  const b64 = (o: unknown) =>
-    Buffer.from(JSON.stringify(o)).toString("base64url");
-  return `${b64({ alg: "RS256", typ: "JWT" })}.${b64(claims)}.assinatura-nao-verificada`;
-}
-
-const VALID = {
-  sub: "user_2abc",
-  iss: "https://clerk.test",
-  role: "authenticated",
-  supabase_uid: "11111111-1111-1111-1111-111111111111",
-};
+const jwtWith = sessionTokenWith;
+const VALID = LINKED_CLAIMS;
 
 beforeEach(() => {
   created.length = 0;

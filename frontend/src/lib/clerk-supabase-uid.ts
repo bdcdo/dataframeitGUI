@@ -49,3 +49,10 @@ export function readSessionTokenClaims(token: string): SessionTokenClaims | null
     return null;
   }
 }
+
+/** `true` quando o token é um JWT legível sem `supabase_uid`. Token ilegível
+ * não entra aqui: quem o julga é quem o verifica. */
+export function lacksSupabaseUid(token: string): boolean {
+  const claims = readSessionTokenClaims(token);
+  return claims !== null && !claims.supabase_uid;
+}

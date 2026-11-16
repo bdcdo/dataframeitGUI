@@ -34,6 +34,7 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@clerk/nextjs", () => ({
   useAuth: () => ({ getToken: vi.fn(async () => "test-token") }),
+  useUser: () => ({ user: null }),
 }));
 
 vi.mock("next/navigation", () => ({

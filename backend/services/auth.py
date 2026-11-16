@@ -198,11 +198,13 @@ def verify_jwt(token: str) -> AuthUser:
         # 503, não 401: a credencial está boa; quem está quebrado é o servidor.
         # Do token puro, este estado é idêntico ao do usuário recém-criado cujo
         # vínculo ainda não foi gravado no metadata do Clerk. Quem os separa é o
-        # frontend, que lê o metadata: token sem a claim de conta sem vínculo não
+        # frontend, que lê o metadata: token sem a claim de conta SEM vínculo não
         # sai de lá (`requireSupabaseToken` em `lib/api.ts`, `fetchFastAPIServer`
         # em `lib/api-server.ts`), e a pessoa é conduzida à conclusão de acesso
-        # (#532). O que chega aqui é a config quebrada, ou um cliente que não é o
-        # nosso — por isso o status e o detail seguem os do #487.
+        # (#532). Chega aqui a conta COM vínculo cujo token não traz a claim: a
+        # config quebrada do #487 ou, por até ~60s, um token do cookie emitido
+        # antes da gravação do vínculo — além de cliente que não é o nosso. Por
+        # isso o status e o detail seguem os do #487.
         logger.error(
             "Token sem claim `supabase_uid` — verificar os custom claims do "
             "session token na instância Clerk (iss=%s).",

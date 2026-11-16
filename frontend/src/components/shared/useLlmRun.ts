@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { useAuth } from "@clerk/nextjs";
-import { fetchFastAPI, requireSupabaseToken } from "@/lib/api";
+import { fetchFastAPI } from "@/lib/api";
+import { useSupabaseToken } from "@/hooks/useSupabaseToken";
 import { toast } from "sonner";
 
 // Tolera N falhas consecutivas de poll (token transitório, blip de rede) antes
@@ -28,7 +28,7 @@ export function useLlmRun({
   impersonating = false,
   onComplete,
 }: UseLlmRunParams): { running: boolean; run: () => Promise<void> } {
-  const { getToken } = useAuth();
+  const getSupabaseToken = useSupabaseToken();
   const [running, setRunning] = useState(false);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelledRef = useRef(false);
@@ -58,7 +58,7 @@ export function useLlmRun({
           // abaixo): o token precisa estar fresco quando a request de status
           // parte, e mover o await para baixo do guard atrasaria a renovação.
           // react-doctor-disable-next-line react-doctor/async-defer-await
-          const token = await requireSupabaseToken(getToken);
+          const token = await getSupabaseToken();
           // O guard de cancelamento abaixo roda DEPOIS do await de propósito: o
           // usuário pode cancelar enquanto a request de status está em voo, então
           // re-checamos `cancelledRef` após a rede retornar. Mover o await para
@@ -99,7 +99,7 @@ export function useLlmRun({
 
       timeoutRef.current = setTimeout(() => void poll(), 2000);
     },
-    [onComplete, getToken],
+    [onComplete, getSupabaseToken],
   );
 
   const run = useCallback(async () => {
@@ -107,7 +107,7 @@ export function useLlmRun({
     setRunning(true);
 
     try {
-      const token = await requireSupabaseToken(getToken);
+      const token = await getSupabaseToken();
       const res = await fetchFastAPI<{ job_id: string }>(
         "/api/llm/run",
         {
@@ -127,7 +127,7 @@ export function useLlmRun({
       setRunning(false);
       toast.error(e instanceof Error ? e.message : "Erro ao iniciar execução");
     }
-  }, [running, getToken, projectId, documentId, impersonating, pollStatus]);
+  }, [running, getSupabaseToken, projectId, documentId, impersonating, pollStatus]);
 
   return { running, run };
 }
