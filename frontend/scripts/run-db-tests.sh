@@ -218,12 +218,9 @@ report() {
   fi
 }
 
-# ── Guarda 4: toda KNOWN_RED aponta para issue aberta (#650). ───────────────
-# A exceção vale enquanto a issue que a rastreia está aberta; fechada a issue,
-# ou a suíte foi consertada e deve ir para GATE_SUITES, ou a issue foi fechada
-# sem consertar e a exceção perdeu o dono. Fora do CI a consulta é fail-open:
-# sem `gh`, sem rede ou sem login, avisa e segue, para o hook local não depender
-# de rede. No CI o workflow dá o token ao `gh`, e a consulta que falha reprova.
+# ── Guarda 4 (ver o cabeçalho): toda KNOWN_RED aponta para issue aberta. ─────
+# Fechada a issue, ou a suíte foi consertada e vai para GATE_SUITES, ou a
+# exceção perdeu o dono. No CI o workflow dá o token ao `gh`.
 KNOWN_RED_REPO=bdcdo/dataframeitGUI
 fossil=()
 for s in "${!KNOWN_RED[@]}"; do
@@ -232,12 +229,9 @@ for s in "${!KNOWN_RED[@]}"; do
     fossil+=("${s}: '${ref}' não é referência de issue (#N)")
     continue
   fi
-  state="$(gh issue view "${BASH_REMATCH[1]}" --repo "${KNOWN_RED_REPO}" \
-    --json state -q .state 2>"${LOG_DIR}/gh.err")"
-  if [[ "$state" == OPEN ]]; then
-    continue
-  elif [[ -n "$state" ]]; then
-    fossil+=("${s}: ${ref} está ${state}")
+  if state="$(gh issue view "${BASH_REMATCH[1]}" --repo "${KNOWN_RED_REPO}" \
+    --json state -q .state 2>"${LOG_DIR}/gh.err")"; then
+    [[ "$state" == OPEN ]] || fossil+=("${s}: ${ref} está ${state}")
   elif grep -q "Could not resolve to an issue" "${LOG_DIR}/gh.err"; then
     fossil+=("${s}: ${ref} não existe em ${KNOWN_RED_REPO}")
   elif in_ci; then

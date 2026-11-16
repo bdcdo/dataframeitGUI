@@ -98,8 +98,7 @@ function run(
   failing: string[],
   env: Record<string, string> = {},
   suites: string[] = [],
-  dir: string = bin,
-  script: string = runner,
+  { dir = bin, script = runner }: { dir?: string; script?: string } = {},
 ) {
   // O próprio CI define GITHUB_ACTIONS; aqui só o caso que o pede o tem.
   return spawnSync("/bin/bash", [script, ...suites], {
@@ -116,7 +115,7 @@ let sweep: { status: number | null; stdout: string; log: string };
 beforeAll(() => {
   const dir = makeBin();
   try {
-    const result = run([], {}, [], dir);
+    const result = run([], {}, [], { dir });
     const log = fs.readFileSync(path.join(dir, "psql.log"), "utf8");
     sweep = { status: result.status, stdout: result.stdout, log };
   } finally {
@@ -224,7 +223,8 @@ describe("run-db-tests.sh", () => {
   describe("KNOWN_RED só com issue aberta", () => {
     let root: string;
 
-    function runWithKnownRed(ref: string, ghState: string, env: Record<string, string> = {}) {
+    // Escreve a cópia do runner com rls_audit em KNOWN_RED e devolve o caminho.
+    function writePatchedRunner(ref: string): string {
       const source = fs.readFileSync(runner, "utf8");
       const patched = source
         .replace("declare -A KNOWN_RED=()", `declare -A KNOWN_RED=([rls_audit]="${ref}")`)
@@ -233,14 +233,15 @@ describe("run-db-tests.sh", () => {
       // conferir o runner sem a entrada.
       expect(patched).toContain(`[rls_audit]="${ref}"`);
       expect(patched.split("\n")).not.toContain("  rls_audit");
-      fs.writeFileSync(path.join(root, "scripts/run-db-tests.sh"), patched);
-      return run(
-        ["rls_audit"],
-        { FAKE_GH_STATE: ghState, ...env },
-        ["rls_audit"],
-        bin,
-        path.join(root, "scripts/run-db-tests.sh"),
-      );
+      const script = path.join(root, "scripts/run-db-tests.sh");
+      fs.writeFileSync(script, patched);
+      return script;
+    }
+
+    function runWithKnownRed(ref: string, ghState: string, env: Record<string, string> = {}) {
+      return run(["rls_audit"], { FAKE_GH_STATE: ghState, ...env }, ["rls_audit"], {
+        script: writePatchedRunner(ref),
+      });
     }
 
     const ghCalls = () => {
@@ -310,10 +311,7 @@ describe("run-db-tests.sh", () => {
     });
 
     it("nome de suíte desconhecido é erro antes de consultar o GitHub", () => {
-      const { status } = runWithKnownRed("#123", "OPEN");
-      expect(status).toBe(0);
-      fs.rmSync(path.join(bin, "gh.log"));
-      const typo = run([], {}, ["rls_audt"], bin, path.join(root, "scripts/run-db-tests.sh"));
+      const typo = run([], {}, ["rls_audt"], { script: writePatchedRunner("#123") });
       expect(typo.status).toBe(2);
       expect(ghCalls()).toEqual([]);
     });
