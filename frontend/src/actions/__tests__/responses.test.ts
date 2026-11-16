@@ -52,6 +52,9 @@ interface State {
   // Erros devolvidos pelo INSERT, na ordem das tentativas.
   responseInsertErrorQueue: Array<{ message: string; code?: string }>;
   currentAssignmentStatus: string | null;
+  // Erros do PostgREST na leitura e no UPDATE do assignment de codificação.
+  assignmentReadError: { message: string; code?: string } | null;
+  assignmentUpdateError: { message: string; code?: string } | null;
   pydanticFields: Array<{
     name: string;
     type: string;
@@ -80,6 +83,8 @@ beforeEach(() => {
     responseUpdateMatchedRows: () => state.existingResponse !== null,
     responseInsertErrorQueue: [],
     currentAssignmentStatus: "pendente",
+    assignmentReadError: null,
+    assignmentUpdateError: null,
     pydanticFields: [
       { name: "q1", type: "single", required: true, options: ["a", "b"] },
     ],
@@ -93,11 +98,11 @@ beforeEach(() => {
 
 // Builder generico awaitable: usado quando o resultado final eh `{ error: null }`
 // e o encadeamento termina em await (sem `.single()`).
-function thenableOk() {
+function thenableOk(error: { message: string; code?: string } | null = null) {
   const chain: Record<string, unknown> = {};
   chain.eq = () => chain;
-  chain.then = (resolve: (v: { error: null }) => unknown) =>
-    resolve({ error: null });
+  chain.then = (resolve: (v: { error: typeof error }) => unknown) =>
+    resolve({ error });
   return chain;
 }
 
@@ -200,15 +205,17 @@ vi.mock("@/lib/supabase/server", () => ({
             const c: Record<string, unknown> = {};
             c.eq = () => c;
             c.maybeSingle = async () => ({
-              data: state.currentAssignmentStatus
-                ? { status: state.currentAssignmentStatus }
-                : null,
+              data:
+                !state.assignmentReadError && state.currentAssignmentStatus
+                  ? { status: state.currentAssignmentStatus }
+                  : null,
+              error: state.assignmentReadError,
             });
             return c;
           },
           update: (payload: Record<string, unknown>) => {
             state.assignmentUpdatePayload = payload;
-            return thenableOk();
+            return thenableOk(state.assignmentUpdateError);
           },
         };
       }
@@ -896,5 +903,62 @@ describe("saveResponse — unicidade da resposta corrente (#609)", () => {
     consoleError.mockRestore();
     expect(state.responseInsertPayload).toBeNull();
     expect(state.responseUpdatePayload).toBeNull();
+  });
+});
+
+describe("saveResponse — falha ao sincronizar o assignment de codificação", () => {
+  // A resposta já foi gravada quando o sync roda: o toast diz isso em pt-BR, e
+  // o texto do PostgREST vai só ao log, com o código que liga os dois (#502).
+  const SYNC_FAILED =
+    "Resposta salva, mas o status da codificação não pôde ser atualizado. Tente salvar novamente.";
+
+  it("UPDATE que conclui o assignment falha: copy pt-BR, texto do banco só no log", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.assignmentUpdateError = { message: "canceling statement due to statement timeout", code: "57014" };
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", { q1: "a" });
+
+    expect(r).toEqual({ success: false, error: copyWithRef(SYNC_FAILED) });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[coding-sync] conclusão do assignment falhou", {
+        code: "57014",
+        message: "canceling statement due to statement timeout",
+      }),
+    );
+    consoleError.mockRestore();
+    expect(state.assignmentUpdatePayload?.status).toBe("concluido");
+  });
+
+  it("UPDATE que mantém o assignment em andamento falha: copy pt-BR, texto do banco só no log", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.assignmentUpdateError = { message: "permission denied for table assignments", code: "42501" };
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", {});
+
+    expect(r).toEqual({ success: false, error: copyWithRef(SYNC_FAILED) });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[coding-sync] assignment em andamento falhou", {
+        code: "42501",
+        message: "permission denied for table assignments",
+      }),
+    );
+    consoleError.mockRestore();
+    expect(state.assignmentUpdatePayload?.status).toBe("em_andamento");
+  });
+
+  it("falha ao LER o assignment antes de mantê-lo em andamento avisa em vez de seguir calada", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    state.assignmentReadError = { message: "timeout ao ler assignments" };
+    const saveResponse = await loadSaveResponse();
+    const r = await saveResponse("proj-1", "doc-1", {});
+
+    expect(r).toEqual({ success: false, error: copyWithRef(SYNC_FAILED) });
+    expect(consoleError).toHaveBeenCalledWith(
+      loggedLine("[coding-sync] leitura do assignment falhou", {
+        message: "timeout ao ler assignments",
+      }),
+    );
+    consoleError.mockRestore();
+    expect(state.assignmentUpdatePayload).toBeNull();
   });
 });
