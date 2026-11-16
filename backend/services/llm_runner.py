@@ -2451,9 +2451,10 @@ def run_llm(
         # Build per-field hash snapshot for staleness detection. Continua vindo
         # de `pydantic_fields`, e não do código compilado (#747): quem lê o
         # snapshot (Comparação, `response_answers_current_question`) o compara
-        # com o `hash` gravado nesse JSON, e o código ainda não reproduz esse
-        # valor em todo campo — as respostas padronizadas de campo de texto
-        # entram no hash e não são emitidas no código.
+        # com o `hash` gravado nesse JSON, e o código já salvo ainda não
+        # reproduz esse valor em todo campo — as respostas padronizadas de
+        # campo de texto entram no hash e só vão no código a partir do save
+        # seguinte de cada projeto.
         answer_field_hashes = {
             f["name"]: f.get("hash") for f in (project.get("pydantic_fields") or [])
         }

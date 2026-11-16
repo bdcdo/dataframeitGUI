@@ -139,6 +139,38 @@ class Analysis(BaseModel):
     assert parsed.model_dump() == {"itens": [{"nome": "x"}]}
 
 
+def test_submodelo_usado_por_dois_campos_sai_uma_vez_em_defs():
+    """Cada referência refaz o submodelo, mas o schema enviado tem uma definição só.
+
+    O Pydantic funde as definições de mesmo nome e mesmo conteúdo ao gerar o
+    JSON Schema. Este teste acusa a duplicata se isso deixar de valer.
+    """
+    code = """from pydantic import BaseModel, Field
+from typing import Optional
+
+
+class Sub(BaseModel):
+    s: str = Field(description="S", json_schema_extra={"id": "b"})
+
+
+class Item(BaseModel):
+    nome: str = Field(description="Nome", json_schema_extra={"id": "a", "help_text": "h"})
+    subs: list[Sub] = Field(description="Subs")
+
+
+class Analysis(BaseModel):
+    itens: Optional[list[Item]] = Field(default=None, description="Itens")
+    outros: list[Item] = Field(description="Outros")
+    soltos: list[Sub] = Field(description="Soltos")
+"""
+    model = _prepare_llm_model(code, True).model_class
+
+    schema = model.model_json_schema()
+
+    assert set(schema["$defs"]) == {"Item", "Sub"}
+    assert "help_text" not in json.dumps(schema)
+
+
 def test_modelo_sem_chave_interna_volta_o_mesmo_objeto():
     class Plain(BaseModel):
         a: str = Field(description="A")
