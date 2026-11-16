@@ -73,15 +73,6 @@
       },
       {
         "files": [
-          "src/components/compare/ComparePage.tsx"
-        ],
-        "rules": [
-          "react-doctor/no-ref-current-in-render",
-          "react-doctor/no-giant-component"
-        ]
-      },
-      {
-        "files": [
           "supabase/migrations/20260401000000_clerk_user_mapping.sql",
           "supabase/migrations/20260402000000_master_users.sql"
         ],
