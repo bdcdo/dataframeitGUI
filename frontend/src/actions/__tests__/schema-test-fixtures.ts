@@ -1,5 +1,4 @@
 import type { PydanticField, SchemaBaselineIdentity } from "@/lib/types";
-import type { TableResult } from "./supabase-mock";
 
 export const FIELD: PydanticField = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -9,7 +8,7 @@ export const FIELD: PydanticField = {
   description: "Pergunta 1",
 };
 
-export const PROJECT_SELECT: TableResult = {
+export const PROJECT_SELECT = {
   data: {
     pydantic_fields: [],
     pydantic_code: null,

@@ -1,16 +1,16 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createProjectIdentityActionHarness } from "./project-identity-harness";
+import { createFilterAwareProjectIdentityActionHarness } from "./project-identity-harness";
 const resolveMemberUserId = vi.hoisted(() =>
   vi.fn(async () => "canonical-member"),
 );
-const harness = createProjectIdentityActionHarness(resolveMemberUserId);
+const harness = createFilterAwareProjectIdentityActionHarness(resolveMemberUserId);
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/lib/auth", () => harness.authModule);
 vi.mock("@/lib/supabase/server", () => harness.supabaseServerModule);
 
 beforeEach(() => {
-  harness.reset({ verdict_acknowledgments: { error: null } });
+  harness.reset();
   resolveMemberUserId.mockReset();
   resolveMemberUserId.mockResolvedValue("canonical-member");
 });
@@ -43,6 +43,7 @@ describe("acknowledgeVerdict", () => {
         comment: null,
         acknowledged_verdict: "Sim",
       },
+      filters: [],
     });
   });
 
