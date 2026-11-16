@@ -272,6 +272,40 @@ describe("makeFilterAwareSupabaseMock: .single() e .maybeSingle() na RPC", () =>
       error: { message: "boom" },
     });
   });
+
+  it("duas chamadas da mesma RPC recebem resultados e erros próprios", async () => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: {}, writeCalls: [],
+      rpcResults: { f: [{ data: { id: "a" } }, { error: { message: "second call" } }] },
+    });
+    const call = () => client.rpc("f", {}) as unknown as { maybeSingle(): Promise<{ data: unknown; error: unknown }> };
+    const first = call();
+    const second = call();
+    expect(await second.maybeSingle()).toEqual({ data: null, error: { message: "second call" } });
+    expect(await first.maybeSingle()).toEqual({ data: { id: "a" }, error: null });
+    expect(() => call().maybeSingle()).toThrow(/rpcResults sem "f"/);
+    await expect(client.rpc("f", {})).rejects.toThrow(/rpcResults esgotado para "f"/);
+  });
+
+  it("RPC sem fixture mantém o resultado vazio sob await", async () => {
+    const client = makeFilterAwareSupabaseMock({ tableData: {}, writeCalls: [] });
+    expect(await client.rpc("legacy", {})).toEqual({ data: null, error: null });
+  });
+});
+
+describe("makeFilterAwareSupabaseMock: erro por filtro", () => {
+  it("falha apenas a chamada com o filtro escolhido, mesmo com SELECT igual", async () => {
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { t: [{ id: "a", kind: "a" }, { id: "b", kind: "b" }] },
+      writeCalls: [],
+      queryErrorForCall: ({ filters }) => filters.some(([, column, value]) => column === "kind" && value === "a")
+        ? { message: "chosen" } : undefined,
+    });
+    type Q = PromiseLike<{ data: unknown; error: unknown }> & { eq(c: string, v: string): Q };
+    const select = () => (client.from("t") as unknown as { select(c: string): Q }).select("id");
+    expect(await select().eq("kind", "a")).toEqual({ data: null, error: { message: "chosen" } });
+    expect(await select().eq("kind", "b")).toEqual({ data: [{ id: "b", kind: "b" }], error: null });
+  });
 });
 
 describe("makeFilterAwareSupabaseMock: escritas", () => {

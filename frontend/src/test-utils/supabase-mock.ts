@@ -123,10 +123,11 @@ export function makeFilterAwareSupabaseMock(state: {
   writeCalls: WriteCall[];
   rpcCalls?: RpcCall[];
   readCalls?: ReadCall[];
-  rpcResults?: Record<string, RpcResult>;
+  rpcResults?: Record<string, RpcResult | RpcResult[]>;
   // `table:op` ou `table:op:select columns` para falhas de uma leitura
   // específica quando a mesma tabela é consultada mais de uma vez.
   queryErrors?: Record<string, QueryError | null>;
+  queryErrorForCall?: (call: { table: string; op: string; columns: string; filters: Filter[] }) => QueryError | undefined;
   // Devolve só as colunas do select, como o PostgREST: uma coluna esquecida
   // nele não chega a quem lê. Os filtros continuam valendo sobre a linha
   // inteira.
@@ -135,7 +136,9 @@ export function makeFilterAwareSupabaseMock(state: {
   return {
     rpc: (fn: string, args: unknown) => {
       state.rpcCalls?.push({ fn, args });
-      const result = state.rpcResults?.[fn];
+      const entry = state.rpcResults?.[fn];
+      const exhausted = Array.isArray(entry) && entry.length === 0;
+      const result = Array.isArray(entry) ? entry.shift() : entry;
       // `.order()` e `.range()`, para a RPC que devolve tabela e é paginada por
       // `fetchAllPaged`: a ordem é a do array do teste.
       let rangeN: [number, number] | null = null;
@@ -157,6 +160,7 @@ export function makeFilterAwareSupabaseMock(state: {
           return call;
         },
         then: (resolve: (value: unknown) => unknown) => {
+          if (exhausted) throw new Error(`mock: rpcResults esgotado para "${fn}"`);
           const error = result?.error ?? null;
           const data = error ? null : (result?.data ?? null);
           const paged =
@@ -280,7 +284,10 @@ export function makeFilterAwareSupabaseMock(state: {
       const settle = () => {
         if (write) write.filters = [...filterList];
         else state.readCalls?.push({ table, columns: selected, filters: [...filterList] });
-        return state.queryErrors?.[`${table}:${op}:${selected}`] ?? state.queryErrors?.[`${table}:${op}`] ?? unfilteredWrite();
+        return state.queryErrorForCall?.({ table, op, columns: selected, filters: [...filterList] })
+          ?? state.queryErrors?.[`${table}:${op}:${selected}`]
+          ?? state.queryErrors?.[`${table}:${op}`]
+          ?? unfilteredWrite();
       };
       // `insert/upsert(...).select().single()` devolve a linha escrita, e não
       // uma linha da tabela.
