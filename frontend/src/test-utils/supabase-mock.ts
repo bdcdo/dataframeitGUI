@@ -124,6 +124,8 @@ export function makeFilterAwareSupabaseMock(state: {
   rpcCalls?: RpcCall[];
   readCalls?: ReadCall[];
   rpcResults?: Record<string, RpcResult>;
+  // `table:op` ou `table:op:select columns` para falhas de uma leitura
+  // específica quando a mesma tabela é consultada mais de uma vez.
   queryErrors?: Record<string, QueryError | null>;
   // Devolve só as colunas do select, como o PostgREST: uma coluna esquecida
   // nele não chega a quem lê. Os filtros continuam valendo sobre a linha
@@ -177,9 +179,13 @@ export function makeFilterAwareSupabaseMock(state: {
       // alias não mudam a linha: o mock não projeta colunas.
       let aliases: Array<[string, string]> = [];
       let selected = "";
+      let countRequested = false;
+      let headRequested = false;
       const builder: Record<string, unknown> = {};
-      builder.select = (columns?: string) => {
+      builder.select = (columns?: string, options?: { count?: string; head?: boolean }) => {
         selected = columns ?? "";
+        countRequested = options?.count === "exact";
+        headRequested = options?.head === true;
         aliases = [...(columns ?? "").matchAll(/(?:^|,)\s*(\w+):([\w.]+(?:->>?\w+)*)\s*(?=,|$)/g)].map(
           (m) => [m[1], m[2]],
         );
@@ -220,6 +226,9 @@ export function makeFilterAwareSupabaseMock(state: {
       for (const writeOp of ["update", "upsert", "insert", "delete"]) {
         // delete() não tem payload; o argumento opcional ({ count }) é opção.
         builder[writeOp] = (payload: unknown) => {
+          if (writeOp === "delete" && (payload as { count?: string } | undefined)?.count === "exact") {
+            countRequested = true;
+          }
           // Os filtros vêm depois no encadeamento; o registro é o mesmo objeto,
           // e `filters` é lido na resolução.
           write = {
@@ -242,11 +251,14 @@ export function makeFilterAwareSupabaseMock(state: {
         if (kind === "neq") return r[c] !== v;
         return (v as unknown[]).includes(r[c]);
       };
-      const rows = () => {
+      const filteredRows = () => {
         const data = (state.tableData[table] ?? []) as Array<
           Record<string, unknown>
         >;
-        const filtered = data.filter((r) => filterList.every((f) => passes(r, f)));
+        return data.filter((r) => filterList.every((f) => passes(r, f)));
+      };
+      const rows = () => {
+        const filtered = filteredRows();
         const ranged = rangeN ? filtered.slice(rangeN[0], rangeN[1] + 1) : filtered;
         // O PostgREST corta em `max_rows` sem erro, inclusive com `.limit()`
         // maior: quem não pagina vê só as primeiras 1000.
@@ -268,7 +280,7 @@ export function makeFilterAwareSupabaseMock(state: {
       const settle = () => {
         if (write) write.filters = [...filterList];
         else state.readCalls?.push({ table, columns: selected, filters: [...filterList] });
-        return state.queryErrors?.[`${table}:${op}`] ?? unfilteredWrite();
+        return state.queryErrors?.[`${table}:${op}:${selected}`] ?? state.queryErrors?.[`${table}:${op}`] ?? unfilteredWrite();
       };
       // `insert/upsert(...).select().single()` devolve a linha escrita, e não
       // uma linha da tabela.
@@ -280,7 +292,12 @@ export function makeFilterAwareSupabaseMock(state: {
       builder.maybeSingle = () => pickOne(singleRows(), true, settle());
       builder.then = (resolve: (v: unknown) => unknown) => {
         const error = settle();
-        return resolve({ data: error ? null : rows(), error });
+        const found = rows();
+        return resolve({
+          data: error || headRequested ? null : found,
+          error,
+          ...(countRequested ? { count: error ? null : filteredRows().length } : {}),
+        });
       };
       return builder;
     },

@@ -116,6 +116,48 @@ describe("makeFilterAwareSupabaseMock: max_rows", () => {
     expect((await select().limit(5000)).data).toHaveLength(1000);
     expect((await select().range(1000, 1999)).data).toEqual([{ id: "r1000" }]);
   });
+
+  it("count exact usa todas as linhas filtradas antes de limit/range/max_rows e head omite data", async () => {
+    const rows = Array.from({ length: 1001 }, (_, i) => ({ id: `r${i}`, project_id: "p1" }));
+    rows.push({ id: "other", project_id: "p2" });
+    const client = makeFilterAwareSupabaseMock({ tableData: { t: rows }, writeCalls: [] });
+    type Counted = PromiseLike<{ data: unknown[] | null; error: unknown; count?: number | null }> & {
+      eq(c: string, v: unknown): Counted;
+      limit(n: number): Counted;
+      range(a: number, b: number): Counted;
+    };
+    const select = (options?: { count: "exact"; head?: boolean }) =>
+      (client.from("t") as unknown as { select(c: string, options?: { count: "exact"; head?: boolean }): Counted })
+        .select("id", options).eq("project_id", "p1");
+
+    expect(await select({ count: "exact", head: true }).limit(1)).toEqual({ data: null, error: null, count: 1001 });
+    expect(await select({ count: "exact" }).range(1000, 1000)).toEqual({ data: [rows[1000]], error: null, count: 1001 });
+    expect((await select()).count).toBeUndefined();
+  });
+});
+
+describe("makeFilterAwareSupabaseMock: erro por SELECT", () => {
+  it("erro da projeção específica prevalece e outro SELECT da mesma tabela segue normal", async () => {
+    const specific = { message: "specific" };
+    const fallback = { message: "fallback" };
+    const client = makeFilterAwareSupabaseMock({
+      tableData: { t: [{ id: "a", name: "A" }] },
+      writeCalls: [],
+      queryErrors: { "t:select:id": specific, "t:select": fallback },
+    });
+    const select = (columns: string) =>
+      (client.from("t") as unknown as { select(c: string): PromiseLike<{ data: unknown; error: unknown }> }).select(columns);
+
+    expect(await select("id")).toEqual({ data: null, error: specific });
+    expect(await select("name")).toEqual({ data: null, error: fallback });
+    const noFallback = makeFilterAwareSupabaseMock({
+      tableData: { t: [{ id: "a", name: "A" }] },
+      writeCalls: [],
+      queryErrors: { "t:select:id": specific },
+    });
+    expect(await (noFallback.from("t") as unknown as { select(c: string): PromiseLike<{ data: unknown; error: unknown }> }).select("name"))
+      .toEqual({ data: [{ id: "a", name: "A" }], error: null });
+  });
 });
 
 describe("makeFilterAwareSupabaseMock: readCalls", () => {
@@ -254,6 +296,22 @@ describe("makeFilterAwareSupabaseMock: escritas", () => {
     expect(writeCalls).toEqual([
       { table: "t", op: "update", payload: { a: 1 }, filters: [["eq", "id", "x"]] },
     ]);
+  });
+
+  it("DELETE com count exact conta linhas filtradas e devolve count null no erro", async () => {
+    const writeCalls: WriteCall[] = [];
+    const rows = [{ id: "a", project_id: "p1" }, { id: "b", project_id: "p1" }, { id: "c", project_id: "p2" }];
+    const options = { count: "exact" };
+    type D = PromiseLike<{ data: unknown; error: unknown; count: number | null }> & { eq(c: string, v: unknown): D };
+    const makeDelete = (queryErrors?: Record<string, { message: string }>) =>
+      (makeFilterAwareSupabaseMock({ tableData: { t: rows }, writeCalls, queryErrors }).from("t") as unknown as {
+        delete(o: typeof options): D;
+      }).delete(options).eq("project_id", "p1");
+
+    expect((await makeDelete()).count).toBe(2);
+    expect(await makeDelete({ "t:delete": { message: "denied" } })).toMatchObject({
+      data: null, error: { message: "denied" }, count: null,
+    });
   });
 
   it(".match vira um .eq por chave, registrado na escrita, e a chave undefined sai do filtro", async () => {
