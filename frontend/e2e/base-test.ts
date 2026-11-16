@@ -13,7 +13,8 @@ import {
 // fixture-lock-test.ts, que estende este). O fixture automático registra as
 // navegações do frame principal e as requests RSC do cliente de toda página do
 // contexto (o spec pode abrir outra com `context.newPage()`); quando o teste
-// falha, imprime a URL final de cada página (o login, se a sessão caiu), anexa
+// falha, imprime a URL final de cada página (o login, se a sessão caiu, ou o
+// código da tela de erro de servidor, que acha o stack no log), anexa
 // a lista e imprime as que deram erro, já classificadas por
 // navigation-diagnostics.ts. Sem isso o spec só mostra a própria mensagem,
 // que não tem como saber se o servidor casou a rota.
@@ -67,13 +68,19 @@ export const test = base.extend<{ navigationDiagnostics: void }>({
 
       // Antes das navegações, e mesmo quando nenhuma deu erro: o
       // redirecionamento ao login responde 200 e não aparece na lista abaixo.
-      console.log(
-        `[URL final] ${testInfo.title}\n` +
-          context
-            .pages()
-            .map((page) => `  ${describeFinalUrl(page.url())}`)
-            .join("\n"),
+      // O texto do `<main>`, onde todo boundary de erro do app põe o painel,
+      // só serve para achar o código da tela de erro, e não vai para a saída;
+      // página já fechada sai sem ele.
+      const finalUrls = await Promise.all(
+        context.pages().map(async (page) => {
+          const texts = await page
+            .getByRole("main")
+            .allInnerTexts()
+            .catch(() => []);
+          return `  ${describeFinalUrl(page.url(), texts.join("\n"))}`;
+        }),
       );
+      console.log(`[URL final] ${testInfo.title}\n${finalUrls.join("\n")}`);
 
       const records = await Promise.all(pending);
       // Anexo por caminho, e não por `body`: o reporter `list` do pre-push só

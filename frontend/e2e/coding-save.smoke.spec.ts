@@ -45,10 +45,14 @@ const DOC_TITLE = "Doc E2E save 1";
 const UNSENT_VALUE = "valor-e2e-nao-enviado";
 // Espera pela primeira pergunta: é onde o spec descobre que a página não chegou
 // ao estado esperado. A mensagem lista onde olhar, sem presumir a causa (#740).
+// A tela de erro de servidor mostra um código que é hash do erro, não pista da
+// origem: quem diz se foi o Clerk ou outra coisa é a linha do log que a linha
+// [URL final] aponta (#527).
 const QUESTION_NOT_SHOWN =
   "pergunta 'Resumo do documento' não ficou visível uma única vez — confira " +
-  "no snapshot se a página é o login, no anexo navegacoes.json se houve 404, " +
-  "e só então o fixture e o reset";
+  "na linha [URL final] se a página é o login ou a tela de erro de servidor " +
+  "(com o código que acha o stack no log), no anexo navegacoes.json se houve " +
+  "404, e só então o fixture e o reset";
 
 function createAdminClient() {
   return createClient(
@@ -61,8 +65,9 @@ test("codificação: enviar respostas persiste response e conclui assignment", a
   page,
   holdFixtureLock,
 }) => {
-  // Primeira visita compila /analyze/code no dev server; o fluxo tem login +
-  // submit + renavegação — folga bem acima dos 30s default.
+  // No `next dev` do `npm run test:e2e`, a primeira visita compila
+  // /analyze/code (o gate roda contra o build); o fluxo tem login + submit +
+  // renavegação — folga bem acima dos 30s default.
   test.setTimeout(120_000);
 
   const email = process.env.E2E_MEMBER_EMAIL;

@@ -90,5 +90,10 @@ export default defineConfig({
     // `next build` inteiro (49 s com load ~60), trabalho que o `next dev`
     // fazia aos poucos dentro do timeout de cada teste.
     timeout: isGatedRun ? 600_000 : 120_000,
+    // Já é o default, e fica explícito porque o diagnóstico de falha depende
+    // dele: a linha `[erro <código>]` que o servidor loga (src/instrumentation.ts)
+    // sai na saída do run com o prefixo `[WebServer]`, e é ela que a linha
+    // [URL final] de e2e/base-test.ts aponta quando a página é a tela de erro.
+    stderr: "pipe",
   },
 });

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { errorCode, errorDetail } from "@/lib/server-error";
 import {
   classifyNotFound,
+  describeErrorScreen,
   describeFinalUrl,
   describeNavigation,
   readRscPayload,
@@ -166,10 +168,42 @@ describe("describeFinalUrl", () => {
     expect(line).not.toContain("segredo");
   });
 
+  it("aponta a tela de erro de servidor pelo código, que acha o stack no log (#527)", () => {
+    const code = errorCode({ digest: "1903308217" })!;
+    const line = describeFinalUrl(
+      "http://localhost:3100/projects/p1/analyze/code",
+      `Algo deu errado\n${errorDetail({ digest: "1903308217" })}\nTentar de novo`,
+    );
+    expect(line).toContain("tela de erro de servidor");
+    expect(line).toContain(`[erro ${code}]`);
+    expect(line).toContain("[WebServer]");
+  });
+
   it("página do app sai como veio, sem o aviso de login", () => {
     expect(describeFinalUrl("http://localhost:3100/projects/p1/analyze/code")).toBe(
       "http://localhost:3100/projects/p1/analyze/code",
     );
     expect(describeFinalUrl("about:blank")).toBe("about:blank");
+  });
+});
+
+// O código da tela vem de `errorDetail`, que o ErrorPanel dos boundaries
+// renderiza; o do log vem de `errorCode`, que o `onRequestError` usa. Ler o
+// texto do produtor real, e não uma cópia da string, faz este teste quebrar se
+// o painel mudar o formato e o diagnóstico deixar de achar o código.
+describe("describeErrorScreen", () => {
+  it("lê do painel o mesmo código que o servidor loga", () => {
+    const digest = "1903308217";
+    const code = errorCode({ digest });
+    expect(code).not.toBeNull();
+    expect(describeErrorScreen(`Algo deu errado ${errorDetail({ digest })}`)).toContain(
+      `"[erro ${code}]"`,
+    );
+  });
+
+  it("erro do navegador, sem código, e página normal ficam sem veredito", () => {
+    expect(describeErrorScreen(`Algo deu errado ${errorDetail(new Error("falhou"))}`)).toBeNull();
+    expect(describeErrorScreen("Resumo do documento\nObservação livre")).toBeNull();
+    expect(describeErrorScreen("")).toBeNull();
   });
 });
