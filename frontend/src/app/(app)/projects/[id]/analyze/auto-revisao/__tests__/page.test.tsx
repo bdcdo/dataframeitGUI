@@ -176,6 +176,46 @@ describe("AutoReviewRoute — identidade efetiva", () => {
   });
 });
 
+// A pendência é uma linha por campo, e o PostgREST corta a leitura em 1000
+// sem erro: a fila perdia documentos que o contador de /config/members contava.
+describe("AutoReviewRoute — leitura da fila", () => {
+  it("fila com mais de 1000 campos pendentes vem inteira", async () => {
+    seedQueue("canonical-member");
+    const [template] = tableData.field_reviews as Array<Record<string, unknown>>;
+    tableData.field_reviews = [
+      ...Array.from({ length: 1000 }, (_, i) => ({
+        ...template,
+        id: `review-${String(i).padStart(4, "0")}`,
+        field_name: `campo_${i}`,
+      })),
+      { ...template, id: "review-9999", document_id: "doc-2" },
+    ];
+    (tableData.documents as unknown[]).push({
+      ...(tableData.documents[0] as object),
+      id: "doc-2",
+    });
+
+    const props = await renderRoute();
+
+    expect(props.docs.map((doc) => doc.docId)).toEqual(["doc-1", "doc-2"]);
+  });
+
+  it("leitura que falha derruba a página em vez de abrir a fila vazia", async () => {
+    seedQueue("canonical-member");
+    createSupabaseServer.mockImplementation(async () =>
+      makeFilterAwareSupabaseMock({
+        tableData,
+        writeCalls: [],
+        queryErrors: { "field_reviews:select": { message: "timeout" } },
+      }),
+    );
+
+    await expect(renderRoute()).rejects.toThrow(
+      "Não foi possível carregar a fila de auto-revisão",
+    );
+  });
+});
+
 // #889: depois de um round reiniciado (que arquiva toda geração LLM), a fila
 // fica vazia sem dizer por quê. O coordenador vê quantos documentos ficaram
 // fora por falta de geração LLM corrente — o mesmo critério do toast do reparo.

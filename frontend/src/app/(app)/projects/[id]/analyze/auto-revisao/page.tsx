@@ -14,6 +14,7 @@ import {
 import type { PydanticField } from "@/lib/types";
 import { requireResolvedProjectAccess } from "@/lib/project-access";
 import { pendingAutoReviewsQuery } from "@/lib/auto-review-pending";
+import { fetchAllAfterId } from "@/lib/supabase/fetch-all-paged";
 import { fetchDocsWithoutLlmCount } from "@/lib/auto-review-backlog-without-llm";
 
 interface MemberRow {
@@ -119,12 +120,16 @@ export default async function AutoReviewRoute({
   // demais filas.
   const queueUserId = isCoordinator && viewAs ? viewAs : ownQueueUserId;
 
-  const [{ data: project }, { data: pendingReviews }, { data: memberRows }] =
+  const [{ data: project }, pendingRead, { data: memberRows }] =
     await Promise.all([
       supabase.from("projects").select("pydantic_fields").eq("id", id).single(),
-      pendingAutoReviewsQuery(supabase, id).eq(
-        "self_reviewer_id",
-        queueUserId,
+      // Paginado, como o contador de /config/members: a pendência é uma
+      // linha por campo, e o PostgREST corta em 1000 sem erro.
+      fetchAllAfterId<{ id: string; document_id: string }>(() =>
+        pendingAutoReviewsQuery(supabase, id).eq(
+          "self_reviewer_id",
+          queueUserId,
+        ),
       ),
       isCoordinator
         ? supabase
@@ -135,27 +140,36 @@ export default async function AutoReviewRoute({
     ]);
 
   const reviewers = buildQueueOwners(memberRows, isCoordinator);
+  // Sem isto a leitura que falha abria a fila vazia, como se não houvesse
+  // pendência (P3).
+  if (pendingRead.error) {
+    throw new Error(
+      `Não foi possível carregar a fila de auto-revisão: ${pendingRead.error.message}`,
+    );
+  }
   const docIds = Array.from(
-    new Set((pendingReviews ?? []).map((review) => review.document_id)),
+    new Set(pendingRead.data.map((review) => review.document_id)),
   );
   const { documents: docs, fieldReviews } = await loadReviewQueueRows(
     supabase,
     docIds,
     () =>
-      supabase
-        .from("field_reviews")
-        .select(
-          "id, document_id, field_name, human_answer_snapshot, llm_answer_snapshot, llm_justification_snapshot, self_verdict, self_justification",
-        )
-        .eq("project_id", id)
-        .in("document_id", docIds)
-        .eq("self_reviewer_id", queueUserId)
-        .is("superseded_at", null),
+      fetchAllAfterId<AutoReviewFieldReviewRow>(() =>
+        supabase
+          .from("field_reviews")
+          .select(
+            "id, document_id, field_name, human_answer_snapshot, llm_answer_snapshot, llm_justification_snapshot, self_verdict, self_justification",
+          )
+          .eq("project_id", id)
+          .in("document_id", docIds)
+          .eq("self_reviewer_id", queueUserId)
+          .is("superseded_at", null),
+      ),
   );
   const fieldsMeta = (project?.pydantic_fields as PydanticField[]) ?? [];
   const docsToReview = buildAutoReviewDocuments(
     docs,
-    fieldReviews as AutoReviewFieldReviewRow[],
+    fieldReviews,
     fieldsMeta,
   );
 
