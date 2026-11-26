@@ -39,7 +39,7 @@ jobs:
       # por suíte, tinha ficado 17 suítes atrás. O runner imprime PASS/FAIL por
       # suíte e a cauda da saída de cada uma que falha, e roda por último o
       # contrato payload×schema dos writes de llm_runs (uv, abaixo).
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           # Mesmo uv do backend/Dockerfile.
           version: "0.9.18"
